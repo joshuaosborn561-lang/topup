@@ -71,6 +71,16 @@ const schema = z.object({
   LEADPIPE_TOKEN: z.string().default(""),
   VERIFIER_BASE_URL: z.string().default(""),
   WIZARD_HEALTH_URL: z.string().default(""),
+  /** getleads hosted MCP (steps 2 and 3). The token is whatever getleads issues for a service; see docs/servers.md §11. */
+  GETLEADS_MCP_URL: z.string().default(""),
+  GETLEADS_TOKEN: z.string().default(""),
+  /** Smartlead server on Railway (steps 11 and 12). It has no inbound auth today; the token slot is for when it does. */
+  SMARTLEAD_MCP_URL: z.string().default(""),
+  SMARTLEAD_TOKEN: z.string().default(""),
+
+  /** Poll cadence and patience for the vendor jobs in steps 3, 4 and 11. */
+  JOB_POLL_SECONDS: numberWithDefault(30),
+  JOB_DEAD_MINUTES: numberWithDefault(90),
 
   AUTO_SPEND_CAP_USD: numberWithDefault(5),
   DAILY_VENDOR_CAP_USD: numberWithDefault(25),
@@ -130,5 +140,7 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     leadpipe: Boolean(cfg.LEADPIPE_MCP_URL),
     verifier: Boolean(cfg.VERIFIER_BASE_URL),
     wizard: Boolean(cfg.WIZARD_HEALTH_URL),
+    getleads: Boolean(cfg.GETLEADS_MCP_URL),
+    smartlead: Boolean(cfg.SMARTLEAD_MCP_URL),
   };
 }

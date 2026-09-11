@@ -777,6 +777,88 @@ None. Smartlead is plan-billed; no cost is tracked.
 
 ---
 
+## 11. getleads (hosted MCP, third party)
+
+### Identity
+
+Not one of the ten Railway servers: getleads is a vendor, and its MCP is
+hosted by getleads at `https://app.getleads.io/api/mcp`
+(`skills/MCP_SERVERS.md`). There is no repository to read, so this section is
+from the live `tools/list` schema and the server's own instructions text,
+read on 2026-09-11. **Auth is OAuth for a person** (the workspace connection
+was made by a human signing in). The schema publishes no API-key or
+service-token path; `leadtopup` reads `GETLEADS_TOKEN` from Railway and sends
+it as a bearer, and whether getleads accepts a bearer from a service is the
+open question at the top of the PR. Until it does, steps 2 and 3 on a getleads
+lane park with "GETLEADS_MCP_URL is not configured" rather than guess.
+
+Two balances, per the server's instructions: **plan credits** cover contact
+search, export and enrichment (unlimited plan → `creditsRemaining` null, not
+zero); a **prepaid wallet** funds only paid scrapes (profile monitoring,
+company followers, website visitors), none of which `leadtopup` uses. A low
+wallet is never "out of credits". `get_fair_use` shows the daily/monthly
+fair-use budget and `resets_at` (next 00:00 UTC).
+
+### Tools
+
+Those `leadtopup` calls; everything else on the server is out of scope.
+
+| Tool | Arguments (required in bold) | Sync / job | Returns |
+|---|---|---|---|
+| `count_contacts` | the contact filters: `job_titles[]`, `company_size[]` (**band labels** — `"11 to 50"`, `"51 to 200"`, …), `employee_profiles_on_linkedin {min,max}`, `countries[]`, `states[]`, `cities[]`, `industries[]` / `companyIndustry[]` (no commas — they shred silently), `email_status[]` (`["VALID"]` only), … | sync, **free, always** | `{total_matching, exportable_rows}` |
+| `export_contacts` | same filters + `columns[]`, `max_per_company` (1–50), `max_rows` (1–50 000), **`confirmed: true`** (refused without it) | **export id** | `{export_id}`; later `cap_reason ∈ per_company \| max_rows \| hard_ceiling \| fair_use \| credits \| filtered` says why fewer rows than asked |
+| `check_contact_export` | **export_id** | sync poll | `{job_status, export_url, rows_exported, rows_available, cap_reason, cap_message}` |
+| `get_fair_use` | — | sync, free | remaining daily/monthly budget, `resets_at` |
+
+### Jobs
+
+- An export is a job: `export_contacts` returns `export_id`; poll
+  `check_contact_export` until `job_status` is terminal. The status words are
+  **not in the schema**; the client treats `completed / done / finished /
+  succeeded / ready` as done and `failed / error / cancelled` as failed, and
+  the first real job confirms the vocabulary (`src/clients/getleads.ts`).
+- **No cancel tool.** An export that was asked for is delivered.
+- `rows_exported` can be **below `max_rows`** with a `cap_reason`; the service
+  reads `rows_exported` and never assumes it got what it asked for (step 4's
+  gate compares against `rows_exported`, not the request).
+
+### Rows
+
+- `export_contacts` hands back a URL; the file never transits the MCP call
+  and `leadtopup` never opens it — LeadPipe ingests from the URL (step 4).
+- `search_contacts`, `lookup_decision_makers`, `getleads_enrich_person_batch`
+  and every `*_batch` / `lookup_*` tool return contact rows inline. **Never
+  called** from `leadtopup`.
+
+### Prices
+
+Included plan: `count_contacts` and `export_contacts` are $0 per call
+(`src/spend/prices.ts` `getleads: included`). Every call still writes a
+`topup.spend_ledger` row. The fair-use budget is the real ceiling; a
+`cap_reason: fair_use` on an export is reported in the thread and the ledger,
+never worked around.
+
+### Breakage
+
+| Brief item | Finding |
+|---|---|
+| No cancel | **Confirmed** (no such tool). |
+| Zero-dollar accounting | Not applicable — included plan; the service books $0 and counts rows. |
+| Status errors on completed jobs | Cannot confirm; vocabulary unpublished. |
+| Row-count truncation | **By design** — `cap_reason` reduces `rows_exported` silently unless the caller reads it. The service reads it and gates step 4 on `rows_exported`. |
+| Other | OAuth-for-a-person is the only documented auth. Numeric headcount bounds (`employee_count_min/max`) and comma industries shred results silently (brief section 9); the recipe schema refuses both before a call is made. |
+
+### Prerequisite PRs (getleads)
+
+Not ours to write. Two things Josh must settle before a run reaches step 3:
+
+1. A credential a service may present (`GETLEADS_TOKEN`), or confirmation
+   that the OAuth session token may be used and how it is refreshed.
+2. The `job_status` words of `check_contact_export`, from the first real
+   export, written back into this section.
+
+---
+
 ## What `leadtopup` may call
 
 Derived from the sections above and the non-negotiables. Anything not listed
@@ -793,7 +875,13 @@ is a decision for Josh (D18: unclear → judgement column).
 | Email Finder Waterfall | `enrich_waterfall` with `source_table` (estimate first; `max_tier` ≤ leadmagic unless `owner_approved_at`), `get_job_status`, `ensure_client`, `describe_client` | `enrich_waterfall` with inline `rows` |
 | Name to Email | `verify_person` (single, on a card), `get_run` | `start_run` (inline rows), `export_run` |
 | Email Verifier Progression | `start_verification`, `get_verification_status`, `get_verification_results`, `resume_verification`, `list_verification_runs` | `export_all_sendable` (aggregate is a judgement) |
-| Smartlead server | `stage_leads_from_url`, `start_lead_import`, `get_lead_*_status`, `list_lead_*_runs`, `list_campaigns`, `get_campaign*`, analytics/statistics, `get_lead_by_email`, `add_to_block_list`, `list_email_accounts` | `update_campaign_status`, `delete_campaign`, `start_lead_purge`, `unsubscribe_lead`, `pause_lead`, `unlink_mailboxes`, `import_leads`, `list_campaign_leads`, `export_campaign_leads`, `smartlead_request` |
+| Smartlead server | `stage_leads_from_url`, `start_lead_import`, `get_lead_*_status`, `list_lead_*_runs`, `list_campaigns`, `get_campaign*`, `get_sequences`, `list_campaign_mailboxes`, analytics/statistics, `get_lead_by_email`, `add_to_block_list`, `list_email_accounts` | `update_campaign_status`, `delete_campaign`, `start_lead_purge`, `unsubscribe_lead`, `pause_lead`, `unlink_mailboxes`, `import_leads`, `list_campaign_leads`, `export_campaign_leads`, `smartlead_request` |
+| getleads (hosted) | `count_contacts`, `export_contacts` (`confirmed: true`, band labels, `VALID` only), `check_contact_export`, `get_fair_use` | every tool that returns contacts inline (`search_contacts`, `lookup_*`, `*_batch`), every wallet-funded scrape |
+
+`src/clients/smartlead.ts` carries the Smartlead allow list in code
+(`SMARTLEAD_ALLOWED`: `start_lead_import`, `get_lead_import_status`,
+`get_sequences`, `get_campaign`, `list_campaign_mailboxes`) and refuses any
+other tool name before a request is built.
 
 Anything over $5 per step still asks first with the worst case in dollars,
 regardless of the table.

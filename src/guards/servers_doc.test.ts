@@ -15,6 +15,8 @@ const root = new URL("../../", import.meta.url);
 const CLIENT_SERVER: Readonly<Record<string, string>> = {
   "leadpipe.ts": "LeadPipe",
   "verifier.ts": "Email Verifier Progression",
+  "getleads.ts": "getleads",
+  "smartlead.ts": "Smartlead server",
 };
 
 /** The ten servers the addendum names (section 4). */

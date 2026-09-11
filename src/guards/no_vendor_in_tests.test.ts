@@ -31,7 +31,7 @@ describe("D4 — tests never touch a vendor", () => {
       if (f.pathname.endsWith("no_vendor_in_tests.test.ts")) continue;
       const src = await readFile(f, "utf8");
       if (VENDOR_HOSTS.test(src)) offenders.push(`${f.pathname}: names a vendor host`);
-      if (/new (VerifierClient|LeadPipeClient|SlackPoster|WebClient|Db)\(/.test(src)) offenders.push(`${f.pathname}: constructs a live client`);
+      if (/new (VerifierClient|LeadPipeClient|GetleadsClient|SmartleadClient|McpHttpClient|SlackPoster|WebClient|Db)\(/.test(src)) offenders.push(`${f.pathname}: constructs a live client`);
       if (/\bfetch\(\s*["'`]https?:/.test(src)) offenders.push(`${f.pathname}: fetches a URL`);
     }
     assert.deepEqual(offenders, [], "D4: a test would call a vendor. Fake the client and assert on the ledger. Ask Josh if you think this one is different.");
