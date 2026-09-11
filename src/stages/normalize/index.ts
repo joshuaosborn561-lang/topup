@@ -4,15 +4,19 @@ import { MAX_STEP_ATTEMPTS, type RunRow } from "../../domain/runs.js";
 import { logger } from "../../lib/log.js";
 import type { Recipe } from "../../recipes/schema.js";
 import type { SlackConsole } from "../../slack/console.js";
-import { mergeFieldsGate, REQUIRED_MERGE_FIELDS, type GateUnmet } from "../../spine/gate.js";
+import { mergeFieldsToHold } from "../../spine/gate.js";
 import { normalizeCompany, type CompanyRefs } from "./company.js";
-import { conversationalLocation, metroKey, type MetroRefs } from "./location.js";
+import { cityKey, type CityCoords } from "./geo.js";
+import { conversationalLocation } from "./location.js";
 import { normalizeFirstName } from "./names.js";
-import { assignTeam, type TeamRefs } from "./team.js";
+import { assignTeam } from "./team.js";
 
 const log = logger("normalize");
 
-export interface NormalizeRefs extends CompanyRefs, MetroRefs, TeamRefs {}
+export interface NormalizeRefs extends CompanyRefs {
+  /** topup.ref_cities in memory. Empty when the table was never seeded: every row is then NO_GEOCODE. */
+  coords: CityCoords;
+}
 
 export interface LeadInput {
   id: string;
@@ -31,47 +35,50 @@ export interface NormalizedFields {
   flags: Record<string, string[]>;
 }
 
-/** Pure: one lead in, normalized merge fields out. Never touches the raw columns. */
+/**
+ * Step 7 for one lead, pure. The four skills run in the spine's order
+ * (name-city, company, conversational-location, sports-team); each writes a
+ * new field and the raw columns are never touched.
+ */
 export function normalizeLead(lead: LeadInput, refs: NormalizeRefs, opts: Recipe["normalize"]): NormalizedFields {
   const flags: Record<string, string[]> = {};
   const name = opts.names_cities ? normalizeFirstName(lead.first_name) : { value: lead.first_name, flags: [] };
   if (name.flags.length) flags.first_name = name.flags;
   const company = opts.company ? normalizeCompany(lead.company_name, refs) : { value: lead.company_name, flags: [] };
   if (company.flags.length) flags.company = company.flags;
-  const loc = opts.location ? conversationalLocation(lead.city, lead.state, refs) : { location: lead.city ?? "", metro: null, flags: [] as string[] };
+  const loc = opts.location
+    ? conversationalLocation(lead.city, lead.state, refs.coords)
+    : { location: lead.city ?? "", metro: null, city: lead.city, geo: null, source: "city" as const, flags: [] as string[] };
   if (loc.flags.length) flags.location = loc.flags;
   let team: string | null = null;
   let gift: "team" | "airpods" = "airpods";
   if (opts.sports_team) {
-    const t = assignTeam(loc.metro ?? (loc.location || null), refs, opts.sports_team);
+    const t = assignTeam(loc.city, lead.state, loc.geo, opts.sports_team);
     team = t.team;
     gift = t.gift;
-    if (t.flags.length) flags.team = t.flags;
+    flags.team = [t.source];
   }
   return { first_name_n: name.value, company_n: company.value, location: loc.location, local_sports_team: team, gift_tier: gift, flags };
 }
 
 export async function loadRefs(repo: Repo): Promise<NormalizeRefs> {
   const db = repo.raw();
-  const [acr, suf, met, teams, amb] = await Promise.all([
+  const [acr, cities] = await Promise.all([
     db.query<{ acronym: string }>(`select acronym from topup.ref_acronyms`),
-    db.query<{ suffix: string }>(`select suffix from topup.ref_company_suffixes where strip`),
-    db.query<{ city: string; state: string; conversational: string }>(`select city, state, conversational from topup.ref_metro_names`),
-    db.query<{ team: string; league: string; metro: string; pro: boolean }>(`select team, league, metro, pro from topup.ref_sports_teams`),
-    db.query<{ nickname: string }>(`select nickname from topup.ref_ambiguous_nicknames`),
+    db.query<{ city: string; state: string; lat: number; lon: number }>(`select city, state, lat::float8 as lat, lon::float8 as lon from topup.ref_cities`),
   ]);
-  return {
-    acronyms: new Set(acr.rows.map((r) => r.acronym.toUpperCase())),
-    suffixes: new Set(suf.rows.map((r) => r.suffix.toLowerCase().replace(/[.,]/g, ""))),
-    metros: new Map(met.rows.map((r) => [metroKey(r.city, r.state), r.conversational])),
-    teams: teams.rows,
-    ambiguous: new Set(amb.rows.map((r) => r.nickname.toLowerCase())),
-  };
+  const coords = new Map<string, { lat: number; lon: number }>();
+  for (const r of cities.rows) coords.set(cityKey(r.city, r.state), { lat: r.lat, lon: r.lon });
+  return { acronyms: new Set(acr.rows.map((r) => r.acronym.toUpperCase())), coords };
 }
 
-export type NormalizeOutcome = { kind: "done"; normalized: number; flagged: number } | { kind: "retry"; error: string } | { kind: "parked"; reason: string } | GateUnmet;
+export type NormalizeOutcome = { kind: "done"; normalized: number; held: number; flagged: number } | { kind: "retry"; error: string } | { kind: "parked"; reason: string };
 
-/** Moves `verified` rows of a run to `normalized`, writing the four merge fields plus flags. */
+/**
+ * Moves `verified` rows of a run to `normalized`, writing the merge fields plus
+ * flags; then holds (`qa_hold`) every row with a required merge field empty.
+ * Step 7 gate: every merge field the copy uses is populated or the row is held.
+ */
 export class NormalizeStage {
   constructor(
     private readonly repo: Repo,
@@ -121,23 +128,29 @@ export class NormalizeStage {
         );
         normalized += out.length;
         for (const o of out) {
-          const fl = Object.entries(o.f.flags);
+          const fl = Object.entries(o.f.flags).filter(([k]) => k !== "team");
           if (fl.length) flagged++;
-          for (const [k, vs] of fl) for (const v of vs) flagTotals[`${k}.${v}`] = (flagTotals[`${k}.${v}`] ?? 0) + 1;
+          for (const [k, vs] of Object.entries(o.f.flags)) for (const v of vs) flagTotals[`${k}.${v}`] = (flagTotals[`${k}.${v}`] ?? 0) + 1;
         }
       }
-      const empty = await this.emptyMergeFields(run, table);
-      await this.repo.finishStep(run.run_id, "normalize", { useful_output: normalized - empty.rows_with_empty, counts: { normalized, flagged, rows_with_empty_merge_field: empty.rows_with_empty, ...flagTotals } });
-      await this.repo.mergeRunCounts(run.run_id, { normalized });
-      const gate = mergeFieldsGate({ normalized, ...empty });
-      if (gate) return gate;
+      const held = await this.holdEmptyMergeFields(run, table, recipe);
+      const heldDetail = Object.entries(held.by_field).filter(([, n]) => n > 0);
+      await this.repo.finishStep(run.run_id, "normalize", {
+        useful_output: normalized - held.rows,
+        counts: { normalized, held_merge_field: held.rows, flagged, ...Object.fromEntries(heldDetail.map(([f, n]) => [`held_${f}`, n])), ...flagTotals },
+      });
+      await this.repo.mergeRunCounts(run.run_id, { normalized, held: held.rows });
+      const geocodeNote = refs.coords.size === 0 ? " · topup.ref_cities is empty, so every location is NO_GEOCODE: run `npm run seed:cities`" : "";
       await this.console.postInThread(
         run,
-        `Normalize done: ${normalized} rows · ${flagged} carry flags` +
+        `Normalize done: ${normalized} rows · ${held.rows} held for an empty merge field` +
+          (heldDetail.length ? ` (${heldDetail.map(([f, n]) => `${f} ${n}`).join(", ")})` : "") +
+          ` · ${flagged} carry flags` +
           (Object.keys(flagTotals).length ? ` (${Object.entries(flagTotals).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${k} ${v}`).join(", ")})` : "") +
+          geocodeNote +
           ".",
       );
-      return { kind: "done", normalized, flagged };
+      return { kind: "done", normalized, held: held.rows, flagged };
     } catch (err) {
       const message = (err as Error).message;
       const parked = step.attempts >= MAX_STEP_ATTEMPTS;
@@ -151,18 +164,31 @@ export class NormalizeStage {
     }
   }
 
-  /** Step 7 gate: rows this run normalized whose required merge fields came out empty. Counts only. */
-  private async emptyMergeFields(run: RunRow, table: string): Promise<{ rows_with_empty: number; empty_by_field: Record<string, number> }> {
-    const cols = REQUIRED_MERGE_FIELDS.map((f) => `count(*) filter (where coalesce(${f}, '') = '')::text as ${f}`).join(", ");
-    const any = REQUIRED_MERGE_FIELDS.map((f) => `coalesce(${f}, '') = ''`).join(" or ");
-    const { rows } = await this.repo.raw().query<Record<string, string>>(
-      `select count(*) filter (where ${any})::text as rows_with_empty, ${cols} from ${table} where run_id = $1 and lead_status = 'normalized'`,
-      [run.run_id],
-    );
-    const r = rows[0] ?? {};
-    return {
-      rows_with_empty: Number(r.rows_with_empty ?? 0),
-      empty_by_field: Object.fromEntries(REQUIRED_MERGE_FIELDS.map((f) => [f, Number(r[f] ?? 0)])),
-    };
+  /**
+   * Step 7 gate, the "or the row is held" half: rows this run normalized whose
+   * required merge fields (recipe.required_fields, minus the team) came out
+   * empty move to qa_hold with the empty fields in qa_flags. Counts only.
+   */
+  private async holdEmptyMergeFields(run: RunRow, table: string, recipe: Recipe): Promise<{ rows: number; by_field: Record<string, number> }> {
+    const fields = mergeFieldsToHold(recipe.required_fields);
+    if (fields.length === 0) return { rows: 0, by_field: {} };
+    const emptyList = fields.map((f) => `case when coalesce(${f}::text, '') = '' then '${f}' end`).join(", ");
+    const anyEmpty = fields.map((f) => `coalesce(${f}::text, '') = ''`).join(" or ");
+    const perField = fields.map((f) => `count(*) filter (where coalesce(${f}::text, '') = '')::text as "${f}"`).join(", ");
+    return this.repo.withRun(run.run_id, async (tx) => {
+      const { rows } = await tx.query<Record<string, string>>(
+        `with held as (
+           update ${table} set
+             lead_status = 'qa_hold', status_changed_at = now(),
+             qa_flags = coalesce(qa_flags, '{}'::jsonb) || jsonb_build_object('merge_field_empty', array_remove(array[${emptyList}], null))
+           where run_id = $1 and lead_status = 'normalized' and (${anyEmpty})
+           returning ${fields.join(", ")}
+         )
+         select count(*)::text as rows, ${perField} from held`,
+        [run.run_id],
+      );
+      const r = rows[0] ?? {};
+      return { rows: Number(r.rows ?? 0), by_field: Object.fromEntries(fields.map((f) => [f, Number(r[f] ?? 0)])) };
+    });
   }
 }

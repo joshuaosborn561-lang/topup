@@ -10,7 +10,8 @@
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "migrate": "tsx scripts/migrate.ts"
+    "migrate": "tsx scripts/migrate.ts",
+    "seed:cities": "tsx scripts/seed-cities.ts"
   },
   "engines": {
     "node": ">=20"

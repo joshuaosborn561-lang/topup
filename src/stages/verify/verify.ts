@@ -10,7 +10,7 @@ import { parkedCard, spendApprovalCard, stallCard } from "../../slack/cards.js";
 import type { SlackConsole } from "../../slack/console.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
-import { sendableGate, type GateUnmet } from "../../spine/gate.js";
+import { pct, rejectRate, rejectRateGate, type GateUnmet } from "../../spine/gate.js";
 import { decide, observe, splitNames, type BatchState, type RunbookConfig } from "./runbook.js";
 import { verdictFromCsvRow, type Verdict } from "./sendable.js";
 
@@ -112,7 +112,7 @@ export class VerifyStage {
         }
         await this.sleep(this.d.cfg.pollMs);
       }
-      return this.finish(run, table);
+      return this.finish(run, recipe, table);
     } catch (err) {
       const message = (err as Error).message;
       const parked = step.attempts >= MAX_STEP_ATTEMPTS;
@@ -566,7 +566,7 @@ export class VerifyStage {
     return { kind: "done" };
   }
 
-  private async finish(run: RunRow, table: string): Promise<VerifyOutcome> {
+  private async finish(run: RunRow, recipe: Recipe, table: string): Promise<VerifyOutcome> {
     const { rows } = await this.d.repo.raw().query<{ lead_status: string; mail_class: string | null; n: string }>(
       `select lead_status, mail_class, count(*)::text as n from ${table} where run_id = $1 group by 1, 2`,
       [run.run_id],
@@ -583,12 +583,19 @@ export class VerifyStage {
       } else if (r.lead_status === "rejected") rejected += n;
       else if (r.lead_status === "stalled_unverified") stalled += n;
     }
-    const counts = { verified: sendable, verified_seg: seg, verified_other: sendable - seg, rejected, stalled_unverified: stalled };
+    const rate = rejectRate({ sendable, rejected, stalled });
+    const counts = { verified: sendable, verified_seg: seg, verified_other: sendable - seg, rejected, stalled_unverified: stalled, reject_rate_bp: rate === null ? 0 : Math.round(rate * 10000) };
     await this.d.repo.finishStep(run.run_id, "verify", { useful_output: sendable, counts });
     await this.d.repo.mergeRunCounts(run.run_id, counts);
-    const gate = sendableGate({ sendable, rejected, stalled });
+    // Step 6 gate: sendable count and reject rate reported; far above the lane's norm stops the run.
+    const gate = rejectRateGate({ sendable, rejected, stalled }, recipe.verify.reject_rate_norm);
     if (gate) return gate;
-    await this.d.console.postInThread(run, `:white_check_mark: Verify done: *${sendable}* sendable (SEG ${seg} / OTHER ${sendable - seg}), ${rejected} rejected, ${stalled} left unverified.`);
+    const norm = recipe.verify.reject_rate_norm;
+    await this.d.console.postInThread(
+      run,
+      `:white_check_mark: Verify done: *${sendable}* sendable (SEG ${seg} / OTHER ${sendable - seg}), ${rejected} rejected, ${stalled} left unverified · reject rate ${pct(rate)}` +
+        (norm === null ? " (no norm on the recipe yet; ask Josh for this lane's)." : ` (lane norm ${pct(norm)}).`),
+    );
     return { kind: "done", sendable, seg, other: sendable - seg, rejected, stalled };
   }
 

@@ -46,7 +46,7 @@
     "same_gift_any_client": false
   },
   "email_finding": { "enabled": false, "max_tier": "aiark", "fullenrich": false, "batch_rows": 200 },
-  "verify": { "seg_split": true },
+  "verify": { "seg_split": true, "reject_rate_norm": null },
   "normalize": {
     "names_cities": true,
     "company": true,

@@ -102,10 +102,24 @@ const normalize = z
     names_cities: z.boolean().default(true),
     company: z.boolean().default(true),
     location: z.boolean().default(true),
+    // skill sports-team-assignment: MLB or NFL, or both (MLB first, NFL second, AirPods when both are blank).
+    // pro_only is mandatory for education-sector lanes.
     sports_team: z
-      .object({ league: z.enum(["nfl", "nba", "mlb", "nhl", "both", "all"]).default("all"), pro_only: z.boolean().default(false) })
+      .object({ league: z.enum(["mlb", "nfl", "both"]).default("both"), pro_only: z.boolean().default(false) })
       .nullable()
-      .default({ league: "all", pro_only: false }),
+      .default({ league: "both", pro_only: false }),
+  })
+  .strict();
+
+/**
+ * Step 6 (skill lead-list-build): "A reject rate far above the lane's norm
+ * means the source is bad, stop and say so." The norm is per lane and comes
+ * from Josh; null means no norm yet, so only the zero-sendable case stops a run.
+ */
+const verify = z
+  .object({
+    seg_split: z.literal(true),
+    reject_rate_norm: z.number().min(0).max(1).nullable().default(null),
   })
   .strict();
 
@@ -127,7 +141,7 @@ export const recipeSchema = z
     source,
     suppression,
     email_finding: emailFinding,
-    verify: z.object({ seg_split: z.literal(true) }).strict(),
+    verify,
     normalize,
     qa: z.array(z.string()).default([]),
     segments: z.record(z.array(z.string())).default({}),
