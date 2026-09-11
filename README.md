@@ -10,6 +10,10 @@ Read `CANON.md` first. It is one page and it is the current truth.
 
 ## What is in this build
 
+- The **watch** (every six hours, and once on boot): if a campaign is low or
+  empty and still working (1 interested reply per 2,000 sends), a run starts
+  on its own. If it is low and not working, Josh gets one card. `/topup` is
+  the override.
 - `/health` — counts by `lead_status`, spend by vendor, stall events, open
   cards, open runs, integration readiness.
 - The `topup` schema, the `lead_status` column on `lp.*_ingested_leads`, the
@@ -71,6 +75,7 @@ src/
   index.ts            boot: config check, /health first, then everything else
   config.ts           env → typed config; refuses the wrong Supabase project
   orchestrator.ts     opens runs, drives stages, reacts to card taps
+  watch/              runway watch: low + working → go; low + dead → ask Josh
   commands.ts         /where /topup /holds /runs /working /suppress
   health.ts           the first run report
   db/                 pg pool with app.run_id transactions; typed repo over topup.*

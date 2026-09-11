@@ -46,6 +46,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D24 | Live |
 | D25 | Live |
 | D26 | Live |
+| D27 | Live |
 
 ---
 
@@ -622,3 +623,38 @@ Smartlead client's allow list is exactly D6's five tools. `src/
 stages/post_import/mergeTags.test.ts` — every case the Python script
 documents. `src/slack/roles.test.ts` — `no_list` and `continue_without` are
 Josh's; `list_added` and `add_client_domains` are operator. Ask Josh.
+
+## D27 — The watch starts a top-up on its own when a campaign is low and still working
+
+**Decision.** `/topup` is the override, not the normal start. Every
+`WATCH_CRON` (default every six hours) and once on boot, the service looks
+at every recipe's campaigns in the Smartlead mirror:
+
+- A campaign is **needy** when it is ACTIVE and either **empty** or **low**
+  (runway under `recipe.runway.floor_days`). Silent is not needy: it already
+  has leads it is not sending.
+- A campaign is **working** by D11 (one interested reply per 2,000 sends,
+  or `/working on|off`). Too few sends to judge counts as working.
+- **Any needy campaign still working → open a run and go.** No card. Trigger
+  is `runway`. The thread says the watch started it.
+- **Every needy campaign not working → open a run, post the not-working
+  card, wait.** Top up anyway (Josh) drives the pipeline; Leave it closes as
+  `not_working`. The watch will not ask again on that lane until a campaign
+  becomes working or Josh flips `/working on`.
+- An open run, a recipe with no campaigns, or `DRY_RUN` → skip.
+
+The recipe is the signed-off ICP (step 1). After that, starting a run when
+the numbers say so is mechanical (D18). Josh is still the only person who
+flips a campaign ACTIVE (step 13).
+
+**Why.** Josh: the whole point is to top up automatically, evaluating for a
+good reply rate and then going for it — not waiting for `/topup`.
+
+**Tradeoff.** The watch reads the hourly Smartlead mirror, not Smartlead
+live, so a campaign can sit low for up to the mirror lag plus the cron
+interval. Tightening `WATCH_CRON` is a Railway variable. Bouncing is a
+digest flag, not a stop: a low working campaign that is bouncing still
+gets topped up. Change that here if it should ask instead.
+
+**Guard.** `src/watch/decide.test.ts` — go / ask / skip / leave-it quiet /
+empty asked first. Ask Josh.

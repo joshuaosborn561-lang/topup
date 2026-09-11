@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D26** (2026-09-11). One page of current truth. When a new
+Canon as of **D27** (2026-09-11). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -94,8 +94,8 @@ floor), **bouncing** (over 5%).
 ## Build order (D23)
 
 1. Done: ledger, `/where`, digest, verify → normalize (D17).
-2. **This build:** a getleads lane end to end, steps 2 → 12 (D26). Next:
-   runway watch as the trigger for step 1.
+2. **This build:** a getleads lane end to end, steps 2 → 12 (D26), and the
+   runway watch that starts a run on its own (D27).
 3. Physical lane cascade with the **yield card** and the **pilot of ~100**;
    nothing scales without the second tap (D21). Peterson roof owners first.
 4. Vendor server fixes and attribution.
@@ -103,11 +103,18 @@ floor), **bouncing** (over 5%).
 Before the service calls a vendor server it is documented from its code in
 `docs/servers.md`, and Josh reviews that first (D22).
 
-## What this build runs (D26)
+## What this build runs (D26, D27)
 
-`/topup <client> <lane>` (or MCP `start_topup`) opens a run for that lane,
-locked in Postgres so there is only ever one (D12). The run walks steps 2 →
-12 in the skill's order, one internal stage per step:
+The **watch** is the normal start. Every six hours (and once on boot) it
+reads the Smartlead mirror for every recipe. A campaign that is ACTIVE and
+empty or under the runway floor, and still **working** (one interested reply
+per 2,000 sends, D11), opens a run by itself — no `/topup`, no card. A
+campaign that is low and **not** working posts one card: Top up anyway, or
+Leave it. Leave it stays quiet until the rate recovers or Josh flips
+`/working on`. `/topup` and MCP `start_topup` are the override.
+
+A run is locked in Postgres so there is only ever one per lane (D12). It
+walks steps 2 → 12 in the skill's order, one internal stage per step:
 
 2. **size** — getleads `count_contacts` for the recipe's bands, their
    complement and no band filter (partition check); already-sent rows from
@@ -173,7 +180,7 @@ open cards, open runs and which integrations are configured.
   go without a customer list, continue without pending leads, anything that
   changes a recipe. Operator taps never spend and never change a recipe; the
   reply is "This needs Josh."
-- Commands: `/where`, `/topup`, `/holds`, `/runs`, `/working` (owner),
+- Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains itself until the suppression stage lands).
 - `/mcp` with owner and operator bearer tokens exposes `lane_state,
   run_status, list_runs, list_holds, resolve_hold, start_topup,
