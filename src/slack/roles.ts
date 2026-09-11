@@ -44,8 +44,12 @@ export const CHOICE_ROLE: Readonly<Record<string, Role>> = {
   // segment_proposal (Phase 2)
   approve_segment: "owner",
   decline_segment: "owner",
-  // pending_campaign (Phase 2)
+  // pending_campaign: a new campaign is Josh's; continuing without the pending rows is his call too
   clone_campaign: "owner",
+  continue_without: "owner",
+  // client_domain_list (step 5): Cayden adds the list; going without one is Josh's call
+  list_added: "operator",
+  no_list: "owner",
   // yield card and pilot gate (Phase 3, D21): nothing scales without Josh's second tap
   approve_yield: "owner",
   decline_yield: "owner",
@@ -69,6 +73,8 @@ export const JUDGEMENT_CHOICES: readonly string[] = [
   "approve_segment",
   "decline_segment",
   "clone_campaign",
+  "continue_without",
+  "no_list",
   "approve_yield",
   "decline_yield",
   "scale_pilot",

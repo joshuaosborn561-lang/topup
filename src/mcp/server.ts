@@ -28,6 +28,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   start_topup: "operator",
   register_queue_table: "owner",
   lane_note: "owner",
+  add_client_domains: "operator",
   sample_rows: "owner",
   variant_stats: "owner",
   campaign_registry: "owner",
@@ -128,6 +129,41 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
       if (!allowed("lane_note")) return refused();
       await d.ledger.event({ client_tag, lane, event: "note", line, next_intent, actor: `mcp:${role}` });
       return text({ ok: true });
+    },
+  );
+
+  server.registerTool(
+    "add_client_domains",
+    {
+      description:
+        "Step 5 of skills/lead-list-build: the client's own customer domain list, applied before anything loads. Adds domains (not addresses) to topup.client_domain_blocklist for the client; existing rows are kept. Then tap 'List added' on the step 5 card. Operator may call. Domains only — never a lead row.",
+      inputSchema: {
+        client_tag: snake,
+        domains: z.array(z.string().min(3).max(253)).min(1).max(5000),
+        note: z.string().max(300).optional(),
+      },
+    },
+    async ({ client_tag, domains, note }) => {
+      if (!allowed("add_client_domains")) return refused();
+      const cleaned = new Set<string>();
+      const rejected: string[] = [];
+      for (const raw of domains) {
+        const d0 = raw.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+        if (!d0 || d0.includes("@") || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d0)) rejected.push(raw.slice(0, 60));
+        else cleaned.add(d0);
+      }
+      const list = [...cleaned];
+      const { rowCount } = await d.repo.raw().query(
+        `insert into topup.client_domain_blocklist (client_tag, domain, added_by, note)
+         select $1, x, $3, $4 from unnest($2::text[]) as x on conflict (client_tag, domain) do nothing`,
+        [client_tag, list, `mcp:${role}`, note ?? null],
+      );
+      const { rows } = await d.repo.raw().query<{ n: string }>(`select count(*)::text as n from topup.client_domain_blocklist where client_tag = $1`, [client_tag]);
+      const lanes = await d.ledger.lanes(client_tag).catch(() => []);
+      for (const l of lanes) {
+        await d.ledger.event({ client_tag, lane: l.lane, event: "note", line: `Customer domain list: ${rowCount ?? 0} domains added (${rows[0]?.n ?? 0} total). Tap 'List added' on the step 5 card if a run waits.`, actor: `mcp:${role}` }).catch(() => undefined);
+      }
+      return text({ ok: true, client_tag, added: rowCount ?? 0, total: Number(rows[0]?.n ?? 0), rejected_count: rejected.length, rejected: rejected.slice(0, 10) });
     },
   );
 

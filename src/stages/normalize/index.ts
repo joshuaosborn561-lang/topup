@@ -1,17 +1,15 @@
 import type { Repo } from "../../db/repo.js";
 import { ingestedTable } from "../../db/pool.js";
-import { MAX_STEP_ATTEMPTS, type RunRow } from "../../domain/runs.js";
-import { logger } from "../../lib/log.js";
+import type { RunRow } from "../../domain/runs.js";
 import type { Recipe } from "../../recipes/schema.js";
 import type { SlackConsole } from "../../slack/console.js";
-import { mergeFieldsToHold } from "../../spine/gate.js";
+import { mergeFieldColumn, mergeFieldsToHold } from "../../spine/gate.js";
+import { attempt, type StageOutcome } from "../common.js";
 import { normalizeCompany, type CompanyRefs } from "./company.js";
 import { cityKey, type CityCoords } from "./geo.js";
 import { conversationalLocation } from "./location.js";
 import { normalizeFirstName } from "./names.js";
 import { assignTeam } from "./team.js";
-
-const log = logger("normalize");
 
 export interface NormalizeRefs extends CompanyRefs {
   /** topup.ref_cities in memory. Empty when the table was never seeded: every row is then NO_GEOCODE. */
@@ -72,7 +70,7 @@ export async function loadRefs(repo: Repo): Promise<NormalizeRefs> {
   return { acronyms: new Set(acr.rows.map((r) => r.acronym.toUpperCase())), coords };
 }
 
-export type NormalizeOutcome = { kind: "done"; normalized: number; held: number; flagged: number } | { kind: "retry"; error: string } | { kind: "parked"; reason: string };
+export type NormalizeOutcome = StageOutcome;
 
 /**
  * Moves `verified` rows of a run to `normalized`, writing the merge fields plus
@@ -87,13 +85,7 @@ export class NormalizeStage {
 
   async run(run: RunRow, recipe: Recipe): Promise<NormalizeOutcome> {
     const table = ingestedTable(run.client_tag);
-    const step = await this.repo.beginStep(run.run_id, "normalize");
-    if (!step.ok) {
-      await this.repo.setRunStatus(run.run_id, "awaiting_operator", "normalize", "normalize exhausted its attempts");
-      return { kind: "parked", reason: "normalize exhausted its attempts" };
-    }
-    await this.repo.setRunStatus(run.run_id, "normalizing", "normalize");
-    try {
+    return attempt({ repo: this.repo, console: this.console }, run, "normalize", "normalizing", async () => {
       const refs = await loadRefs(this.repo);
       let normalized = 0;
       let flagged = 0;
@@ -150,18 +142,8 @@ export class NormalizeStage {
           geocodeNote +
           ".",
       );
-      return { kind: "done", normalized, held: held.rows, flagged };
-    } catch (err) {
-      const message = (err as Error).message;
-      const parked = step.attempts >= MAX_STEP_ATTEMPTS;
-      await this.repo.failStep(run.run_id, "normalize", message, parked);
-      log.error("normalize failed", { run_id: run.run_id, attempt: step.attempts, error: message });
-      if (parked) {
-        await this.repo.setRunStatus(run.run_id, "awaiting_operator", "normalize", message);
-        return { kind: "parked", reason: message };
-      }
-      return { kind: "retry", error: message };
-    }
+      return { kind: "done", counts: { normalized, held: held.rows, flagged } };
+    });
   }
 
   /**
@@ -172,9 +154,11 @@ export class NormalizeStage {
   private async holdEmptyMergeFields(run: RunRow, table: string, recipe: Recipe): Promise<{ rows: number; by_field: Record<string, number> }> {
     const fields = mergeFieldsToHold(recipe.required_fields);
     if (fields.length === 0) return { rows: 0, by_field: {} };
-    const emptyList = fields.map((f) => `case when coalesce(${f}::text, '') = '' then '${f}' end`).join(", ");
-    const anyEmpty = fields.map((f) => `coalesce(${f}::text, '') = ''`).join(" or ");
-    const perField = fields.map((f) => `count(*) filter (where coalesce(${f}::text, '') = '')::text as "${f}"`).join(", ");
+    const col = (f: string) => mergeFieldColumn(f);
+    const emptyList = fields.map((f) => `case when coalesce(${col(f)}::text, '') = '' then '${f}' end`).join(", ");
+    const anyEmpty = fields.map((f) => `coalesce(${col(f)}::text, '') = ''`).join(" or ");
+    // `held` exposes the returned aliases (the merge field names), not the table's column names.
+    const perField = fields.map((f) => `count(*) filter (where coalesce("${f}"::text, '') = '')::text as "${f}"`).join(", ");
     return this.repo.withRun(run.run_id, async (tx) => {
       const { rows } = await tx.query<Record<string, string>>(
         `with held as (
@@ -182,7 +166,7 @@ export class NormalizeStage {
              lead_status = 'qa_hold', status_changed_at = now(),
              qa_flags = coalesce(qa_flags, '{}'::jsonb) || jsonb_build_object('merge_field_empty', array_remove(array[${emptyList}], null))
            where run_id = $1 and lead_status = 'normalized' and (${anyEmpty})
-           returning ${fields.join(", ")}
+           returning ${fields.map((f) => `${col(f)} as "${f}"`).join(", ")}
          )
          select count(*)::text as rows, ${perField} from held`,
         [run.run_id],

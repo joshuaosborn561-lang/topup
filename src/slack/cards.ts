@@ -1,4 +1,5 @@
 import { usd } from "../spend/prices.js";
+import { orderCounts } from "../domain/runs.js";
 
 /**
  * Block Kit builders. Every card with buttons references a topup.cards row by
@@ -193,6 +194,99 @@ export function qaHoldCard(c: QaHoldCard): Block[] {
   ];
 }
 
+/** Step 8 thread summary: one line per rule with up to ten sample values (company names or titles, never emails). No buttons. */
+export function qaSummaryBlocks(input: { clientTag: string; runId: string; rows: Array<{ ruleId: string; action: string; count: number; samples: string[] }>; passed: number }): Block[] {
+  const lines = input.rows.map((r) => {
+    const s = r.samples.slice(0, 10).map((x) => `\`${x}\``).join(", ");
+    return `• *${r.ruleId}* (${r.action}) ${r.count}${s ? ` — ${s}` : ""}`;
+  });
+  return [
+    section(`:mag: *Step 8 QA — ${input.clientTag}* · run \`${input.runId.slice(0, 8)}\` · ${input.passed} passed`),
+    ...(lines.length ? [section(lines.join("\n"))] : [context("No rule matched.")]),
+  ];
+}
+
+export interface ClientDomainListCard {
+  cardId: string;
+  runId: string;
+  clientTag: string;
+  lane: string;
+}
+
+/** Step 5: the client's customer domain list is missing. Cayden adds it (MCP add_client_domains); only Josh may say to go without. */
+export function clientDomainListCard(c: ClientDomainListCard): Block[] {
+  return [
+    section(`:card_index: *Customer domain list missing — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\``),
+    section(
+      `Step 5 suppresses the client's own customers by domain before anything loads (skill lead-list-build). \`topup.client_domain_blocklist\` has no rows for *${c.clientTag}*.\n` +
+        `Cayden: add the list with the MCP tool \`add_client_domains\` (client_tag, domains[]), then tap *List added*. *Go without* is Josh's call and is recorded on the run.`,
+    ),
+    actions(c.cardId, [
+      { choice: "list_added", label: "List added", style: "primary" },
+      { choice: "no_list", label: "Go without (Josh)", style: "danger" },
+    ]),
+  ];
+}
+
+export interface PendingCampaignCard {
+  cardId: string;
+  runId: string;
+  clientTag: string;
+  lane: string;
+  pending: number;
+  /** Cell → count, e.g. "band=201_500 · mail_class=SEG" → 40. Never rows. */
+  cells: Array<{ cell: string; count: number }>;
+}
+
+/** Step 9: leads with no campaign in the recipe's routing. New campaigns are Josh's; the service never clones or creates one. */
+export function pendingCampaignCard(c: PendingCampaignCard): Block[] {
+  const cells = c.cells.slice(0, 10).map((x) => `• \`${x.cell}\` ${x.count}`).join("\n");
+  return [
+    section(`:signpost: *No campaign for ${c.pending} leads — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\``),
+    section(`These cells match no routing rule in the recipe:\n${cells}\nThey wait as \`pending_campaign\` in the lane. A new campaign or a routing rule is a recipe change (Josh).`),
+    context("Continue without: the routed leads go on to staging and these wait for a later run. Abort: nothing is staged."),
+    actions(c.cardId, [
+      { choice: "continue_without", label: `Continue without ${c.pending}`, style: "primary" },
+      { choice: "abort", label: "Abort", style: "danger" },
+    ]),
+  ];
+}
+
+export interface PreLaunchInput {
+  clientTag: string;
+  runId: string;
+  campaigns: Array<{
+    campaignId: number;
+    name: string | null;
+    imported: number;
+    runwayBefore: number | null;
+    runwayAfter: number | null;
+    mergeTags: string;
+    settings: Array<{ check: string; verdict: "pass" | "fail" | "unknown"; detail: string }>;
+    ready: boolean;
+  }>;
+}
+
+/** Step 12 findings per campaign. The merge tag check is the gate; the settings are findings. */
+export function preLaunchBlocks(p: PreLaunchInput): Block[] {
+  const out: Block[] = [section(`:rocket: *Step 12 pre launch — ${p.clientTag}* · run \`${p.runId.slice(0, 8)}\``)];
+  for (const c of p.campaigns) {
+    const settings = c.settings.map((s) => `${s.verdict === "pass" ? ":white_check_mark:" : s.verdict === "fail" ? ":x:" : ":grey_question:"} ${s.check}: ${s.detail}`).join("\n");
+    out.push(
+      section(
+        `*${c.name ?? "campaign"}* (#${c.campaignId}) · imported ${c.imported} · runway ${fmtDays(c.runwayBefore)} → ${fmtDays(c.runwayAfter)}\n` +
+          `Merge tags: ${c.mergeTags}\n${settings}\n` +
+          (c.ready ? "*Ready for ACTIVE* — Josh flips it; the service never does." : "*Not ready* — see above."),
+      ),
+    );
+  }
+  return out;
+}
+
+function fmtDays(d: number | null): string {
+  return d === null ? "n/a" : `${d.toFixed(1)}d`;
+}
+
 export interface ParkedCard {
   cardId: string;
   runId: string;
@@ -256,8 +350,7 @@ export interface ReceiptInput {
 
 /** Run receipt: counts by status, spend by vendor, holds waiting. Never rows. */
 export function receiptBlocks(r: ReceiptInput): Block[] {
-  const counts = Object.entries(r.counts)
-    .sort(([a], [b]) => a.localeCompare(b))
+  const counts = orderCounts(r.counts)
     .map(([k, v]) => `\`${k}\` ${v}`)
     .join(" · ");
   const spend =
