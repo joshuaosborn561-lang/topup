@@ -8,7 +8,7 @@ through Slack.
 Read `CANON.md` first. It is one page and it is the current truth.
 `DECISIONS.md` is the ledger of why.
 
-## What is in this build (Phase 1)
+## What is in this build
 
 - `/health` — counts by `lead_status`, spend by vendor, stall events, open
   cards, open runs, integration readiness.
@@ -25,19 +25,24 @@ Read `CANON.md` first. It is one page and it is the current truth.
 - The **spine**: the thirteen steps of `skills/lead-list-build/SKILL.md` as
   the state machine (`src/spine/steps.ts`, titles/owners/gates copied from the
   skill and guarded), with gates that halt a run, record why and post one
-  card. Step 6 (sendable + reject rate vs the lane's norm) and step 7 (every
-  merge field populated or the row held) gate today.
+  card. Every step from 2 to 12 has its gate wired (CANON, "The spine").
 - The **lane ledger**: step per lane, event log, queue registry. `/where
   <client> [lane]`, the `lane_state` MCP tool, and a daily ops digest that
   only names lanes whose state changed or whose campaign health crossed a
   line. Claude sessions hand queue tables to the service with
   `register_queue_table` and leave notes with `lane_note`.
-- The **verify** stage (LeadPipe export → Email Verifier Progression → stall
-  runbook → per-row verdicts) and the **normalize** stage: the four skill
-  scripts ported (names/cities, company, conversational location, sports
-  team). Geocoding needs `topup.ref_cities`: run `npm run seed:cities` once
-  per database (downloads the free US cities file, pinned).
-- A run stops after normalize. Routing, staging and import are later PRs.
+- **Steps 2 → 12 end to end for a getleads lane** (Parlay `it_dm`): size,
+  pull (`GetleadsPull` behind one adapter interface), find emails (skipped
+  for getleads), ingest through LeadPipe, suppress (one SQL pass, response
+  based; client customer domains via the `add_client_domains` MCP tool),
+  verify (LeadPipe export → Email Verifier Progression → stall runbook →
+  per-row verdicts), normalize (the four skill scripts ported), QA (rules in
+  `topup.qa_rules`, hold cards for Cayden), route (cell → campaign, client
+  check), stage (`public.leads_staging`), import (Smartlead, count assert),
+  pre-launch (merge tags + settings, the `check_merge_tags.py` port), and the
+  receipt. Step 13 — flipping ACTIVE — is Josh's by hand, always.
+- Geocoding needs `topup.ref_cities`: run `npm run seed:cities` once per
+  database (downloads the free US cities file, pinned).
 - `docs/servers.md` — every vendor server documented from its code, with the
   breakages confirmed and listed as prerequisite PRs. Read before building on
   a server.
@@ -48,9 +53,14 @@ Read `CANON.md` first. It is one page and it is the current truth.
 npm install
 cp .env.example .env        # fill from Railway; never commit values
 npm run migrate             # applies supabase/migrations in order, refuses the wrong project
+npm run seed:cities         # once per database
 npm run dev
 curl localhost:3000/health
 ```
+
+Deploying this build on Railway needs, beyond the Phase 1 variables:
+`GETLEADS_MCP_URL`, `GETLEADS_TOKEN`, `SMARTLEAD_MCP_URL`, `SMARTLEAD_TOKEN`
+(see `.env.example`). Then `npm run migrate` for 0007 and 0008.
 
 `npm test` runs the unit tests and the guards. No test calls a vendor.
 
@@ -71,9 +81,20 @@ src/
   recipes/            recipe schema (zod) and loader
   slack/              signature check, roles, cards, poster, console, router
   mcp/                /mcp server with per-role tool sets
-  clients/            LeadPipe and verifier HTTP clients (called, never forked)
-  stages/verify/      runbook (pure), sendable rule, the stage
-  stages/normalize/   names, company, geo, location, team (ports of the skill scripts), the stage
+  clients/            LeadPipe, verifier, getleads and Smartlead (allow-listed) clients — called, never forked
+  stages/common.ts    attempt / finish / park / poll — the discipline every stage shares
+  stages/size/        step 2: counts, partition check, plan
+  stages/pull/        step 3: PullAdapter interface, GetleadsPull
+  stages/find_emails/ step 3: email finding (cascade lands with the company-first adapter)
+  stages/ingest/      step 4: LeadPipe ingest_csv, claim, title audit
+  stages/suppress/    step 5: one SQL pass, customer list card
+  stages/verify/      step 6: runbook (pure), sendable rule, the stage
+  stages/normalize/   step 7: names, company, geo, location, team (ports of the skill scripts)
+  stages/qa/          step 8: topup.qa_rules, hold cards, taps
+  stages/route/       step 9: cell match, client check, pending_campaign card
+  stages/stage/       step 10: public.leads_staging
+  stages/import/      step 11: Smartlead import, count assert
+  stages/post_import/ step 12: merge tags (check_merge_tags.py port), settings findings
   guards/             tests that name a decision and who to ask
 recipes/<client>/<lane>.json
 supabase/migrations/*.sql

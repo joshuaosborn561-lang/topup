@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D25** (2026-09-11). One page of current truth. When a new
+Canon as of **D26** (2026-09-11). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -51,15 +51,26 @@ why, posts one card, and waits; silence never means yes. The receipt is the
 last gate. `trigger` is step 1 (the recipe is the signed-off segment),
 `ingest` 4, `stage` 10.
 
-Gates live today. **Step 6**: sendable count and reject rate are reported;
-nothing sendable stops the run; a reject rate far above the lane's norm
-(`verify.reject_rate_norm`, Josh's number; 2× and 10 points over, on 50+
-verdicts) stops it and says the source is bad. **Step 7**: every merge field
-the copy uses (`required_fields`) is populated or the row is **held**
-(`qa_hold`, `qa_flags.merge_field_empty`); the run goes on and reports the
-held count. No team is not a hold; it is the AirPods tier. Two flavours of
-step 3 (LinkedIn-native, company-first with the yield card and pilot of D21);
-one pipeline from 4 on.
+Gates live today (D25, D26). **Step 2**: the band filter must bind (bands +
+other bands = all, within 1%) and the projected net new must clear
+`size.useful_floor`, else `pool_thin`. **Step 3**: zero rows delivered stops
+the run. **Step 4**: rows read = rows exported; titles audited against the
+recipe as whole phrases, off-title flagged for step 8. **Step 5**: the client
+customer list is present or Josh says go without. **Step 6**: sendable count
+and reject rate are reported; nothing sendable stops the run; a reject rate
+far above the lane's norm (`verify.reject_rate_norm`, Josh's number; 2× and
+10 points over, on 50+ verdicts) stops it and says the source is bad. **Step
+7**: every merge field the copy uses (`required_fields`) is populated or the
+row is **held** (`qa_hold`, `qa_flags.merge_field_empty`); the run goes on
+and reports the held count. No team is not a hold; it is the AirPods tier.
+**Step 8**: every hold cleared by a tap (accept, purge, reroute). **Step 9**:
+every target campaign is this client's in the mirror; unmatched leads wait
+as `pending_campaign` for Josh. **Step 10**: every routed row has a staging
+row for this run. **Step 11**: Smartlead's imported count equals rows
+submitted. **Step 12**: every merge tag in the copy resolves on every staged
+lead. Two flavours of step 3 (LinkedIn-native, company-first with the yield
+card and pilot of D21); one pipeline from 4 on. Email finding is inside step
+3, before ingest.
 
 ## The service is the memory (D19, D20)
 
@@ -82,8 +93,9 @@ floor), **bouncing** (over 5%).
 
 ## Build order (D23)
 
-1. **This build:** ledger, `/where`, digest, plus verify → normalize (D17).
-2. getleads lanes end to end (pull … import, runway watch).
+1. Done: ledger, `/where`, digest, verify → normalize (D17).
+2. **This build:** a getleads lane end to end, steps 2 → 12 (D26). Next:
+   runway watch as the trigger for step 1.
 3. Physical lane cascade with the **yield card** and the **pilot of ~100**;
    nothing scales without the second tap (D21). Peterson roof owners first.
 4. Vendor server fixes and attribution.
@@ -91,27 +103,52 @@ floor), **bouncing** (over 5%).
 Before the service calls a vendor server it is documented from its code in
 `docs/servers.md`, and Josh reviews that first (D22).
 
-## What this build runs (D17)
+## What this build runs (D26)
 
 `/topup <client> <lane>` (or MCP `start_topup`) opens a run for that lane,
-locked in Postgres so there is only ever one (D12). The run:
+locked in Postgres so there is only ever one (D12). The run walks steps 2 →
+12 in the skill's order, one internal stage per step:
 
-1. **verify** — claims `lp.<tag>_ingested_leads` rows in `needs_verify`,
-   exports them through LeadPipe as a signed CSV (row count must match),
-   submits to Email Verifier Progression, polls every 60s, applies the stall
-   runbook, and writes `mv_status, n2b_status, mail_class, verify_path,
-   ev_status, lead_status` per row. Sendable is `mv ok` or `catch_all + N2B
-   deliverable`; nothing else (D10). SEG / OTHER is stamped from `mail_class`.
-2. **normalize** — moves `verified` rows to `normalized` with
-   `first_name_n, company_n, location, local_sports_team` and flags, then
-   holds rows with an empty required merge field (D16, D25). The four
-   normalizers are ports of the skill scripts (`skills/name-city-normalization`,
-   `company-name-normalization`, `conversational-location`,
-   `sports-team-assignment`), in that order. Geocoding reads
-   `topup.ref_cities` (`npm run seed:cities`, once per database); an unknown
-   city is a blank location and no team, never a guess. Raw columns are never
-   overwritten.
-3. Closes as `done` with a receipt. Nothing is routed, staged or imported.
+2. **size** — getleads `count_contacts` for the recipe's bands, their
+   complement and no band filter (partition check); already-sent rows from
+   the mirror; plans `min(max_per_run, max(rows needed for 30 days, floor),
+   net new)`. One sizing source.
+3. **pull** — `GetleadsPull` behind the `PullAdapter` interface:
+   `export_contacts` (confirmed), poll `check_contact_export`. Then
+   **find_emails** — skipped when the recipe has email finding off (a getleads
+   lane); parks with a message otherwise until the company-first adapter lands.
+4. **ingest** — LeadPipe `ingest_csv` under a run-scoped `source_label`; rows
+   claimed for the run; `company_size` / `vertical` filled; title audit.
+5. **suppress** — one SQL pass, response based only: positive reply, DNC,
+   wrong person, suppression list, bounced, client prior contact, same offer
+   other client (needs `offer_key`), client customer domain
+   (`topup.client_domain_blocklist`, filled by Cayden with `add_client_domains`).
+   Duplicates within the pull are `deduped`. Net new is the number from here on.
+6. **verify** — LeadPipe signed CSV (row count must match), Email Verifier
+   Progression, 60s polls, the stall runbook; `mv_status, n2b_status,
+   mail_class, verify_path, ev_status, lead_status` per row. Sendable is `mv
+   ok` or `catch_all + N2B deliverable`; nothing else (D10).
+7. **normalize** — `first_name_n, company_n, location, local_sports_team`
+   and flags from the four skill-script ports (D25); empty required merge
+   field → hold. `topup.ref_cities` via `npm run seed:cities`, once.
+8. **qa** — `topup.qa_rules` named by the recipe (Postgres regex; purge
+   before hold); one summary, one card per rule with ten samples of company
+   and title; taps accept, purge or reroute (reroute only where the recipe
+   maps the target to a campaign of this client).
+9. **route** — cell = band × mail class × gift tier; first matching rule;
+   campaign must be this client's in `public.campaigns`; no match →
+   `pending_campaign` and a card to Josh (continue without, or abort).
+10. **stage** — `public.leads_staging` with normalized `first_name` /
+    `company_name`, `job_title`, `vendor`, `source_dedupe_key`, `imported = false`.
+11. **import** — Smartlead `start_lead_import` per campaign, poll
+    `get_lead_import_status`, count assert; a mismatch stops before the next
+    campaign. Restart-safe through `run_steps.vendor_job_id`.
+12. **post_import** — merge tags from `get_sequences` against staged
+    coverage (the `check_merge_tags.py` port), settings findings from
+    `get_campaign`, runway before → after; one pre-launch post per run.
+13. Closes as `done` with the **receipt**: the funnel in step order and one
+    line per campaign — imported, runway, ready for ACTIVE or not. Step 13 is
+    Josh's by hand; nothing is queued and nothing is ever set ACTIVE here.
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
 open cards, open runs and which integrations are configured.
@@ -133,12 +170,14 @@ open cards, open runs and which integrations are configured.
 
 - Owner = Josh, operator = Cayden, by Slack user id in Railway variables.
 - Owner-only taps: approve/decline spend, top up anyway / leave it, split,
-  anything that changes a recipe. Operator taps never spend and never change
-  a recipe; the reply is "This needs Josh."
+  go without a customer list, continue without pending leads, anything that
+  changes a recipe. Operator taps never spend and never change a recipe; the
+  reply is "This needs Josh."
 - Commands: `/where`, `/topup`, `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains itself until the suppression stage lands).
 - `/mcp` with owner and operator bearer tokens exposes `lane_state,
-  run_status, list_runs, list_holds, resolve_hold, start_topup` to both and
+  run_status, list_runs, list_holds, resolve_hold, start_topup,
+  add_client_domains` (domains only, never rows) to both and
   `register_queue_table, lane_note, sample_rows` (ten max, emails masked),
   `variant_stats, campaign_registry, recipe_get, missing_piece_groups` to
   the owner.
@@ -163,7 +202,9 @@ open cards, open runs and which integrations are configured.
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
 | Skills | `skills/` — Josh's skills, the specification; `skills/SKILLS_INDEX.md` says what is stale (D25) |
-| Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (step 6 and 7 gates) |
+| Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
+| Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
+| Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |
 | Lane ledger | `src/ledger/` (`lane.ts` state, `health.ts` campaign lines, `render.ts` `/where` + digest text) |
 | Servers | `docs/servers.md` — every vendor server from its code (D22) |
 | Recipes | `recipes/<client>/<lane>.json`, validated at boot, mirrored to `topup.lane_recipes` |

@@ -45,6 +45,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D23 | Live |
 | D24 | Live |
 | D25 | Live |
+| D26 | Live |
 
 ---
 
@@ -505,3 +506,119 @@ from it (no longer skipped). `src/spine/gate.test.ts` — the reject-rate stop
 line and the hold field list. `src/stages/normalize/normalize.test.ts` — every
 example the four skills document, as a test. `src/guards/no_secrets.test.ts`
 now scans `skills/` and `docs/`. Ask Josh.
+
+## D26 — Steps 2 through 12 run end to end for a getleads lane; each gate is the skill's
+
+**Decision.** The pipeline is the skill's order, one internal stage per step
+(`PIPELINE_STEPS` in `src/orchestrator.ts`): `size` (2), `pull` then
+`find_emails` (3), `ingest` (4), `suppress` (5), `verify` (6), `normalize`
+(7), `qa` (8), `route` (9), `stage` (10), `import` (11), `post_import` (12).
+Step 13 is Josh's by hand; the receipt says so and queues nothing. A getleads
+lane (Parlay `it_dm`) runs 2 → 12 with fakes end to end against the schema.
+The rules each step carries, where the skill left them open or where two
+sources disagreed:
+
+- **Step 2, size.** One sizing source (getleads `count_contacts`). The
+  tam-sizing partition check runs on the same source (bands + other bands =
+  no band filter, within `size.partition_tolerance`, default 1%); off means
+  the band filter does not bind and the run stops. Net new = matching − rows
+  already sent to this ICP (`public.leads` joined to `public.sends` for the
+  lane's campaigns). Under `size.useful_floor` (default 200) the run parks as
+  `pool_thin` — the skill's gate. The pull plans
+  `min(runway.max_per_run, max(rows needed for 30 days, floor), net new)`;
+  when the mirror has no sends for the lane, rows needed is unknown and the
+  plan falls back to `max_per_run`.
+- **Step 3, pull.** One `PullAdapter` interface; `GetleadsPull` is the first
+  adapter (`export_contacts` with `confirmed: true`, then
+  `check_contact_export`). Zero rows delivered is the gate. Email finding is
+  **inside step 3** as the skill places it, so `find_emails` runs before
+  ingest; for a getleads lane it is skipped by recipe (`email_finding.enabled`
+  false, VALID rows arrive with an address). The company-first adapter and the
+  cascade land next (Peterson first, D23); until then a recipe with email
+  finding on parks at the step and says so.
+- **Step 4, ingest.** LeadPipe `ingest_csv` under a run-scoped `source_label`;
+  the rows are then **claimed** for the run (`run_id`, `lead_status =
+  'ingested'`) and `company_size` / `vertical` filled from getleads' band and
+  industry. Gate: rows read = rows exported, else stop. The title audit runs
+  here against the recipe's title patterns as whole phrases; off-title rows
+  are flagged for step 8, not dropped.
+- **Step 5, suppress.** One SQL pass, response based only (D18), reason by
+  priority: `positive_reply, do_not_contact, wrong_person, suppression_list,
+  bounced, client_prior_contact, same_offer_other_client, client_domain`.
+  Duplicates within the pull become `deduped`. The client's customer domain
+  list is `topup.client_domain_blocklist`, filled by Cayden through the
+  `add_client_domains` operator MCP tool (domains only, never rows); a lane
+  with an empty list posts one card — **List added** (operator) or **Go
+  without** (Josh only) — and waits. "Same offer, other client" applies only
+  when the lane's campaigns carry an `offer_key` in `topup.campaign_registry`;
+  without one the line says it was not applied.
+- **Step 8, QA.** Rules are rows of `topup.qa_rules` named by the recipe's
+  `qa` list; a rule the recipe names and the table lacks stops the run. Purge
+  rules run before hold rules. Patterns are **Postgres regular expressions**
+  (`\y` for a word boundary — `\b` is a backspace in Postgres; `(?c)` for a
+  case-sensitive rule under `~*`); migration 0008 corrects the seeded
+  patterns. The skill's automatic reroute (nonprofit → EOS) is a **hold with
+  a Reroute button**, offered only when the recipe's `reroute` map names a
+  campaign of this client; a person decides. Step 7 holds carry
+  `hold_rule = merge_field_empty` and get the same card. One summary post,
+  one card per rule; ten samples of company and title at most, never an
+  address.
+- **Step 9, route.** A lead's cell is `band` (segment label from the getleads
+  band), `mail_class` (`SEG` / `OTHER`) and `gift` (first tier of
+  `normalize_flags.gift_tier`); the first routing rule whose every `when`
+  matches wins. Gate: every target campaign is this client's in
+  `public.campaigns` (`smartlead_client_id` on the recipe), else stop. A lead
+  no rule matches waits as `pending_campaign` and one card asks Josh to
+  continue without them or abort; they stay in the lane and a later run
+  reclaims them.
+- **Step 10, stage.** Rows land in `public.leads_staging` with `first_name`
+  and `company_name` set to the **normalized** values (the merge tags read
+  those columns), `job_title` from `title`, `vendor = 'getleads'`,
+  `source_dedupe_key = md5(campaign_id || '|' || lower(email))`, `imported =
+  false`. A routed row whose key already sits in staging from an earlier load
+  is the gate: stop and say how many.
+- **Step 11, import.** Per campaign, `start_lead_import` then
+  `get_lead_import_status` (Smartlead MCP, D6 allow list); the Smartlead run
+  id is kept on `run_steps.vendor_job_id` so a restart polls rather than
+  re-submits. Gate: `imported_count` equals rows submitted, else the rows are
+  `import_mismatch` and the run stops before the next campaign — duplicates
+  and invalids count as a mismatch because the skill's assert is on the count.
+- **Step 12, pre-launch.** `check_merge_tags.py` ported rule for rule
+  (`KNOWN_BAD`, system fields under coverage warn, custom fields posted
+  `Local_Sports_Team, vendor, job_title` at zero coverage fail with the
+  near-miss hint, "ZERO staged leads" is the Goliath failure); settings
+  findings (plain text, tracking off, stop on reply, bounce autopause off,
+  Mon–Thu) reported, unknown when the payload lacks them. Any merge failure is
+  the gate: the leads are already in the campaign, so the card says do not
+  flip it active. Runway before → after per campaign from the mirror.
+  Signatures, pod staffing and placement tests are the deliverability
+  wizard's and are named as not checked.
+- **Receipt.** Funnel numbers only (`FUNNEL_COUNTS` in `src/domain/runs.ts`,
+  in step order) plus one line per campaign: imported, runway before → after,
+  ready for ACTIVE or not. Per-step detail stays on `run_steps.counts`.
+
+**Why.** Josh's order of work: "Then steps 2 through 12 end to end for one
+getleads lane, Parlay." The lane has to run before the physical cascade can
+be measured against it (D21, D23). Where the skill's placement and the
+brief's phase list disagreed (email finding after suppress in the earlier
+stage list; inside step 3 in the skill) the skill wins on order (D24).
+
+**Tradeoff.** Rules filled in here for Josh to change, all listed in the PR:
+the partition tolerance (1%), one sizing source where tam-sizing wants two,
+the `max_per_run` fallback when the mirror has no sends, reroute as a hold
+rather than automatic, duplicates as an import mismatch, the merge-tag gate
+running after import (a pre-check in step 9 would need the copy earlier),
+staging carrying normalized names, and the additive indexes on the shared
+`public.leads`, `leads_staging` and `suppression` tables (0007). The e2e
+exercise lives outside the repo and hits a local Postgres with fakes; the
+repo's tests assert on the pure rules and the ledger, never a vendor (D5).
+
+**Guard.** `src/guards/invariants.test.ts` — `PIPELINE_STEPS` is exactly the
+order above, non-decreasing on the spine, with no `trigger`. `src/guards/
+smartlead_never.test.ts` — no forbidden Smartlead verb anywhere in source.
+`src/stages/pure.test.ts` — partition check, plan rows, title phrase match,
+QA scope SQL, routing cells, dedupe key, import match, job parsing, and the
+Smartlead client's allow list is exactly D6's five tools. `src/
+stages/post_import/mergeTags.test.ts` — every case the Python script
+documents. `src/slack/roles.test.ts` — `no_list` and `continue_without` are
+Josh's; `list_added` and `add_client_domains` are operator. Ask Josh.
