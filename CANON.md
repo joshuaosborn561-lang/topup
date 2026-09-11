@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D24** (2026-09-11). One page of current truth. When a new
+Canon as of **D25** (2026-09-11). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -35,24 +35,31 @@ lane recipe says (D9, D15).
   runs, acknowledging receipts.
 - Unclear → judgement column, ask. Nobody automates a decision to save a card.
 
-## The spine (D24)
+## The spine (D24, D25)
 
 The business process is the thirteen steps of `skills/lead-list-build/SKILL.md`
 and the service is those steps, the gates between them, and the ledger that
-records which step a lane is on. A lane is always on exactly one step, named
-by **number** (and the skill's title once the file is in the repo) in every
-card, log line and ledger row — `src/spine/steps.ts` is the only table of
-steps. Code runs 3–12; Josh owns 1, 9 when copy is needed, and 13; Cayden
-clears holds in 8 and handles the client customer list in 5. A step's gate
-halts the run, records why, posts one card, and waits; silence never means
-yes. The receipt is the last gate. Gates live today: step 6 (sendable rule:
-zero sendable halts) and step 7 (every merge field populated: an empty
-`first_name_n` or `company_n` halts). Two flavours of step 3 (LinkedIn-native,
-company-first with the yield card and pilot of D21); one pipeline from 4 on.
+records which step a lane is on. The skills are in the repo at `skills/` and
+are the specification; `SKILLS_INDEX.md` says which parts are stale, and the
+index wins over a stale skill. A lane is always on exactly one step, named by
+**number and the skill's title** ("Step 6 — Verify") in every card, log line
+and ledger row — `src/spine/steps.ts` is the only table of steps and a guard
+fails when it differs from the skill's headings or `Gate:` lines. Code runs
+3–12; Josh owns 1, 9 when copy is needed, and 13; Cayden clears holds in 8 and
+supplies the client customer list in 5. A step's gate halts the run, records
+why, posts one card, and waits; silence never means yes. The receipt is the
+last gate. `trigger` is step 1 (the recipe is the signed-off segment),
+`ingest` 4, `stage` 10.
 
-The skill file is not in the repo yet; titles, the owner of step 2, the
-gates of 4, 8, 9, 10, 12, 13 and where `trigger`/`stage` sit are open
-questions in the PR, not defaults.
+Gates live today. **Step 6**: sendable count and reject rate are reported;
+nothing sendable stops the run; a reject rate far above the lane's norm
+(`verify.reject_rate_norm`, Josh's number; 2× and 10 points over, on 50+
+verdicts) stops it and says the source is bad. **Step 7**: every merge field
+the copy uses (`required_fields`) is populated or the row is **held**
+(`qa_hold`, `qa_flags.merge_field_empty`); the run goes on and reports the
+held count. No team is not a hold; it is the AirPods tier. Two flavours of
+step 3 (LinkedIn-native, company-first with the yield card and pilot of D21);
+one pipeline from 4 on.
 
 ## The service is the memory (D19, D20)
 
@@ -96,8 +103,14 @@ locked in Postgres so there is only ever one (D12). The run:
    ev_status, lead_status` per row. Sendable is `mv ok` or `catch_all + N2B
    deliverable`; nothing else (D10). SEG / OTHER is stamped from `mail_class`.
 2. **normalize** — moves `verified` rows to `normalized` with
-   `first_name_n, company_n, location, local_sports_team` and flags (D16).
-   Raw columns are never overwritten.
+   `first_name_n, company_n, location, local_sports_team` and flags, then
+   holds rows with an empty required merge field (D16, D25). The four
+   normalizers are ports of the skill scripts (`skills/name-city-normalization`,
+   `company-name-normalization`, `conversational-location`,
+   `sports-team-assignment`), in that order. Geocoding reads
+   `topup.ref_cities` (`npm run seed:cities`, once per database); an unknown
+   city is a blank location and no team, never a guess. Raw columns are never
+   overwritten.
 3. Closes as `done` with a receipt. Nothing is routed, staged or imported.
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
@@ -149,7 +162,8 @@ open cards, open runs and which integrations are configured.
 | Thing | Place |
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
-| Spine | `src/spine/steps.ts` (the thirteen steps), `src/spine/gate.ts` (gate outcomes) |
+| Skills | `skills/` — Josh's skills, the specification; `skills/SKILLS_INDEX.md` says what is stale (D25) |
+| Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (step 6 and 7 gates) |
 | Lane ledger | `src/ledger/` (`lane.ts` state, `health.ts` campaign lines, `render.ts` `/where` + digest text) |
 | Servers | `docs/servers.md` — every vendor server from its code (D22) |
 | Recipes | `recipes/<client>/<lane>.json`, validated at boot, mirrored to `topup.lane_recipes` |

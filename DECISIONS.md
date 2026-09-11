@@ -44,6 +44,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D22 | Live |
 | D23 | Live |
 | D24 | Live |
+| D25 | Live |
 
 ---
 
@@ -434,3 +435,73 @@ or listed unplaced; labels never invent a title; only `LaneLedger` writes
 `lane_state`; and when `skills/lead-list-build/SKILL.md` is in the repo the
 titles must match its headings (skipped with a message until then).
 `src/spine/gate.test.ts` holds the step 6 and 7 gates. Ask Josh.
+
+## D25 — The skills are in the repo; the spine, the gates and the normalizers are copied from them
+
+**Decision.** Josh's skills live at `skills/` (`lead-list-build` plus the
+twenty-five SalesGlider skills, `SKILLS_INDEX.md`, `MCP_SERVERS.md`). They
+are the specification. From them:
+
+- `src/spine/steps.ts` carries the thirteen titles, owners and `Gate:` lines
+  **word for word**; `trigger` sits on step 1 (a run opens against the
+  signed-off segment, which is the recipe), `ingest` on 4, `stage` on 10;
+  nothing is unplaced. Change the skill first, then the table.
+- **Step 6 gate** is the skill's: "sendable count and reject rate reported. A
+  reject rate far above the lane's norm means the source is bad, stop and say
+  so." The norm is `verify.reject_rate_norm` on the recipe (Josh's number per
+  lane; null until he gives it). "Far above" is defined here, not in the
+  skill: at least **2×** the norm and at least **10 points** over it, on at
+  least **50** verdicts; stalled rows are not verdicts. With no norm only the
+  unarguable case stops the run: nothing sendable.
+- **Step 7 gate** is the skill's: "every merge field the copy uses is
+  populated or the row is held." The fields the copy uses are the recipe's
+  `required_fields`. A row with one empty moves to `qa_hold` with the empty
+  fields in `qa_flags.merge_field_empty`; the run goes on to step 8 and the
+  gate reports how many were held and why. `local_sports_team` is never a hold
+  on its own: the skill routes a row with no team to the AirPods tier. This
+  replaces D24's halt-the-run reading of the gate.
+- The four **normalizers** are ports of the skill scripts, rule for rule and
+  in the scripts' order: `normalize_names_and_cities.py` → `names.ts`;
+  `company-name-normalization/SKILL.md` (no script; its eleven rules) →
+  `company.ts`; `conversational_location.py` → `location.ts` (the METROS
+  table verbatim); `assign_team.py` → `team.ts` (MLB, NFL, college tables,
+  overrides, renames, radii verbatim). Where `SKILLS_INDEX.md` marks a part
+  stale, the index wins: the raw `city` is never written; a city that cannot
+  be geocoded gets a **blank** location (the script returned the city); an
+  ambiguous (school-qualified) college nickname goes to **null** and the
+  AirPods tier (the script wrote "LSU Tigers").
+- Geocoding needs the free US cities file both scripts read. It lives in
+  `topup.ref_cities`, loaded once by `npm run seed:cities` from
+  kelvins/US-Cities-Database pinned to a commit (MIT; not a vendor; never
+  called by the service or a test). An empty table means every row is
+  NO_GEOCODE and the normalize line says so. Migration 0006 drops the three
+  scaffolding reference tables the scripts' constants replace
+  (`ref_metro_names`, `ref_sports_teams`, `ref_ambiguous_nicknames`) and the
+  suffix table; `ref_acronyms` stays as the skill's "fix by hand" list.
+
+**Why.** Josh: "Each step names its skill. That skill is the specification.
+Port the normalizers from their scripts… Where a skill is marked stale in
+`skills/SKILLS_INDEX.md`, the skill's stale part is wrong and the index note
+is right." And: "Do not invent your own stage names; use the step numbers and
+the step titles from the skill."
+
+**Tradeoff.** Three places the skills leave a number or a rule open are
+filled here and named as such, for Josh to change: the "far above" factor,
+the pipe (`|`) treated like a spaced dash in company names (the skill lists
+dashes only), and `local_sports_team` excluded from the step 7 hold. Two
+places the skills disagree with each other are decided for the spine and
+listed in the PR: the order of the four normalizers (lead-list-build says
+company before location; the company skill says company last — the spine's
+order is used, and the two write different columns so nothing depends on
+it), and school-qualified college nicknames (the sports skill keeps them,
+the spine and the index null them — nulled). The first-name script keeps an
+all-initials name ("C J") and a lone initial ("J.") as the merge value; the
+service does the same and flags them (`all_initials`, `initial_only`) rather
+than hold, because the skill says keep.
+
+**Guard.** `src/guards/spine.test.ts` parses `skills/lead-list-build/SKILL.md`
+and fails when a title, owner or `Gate:` line in `src/spine/steps.ts` differs
+from it (no longer skipped). `src/spine/gate.test.ts` — the reject-rate stop
+line and the hold field list. `src/stages/normalize/normalize.test.ts` — every
+example the four skills document, as a test. `src/guards/no_secrets.test.ts`
+now scans `skills/` and `docs/`. Ask Josh.

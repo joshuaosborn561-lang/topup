@@ -20,16 +20,23 @@ Read `CANON.md` first. It is one page and it is the current truth.
 - Slack: one thread per run, cards with buttons, slash commands, owner and
   operator roles.
 - `/mcp` with owner and operator tokens.
+- Josh's **skills** at `skills/` — the specification. `lead-list-build` is
+  the spine; `SKILLS_INDEX.md` names the stale parts (the index wins).
 - The **spine**: the thirteen steps of `skills/lead-list-build/SKILL.md` as
-  the state machine (`src/spine/steps.ts`), with gates that halt a run, record
-  why and post one card. Steps 6 and 7 gate today.
+  the state machine (`src/spine/steps.ts`, titles/owners/gates copied from the
+  skill and guarded), with gates that halt a run, record why and post one
+  card. Step 6 (sendable + reject rate vs the lane's norm) and step 7 (every
+  merge field populated or the row held) gate today.
 - The **lane ledger**: step per lane, event log, queue registry. `/where
   <client> [lane]`, the `lane_state` MCP tool, and a daily ops digest that
   only names lanes whose state changed or whose campaign health crossed a
   line. Claude sessions hand queue tables to the service with
   `register_queue_table` and leave notes with `lane_note`.
 - The **verify** stage (LeadPipe export → Email Verifier Progression → stall
-  runbook → per-row verdicts) and the **normalize** stage.
+  runbook → per-row verdicts) and the **normalize** stage: the four skill
+  scripts ported (names/cities, company, conversational location, sports
+  team). Geocoding needs `topup.ref_cities`: run `npm run seed:cities` once
+  per database (downloads the free US cities file, pinned).
 - A run stops after normalize. Routing, staging and import are later PRs.
 - `docs/servers.md` — every vendor server documented from its code, with the
   breakages confirmed and listed as prerequisite PRs. Read before building on
@@ -66,11 +73,13 @@ src/
   mcp/                /mcp server with per-role tool sets
   clients/            LeadPipe and verifier HTTP clients (called, never forked)
   stages/verify/      runbook (pure), sendable rule, the stage
-  stages/normalize/   names, company, location, team, the stage
+  stages/normalize/   names, company, geo, location, team (ports of the skill scripts), the stage
   guards/             tests that name a decision and who to ask
 recipes/<client>/<lane>.json
 supabase/migrations/*.sql
 docs/servers.md       the vendor servers, from their code
+skills/               Josh's skills; lead-list-build is the spine, SKILLS_INDEX.md marks stale parts
+scripts/seed-cities.ts  load topup.ref_cities once (npm run seed:cities)
 ```
 
 ## Slack
