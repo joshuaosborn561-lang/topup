@@ -31,13 +31,13 @@ describe("roles", () => {
     }
     for (const c of ["resume", "abort", "accept", "purge", "reroute", "resume_run"]) assert.equal(CHOICE_ROLE[c], "operator", `${c} is operator-level`);
     assert.equal(COMMAND_ROLE["/working"], "owner");
-    for (const c of ["/topup", "/holds", "/runs", "/suppress"]) assert.equal(COMMAND_ROLE[c], "operator");
+    for (const c of ["/where", "/topup", "/holds", "/runs", "/suppress"]) assert.equal(COMMAND_ROLE[c], "operator");
   });
 
   it("MCP: the operator token gets the narrow set", () => {
     const operatorTools = Object.entries(MCP_TOOL_ROLE).filter(([, r]) => r === "operator").map(([t]) => t).sort();
-    assert.deepEqual(operatorTools, ["list_holds", "list_runs", "resolve_hold", "run_status", "start_topup"]);
-    for (const t of ["sample_rows", "variant_stats", "campaign_registry", "recipe_get", "missing_piece_groups"]) assert.equal(MCP_TOOL_ROLE[t], "owner");
+    assert.deepEqual(operatorTools, ["lane_state", "list_holds", "list_runs", "resolve_hold", "run_status", "start_topup"]);
+    for (const t of ["register_queue_table", "lane_note", "sample_rows", "variant_stats", "campaign_registry", "recipe_get", "missing_piece_groups"]) assert.equal(MCP_TOOL_ROLE[t], "owner");
     const d = { ownerToken: "owner-tok-1", operatorToken: "operator-tok-2" };
     assert.equal(roleForToken(`Bearer ${d.ownerToken}`, d), "owner");
     assert.equal(roleForToken(`Bearer ${d.operatorToken}`, d), "operator");

@@ -9,6 +9,8 @@ import { assertSupabaseProject, loadConfig } from "./config.js";
 import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
 import { buildHealth } from "./health.js";
+import { runDigest } from "./ledger/digest.js";
+import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { mcpRouter } from "./mcp/server.js";
 import { Orchestrator } from "./orchestrator.js";
@@ -90,7 +92,9 @@ async function main(): Promise<void> {
     },
   });
   const normalize = new NormalizeStage(repo, console_);
-  const orchestrator = new Orchestrator({ repo, console: console_, verify, normalize, retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000 });
+  const ledger = new LaneLedger(db);
+  console_.attachLedger(ledger);
+  const orchestrator = new Orchestrator({ repo, console: console_, verify, normalize, ledger, retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000 });
 
   if (cfg.SLACK_SIGNING_SECRET) {
     app.use(
@@ -99,7 +103,7 @@ async function main(): Promise<void> {
         signingSecret: cfg.SLACK_SIGNING_SECRET,
         roles,
         console: console_,
-        commands: buildCommands({ repo, orchestrator }),
+        commands: buildCommands({ repo, orchestrator, ledger }),
         onTap: orchestrator.onTap,
       }),
     );
@@ -108,7 +112,7 @@ async function main(): Promise<void> {
   }
 
   if (cfg.MCP_OWNER_TOKEN && cfg.MCP_OPERATOR_TOKEN) {
-    app.use("/mcp", mcpRouter({ repo, orchestrator, console: console_, ownerToken: cfg.MCP_OWNER_TOKEN, operatorToken: cfg.MCP_OPERATOR_TOKEN }));
+    app.use("/mcp", mcpRouter({ repo, orchestrator, console: console_, ledger, ownerToken: cfg.MCP_OWNER_TOKEN, operatorToken: cfg.MCP_OPERATOR_TOKEN }));
   } else {
     log.warn("MCP tokens are not both set; /mcp is not mounted");
   }
@@ -128,6 +132,15 @@ async function main(): Promise<void> {
       await orchestrator.resumeOpenRuns();
     } catch (err) {
       log.error("watch tick failed", { error: (err as Error).message });
+    }
+  });
+
+  // The daily digest names only lanes whose state changed or whose health crossed a line.
+  cron.schedule(cfg.DIGEST_CRON, async () => {
+    try {
+      await runDigest({ ledger, console: console_ });
+    } catch (err) {
+      log.error("digest failed", { error: (err as Error).message });
     }
   });
 

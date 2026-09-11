@@ -55,6 +55,22 @@ export class Db {
     }
   }
 
+  /** Read-only transaction for counts over tables the service does not own (queue registry). */
+  async readOnly<T>(fn: (tx: Queryable) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin read only");
+      const out = await fn(client);
+      await client.query("commit");
+      return out;
+    } catch (err) {
+      await client.query("rollback").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.pool.query("select 1");

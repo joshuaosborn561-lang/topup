@@ -7,6 +7,7 @@ import { ingestedTable } from "../db/pool.js";
 import type { Repo } from "../db/repo.js";
 import type { Role } from "../domain/runs.js";
 import { variantStats } from "../domain/working.js";
+import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
 import type { Orchestrator } from "../orchestrator.js";
 import type { SlackConsole } from "../slack/console.js";
@@ -19,11 +20,14 @@ export const SAMPLE_ROWS_MAX = 10;
 
 /** Tools and the least role that may call them. Operator sees the rest as "This needs Josh." */
 export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
+  lane_state: "operator",
   run_status: "operator",
   list_runs: "operator",
   list_holds: "operator",
   resolve_hold: "operator",
   start_topup: "operator",
+  register_queue_table: "owner",
+  lane_note: "owner",
   sample_rows: "owner",
   variant_stats: "owner",
   campaign_registry: "owner",
@@ -35,6 +39,7 @@ export interface McpDeps {
   repo: Repo;
   orchestrator: Orchestrator;
   console: SlackConsole;
+  ledger: LaneLedger;
   ownerToken: string;
   operatorToken: string;
 }
@@ -68,6 +73,63 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   const server = new McpServer({ name: "leadtopup", version: "0.1.0" });
   const allowed = (tool: string) => role === "owner" || MCP_TOOL_ROLE[tool] === "operator";
   const refused = () => text({ error: NEEDS_JOSH, role });
+  const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
+
+  server.registerTool(
+    "lane_state",
+    {
+      description:
+        "Where a lane is: stage and since when, what is queued where (counts by status and every registered queue table), who it is blocked on and what they need to do, spend this run and this month, campaign runway and health, and the recent event log. Same answer as /where. Counts only, never rows.",
+      inputSchema: { client_tag: snake, lane: snake.optional(), recount: z.boolean().default(false).describe("Re-run the registered queue counts first (live, slower).") },
+    },
+    async ({ client_tag, lane, recount }) => {
+      if (lane) return text(await d.ledger.state(client_tag, lane, { recount }));
+      const lanes = await d.ledger.lanes(client_tag);
+      const out = [];
+      for (const l of lanes) out.push(await d.ledger.state(l.client_tag, l.lane, { recount }));
+      return text(out);
+    },
+  );
+
+  server.registerTool(
+    "register_queue_table",
+    {
+      description:
+        "Hand a queue table to the service so the work survives the chat: which schema.table, an optional where predicate, what each row is still missing (domain, person, email or none) and the next method that fills it. The service counts it now and keeps the count current. Owner only. Never pass rows.",
+      inputSchema: {
+        client_tag: snake,
+        lane: snake,
+        queue_name: snake,
+        source_table: z.string().regex(/^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/, "schema.table"),
+        where_sql: z.string().max(500).optional(),
+        missing: z.enum(["domain", "person", "email", "none"]),
+        next_method: z.string().max(80).optional(),
+        note: z.string().max(500).optional(),
+      },
+    },
+    async (input) => {
+      if (!allowed("register_queue_table")) return refused();
+      try {
+        const r = await d.ledger.registerQueue({ ...input, registered_by: `mcp:${role}` });
+        return text({ ok: true, queue: { ...r.entry }, count: r.count, count_error: r.count_error });
+      } catch (err) {
+        return text({ ok: false, error: (err as Error).message });
+      }
+    },
+  );
+
+  server.registerTool(
+    "lane_note",
+    {
+      description: "Write one line to a lane's event log (what was done, what is intended next). For Claude sessions handing state to the service. Owner only. No lead data.",
+      inputSchema: { client_tag: snake, lane: snake, line: z.string().min(1).max(500), next_intent: z.string().max(300).optional() },
+    },
+    async ({ client_tag, lane, line, next_intent }) => {
+      if (!allowed("lane_note")) return refused();
+      await d.ledger.event({ client_tag, lane, event: "note", line, next_intent, actor: `mcp:${role}` });
+      return text({ ok: true });
+    },
+  );
 
   server.registerTool(
     "run_status",

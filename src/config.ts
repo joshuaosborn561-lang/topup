@@ -84,6 +84,8 @@ const schema = z.object({
 
   STEP_RETRY_SECONDS: numberWithDefault(30),
   WATCH_CRON: z.string().default("0 */6 * * *"),
+  /** Daily digest in the ops channel; 13:00 UTC is 8am Central. Only lanes that changed are named. */
+  DIGEST_CRON: z.string().default("0 13 * * *"),
   DRY_RUN: bool(false),
 });
 

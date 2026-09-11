@@ -1,6 +1,7 @@
 import { ingestedTable } from "./db/pool.js";
 import type { Repo } from "./db/repo.js";
 import type { Role, RunRow, Step } from "./domain/runs.js";
+import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
 import type { SlackConsole } from "./slack/console.js";
@@ -38,6 +39,8 @@ export class Orchestrator {
       console: SlackConsole;
       verify: VerifyStage;
       normalize: NormalizeStage;
+      /** The lane ledger; every stage change and outcome is written to it as it happens. */
+      ledger?: LaneLedger;
       /** Pause between a failed step attempt and the next (default 30s). */
       retryDelayMs?: number;
       sleep?: (ms: number) => Promise<void>;
@@ -83,8 +86,29 @@ export class Orchestrator {
       opened.run,
       `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · started by <@${input.by}> (${input.trigger})`,
     );
+    await this.ledger((l) =>
+      l.event({
+        client_tag: run.client_tag,
+        lane: run.lane,
+        run_id: run.run_id,
+        event: "run_opened",
+        line: `Run ${run.run_id.slice(0, 8)} opened (${input.trigger}).`,
+        next_intent: `Run ${PHASE1_STEPS.join(", then ")}.`,
+        actor: input.by,
+      }),
+    );
     void this.drive(run.run_id);
     return { ok: true, run };
+  }
+
+  /** Ledger writes never break a run: a failed write is logged and the run goes on. */
+  private async ledger(fn: (l: LaneLedger) => Promise<void>): Promise<void> {
+    if (!this.d.ledger) return;
+    try {
+      await fn(this.d.ledger);
+    } catch (err) {
+      log.error("ledger write failed", { error: (err as Error).message });
+    }
   }
 
   /** Re-enter every open run after a restart. Runs waiting on a card simply keep waiting. */
@@ -124,18 +148,33 @@ export class Orchestrator {
     if (!rec) throw new Error(`recipe ${initial.recipe_id} is not in topup.lane_recipes`);
     const recipe = parseRecipe(rec.body);
 
-    for (const step of PHASE1_STEPS) {
+    for (const [i, step] of PHASE1_STEPS.entries()) {
+      const after = PHASE1_STEPS[i + 1];
       for (;;) {
         const run = (await this.d.repo.getRun(initial.run_id))!;
         const stepRow = await this.d.repo.getStep(run.run_id, step);
         if (stepRow?.status === "done") break;
+        await this.ledger((l) => l.setStage(run.client_tag, run.lane, step, { run_id: run.run_id, next_intent: after ? `Then ${after}.` : "Then close with a receipt." }));
         const outcome = step === "verify" ? await this.d.verify.run(run, recipe) : await this.d.normalize.run(run, recipe);
         if (outcome.kind === "retry") {
           log.warn("step retrying", { run_id: run.run_id, step, error: outcome.error, in_ms: this.retryDelayMs });
+          await this.ledger((l) =>
+            l.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "retry", line: `${step} failed: ${outcome.error.slice(0, 160)}`, next_intent: `Retry ${step} in ${Math.round(this.retryDelayMs / 1000)}s.`, actor: "service" }),
+          );
           await this.sleep(this.retryDelayMs);
           continue;
         }
-        if (outcome.kind === "parked" || outcome.kind === "declined") return;
+        if (outcome.kind === "parked" || outcome.kind === "declined") {
+          const fresh = (await this.d.repo.getRun(run.run_id))!;
+          await this.ledger((l) =>
+            l.setStage(run.client_tag, run.lane, outcome.kind === "parked" ? "parked" : "idle", {
+              run_id: outcome.kind === "parked" ? run.run_id : null,
+              line: outcome.kind === "parked" ? `Parked at ${step}: ${(fresh.last_error ?? "").slice(0, 160)}` : `Run ${run.run_id.slice(0, 8)} closed ${fresh.status} at ${step}.`,
+              next_intent: outcome.kind === "parked" ? "Waiting for Resume or Abort on the parked card." : "Nothing queued.",
+            }),
+          );
+          return;
+        }
         break;
       }
     }
@@ -144,11 +183,26 @@ export class Orchestrator {
     await this.d.repo.setRunStatus(run.run_id, "done", "normalize");
     const closed = (await this.d.repo.getRun(run.run_id))!;
     await this.d.console.receipt(closed, "Phase 1 build: the run stops after normalize. Nothing was routed, staged or imported.");
+    await this.ledger((l) =>
+      l.setStage(closed.client_tag, closed.lane, "idle", {
+        run_id: null,
+        line: `Run ${closed.run_id.slice(0, 8)} done after normalize: ${Object.entries(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts"}.`,
+        next_intent: "Nothing queued; Phase 1 stops after normalize.",
+      }),
+    );
   }
 
   /** What a resolved card should set in motion. Shared by Slack taps and MCP resolve_hold. */
   readonly onTap: TapListener = async (card) => {
     const runId = card.run_id;
+    if (runId) {
+      const run = await this.d.repo.getRun(runId);
+      if (run) {
+        await this.ledger((l) =>
+          l.event({ client_tag: run.client_tag, lane: run.lane, run_id: runId, event: "card_resolved", line: `${card.kind} card: ${card.choice} by ${card.by}.`, actor: card.by, detail: { card_id: card.card_id } }),
+        );
+      }
+    }
     switch (card.choice) {
       case "approve_spend":
       case "split":
@@ -178,11 +232,14 @@ export class Orchestrator {
         await this.d.repo.setRunStatus(runId, "aborted", undefined, `aborted by ${card.by}`);
         const closed = (await this.d.repo.getRun(runId))!;
         await this.d.console.receipt(closed, `Aborted by <@${card.by}>. ${released} unverified rows returned to needs_verify. Nothing was sent.`);
+        await this.ledger((l) => l.setStage(run.client_tag, run.lane, "idle", { run_id: null, line: `Run ${runId.slice(0, 8)} aborted by ${card.by}; ${released} rows back to needs_verify.`, next_intent: "Nothing queued." }));
         return;
       }
       case "leave_it": {
         if (!runId) return;
         await this.d.repo.setRunStatus(runId, "not_working", undefined, `left alone by ${card.by}`);
+        const run = await this.d.repo.getRun(runId);
+        if (run) await this.ledger((l) => l.setStage(run.client_tag, run.lane, "idle", { run_id: null, line: `Run ${runId.slice(0, 8)} closed not_working: left alone by ${card.by}.`, next_intent: "Nothing queued until the campaign is judged working again." }));
         return;
       }
       case "decline_spend":

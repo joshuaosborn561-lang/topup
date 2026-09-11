@@ -52,6 +52,7 @@ export const CHOICE_ROLE: Readonly<Record<string, Role>> = {
 
 /** Slash commands and the least role that may run them. */
 export const COMMAND_ROLE: Readonly<Record<string, Role>> = {
+  "/where": "operator",
   "/topup": "operator",
   "/holds": "operator",
   "/runs": "operator",

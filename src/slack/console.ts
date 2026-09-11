@@ -1,5 +1,6 @@
 import type { CardRow, Repo } from "../db/repo.js";
 import type { Role, RunRow } from "../domain/runs.js";
+import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
 import { type Block, receiptBlocks, resolvedFooter } from "./cards.js";
 import { channelFor, type Poster } from "./client.js";
@@ -23,12 +24,19 @@ export type TapResult =
  * restart does not lose an open ask.
  */
 export class SlackConsole {
+  private ledger: LaneLedger | null = null;
+
   constructor(
     private readonly repo: Repo,
     private readonly poster: Poster,
     private readonly roles: Roles,
     private readonly cfg: ConsoleConfig,
   ) {}
+
+  /** Cards are the "blocked on Josh / Cayden" state; the ledger hears about each one as it opens. */
+  attachLedger(ledger: LaneLedger): void {
+    this.ledger = ledger;
+  }
 
   channelForClient(clientTag: string | null): string {
     return channelFor(clientTag, this.cfg.clientChannels, this.cfg.opsChannel);
@@ -80,6 +88,20 @@ export class SlackConsole {
       : await this.poster.post(this.channelForClient(null), input.text, blocks);
     await this.repo.setCardMessage(card.card_id, posted.channel, posted.ts);
     log.info("card opened", { card_id: card.card_id, kind: input.kind, audience: input.audience, run_id: input.run?.run_id });
+    if (this.ledger && input.run) {
+      await this.ledger
+        .event({
+          client_tag: input.run.client_tag,
+          lane: input.run.lane,
+          run_id: input.run.run_id,
+          event: "card_opened",
+          line: `${input.kind} card opened for ${input.audience === "owner" ? "Josh" : "Cayden"}: ${input.text.slice(0, 160)}`,
+          next_intent: `Wait for the ${input.kind} card.`,
+          actor: "service",
+          detail: { card_id: card.card_id },
+        })
+        .catch((err) => log.warn("ledger write failed", { error: (err as Error).message }));
+    }
     return { ...card, slack_channel: posted.channel, slack_ts: posted.ts };
   }
 
