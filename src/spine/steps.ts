@@ -5,128 +5,169 @@ import type { Step } from "../domain/runs.js";
  * always on exactly one step; every card, log line and ledger row names the
  * step by number so it and the skill say the same thing (D24).
  *
- * The skill file is not in this repository yet (see the PR). Everything here
- * comes from Josh's "build to the spine" prompt, which names owners and gates
- * for some steps and not others. What the prompt did not say is `null`, never
- * guessed: a null title or gate renders as "Step N" and is a question for
- * Josh, not a default. When the skill lands, `src/guards/spine.test.ts`
- * compares this table to its headings.
+ * Titles, owners, gates and skills are copied from the skill's headings and
+ * its "Gate:" / "Skill:" lines, word for word (D25). `src/guards/spine.test.ts`
+ * parses the skill and fails when this table drifts from it. Change the skill
+ * first, then this file; never the other way round.
  */
 
 export type StepOwner = "code" | "josh" | "cayden";
 
 export interface SpineStep {
   n: number;
-  /** The step title from the skill. Null until the skill is in the repo. */
-  title: string | null;
-  /** Who runs the step. Code never waits for a human on its own step unless a gate fails. */
-  owner: StepOwner | null;
-  /** A human whose tap the step also needs on some paths, and when. */
+  /** The step title from the skill heading, without the owner parenthetical. */
+  title: string;
+  /** Who runs the step (the first name in the heading's parenthetical). */
+  owner: StepOwner;
+  /** A human whose tap the step also needs on some paths, and when — from the heading or the step body. */
   also: { who: Exclude<StepOwner, "code">; when: string } | null;
-  /** The test that must pass before the next step starts. Verbatim from the prompt where it gave one. */
-  gate: string | null;
-  /** The skill that is the specification for this step. */
+  /** The skill's "Gate:" line, verbatim. */
+  gate: string;
+  /** The skill(s) the skill names as the specification for this step. */
   skill: string | null;
   /** Internal pipeline stages (run_steps.step) that belong to this step. */
   pipeline: readonly Step[];
-  /** What Josh must see on the card, when the prompt said. */
+  /** What the human must see on the card at this step (skill body + Josh's prompt). */
   card: string | null;
 }
 
 export const SPINE: readonly SpineStep[] = [
   {
     n: 1,
-    title: null,
+    title: "Nail the ICP for the lane",
     owner: "josh",
     also: null,
-    gate: "sign off on the segment before any pull",
-    skill: null,
-    pipeline: [],
+    gate: "every cell has a campaign or Josh knows one must be built. Josh signs off on the segment before anything is pulled.",
+    skill: "the client's lead pull skill (parlay-lead-pulls, culture-fits-lead-pulls, techevo-lead-pulls, goliath-lead-pulls, salesglider-lead-pulls) plus the latest client call in Fireflies",
+    // The recipe is the signed-off segment; `trigger` checks a recipe exists for the lane before a run opens.
+    pipeline: ["trigger"],
     card: "the segment with counts and ten sample rows",
   },
   {
     n: 2,
-    title: null,
-    owner: null,
-    also: null,
-    gate: "useful floor",
+    title: "Size it",
+    owner: "code",
+    also: { who: "josh", when: "the pool is thin: widening options with counts, Josh decides" },
+    gate: "projected net new is above the useful floor (default 200). If thin, present widening options with counts; Josh decides. Never widen unasked, never declare a pool exhausted.",
     skill: "tam-sizing",
     pipeline: [],
     card: "the segment with counts and ten sample rows",
   },
   {
     n: 3,
-    title: null,
+    title: "Pull",
     owner: "code",
-    also: { who: "josh", when: "company-first lanes: the yield card, then the pilot result before scaling" },
-    gate: "title audit and spend ceiling",
-    skill: "leadgen-mcp-routing; company-first: domain-waterfall, people-waterfall, unmask-shell-llc, hard-to-find-dm-discovery, serp-dm-discovery, unresolved-name-routing",
-    pipeline: ["pull", "ingest", "find_emails"],
+    also: { who: "josh", when: "paid tiers; company-first lanes: the yield card, then the pilot (~100) result before scaling" },
+    gate: "useful output counted, titles audited, spend within the approved ceiling.",
+    skill:
+      "the client pull skill, leadgen-mcp-routing; company-first: unmask-shell-llc, domain-waterfall, people-waterfall, serp-dm-discovery, hard-to-find-dm-discovery, unresolved-name-routing",
+    pipeline: ["pull", "find_emails"],
     card: "expected yield and cost per usable lead, and the pilot result for company-first lanes",
   },
-  { n: 4, title: null, owner: "code", also: null, gate: null, skill: null, pipeline: [], card: null },
+  {
+    n: 4,
+    title: "Ingest",
+    owner: "code",
+    also: null,
+    gate: "row count equals the export count.",
+    skill: null,
+    pipeline: ["ingest"],
+    card: null,
+  },
   {
     n: 5,
-    title: null,
+    title: "Suppress and dedupe",
     owner: "code",
-    also: { who: "cayden", when: "the client customer list" },
-    gate: "response based scope and the cross campaign check against staging",
-    skill: null,
+    also: { who: "cayden", when: "the client's customer domain list is missing" },
+    gate: "report raw, removed by reason, net new. Net new is the number from here on.",
+    skill: "global-suppression",
     pipeline: ["suppress"],
     card: null,
   },
   {
     n: 6,
-    title: null,
+    title: "Verify",
     owner: "code",
-    also: null,
-    gate: "sendable rule and stall runbook",
-    skill: null,
+    also: { who: "josh", when: "the estimate is over the auto cap, or a resubmit after a stall can bill" },
+    gate: "sendable count and reject rate reported. A reject rate far above the lane's norm means the source is bad, stop and say so.",
+    skill: "supabase-csv-endpoint; Email Verifier Progression",
     pipeline: ["verify"],
     card: null,
   },
   {
     n: 7,
-    title: null,
+    title: "Normalize",
     owner: "code",
     also: null,
-    gate: "every merge field populated",
-    skill: "normalizers: normalize_names_and_cities, normalize_company, conversational_location, assign_team",
+    gate: "every merge field the copy uses is populated or the row is held.",
+    skill: "name-city-normalization, company-name-normalization, conversational-location, sports-team-assignment (in that order)",
     pipeline: ["normalize"],
     card: null,
   },
   {
     n: 8,
-    title: null,
+    title: "QA",
     owner: "code",
     also: { who: "cayden", when: "clears holds" },
-    gate: null,
+    gate: "holds cleared or excluded; counts of purged and held reported.",
     skill: null,
     pipeline: ["qa"],
-    card: null,
+    card: "the hold: rule, count, ten sample rows",
   },
   {
     n: 9,
-    title: null,
+    title: "Route to campaign",
     owner: "code",
-    also: { who: "josh", when: "copy is needed" },
-    gate: null,
-    skill: null,
+    also: { who: "josh", when: "copy is needed (a cell with no campaign)" },
+    gate: "every lead has a campaign id whose client matches.",
+    skill: "smartlead-campaign-settings, salesglider-cold-email-copy, subject-line-offer-naming, spintax-generator, salesglider-unsubscribe",
     pipeline: ["route"],
     card: "the parked cell and a clone offer",
   },
-  { n: 10, title: null, owner: "code", also: null, gate: null, skill: null, pipeline: [], card: null },
-  { n: 11, title: null, owner: "code", also: null, gate: "count assert", skill: null, pipeline: ["import"], card: null },
-  { n: 12, title: null, owner: "code", also: null, gate: "the receipt posts", skill: null, pipeline: ["post_import"], card: "the receipt" },
-  { n: 13, title: null, owner: "josh", also: null, gate: null, skill: null, pipeline: [], card: null },
+  {
+    n: 10,
+    title: "Stage",
+    owner: "code",
+    also: null,
+    gate: "staged count equals routed count.",
+    skill: null,
+    pipeline: ["stage"],
+    card: null,
+  },
+  {
+    n: 11,
+    title: "Import",
+    owner: "code",
+    also: null,
+    gate: "counts match on every campaign.",
+    skill: null,
+    pipeline: ["import"],
+    card: null,
+  },
+  {
+    n: 12,
+    title: "Pre launch check",
+    owner: "code",
+    also: null,
+    gate: 'receipt posted: campaign, imported, runway before and after, spend by vendor, holds, "ready for ACTIVE."',
+    skill: "smartlead-campaign-settings (scripts/check_merge_tags.py)",
+    pipeline: ["post_import"],
+    card: "the receipt",
+  },
+  {
+    n: 13,
+    title: "Flip active and watch day one",
+    owner: "josh",
+    also: null,
+    gate: "Josh sets the campaign ACTIVE by hand. Nothing automated ever starts, pauses, or stops a campaign.",
+    skill: null,
+    pipeline: [],
+    card: null,
+  },
 ];
 
-/**
- * Internal stages the prompt did not place on a step. `trigger` opens a run
- * (before or at step 1?); `stage` is the Smartlead staging write (step 10?).
- * Both are questions in the PR; until answered they report no step.
- */
-export const UNPLACED_STAGES: readonly Step[] = ["trigger", "stage"];
+/** Every internal stage is now placed on a step (D25). Kept so callers that ask "is this unplaced?" still can. */
+export const UNPLACED_STAGES: readonly Step[] = [];
 
 const BY_N = new Map(SPINE.map((s) => [s.n, s]));
 const BY_STAGE = new Map<Step, SpineStep>();
@@ -138,22 +179,21 @@ export function spineStep(n: number): SpineStep {
   return s;
 }
 
-/** Which spine step an internal pipeline stage belongs to; null for the unplaced ones. */
+/** Which spine step an internal pipeline stage belongs to; null only for a stage nobody placed. */
 export function stepForStage(stage: Step): SpineStep | null {
   return BY_STAGE.get(stage) ?? null;
 }
 
-/** "Step 6" or "Step 6 — <title>" once the skill supplies titles. Never a made-up name. */
+/** "Step 6 — Verify". Never a made-up name: the title is the skill's heading. */
 export function stepLabel(n: number | null): string {
   if (n === null) return "no step (idle)";
   const s = spineStep(n);
-  return s.title ? `Step ${s.n} — ${s.title}` : `Step ${s.n}`;
+  return `Step ${s.n} — ${s.title}`;
 }
 
 /** The gate a step must pass, for cards and ledger lines. */
 export function gateLabel(n: number): string {
-  const s = spineStep(n);
-  return s.gate ?? `gate for step ${n} not yet named (ask Josh; the skill names it)`;
+  return spineStep(n).gate;
 }
 
 /** The step a lane moves to when this one is done. Null after 13. */
