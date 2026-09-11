@@ -32,7 +32,7 @@ export function buildCommands(d: { repo: Repo; orchestrator: Orchestrator; ledge
       if (!SNAKE.test(clientTag) || !SNAKE.test(lane)) return "client_tag and lane are snake_case.";
       const res = await d.orchestrator.startTopup({ clientTag, lane, by: ctx.userId, trigger: "manual" });
       if (!res.ok) return res.message;
-      return `Run \`${res.run.run_id.slice(0, 8)}\` opened for ${clientTag}/${lane}. Follow it in <#${res.run.slack_channel}> — every step posts to its thread; anything over the cap will ask before it spends.`;
+      return `Run \`${res.run.run_id.slice(0, 8)}\` opened for ${clientTag}/${lane} (manual override). The watch starts this on its own when a campaign is low and still working; you do not need this command for the normal path. Follow it in <#${res.run.slack_channel}>.`;
     },
 
     "/holds": async (ctx) => {
@@ -69,8 +69,8 @@ export function buildCommands(d: { repo: Repo; orchestrator: Orchestrator; ledge
       }
       const value = mode === "auto" ? null : mode === "on";
       const found = await d.repo.setWorkingOverride(campaignId, value);
-      if (!found) return `Campaign ${campaignId} is not in topup.campaign_registry. The registry is filled by the runway check, which lands in the next PR.`;
-      return `Campaign ${campaignId}: working override is now *${mode}*.`;
+      if (!found) return `Campaign ${campaignId} is not in topup.campaign_registry yet. The watch writes a row the first time it sees the campaign. /topup also works without an override.`;
+      return `Campaign ${campaignId}: working override is now *${mode}*. ${mode === "on" ? "The next watch tick will top up if the campaign is low." : mode === "off" ? "The watch will ask you instead of going." : "The 1-per-2,000-sends rule is back."}`;
     },
 
     "/suppress": async () =>

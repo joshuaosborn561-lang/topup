@@ -1,4 +1,4 @@
-import type { Db } from "../db/pool.js";
+import type { Queryable } from "../db/pool.js";
 
 /**
  * "Working" (decision D11 in DECISIONS.md): at least one interested reply per
@@ -66,7 +66,7 @@ export function isWorking(i: WorkingInput): WorkingVerdict {
 }
 
 /** Sends and interested replies by variant from the hourly Supabase sync. Read-only. */
-export async function variantStats(db: Db, smartleadCampaignId: number, sinceDays = 30): Promise<{ sends: number; interested: number; variants: VariantStat[] }> {
+export async function variantStats(db: Queryable, smartleadCampaignId: number, sinceDays = 30): Promise<{ sends: number; interested: number; variants: VariantStat[] }> {
   const { rows } = await db.query<{ label: string | null; step_number: number | null; subject_line: string | null; sends: string; interested: string }>(
     `select coalesce(ss.variant_label, 'step ' || coalesce(s.step_number, ss.step_number)::text) as label,
             coalesce(ss.step_number, s.step_number) as step_number,

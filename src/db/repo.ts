@@ -94,6 +94,14 @@ export class Repo {
     return rows;
   }
 
+  async lastRunForLane(clientTag: string, lane: string): Promise<RunRow | null> {
+    const { rows } = await this.db.query<RunRow>(
+      `select * from topup.runs where client_tag = $1 and lane = $2 order by opened_at desc limit 1`,
+      [clientTag, lane],
+    );
+    return rows[0] ?? null;
+  }
+
   async openRuns(): Promise<RunRow[]> {
     const { rows } = await this.db.query<RunRow>(
       `select * from topup.runs where topup.run_is_open(status) order by opened_at`,
@@ -465,6 +473,44 @@ export class Repo {
       [campaignId, value],
     );
     return (rowCount ?? 0) > 0;
+  }
+
+  async workingOverrides(campaignIds: readonly number[]): Promise<Map<number, boolean | null>> {
+    const out = new Map<number, boolean | null>();
+    if (campaignIds.length === 0) return out;
+    const { rows } = await this.db.query<{ campaign_id: string; working_override: boolean | null }>(
+      `select campaign_id::text, working_override from topup.campaign_registry where campaign_id = any($1::bigint[])`,
+      [campaignIds],
+    );
+    for (const r of rows) out.set(Number(r.campaign_id), r.working_override);
+    return out;
+  }
+
+  /** Keep the registry in step with the recipe so `/working` has a row to flip. Never overwrites the override. */
+  async upsertCampaignRegistry(rows: Array<{
+    campaign_id: number;
+    campaign_name: string | null;
+    client_tag: string;
+    smartlead_client_id: number;
+    lane: string;
+    recipe_id: string;
+    status: string | null;
+  }>): Promise<void> {
+    for (const r of rows) {
+      await this.db.query(
+        `insert into topup.campaign_registry (campaign_id, campaign_name, client_tag, smartlead_client_id, lane, recipe_id, status, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7, now())
+         on conflict (campaign_id) do update set
+           campaign_name = excluded.campaign_name,
+           client_tag = excluded.client_tag,
+           smartlead_client_id = excluded.smartlead_client_id,
+           lane = excluded.lane,
+           recipe_id = excluded.recipe_id,
+           status = excluded.status,
+           updated_at = now()`,
+        [r.campaign_id, r.campaign_name, r.client_tag, r.smartlead_client_id, r.lane, r.recipe_id, r.status],
+      );
+    }
   }
 
   async missingPieceGroups(clientTag?: string): Promise<Record<string, unknown>[]> {

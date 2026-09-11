@@ -36,6 +36,7 @@ import { SizeStage } from "./stages/size/index.js";
 import { StageStage } from "./stages/stage/index.js";
 import { SuppressStage } from "./stages/suppress/index.js";
 import { VerifyStage } from "./stages/verify/verify.js";
+import { RunwayWatch } from "./watch/index.js";
 
 const log = logger("boot");
 
@@ -161,13 +162,27 @@ async function main(): Promise<void> {
   const resumed = await orchestrator.resumeOpenRuns();
   log.info("open runs re-entered", { count: resumed });
 
-  // The runway watch that opens runs on its own lands with the pull stage.
-  // Until then the tick only expires stale cards and re-enters open runs.
+  const watch = new RunwayWatch({
+    db,
+    repo,
+    orchestrator,
+    console: console_,
+    recipes: recipeFiles,
+    dryRun: cfg.DRY_RUN,
+    ledger,
+  });
+  // Look once on boot so a deploy does not wait for the next cron hour.
+  try {
+    await watch.tick();
+  } catch (err) {
+    log.error("watch tick on boot failed", { error: (err as Error).message });
+  }
   cron.schedule(cfg.WATCH_CRON, async () => {
     try {
       const gone = await repo!.expireCards();
       if (gone.length) log.info("expired cards", { count: gone.length });
       await orchestrator.resumeOpenRuns();
+      await watch.tick();
     } catch (err) {
       log.error("watch tick failed", { error: (err as Error).message });
     }

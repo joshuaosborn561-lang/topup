@@ -57,6 +57,10 @@ export interface StartInput {
   lane: string;
   by: string;
   trigger: RunRow["trigger"];
+  /** Default true. The watch sets false when it is about to post a not-working card. */
+  drive?: boolean;
+  /** The watch names why it opened a run without driving it. */
+  hold?: "not_working";
 }
 
 export type StartResult = { ok: true; run: RunRow } | { ok: false; message: string };
@@ -115,22 +119,30 @@ export class Orchestrator {
           : `The database refused a second open run for ${recipe.client_tag}/${recipe.lane}.`,
       };
     }
-    const run = await this.d.console.openRunThread(
-      opened.run,
-      `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · started by <@${input.by}> (${input.trigger})`,
-    );
+    const headline =
+      input.hold === "not_working"
+        ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch stopped: a campaign is low and not working. This needs Josh.`
+        : input.trigger === "runway"
+          ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch started it: a campaign is low and still working.`
+          : `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · started by <@${input.by}> (${input.trigger})`;
+    const run = await this.d.console.openRunThread(opened.run, headline);
     await this.ledger((l) =>
       l.event({
         client_tag: run.client_tag,
         lane: run.lane,
         run_id: run.run_id,
         event: "run_opened",
-        line: `Run ${run.run_id.slice(0, 8)} opened (${input.trigger}).`,
-        next_intent: `Run ${PIPELINE_STEPS.join(", ")}; then the receipt.`,
+        line:
+          input.hold === "not_working"
+            ? `Run ${run.run_id.slice(0, 8)} opened by the watch and waiting on Josh: not working.`
+            : input.trigger === "runway"
+              ? `Run ${run.run_id.slice(0, 8)} opened by the watch (runway low, still working).`
+              : `Run ${run.run_id.slice(0, 8)} opened (${input.trigger}).`,
+        next_intent: input.hold === "not_working" ? "Waiting for Top up anyway or Leave it." : `Run ${PIPELINE_STEPS.join(", ")}; then the receipt.`,
         actor: input.by,
       }),
     );
-    void this.drive(run.run_id);
+    if (input.drive !== false) void this.drive(run.run_id);
     return { ok: true, run };
   }
 
@@ -325,7 +337,17 @@ export class Orchestrator {
       case "approve_spend":
       case "split":
       case "resume":
-      case "topup_anyway":
+      case "topup_anyway": {
+        if (!runId) return;
+        const run = await this.d.repo.getRun(runId);
+        if (run) {
+          await this.d.repo.setRunStatus(runId, "open", "size");
+          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh chose to top up anyway.`, runId));
+          await this.d.console.postInThread(run, `Top up anyway by <@${card.by}>: the watch will run the lane even though the reply rate is under the bar.`);
+        }
+        void this.drive(runId);
+        return;
+      }
       // step 5: the list was added (or Josh said go without); step 9: Josh said continue without the pending cells
       case "list_added":
       case "no_list":
@@ -373,7 +395,10 @@ export class Orchestrator {
         if (!runId) return;
         await this.d.repo.setRunStatus(runId, "not_working", undefined, `left alone by ${card.by}`);
         const run = await this.d.repo.getRun(runId);
-        if (run) await this.closeWithReceipt(run, `Left alone by <@${card.by}>: the campaign is not working and nothing was topped up.`, "Nothing queued until the campaign is judged working again.");
+        if (run) {
+          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh left it: not working, no top-up.`, runId));
+          await this.closeWithReceipt(run, `Left alone by <@${card.by}>: the campaign is not working and nothing was topped up.`, "The watch will stay quiet on this lane until the rate recovers or /working is flipped on.");
+        }
         return;
       }
       case "decline_spend":
