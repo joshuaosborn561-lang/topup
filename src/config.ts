@@ -1,0 +1,132 @@
+import { z } from "zod";
+
+/**
+ * All configuration comes from the environment. Railway holds the secrets;
+ * nothing in this repo carries a real value. `loadConfig({})` yields the
+ * shipped defaults, which is what the guards in src/guards assert against.
+ */
+
+/** The only Supabase project this service may write to (D6). */
+export const ALLOWED_SUPABASE_PROJECT_REF = "azpapwtnrbzywlnxxecz";
+
+const csvIds = z
+  .string()
+  .default("")
+  .transform((s) =>
+    s
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean),
+  );
+
+const jsonMap = z
+  .string()
+  .default("{}")
+  .transform((s, ctx) => {
+    try {
+      const v = JSON.parse(s);
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        return v as Record<string, string>;
+      }
+    } catch {
+      /* fall through */
+    }
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expected a JSON object" });
+    return z.NEVER;
+  });
+
+const numberWithDefault = (d: number) =>
+  z
+    .string()
+    .optional()
+    .transform((s) => (s === undefined || s === "" ? d : Number(s)))
+    .pipe(z.number().finite());
+
+const bool = (d: boolean) =>
+  z
+    .string()
+    .optional()
+    .transform((s) => (s === undefined || s === "" ? d : /^(1|true|yes)$/i.test(s)));
+
+const schema = z.object({
+  PORT: numberWithDefault(3000),
+  NODE_ENV: z.string().default("development"),
+
+  SUPABASE_PROJECT_REF: z.string().default(ALLOWED_SUPABASE_PROJECT_REF),
+  SUPABASE_URL: z.string().default(""),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().default(""),
+  DATABASE_URL: z.string().default(""),
+
+  SLACK_BOT_TOKEN: z.string().default(""),
+  SLACK_SIGNING_SECRET: z.string().default(""),
+  SLACK_OPS_CHANNEL: z.string().default("#topup_ops"),
+  SLACK_CLIENT_CHANNELS: jsonMap,
+  SLACK_OWNER_USER_IDS: csvIds,
+  SLACK_OPERATOR_USER_IDS: csvIds,
+
+  MCP_OWNER_TOKEN: z.string().default(""),
+  MCP_OPERATOR_TOKEN: z.string().default(""),
+
+  LEADPIPE_MCP_URL: z.string().default(""),
+  LEADPIPE_TOKEN: z.string().default(""),
+  VERIFIER_BASE_URL: z.string().default(""),
+  WIZARD_HEALTH_URL: z.string().default(""),
+
+  AUTO_SPEND_CAP_USD: numberWithDefault(5),
+  DAILY_VENDOR_CAP_USD: numberWithDefault(25),
+  SPEND_CARD_TIMEOUT_MINUTES: numberWithDefault(24 * 60),
+
+  VERIFY_POLL_SECONDS: numberWithDefault(60),
+  VERIFY_STALL_PERCENT: numberWithDefault(90),
+  VERIFY_STALL_MINUTES: numberWithDefault(12),
+  VERIFY_MIN_SPLIT_ROWS: numberWithDefault(50),
+  VERIFY_DEAD_MINUTES: numberWithDefault(6 * 60),
+
+  STEP_RETRY_SECONDS: numberWithDefault(30),
+  WATCH_CRON: z.string().default("0 */6 * * *"),
+  DRY_RUN: bool(false),
+});
+
+export type Config = z.infer<typeof schema>;
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const parsed = schema.safeParse(env);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+    throw new Error(`Invalid configuration:\n  ${issues.join("\n  ")}`);
+  }
+  return parsed.data;
+}
+
+/**
+ * Boot-time refusal. The service will not start against a Supabase project
+ * other than campaignintelligence; three projects exist and mixing them has
+ * cost real hours (brief section 8).
+ */
+export function assertSupabaseProject(cfg: Config): void {
+  if (cfg.SUPABASE_PROJECT_REF !== ALLOWED_SUPABASE_PROJECT_REF) {
+    throw new Error(
+      `SUPABASE_PROJECT_REF is ${cfg.SUPABASE_PROJECT_REF}; this service only writes to ` +
+        `${ALLOWED_SUPABASE_PROJECT_REF} (campaignintelligence). Refusing to boot.`,
+    );
+  }
+  if (cfg.SUPABASE_URL && !cfg.SUPABASE_URL.includes(ALLOWED_SUPABASE_PROJECT_REF)) {
+    throw new Error(
+      `SUPABASE_URL does not point at ${ALLOWED_SUPABASE_PROJECT_REF}. Refusing to boot.`,
+    );
+  }
+}
+
+/** Which integrations are configured. Missing ones are reported on /health, never guessed. */
+export function configReadiness(cfg: Config): Record<string, boolean> {
+  return {
+    supabase: Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_SERVICE_ROLE_KEY),
+    database_url: Boolean(cfg.DATABASE_URL),
+    slack: Boolean(cfg.SLACK_BOT_TOKEN && cfg.SLACK_SIGNING_SECRET),
+    slack_roles: cfg.SLACK_OWNER_USER_IDS.length > 0,
+    mcp: Boolean(cfg.MCP_OWNER_TOKEN && cfg.MCP_OPERATOR_TOKEN),
+    leadpipe: Boolean(cfg.LEADPIPE_MCP_URL),
+    verifier: Boolean(cfg.VERIFIER_BASE_URL),
+    wizard: Boolean(cfg.WIZARD_HEALTH_URL),
+  };
+}
