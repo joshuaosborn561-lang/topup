@@ -20,9 +20,17 @@ Read `CANON.md` first. It is one page and it is the current truth.
 - Slack: one thread per run, cards with buttons, slash commands, owner and
   operator roles.
 - `/mcp` with owner and operator tokens.
+- The **lane ledger**: state per lane, event log, queue registry. `/where
+  <client> [lane]`, the `lane_state` MCP tool, and a daily ops digest that
+  only names lanes whose state changed or whose campaign health crossed a
+  line. Claude sessions hand queue tables to the service with
+  `register_queue_table` and leave notes with `lane_note`.
 - The **verify** stage (LeadPipe export → Email Verifier Progression → stall
   runbook → per-row verdicts) and the **normalize** stage.
 - A run stops after normalize. Routing, staging and import are later PRs.
+- `docs/servers.md` — every vendor server documented from its code, with the
+  breakages confirmed and listed as prerequisite PRs. Read before building on
+  a server.
 
 ## Running it
 
@@ -43,10 +51,11 @@ src/
   index.ts            boot: config check, /health first, then everything else
   config.ts           env → typed config; refuses the wrong Supabase project
   orchestrator.ts     opens runs, drives stages, reacts to card taps
-  commands.ts         /topup /holds /runs /working /suppress
+  commands.ts         /where /topup /holds /runs /working /suppress
   health.ts           the first run report
   db/                 pg pool with app.run_id transactions; typed repo over topup.*
   domain/             lead_status machine, run vocabulary, the "working" rule
+  ledger/             lane state, event log, queue registry, campaign health, /where text, digest
   spend/              price table, the five rails, balance readers
   recipes/            recipe schema (zod) and loader
   slack/              signature check, roles, cards, poster, console, router
@@ -57,6 +66,7 @@ src/
   guards/             tests that name a decision and who to ask
 recipes/<client>/<lane>.json
 supabase/migrations/*.sql
+docs/servers.md       the vendor servers, from their code
 ```
 
 ## Slack

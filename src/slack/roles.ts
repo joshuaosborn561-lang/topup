@@ -46,9 +46,34 @@ export const CHOICE_ROLE: Readonly<Record<string, Role>> = {
   decline_segment: "owner",
   // pending_campaign (Phase 2)
   clone_campaign: "owner",
+  // yield card and pilot gate (Phase 3, D21): nothing scales without Josh's second tap
+  approve_yield: "owner",
+  decline_yield: "owner",
+  scale_pilot: "owner",
+  stop_pilot: "owner",
   // resume a parked run
   resume_run: "operator",
 };
+
+/**
+ * Choices that spend, widen, scale or flip (D18: judgement). Each must be
+ * owner-only; the guard in src/guards/judgement.test.ts holds this list
+ * against CHOICE_ROLE.
+ */
+export const JUDGEMENT_CHOICES: readonly string[] = [
+  "approve_spend",
+  "decline_spend",
+  "topup_anyway",
+  "leave_it",
+  "split",
+  "approve_segment",
+  "decline_segment",
+  "clone_campaign",
+  "approve_yield",
+  "decline_yield",
+  "scale_pilot",
+  "stop_pilot",
+];
 
 /** Slash commands and the least role that may run them. */
 export const COMMAND_ROLE: Readonly<Record<string, Role>> = {

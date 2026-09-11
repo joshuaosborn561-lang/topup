@@ -36,7 +36,13 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D14 | Live |
 | D15 | Live |
 | D16 | Live |
-| D17 | Live — Phase 1 scope; retire when route/stage/import land |
+| D17 | Superseded by D23 (phase order); the verify → normalize scope itself is still live |
+| D18 | Live |
+| D19 | Live |
+| D20 | Live |
+| D21 | Live |
+| D22 | Live |
+| D23 | Live |
 
 ---
 
@@ -235,3 +241,154 @@ their own PRs. `/suppress` explains this instead of pretending.
 **Why.** Design section 7: "health endpoint first", small plain-English PRs.
 
 **Guard.** `src/guards/invariants.test.ts` (`PHASE1_STEPS`).
+
+## D18 — Any campaign, any source; the line is judgement
+
+**Decision.** The service tops up any campaign from any source, not only
+getleads lanes: a contact database query, a Google Maps scrape, a permit
+feed, a parcel query, a public record, a signal feed, or a queue table a
+Claude session filled by hand. The rule that decides who does a step:
+
+> If a task does not require judgement, the service does it. If it requires
+> judgement, the service brings it to me in Slack with everything I need to
+> decide.
+
+Three columns, stated once (addendum section 3):
+
+- **Mechanical — the service does it and reports.** Runway and health watch;
+  counting a segment; approved pulls; ingest; suppression and dedupe; the
+  cascade steps of an approved segment within budget; verification and the
+  stall runbook; normalization; QA rules; routing; staging; importing with
+  the count assert; merge field checks; receipts; the ledger; the digest;
+  retries that cannot bill; resumes; splitting under the spend rules;
+  registering a cloned campaign; keeping the missing-piece groups current.
+- **Judgement — Josh, on a card in Slack.** Which segment, and whether to
+  widen; whether a low campaign is worth topping up; spend above the cap;
+  whether a pilot's yield justifies scaling; copy for a new cell; ICP
+  changes; a client's expanded title list; flipping a campaign active.
+- **Routine — Cayden.** QA holds; uploading customer lists; resuming parked
+  runs; acknowledging receipts.
+
+A step that does not clearly sit in one column goes in the judgement column
+and gets asked. **Nobody automates a decision to save a card.**
+
+**Why.** Addendum section 1 and 3, verbatim. The first version of the brief
+read as "getleads lanes"; the addendum says the service is for every lane,
+and that the only thing that stays with Josh and Claude is working out which
+source holds a never-sourced buyer, once per lane, whose output is a recipe.
+
+**Tradeoff.** More cards early. Accepted: a wrong automated decision costs
+more than a tap.
+
+**Guard.** `src/guards/judgement.test.ts` — every card choice that spends,
+widens, scales or flips is owner-only; no code path resolves a card without
+a human or an MCP token.
+
+## D19 — The service is the memory
+
+**Decision.** One state record per lane in `topup.lane_state`, an append-only
+`topup.lane_events` log, and a `topup.queue_registry` of every table a lane
+draws from (including hand-filled ones registered from a Claude session over
+MCP). The state answers, for a lane: current stage and since when; what is
+queued where (counts by `lead_status`, every registered queue with what its
+rows are still missing and the next method that fills it); what it is
+blocked on and what that person or thing needs to do; spend by vendor this
+run and this month; a one-line event log with what the service intends next;
+runway and health for every campaign the lane feeds. It is readable three
+ways: `/where <client> [lane]` in Slack, the `lane_state` MCP tool, and a
+daily digest in the ops channel that only names lanes whose state changed or
+whose health crossed a line since the last digest.
+
+**Why.** Addendum section 2: "A chat that ends is not a state that ends."
+Work done in a Claude session was being lost with the session.
+
+**Tradeoff.** `register_queue_table` accepts a `where` predicate written by
+the owner. It runs in a read-only transaction with a statement timeout and
+the table name is validated as `schema.table`; the predicate is not parsed.
+Accepted because only the owner token can register, and the result is a
+count.
+
+**Guard.** `src/ledger/ledger.test.ts` (state composes; digest silent on no
+change; nothing rendered looks like an email; registry refuses anything that
+is not `schema.table` or has a statement separator).
+
+## D20 — Campaign health lines
+
+**Decision.** From the Smartlead mirror (`public.campaigns / leads / sends` on
+campaignintelligence), never from Smartlead directly. A lead is *untouched*
+when it has no sent row. Over a seven-day window a campaign is:
+**silent** — ACTIVE, untouched leads, zero sends; **empty** — ACTIVE with no
+untouched leads; **low** — days of runway (untouched ÷ average daily sends)
+under the recipe's `runway.floor_days` (default 7); **bouncing** — bounce
+share over 5% of sends. Any flag change is a "crossed a line" for the digest.
+
+**Why.** Addendum section 2 names the case: a live campaign with thousands of
+leads and zero sends for a week must be surfaced automatically.
+
+**Tradeoff.** The mirror syncs hourly; health is at most an hour stale and
+says so (`synced_at`). Accepted.
+
+**Guard.** `src/ledger/ledger.test.ts` (`assessCampaign`).
+
+## D21 — Physical lanes get a yield card, then a pilot of about 100, then a second card
+
+**Decision.** For any lane whose source is not already a person with an
+email (Maps, permits, parcels, public records, signal feeds), the service
+runs the cascade — company → domain, domain → named person with the wanted
+title, person → email (name-to-email first, then the email finder
+waterfall), verification, then the shared tail — and before spending it
+posts a **segment card with expected yield and expected cost per usable
+lead**, computed from per-lane, per-step hit rates the service keeps
+(seeded from the measured defaults in the skills the first time). On
+approval it runs a **pilot of about 100** through the whole cascade and posts
+a second card: "pilot returned N usable at $X each — scale to the remaining
+M, or stop." **Nothing scales without that second tap.** The skills
+`leadgen-mcp-routing`, `tam-sizing`, `domain-waterfall`, `people-waterfall`,
+`unmask-shell-llc`, `hard-to-find-dm-discovery`, `serp-dm-discovery` and
+`unresolved-name-routing` are the specification for the cascade: every
+measured hit rate and trap in them becomes a guard or a default here.
+
+**Why.** Addendum section 1. Scaling a cold cascade on an estimate is how a
+few hundred dollars disappears into unresolved rows.
+
+**Status.** Decided now, built in Phase 3 (D23). Peterson roof owners first:
+a working campaign with nothing left to send and about four thousand
+verified contacts never staged.
+
+**Guard.** None yet; lands with the cascade PR and must cite this entry.
+
+## D22 — `docs/servers.md` before pipeline code on a server
+
+**Decision.** Before the service calls a vendor server, that server is
+documented in `docs/servers.md` from its code (not its README): tool names
+and real arguments, which calls are synchronous and which return a job id,
+how to poll and what finished looks like, what a failure looks like versus a
+stall, the table-source and writeback modes that keep rows out of the
+caller, and the unit prices per tier. Where the brief says a server is
+broken (no cancel, zero-dollar accounting, status errors on completed jobs,
+row-count truncation) the breakage is confirmed in code and listed as a
+prerequisite PR on that server. Josh reviews the document before the service
+builds on it. Third-party MCPs (getleads, AI Ark, LeadMagic, Prospeo,
+FullEnrich, DiscoLike, Apify) document themselves.
+
+**Why.** Addendum section 4, verbatim: "Fix that as your first task, before
+any pipeline code." Every server's tools have been rediscovered by trial in
+chat, more than once.
+
+**Guard.** `src/guards/servers_doc.test.ts` — every vendor client under
+`src/clients/` names a server that has a section in `docs/servers.md`.
+
+## D23 — Build order: ledger first, then getleads lanes, then the physical cascade, then vendor fixes
+
+**Decision.** Phase one adds the ledger and `/where` before anything else
+(this PR). Phase two runs the getleads lanes end to end (pull, suppress,
+find_emails, qa, route, stage, import, post_import, runway watch). Phase three
+is the physical lane cascade with the yield card and the pilot gate (D21),
+Peterson first. Phase four is the vendor server fixes and attribution. The
+verify → normalize scope of D17 stands; only its "what comes next" is
+replaced.
+
+**Why.** Addendum section 5.
+
+**Guard.** `src/guards/invariants.test.ts` (`PHASE1_STEPS` still ends at
+normalize; a new stage is a new decision).
