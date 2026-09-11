@@ -81,8 +81,21 @@ export function rejectRateGate(c: VerifyCounts, norm: number | null): GateUnmet 
  */
 export const NEVER_HOLD_FIELDS: readonly string[] = ["local_sports_team"];
 
-/** Columns the hold may test. Anything else in required_fields is a recipe bug, not SQL. */
+/** Merge fields the hold may test. Anything else in required_fields is a recipe bug, not SQL. */
 export const HOLDABLE_FIELDS: readonly string[] = ["first_name_n", "company_n", "location", "job_title", "company_size", "vertical", "first_name", "last_name", "email", "company_name"];
+
+/**
+ * Merge field → column on lp.<tag>_ingested_leads. The copy and Smartlead say
+ * `job_title`; LeadPipe's table says `title` (read from the live schema of
+ * lp.parlay_ingested_leads, 2026-09-11). Every other field is its own column.
+ */
+export const MERGE_FIELD_COLUMN: Readonly<Record<string, string>> = { job_title: "title" };
+
+export function mergeFieldColumn(field: string): string {
+  const col = MERGE_FIELD_COLUMN[field] ?? field;
+  if (!/^[a-z_][a-z0-9_]*$/.test(col)) throw new Error(`merge field ${field} maps to an unsafe column name`);
+  return col;
+}
 
 export function mergeFieldsToHold(required: readonly string[]): string[] {
   const out: string[] = [];

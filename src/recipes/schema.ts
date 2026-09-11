@@ -130,6 +130,25 @@ const routingRule = z
   })
   .strict();
 
+/**
+ * Step 2 (skill lead-list-build): "projected net new is above the useful
+ * floor (default 200)". The default is the skill's number; a recipe may set
+ * its own. The partition tolerance is how far count(bands) + count(other
+ * bands) may sit from count(no band filter) before the filters are judged
+ * not to bind (tam-sizing: "prove the filters bind"); 1% is this service's
+ * number, named in D26.
+ */
+const size = z
+  .object({
+    useful_floor: z.number().int().min(1).default(200),
+    partition_tolerance: z.number().min(0).max(0.2).default(0.01),
+  })
+  .strict()
+  .default({ useful_floor: 200, partition_tolerance: 0.01 });
+
+/** Step 12 settings the pre launch check reads from get_campaign. Findings only; the merge tag check is the gate. */
+export const CAMPAIGN_SETTING_CHECKS = ["send_as_plain_text", "tracking_off", "stop_on_reply", "bounce_autopause_off", "schedule_mon_thu"] as const;
+
 export const recipeSchema = z
   .object({
     recipe_id: z.string().regex(/^[a-z0-9_]+\.[a-z0-9_]+\.v\d+$/, "client.lane.vN"),
@@ -143,7 +162,10 @@ export const recipeSchema = z
     email_finding: emailFinding,
     verify,
     normalize,
+    size,
     qa: z.array(z.string()).default([]),
+    /** Step 8 reroute rules name a target (`eos`); this maps that target to a campaign of this client. No entry = the hold card offers no reroute. */
+    reroute: z.record(z.number().int().positive()).default({}),
     segments: z.record(z.array(z.string())).default({}),
     routing: z.array(routingRule).default([]),
     required_fields: z.array(z.string()).default([]),
@@ -224,6 +246,7 @@ export function recipeAuthorises(recipe: Recipe, step: string, vendor?: string):
     case "suppress":
     case "ingest":
       return true;
+    case "size":
     case "pull":
       return recipe.source.kind === "getleads" ? vendor === undefined || vendor === "getleads" : true;
     case "find_emails": {

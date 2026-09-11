@@ -199,6 +199,15 @@ export class Repo {
     );
   }
 
+  /** Add to a step's counts while it is still running (a marker such as "summary posted", or partial progress). */
+  async mergeStepCounts(runId: string, step: Step, counts: Record<string, number>): Promise<void> {
+    await this.db.query(
+      `insert into topup.run_steps (run_id, step, status, counts) values ($1, $2, 'running', $3::jsonb)
+       on conflict (run_id, step) do update set counts = topup.run_steps.counts || $3::jsonb`,
+      [runId, step, JSON.stringify(counts)],
+    );
+  }
+
   async failStep(runId: string, step: Step, error: string, parked: boolean): Promise<void> {
     await this.db.query(
       `update topup.run_steps set status = $4, finished_at = now(), last_error = $3
