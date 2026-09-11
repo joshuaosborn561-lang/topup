@@ -60,8 +60,11 @@ function state(over: Partial<LaneState> = {}): LaneState {
   return {
     client_tag: "peterson",
     lane: "roof_owners",
-    stage: "idle",
-    stage_since: "2026-09-10T00:00:00Z",
+    step: null,
+    step_label: "no step (idle)",
+    step_since: "2026-09-10T00:00:00Z",
+    step_owner: null,
+    gate_unmet: null,
     run: null,
     next_intent: "Nothing queued.",
     blocked: [],
@@ -76,9 +79,12 @@ function state(over: Partial<LaneState> = {}): LaneState {
 }
 
 describe("/where rendering", () => {
-  it("says stage, since when, blocked on whom, queues, spend, campaigns and recent events", () => {
+  it("says the step, since when, the unmet gate, who it waits on, queues, spend, campaigns and recent events", () => {
     const text = renderWhere(state({ blocked: [{ on: "owner", what: "approve or decline $12.00 worst case (millionverifier, 4000 rows)", since: "2026-09-11T00:00:00Z", card_id: "abcdef12-0000" }] }), Date.parse("2026-09-11T02:00:00Z"));
     assert.match(text, /\*peterson \/ roof_owners\* — idle for 26h/);
+    const running = renderWhere(state({ step: 6, step_label: "Step 6", step_owner: "code", gate_unmet: "sendable rule and stall runbook: 0 sendable of 400 verified", run: { run_id: "12345678-abcd", status: "awaiting_josh", current_step: "verify", opened_at: "2026-09-11T00:00:00Z" } }), Date.parse("2026-09-11T02:00:00Z"));
+    assert.match(running, /— Step 6 · owner code \(run `12345678` awaiting_josh\)/);
+    assert.match(running, /Gate unmet: sendable rule and stall runbook: 0 sendable of 400 verified/);
     assert.match(text, /Josh — approve or decline \$12\.00/);
     assert.match(text, /needs_verify 4000/);
     assert.match(text, /have_domain_no_person · public\.peterson_roof_people_queue · missing person → people_waterfall · 200 rows/);
@@ -112,12 +118,14 @@ describe("daily digest", () => {
     assert.match(d.text!, /\*silent\*/);
   });
 
-  it("timestamps and spend do not move the fingerprint; stage and blockers do", () => {
+  it("timestamps and spend do not move the fingerprint; step, gate and blockers do", () => {
     const a = state();
-    const b = state({ stage_since: "2026-09-11T00:00:00Z", spend: { this_run_cents_by_vendor: { no2bounce: 500 }, this_month_cents_by_vendor: {} } });
+    const b = state({ step_since: "2026-09-11T00:00:00Z", spend: { this_run_cents_by_vendor: { no2bounce: 500 }, this_month_cents_by_vendor: {} } });
     assert.equal(fingerprint(a), fingerprint(b));
-    const c = state({ stage: "verify" });
+    const c = state({ step: 6, step_label: "Step 6" });
     assert.notEqual(fingerprint(a), fingerprint(c));
+    const g = state({ gate_unmet: "every merge field populated: 3 of 400 normalized rows have an empty merge field" });
+    assert.notEqual(fingerprint(a), fingerprint(g));
     const blocked = state({ blocked: [{ on: "vendor", what: "MillionVerifier balance is zero", since: "2026-09-11T00:00:00Z" }] });
     assert.notEqual(fingerprint(a), fingerprint(blocked));
   });

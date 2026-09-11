@@ -10,6 +10,7 @@ import { parkedCard, spendApprovalCard, stallCard } from "../../slack/cards.js";
 import type { SlackConsole } from "../../slack/console.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
+import { sendableGate, type GateUnmet } from "../../spine/gate.js";
 import { decide, observe, splitNames, type BatchState, type RunbookConfig } from "./runbook.js";
 import { verdictFromCsvRow, type Verdict } from "./sendable.js";
 
@@ -38,7 +39,8 @@ export type VerifyOutcome =
   | { kind: "nothing" }
   | { kind: "parked"; reason: string }
   | { kind: "declined" }
-  | { kind: "retry"; error: string };
+  | { kind: "retry"; error: string }
+  | GateUnmet;
 
 interface BatchRow {
   run_id: string;
@@ -584,12 +586,9 @@ export class VerifyStage {
     const counts = { verified: sendable, verified_seg: seg, verified_other: sendable - seg, rejected, stalled_unverified: stalled };
     await this.d.repo.finishStep(run.run_id, "verify", { useful_output: sendable, counts });
     await this.d.repo.mergeRunCounts(run.run_id, counts);
-    await this.d.console.postInThread(
-      run,
-      sendable === 0
-        ? `:x: Verify finished with *zero* sendable addresses. This is a failed verification, not "${rows.reduce((a, r) => a + Number(r.n), 0)} rows processed".`
-        : `:white_check_mark: Verify done: *${sendable}* sendable (SEG ${seg} / OTHER ${sendable - seg}), ${rejected} rejected, ${stalled} left unverified.`,
-    );
+    const gate = sendableGate({ sendable, rejected, stalled });
+    if (gate) return gate;
+    await this.d.console.postInThread(run, `:white_check_mark: Verify done: *${sendable}* sendable (SEG ${seg} / OTHER ${sendable - seg}), ${rejected} rejected, ${stalled} left unverified.`);
     return { kind: "done", sendable, seg, other: sendable - seg, rejected, stalled };
   }
 

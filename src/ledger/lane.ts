@@ -2,24 +2,22 @@ import type { Db, Queryable } from "../db/pool.js";
 import { ingestedTable } from "../db/pool.js";
 import type { CardRow } from "../db/repo.js";
 import type { Role, RunRow, Step } from "../domain/runs.js";
-import { STEPS } from "../domain/runs.js";
 import { logger } from "../lib/log.js";
 import { parseRecipe } from "../recipes/schema.js";
+import { spineStep, stepForStage, stepLabel } from "../spine/steps.js";
 import { assessCampaign, campaignIdsForClient, campaignSnapshots, type CampaignHealth } from "./health.js";
 
 const log = logger("ledger");
-
-/** Where a lane can be. `idle` between runs; a step name while one is running. */
-export const LANE_STAGES = ["idle", ...STEPS, "parked", "waiting"] as const;
-export type LaneStage = (typeof LANE_STAGES)[number];
 
 export type BlockedOn = "vendor" | "server" | "client" | "owner" | "operator";
 
 export interface LaneStateRow {
   client_tag: string;
   lane: string;
-  stage: LaneStage;
-  stage_since: string;
+  /** Spine step 1..13; null between runs. */
+  step: number | null;
+  step_since: string;
+  gate_unmet: string | null;
   run_id: string | null;
   next_intent: string | null;
   blocked_on: BlockedOn | null;
@@ -35,6 +33,7 @@ export interface LaneEventRow {
   client_tag: string;
   lane: string;
   run_id: string | null;
+  step: number | null;
   event: string;
   line: string;
   next_intent: string | null;
@@ -70,8 +69,14 @@ export interface Blocker {
 export interface LaneState {
   client_tag: string;
   lane: string;
-  stage: LaneStage;
-  stage_since: string;
+  /** Spine step (D24), null when idle. `step_label` is "Step N" or "Step N — title" once the skill supplies titles. */
+  step: number | null;
+  step_label: string;
+  step_since: string;
+  /** Who owns the current step, from the spine. */
+  step_owner: "code" | "josh" | "cayden" | null;
+  /** The gate that halted the run at this step, or null while it is moving. */
+  gate_unmet: string | null;
   run: { run_id: string; status: string; current_step: string | null; opened_at: string } | null;
   next_intent: string | null;
   blocked: Blocker[];
@@ -120,11 +125,13 @@ export class LaneLedger {
     next_intent?: string | null;
     actor?: string | null;
     detail?: Record<string, unknown>;
+    /** The spine step the event happened on; defaults to the lane's current step. */
+    step?: number | null;
   }): Promise<void> {
     await this.db.query(
-      `insert into topup.lane_events (client_tag, lane, run_id, event, line, next_intent, actor, detail)
-       values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [e.client_tag, e.lane, e.run_id ?? null, e.event, e.line.slice(0, 500), e.next_intent ?? null, e.actor ?? null, JSON.stringify(e.detail ?? {})],
+      `insert into topup.lane_events (client_tag, lane, run_id, step, event, line, next_intent, actor, detail)
+       values ($1,$2,$3, coalesce($4::smallint, (select step from topup.lane_state where client_tag = $1 and lane = $2)), $5,$6,$7,$8,$9)`,
+      [e.client_tag, e.lane, e.run_id ?? null, e.step ?? null, e.event, e.line.slice(0, 500), e.next_intent ?? null, e.actor ?? null, JSON.stringify(e.detail ?? {})],
     );
     await this.db.query(
       `insert into topup.lane_state (client_tag, lane, next_intent) values ($1,$2,$3)
@@ -135,23 +142,67 @@ export class LaneLedger {
     log.info("lane event", { client_tag: e.client_tag, lane: e.lane, event: e.event, run_id: e.run_id ?? undefined });
   }
 
-  /** Move a lane to a stage. `stage_since` only moves when the stage actually changes. */
-  async setStage(clientTag: string, lane: string, stage: LaneStage, opts: { run_id?: string | null; next_intent?: string | null; actor?: string | null; line?: string } = {}): Promise<void> {
+  /**
+   * Move a lane to a spine step (null = idle, run over). `step_since` only
+   * moves when the step actually changes; arriving at a step clears any gate
+   * recorded as unmet there.
+   */
+  async setStep(clientTag: string, lane: string, step: number | null, opts: { run_id?: string | null; next_intent?: string | null; actor?: string | null; line?: string } = {}): Promise<void> {
+    if (step !== null) spineStep(step);
     const { rows } = await this.db.query<{ changed: boolean }>(
-      `insert into topup.lane_state (client_tag, lane, stage, stage_since, run_id, next_intent)
-       values ($1,$2,$3,now(),$4,$5)
+      `insert into topup.lane_state (client_tag, lane, step, step_since, run_id, next_intent)
+       values ($1,$2,$3::smallint,now(),$4,$5)
        on conflict (client_tag, lane) do update set
-         stage_since = case when topup.lane_state.stage = excluded.stage then topup.lane_state.stage_since else now() end,
-         stage = excluded.stage,
-         run_id = case when $3 = 'idle' then null else coalesce(excluded.run_id, topup.lane_state.run_id) end,
+         step_since = case when topup.lane_state.step is not distinct from excluded.step then topup.lane_state.step_since else now() end,
+         step = excluded.step,
+         gate_unmet = case when topup.lane_state.step is not distinct from excluded.step then topup.lane_state.gate_unmet else null end,
+         run_id = case when excluded.step is null then null else coalesce(excluded.run_id, topup.lane_state.run_id) end,
          next_intent = coalesce(excluded.next_intent, topup.lane_state.next_intent),
          updated_at = now()
-       returning (xmax = 0 or stage_since = now()) as changed`,
-      [clientTag, lane, stage, opts.run_id ?? null, opts.next_intent ?? null],
+       returning (xmax = 0 or step_since = now()) as changed`,
+      [clientTag, lane, step, opts.run_id ?? null, opts.next_intent ?? null],
     );
     if (rows[0]?.changed) {
-      await this.event({ client_tag: clientTag, lane, run_id: opts.run_id, event: "stage", line: opts.line ?? `Now ${stage}.`, next_intent: opts.next_intent, actor: opts.actor ?? "service" });
+      await this.event({ client_tag: clientTag, lane, run_id: opts.run_id, step, event: "step", line: opts.line ?? `Now at ${stepLabel(step)}.`, next_intent: opts.next_intent, actor: opts.actor ?? "service" });
     }
+  }
+
+  /** Move a lane to the spine step that owns an internal pipeline stage. Unplaced stages leave the step as it is. */
+  async setStepForStage(clientTag: string, lane: string, stage: Step, opts: { run_id?: string | null; next_intent?: string | null; actor?: string | null; line?: string } = {}): Promise<void> {
+    const s = stepForStage(stage);
+    if (!s) {
+      await this.event({ client_tag: clientTag, lane, run_id: opts.run_id, event: "step", line: `Running ${stage}, which the spine does not place on a step yet.`, next_intent: opts.next_intent, actor: opts.actor ?? "service" });
+      return;
+    }
+    await this.setStep(clientTag, lane, s.n, opts);
+  }
+
+  /**
+   * A gate failed at the lane's current step: the run halted, this is why, and
+   * this is who has to act. Recorded once per (step, gate text); the card or
+   * thread line is posted by the caller, also once.
+   */
+  async gateUnmet(clientTag: string, lane: string, step: number, why: string, opts: { run_id?: string | null; waiting_on?: BlockedOn | null; next_intent?: string | null } = {}): Promise<boolean> {
+    const s = spineStep(step);
+    const text = `${s.gate ?? `step ${step} gate`}: ${why}`.slice(0, 500);
+    const { rowCount } = await this.db.query(
+      `update topup.lane_state set gate_unmet = $3, updated_at = now()
+       where client_tag = $1 and lane = $2 and gate_unmet is distinct from $3`,
+      [clientTag, lane, text],
+    );
+    if (!rowCount) return false;
+    await this.event({
+      client_tag: clientTag,
+      lane,
+      run_id: opts.run_id,
+      step,
+      event: "gate_unmet",
+      line: `${stepLabel(step)} halted — ${text}`,
+      next_intent: opts.next_intent ?? (opts.waiting_on ? `Waiting on ${audienceName(opts.waiting_on)}.` : null),
+      actor: "service",
+      detail: { gate: s.gate, waiting_on: opts.waiting_on ?? null },
+    });
+    return true;
   }
 
   /** Something outside a card is in the way: a vendor balance, a server down, a client list not arrived. */
@@ -307,11 +358,15 @@ export class LaneLedger {
     }));
     if (row?.blocked_on) blocked.push({ on: row.blocked_on, what: row.blocked_detail ?? "", since: iso(row.blocked_since ?? row.updated_at) });
 
+    const step = row?.step ?? null;
     return {
       client_tag: clientTag,
       lane,
-      stage: row?.stage ?? "idle",
-      stage_since: iso(row?.stage_since ?? row?.updated_at ?? new Date(0)),
+      step,
+      step_label: stepLabel(step),
+      step_since: iso(row?.step_since ?? row?.updated_at ?? new Date(0)),
+      step_owner: step === null ? null : spineStep(step).owner,
+      gate_unmet: row?.gate_unmet ?? null,
       run: run ? { run_id: run.run_id, status: run.status, current_step: run.current_step, opened_at: iso(run.opened_at) } : null,
       next_intent: row?.next_intent ?? (run ? null : "Nothing queued; the runway watch decides when a run opens."),
       blocked,
@@ -416,6 +471,8 @@ function cardLine(c: CardRow): string {
       return `verifier stalled on batch ${p.batch}: resume, split or abort`;
     case "parked":
       return `run parked at ${p.step}: resume or abort`;
+    case "gate":
+      return `${stepLabel(Number(p.spine_step))} gate unmet (${p.gate}): resume or abort`;
     case "qa_hold":
       return `QA hold ${p.rule_id} on ${p.count} leads: accept, purge or reroute`;
     case "not_working":
@@ -426,8 +483,10 @@ function cardLine(c: CardRow): string {
 }
 
 /** Who a card is waiting on, in the words the addendum uses. */
-export function audienceName(role: Role): string {
-  return role === "owner" ? "Josh" : "Cayden";
+export function audienceName(who: Role | BlockedOn): string {
+  if (who === "owner") return "Josh";
+  if (who === "operator") return "Cayden";
+  return who;
 }
 
 export type { Step };

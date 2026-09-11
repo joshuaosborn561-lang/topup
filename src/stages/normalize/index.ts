@@ -4,6 +4,7 @@ import { MAX_STEP_ATTEMPTS, type RunRow } from "../../domain/runs.js";
 import { logger } from "../../lib/log.js";
 import type { Recipe } from "../../recipes/schema.js";
 import type { SlackConsole } from "../../slack/console.js";
+import { mergeFieldsGate, REQUIRED_MERGE_FIELDS, type GateUnmet } from "../../spine/gate.js";
 import { normalizeCompany, type CompanyRefs } from "./company.js";
 import { conversationalLocation, metroKey, type MetroRefs } from "./location.js";
 import { normalizeFirstName } from "./names.js";
@@ -68,7 +69,7 @@ export async function loadRefs(repo: Repo): Promise<NormalizeRefs> {
   };
 }
 
-export type NormalizeOutcome = { kind: "done"; normalized: number; flagged: number } | { kind: "retry"; error: string } | { kind: "parked"; reason: string };
+export type NormalizeOutcome = { kind: "done"; normalized: number; flagged: number } | { kind: "retry"; error: string } | { kind: "parked"; reason: string } | GateUnmet;
 
 /** Moves `verified` rows of a run to `normalized`, writing the four merge fields plus flags. */
 export class NormalizeStage {
@@ -125,8 +126,11 @@ export class NormalizeStage {
           for (const [k, vs] of fl) for (const v of vs) flagTotals[`${k}.${v}`] = (flagTotals[`${k}.${v}`] ?? 0) + 1;
         }
       }
-      await this.repo.finishStep(run.run_id, "normalize", { useful_output: normalized, counts: { normalized, flagged, ...flagTotals } });
+      const empty = await this.emptyMergeFields(run, table);
+      await this.repo.finishStep(run.run_id, "normalize", { useful_output: normalized - empty.rows_with_empty, counts: { normalized, flagged, rows_with_empty_merge_field: empty.rows_with_empty, ...flagTotals } });
       await this.repo.mergeRunCounts(run.run_id, { normalized });
+      const gate = mergeFieldsGate({ normalized, ...empty });
+      if (gate) return gate;
       await this.console.postInThread(
         run,
         `Normalize done: ${normalized} rows · ${flagged} carry flags` +
@@ -145,5 +149,20 @@ export class NormalizeStage {
       }
       return { kind: "retry", error: message };
     }
+  }
+
+  /** Step 7 gate: rows this run normalized whose required merge fields came out empty. Counts only. */
+  private async emptyMergeFields(run: RunRow, table: string): Promise<{ rows_with_empty: number; empty_by_field: Record<string, number> }> {
+    const cols = REQUIRED_MERGE_FIELDS.map((f) => `count(*) filter (where coalesce(${f}, '') = '')::text as ${f}`).join(", ");
+    const any = REQUIRED_MERGE_FIELDS.map((f) => `coalesce(${f}, '') = ''`).join(" or ");
+    const { rows } = await this.repo.raw().query<Record<string, string>>(
+      `select count(*) filter (where ${any})::text as rows_with_empty, ${cols} from ${table} where run_id = $1 and lead_status = 'normalized'`,
+      [run.run_id],
+    );
+    const r = rows[0] ?? {};
+    return {
+      rows_with_empty: Number(r.rows_with_empty ?? 0),
+      empty_by_field: Object.fromEntries(REQUIRED_MERGE_FIELDS.map((f) => [f, Number(r[f] ?? 0)])),
+    };
   }
 }

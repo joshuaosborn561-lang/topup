@@ -30,21 +30,27 @@ export function campaignLine(c: CampaignHealth): string {
 }
 
 /** The `/where` answer. Plain text, counts and ids only. */
+/** "Step 6 (owner: code)" or "idle"; the step number is the state, per the skill. */
+export function stepLine(s: LaneState): string {
+  if (s.step === null) return "idle";
+  return `${s.step_label}${s.step_owner ? ` · owner ${s.step_owner === "josh" ? "Josh" : s.step_owner === "cayden" ? "Cayden" : "code"}` : ""}`;
+}
+
 export function renderWhere(s: LaneState, now = Date.now()): string {
   const lines: string[] = [];
-  const stage = s.run ? `${s.stage} (run \`${s.run.run_id.slice(0, 8)}\` ${s.run.status})` : s.stage;
-  lines.push(`*${s.client_tag} / ${s.lane}* — ${stage} for ${ago(s.stage_since, now)}`);
+  const run = s.run ? ` (run \`${s.run.run_id.slice(0, 8)}\` ${s.run.status})` : "";
+  lines.push(`*${s.client_tag} / ${s.lane}* — ${stepLine(s)}${run} for ${ago(s.step_since, now)}`);
   if (!s.registered) lines.push("Nothing is registered for this lane: no recipe, no state, no queues.");
+  if (s.gate_unmet) lines.push(`Gate unmet: ${s.gate_unmet}`);
   if (s.next_intent) lines.push(`Next: ${s.next_intent}`);
 
   if (s.blocked.length) {
-    lines.push("Blocked on:");
+    lines.push("Waiting on:");
     for (const b of s.blocked) {
-      const who = b.on === "owner" || b.on === "operator" ? audienceName(b.on) : b.on;
-      lines.push(`• ${who} — ${b.what} (${ago(b.since, now)})${b.card_id ? ` card \`${b.card_id.slice(0, 8)}\`` : ""}`);
+      lines.push(`• ${audienceName(b.on)} — ${b.what} (${ago(b.since, now)})${b.card_id ? ` card \`${b.card_id.slice(0, 8)}\`` : ""}`);
     }
   } else {
-    lines.push("Blocked on: nobody.");
+    lines.push("Waiting on: nobody.");
   }
 
   lines.push(`Ingested queue: ${counts(s.queues.ingested_by_status)}`);
@@ -84,7 +90,7 @@ export function fingerprint(s: LaneState): string {
   const flags = s.campaigns.map((c) => `${c.smartlead_campaign_id}:${[...c.flags].sort().join("+")}`).sort();
   const blocked = s.blocked.map((b) => `${b.on}:${b.card_id ?? b.what}`).sort();
   const queues = Object.entries(s.queues.ingested_by_status).sort().map(([k, v]) => `${k}=${v}`);
-  return JSON.stringify({ stage: s.stage, run: s.run?.status ?? null, blocked, flags, queues });
+  return JSON.stringify({ step: s.step, gate: s.gate_unmet, run: s.run?.status ?? null, blocked, flags, queues });
 }
 
 /** One digest line per lane whose fingerprint moved. Empty when nothing did. */
@@ -99,8 +105,9 @@ export function buildDigest(states: LaneState[], previous: Record<string, string
     if (previous[key] === fp) continue;
     changed += 1;
     const crossed = s.campaigns.filter((c) => c.flags.length);
-    const blockedOn = s.blocked.length ? ` · blocked on ${[...new Set(s.blocked.map((b) => (b.on === "owner" || b.on === "operator" ? audienceName(b.on) : b.on)))].join(", ")}` : "";
-    out.push(`*${key}* — ${s.stage} for ${ago(s.stage_since, now)}${blockedOn}${s.next_intent ? ` · next: ${s.next_intent}` : ""}`);
+    const blockedOn = s.blocked.length ? ` · waiting on ${[...new Set(s.blocked.map((b) => audienceName(b.on)))].join(", ")}` : "";
+    const gate = s.gate_unmet ? ` · gate unmet: ${s.gate_unmet}` : "";
+    out.push(`*${key}* — ${stepLine(s)} for ${ago(s.step_since, now)}${gate}${blockedOn}${s.next_intent ? ` · next: ${s.next_intent}` : ""}`);
     for (const c of crossed) out.push(`    ${campaignLine(c)}`);
   }
   return { text: changed ? `Daily digest — ${changed} lane${changed === 1 ? "" : "s"} changed or crossed a line:\n${out.join("\n")}` : null, fingerprints: fps };

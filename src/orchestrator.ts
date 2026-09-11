@@ -4,7 +4,10 @@ import type { Role, RunRow, Step } from "./domain/runs.js";
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
+import { gateCard } from "./slack/cards.js";
 import type { SlackConsole } from "./slack/console.js";
+import type { GateUnmet } from "./spine/gate.js";
+import { stepForStage, stepLabel } from "./spine/steps.js";
 import type { TapListener } from "./slack/http.js";
 import type { NormalizeStage } from "./stages/normalize/index.js";
 import type { VerifyStage } from "./stages/verify/verify.js";
@@ -102,7 +105,7 @@ export class Orchestrator {
   }
 
   /** Ledger writes never break a run: a failed write is logged and the run goes on. */
-  private async ledger(fn: (l: LaneLedger) => Promise<void>): Promise<void> {
+  private async ledger(fn: (l: LaneLedger) => Promise<unknown>): Promise<void> {
     if (!this.d.ledger) return;
     try {
       await fn(this.d.ledger);
@@ -154,8 +157,12 @@ export class Orchestrator {
         const run = (await this.d.repo.getRun(initial.run_id))!;
         const stepRow = await this.d.repo.getStep(run.run_id, step);
         if (stepRow?.status === "done") break;
-        await this.ledger((l) => l.setStage(run.client_tag, run.lane, step, { run_id: run.run_id, next_intent: after ? `Then ${after}.` : "Then close with a receipt." }));
+        await this.ledger((l) => l.setStepForStage(run.client_tag, run.lane, step, { run_id: run.run_id, next_intent: after ? `Then ${stepLabel(stepForStage(after)?.n ?? null)} (${after}).` : "Then close with a receipt." }));
         const outcome = step === "verify" ? await this.d.verify.run(run, recipe) : await this.d.normalize.run(run, recipe);
+        if (outcome.kind === "gate") {
+          await this.haltAtGate(run, step, outcome);
+          return;
+        }
         if (outcome.kind === "retry") {
           log.warn("step retrying", { run_id: run.run_id, step, error: outcome.error, in_ms: this.retryDelayMs });
           await this.ledger((l) =>
@@ -166,13 +173,14 @@ export class Orchestrator {
         }
         if (outcome.kind === "parked" || outcome.kind === "declined") {
           const fresh = (await this.d.repo.getRun(run.run_id))!;
-          await this.ledger((l) =>
-            l.setStage(run.client_tag, run.lane, outcome.kind === "parked" ? "parked" : "idle", {
-              run_id: outcome.kind === "parked" ? run.run_id : null,
-              line: outcome.kind === "parked" ? `Parked at ${step}: ${(fresh.last_error ?? "").slice(0, 160)}` : `Run ${run.run_id.slice(0, 8)} closed ${fresh.status} at ${step}.`,
-              next_intent: outcome.kind === "parked" ? "Waiting for Resume or Abort on the parked card." : "Nothing queued.",
-            }),
-          );
+          const at = stepLabel(stepForStage(step)?.n ?? null);
+          if (outcome.kind === "parked") {
+            await this.ledger((l) =>
+              l.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "parked", line: `Parked at ${at} (${step}): ${(fresh.last_error ?? "").slice(0, 160)}`, next_intent: "Waiting for Resume or Abort on the parked card.", actor: "service" }),
+            );
+          } else {
+            await this.ledger((l) => l.setStep(run.client_tag, run.lane, null, { run_id: null, line: `Run ${run.run_id.slice(0, 8)} closed ${fresh.status} at ${at} (${step}).`, next_intent: "Nothing queued." }));
+          }
           return;
         }
         break;
@@ -182,14 +190,35 @@ export class Orchestrator {
     const run = (await this.d.repo.getRun(initial.run_id))!;
     await this.d.repo.setRunStatus(run.run_id, "done", "normalize");
     const closed = (await this.d.repo.getRun(run.run_id))!;
-    await this.d.console.receipt(closed, "Phase 1 build: the run stops after normalize. Nothing was routed, staged or imported.");
-    await this.ledger((l) =>
-      l.setStage(closed.client_tag, closed.lane, "idle", {
-        run_id: null,
-        line: `Run ${closed.run_id.slice(0, 8)} done after normalize: ${Object.entries(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts"}.`,
-        next_intent: "Nothing queued; Phase 1 stops after normalize.",
-      }),
-    );
+    await this.closeWithReceipt(closed, "Phase 1 build: the run stops after normalize (Step 7). Nothing was routed, staged or imported.", "Nothing queued; Phase 1 stops after Step 7.");
+  }
+
+  /**
+   * A spine gate failed (D24). The run halts at the step, the ledger records
+   * why, and exactly one card posts: a second halt at the same step with a
+   * card already open posts nothing more.
+   */
+  private async haltAtGate(run: RunRow, stage: Step, g: GateUnmet): Promise<void> {
+    await this.d.repo.setRunStatus(run.run_id, "awaiting_josh", stage, `${g.gate}: ${g.why}`);
+    await this.ledger((l) => l.gateUnmet(run.client_tag, run.lane, g.step, g.why, { run_id: run.run_id, waiting_on: "owner", next_intent: "Waiting for Resume or Abort on the gate card." }));
+    const open = (await this.d.repo.openCardsForRun(run.run_id)).some((c) => c.kind === "gate" && c.payload.step === stage);
+    if (open) return;
+    await this.d.console.ask({
+      run,
+      kind: "gate",
+      audience: "owner",
+      payload: { step: stage, spine_step: g.step, gate: g.gate, reason: g.why, counts: g.counts },
+      text: `${stepLabel(g.step)} gate unmet — ${g.gate}: ${g.why}`,
+      blocks: (cardId) => gateCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane, stepLabel: stepLabel(g.step), gate: g.gate, why: g.why, counts: g.counts }),
+    });
+  }
+
+  /** The receipt is the last gate: nothing is done until it posts, and it is the last event on the lane. */
+  private async closeWithReceipt(closed: RunRow, note: string, nextIntent: string): Promise<void> {
+    await this.d.console.receipt(closed, note);
+    const counts = Object.entries(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts";
+    await this.ledger((l) => l.setStep(closed.client_tag, closed.lane, null, { run_id: null, line: `Run ${closed.run_id.slice(0, 8)} closed ${closed.status}.`, next_intent: nextIntent }));
+    await this.ledger((l) => l.event({ client_tag: closed.client_tag, lane: closed.lane, run_id: closed.run_id, event: "receipt", line: `Receipt: ${closed.status} · ${counts} · ${note}`, next_intent: nextIntent, actor: "service" }));
   }
 
   /** What a resolved card should set in motion. Shared by Slack taps and MCP resolve_hold. */
@@ -216,7 +245,7 @@ export class Orchestrator {
         if (!runId) return;
         const run = await this.d.repo.getRun(runId);
         if (!run) return;
-        const step = (card.kind === "parked" ? (await this.parkedStep(card.card_id)) : null) ?? run.current_step;
+        const step = (card.kind === "parked" || card.kind === "gate" ? (await this.parkedStep(card.card_id)) : null) ?? run.current_step;
         if (step) await this.d.repo.resetStep(runId, step);
         await this.d.repo.setRunStatus(runId, "open", step ?? undefined);
         await this.d.console.postInThread(run, `Resumed by <@${card.by}>: step *${step ?? "?"}* gets one more go.`);
@@ -231,15 +260,14 @@ export class Orchestrator {
         const released = await this.releaseClaimedRows(run);
         await this.d.repo.setRunStatus(runId, "aborted", undefined, `aborted by ${card.by}`);
         const closed = (await this.d.repo.getRun(runId))!;
-        await this.d.console.receipt(closed, `Aborted by <@${card.by}>. ${released} unverified rows returned to needs_verify. Nothing was sent.`);
-        await this.ledger((l) => l.setStage(run.client_tag, run.lane, "idle", { run_id: null, line: `Run ${runId.slice(0, 8)} aborted by ${card.by}; ${released} rows back to needs_verify.`, next_intent: "Nothing queued." }));
+        await this.closeWithReceipt(closed, `Aborted by <@${card.by}>. ${released} unverified rows returned to needs_verify. Nothing was sent.`, "Nothing queued.");
         return;
       }
       case "leave_it": {
         if (!runId) return;
         await this.d.repo.setRunStatus(runId, "not_working", undefined, `left alone by ${card.by}`);
         const run = await this.d.repo.getRun(runId);
-        if (run) await this.ledger((l) => l.setStage(run.client_tag, run.lane, "idle", { run_id: null, line: `Run ${runId.slice(0, 8)} closed not_working: left alone by ${card.by}.`, next_intent: "Nothing queued until the campaign is judged working again." }));
+        if (run) await this.closeWithReceipt(run, `Left alone by <@${card.by}>: the campaign is not working and nothing was topped up.`, "Nothing queued until the campaign is judged working again.");
         return;
       }
       case "decline_spend":
@@ -301,6 +329,8 @@ function summarize(kind: string, payload: Record<string, unknown>): string {
       return `verifier stalled on batch ${payload.batch}: ${payload.remaining} rows unverified`;
     case "parked":
       return `parked at ${payload.step}: ${String(payload.reason ?? "").slice(0, 120)}`;
+    case "gate":
+      return `${stepLabel(Number(payload.spine_step))} gate unmet — ${payload.gate}: ${String(payload.reason ?? "").slice(0, 120)}`;
     case "qa_hold":
       return `QA hold ${payload.rule_id}: ${payload.count} leads`;
     default:

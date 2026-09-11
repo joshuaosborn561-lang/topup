@@ -5,15 +5,18 @@
 -- Idempotent: safe to re-run. Applied by `npm run migrate`.
 
 -- ---------------------------------------------------------------------------
--- Lane state: what stage the lane is in and since when, what the service
--- intends next, and anything it is blocked on that is not already a card.
--- (Cards are their own table; "blocked on Josh/Cayden" is derived from them.)
+-- Lane state: which of the thirteen steps of skills/lead-list-build the lane
+-- is on (D24; null = idle, no run) and since when, the gate that is unmet if
+-- the run halted there, what the service intends next, and anything it is
+-- blocked on that is not already a card. (Cards are their own table;
+-- "blocked on Josh/Cayden" is derived from them.)
 -- ---------------------------------------------------------------------------
 create table if not exists topup.lane_state (
   client_tag         text not null,
   lane               text not null,
-  stage              text not null default 'idle',
-  stage_since        timestamptz not null default now(),
+  step               smallint check (step between 1 and 13),
+  step_since         timestamptz not null default now(),
+  gate_unmet         text,                        -- why the run halted at this step, one line; null when moving
   run_id             uuid references topup.runs(run_id) on delete set null,
   next_intent        text,
   blocked_on         text check (blocked_on in ('vendor','server','client','owner','operator') or blocked_on is null),
@@ -35,7 +38,8 @@ create table if not exists topup.lane_events (
   client_tag   text not null,
   lane         text not null,
   run_id       uuid,
-  event        text not null,                     -- run_opened|stage|card_opened|card_resolved|blocked|unblocked|note|digest|...
+  step         smallint check (step between 1 and 13),   -- the spine step the event happened on, when it happened on one
+  event        text not null,                     -- run_opened|step|gate_unmet|card_opened|card_resolved|blocked|unblocked|receipt|note|digest|...
   line         text not null,                     -- plain English, one line, counts only
   next_intent  text,
   actor        text,                              -- slack user id, mcp:owner, service

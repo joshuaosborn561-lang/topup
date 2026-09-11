@@ -214,6 +214,34 @@ export function parkedCard(c: ParkedCard): Block[] {
   ];
 }
 
+export interface GateCard {
+  cardId: string;
+  runId: string;
+  clientTag: string;
+  lane: string;
+  /** Spine step label, e.g. "Step 7". */
+  stepLabel: string;
+  gate: string;
+  why: string;
+  counts: Record<string, number>;
+}
+
+/** A spine gate failed (D24): the run halted at the step; here is why; Resume re-runs the step once, Abort closes the run. */
+export function gateCard(c: GateCard): Block[] {
+  const counts = Object.entries(c.counts)
+    .map(([k, v]) => `${k} ${v}`)
+    .join(" · ");
+  return [
+    section(`:no_entry: *${c.stepLabel} gate unmet — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\``),
+    section(`*Gate:* ${c.gate}\n*Why:* ${c.why.slice(0, 600)}${counts ? `\n*Counts:* ${counts}` : ""}`),
+    context("The run halted at this step and will not move on its own. Resume re-runs the step and checks the gate again (fix the rows first); Abort closes the run. Silence never means yes."),
+    actions(c.cardId, [
+      { choice: "resume_run", label: "Resume", style: "primary" },
+      { choice: "abort", label: "Abort", style: "danger" },
+    ]),
+  ];
+}
+
 export interface ReceiptInput {
   runId: string;
   clientTag: string;

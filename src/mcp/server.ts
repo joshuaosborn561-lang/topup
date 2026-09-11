@@ -79,7 +79,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "lane_state",
     {
       description:
-        "Where a lane is: stage and since when, what is queued where (counts by status and every registered queue table), who it is blocked on and what they need to do, spend this run and this month, campaign runway and health, and the recent event log. Same answer as /where. Counts only, never rows.",
+        "Where a lane is: which of the thirteen steps of skills/lead-list-build it is on and since when, the gate that is unmet if it halted there, what is queued where (counts by status and every registered queue table), who it is blocked on and what they need to do, spend this run and this month, campaign runway and health, and the recent event log. Same answer as /where. Counts only, never rows.",
       inputSchema: { client_tag: snake, lane: snake.optional(), recount: z.boolean().default(false).describe("Re-run the registered queue counts first (live, slower).") },
     },
     async ({ client_tag, lane, recount }) => {
