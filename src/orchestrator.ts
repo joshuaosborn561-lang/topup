@@ -1,6 +1,6 @@
 import { ingestedTable } from "./db/pool.js";
 import type { Repo } from "./db/repo.js";
-import type { Role, RunRow, Step } from "./domain/runs.js";
+import { orderCounts, type Role, type RunRow, type Step } from "./domain/runs.js";
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
@@ -9,17 +9,48 @@ import type { SlackConsole } from "./slack/console.js";
 import type { GateUnmet } from "./spine/gate.js";
 import { stepForStage, stepLabel } from "./spine/steps.js";
 import type { TapListener } from "./slack/http.js";
-import type { NormalizeStage } from "./stages/normalize/index.js";
-import type { VerifyStage } from "./stages/verify/verify.js";
+import type { StageOutcome } from "./stages/common.js";
+import type { FindEmailsStage } from "./stages/find_emails/index.js";
+import type { ImportStage } from "./stages/import/index.js";
+import type { IngestStage } from "./stages/ingest/index.js";
+import type { NormalizeOutcome, NormalizeStage } from "./stages/normalize/index.js";
+import type { PostImportStage } from "./stages/post_import/index.js";
+import type { PullStage } from "./stages/pull/index.js";
+import type { QaStage } from "./stages/qa/index.js";
+import type { RouteStage } from "./stages/route/index.js";
+import type { SizeStage } from "./stages/size/index.js";
+import type { StageStage } from "./stages/stage/index.js";
+import type { SuppressStage } from "./stages/suppress/index.js";
+import type { VerifyOutcome, VerifyStage } from "./stages/verify/verify.js";
 
 const log = logger("orchestrator");
 
 /**
- * Stages this build can run, in order. Phase 1 stops after normalize: nothing
- * is routed, staged or imported until those stages land in their own PRs.
- * The run closes as `done` with a receipt that says exactly that.
+ * The stages a run walks, in spine order: steps 2 through 12 of
+ * skills/lead-list-build (D26). Step 1 is Josh's (the recipe) and step 13 is
+ * Josh's (the flip); the receipt after post_import is the last gate.
  */
+export const PIPELINE_STEPS: readonly Step[] = ["size", "pull", "find_emails", "ingest", "suppress", "verify", "normalize", "qa", "route", "stage", "import", "post_import"];
+
+/** Kept for the invariants guard; the Phase 1 build ran only these two. */
 export const PHASE1_STEPS: readonly Step[] = ["verify", "normalize"];
+
+export interface Stages {
+  size: SizeStage;
+  pull: PullStage;
+  ingest: IngestStage;
+  suppress: SuppressStage;
+  findEmails: FindEmailsStage;
+  verify: VerifyStage;
+  normalize: NormalizeStage;
+  qa: QaStage;
+  route: RouteStage;
+  stage: StageStage;
+  import: ImportStage;
+  postImport: PostImportStage;
+}
+
+type AnyOutcome = StageOutcome | VerifyOutcome | NormalizeOutcome;
 
 export interface StartInput {
   clientTag: string;
@@ -40,8 +71,7 @@ export class Orchestrator {
     private readonly d: {
       repo: Repo;
       console: SlackConsole;
-      verify: VerifyStage;
-      normalize: NormalizeStage;
+      stages: Stages;
       /** The lane ledger; every stage change and outcome is written to it as it happens. */
       ledger?: LaneLedger;
       /** Pause between a failed step attempt and the next (default 30s). */
@@ -96,7 +126,7 @@ export class Orchestrator {
         run_id: run.run_id,
         event: "run_opened",
         line: `Run ${run.run_id.slice(0, 8)} opened (${input.trigger}).`,
-        next_intent: `Run ${PHASE1_STEPS.join(", then ")}.`,
+        next_intent: `Run ${PIPELINE_STEPS.join(", ")}; then the receipt.`,
         actor: input.by,
       }),
     );
@@ -151,16 +181,22 @@ export class Orchestrator {
     if (!rec) throw new Error(`recipe ${initial.recipe_id} is not in topup.lane_recipes`);
     const recipe = parseRecipe(rec.body);
 
-    for (const [i, step] of PHASE1_STEPS.entries()) {
-      const after = PHASE1_STEPS[i + 1];
+    for (const [i, step] of PIPELINE_STEPS.entries()) {
+      const after = PIPELINE_STEPS[i + 1];
       for (;;) {
         const run = (await this.d.repo.getRun(initial.run_id))!;
         const stepRow = await this.d.repo.getStep(run.run_id, step);
         if (stepRow?.status === "done") break;
         await this.ledger((l) => l.setStepForStage(run.client_tag, run.lane, step, { run_id: run.run_id, next_intent: after ? `Then ${stepLabel(stepForStage(after)?.n ?? null)} (${after}).` : "Then close with a receipt." }));
-        const outcome = step === "verify" ? await this.d.verify.run(run, recipe) : await this.d.normalize.run(run, recipe);
+        const outcome = await this.runStage(step, run, recipe);
         if (outcome.kind === "gate") {
           await this.haltAtGate(run, step, outcome);
+          return;
+        }
+        if (outcome.kind === "waiting") {
+          await this.ledger((l) =>
+            l.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "waiting", line: `${stepLabel(stepForStage(step)?.n ?? null)} (${step}) waits on ${outcome.on === "owner" ? "Josh" : "Cayden"}: ${outcome.why}`, next_intent: "Waiting for the card; the tap re-enters the step.", actor: "service" }),
+          );
           return;
         }
         if (outcome.kind === "retry") {
@@ -188,9 +224,62 @@ export class Orchestrator {
     }
 
     const run = (await this.d.repo.getRun(initial.run_id))!;
-    await this.d.repo.setRunStatus(run.run_id, "done", "normalize");
+    await this.d.repo.setRunStatus(run.run_id, "done", "post_import");
     const closed = (await this.d.repo.getRun(run.run_id))!;
-    await this.closeWithReceipt(closed, "Phase 1 build: the run stops after normalize (Step 7). Nothing was routed, staged or imported.", "Nothing queued; Phase 1 stops after Step 7.");
+    await this.closeWithReceipt(closed, await this.receiptNote(closed), "Step 13 is Josh's: flip ACTIVE by hand and watch day one. Nothing queued.");
+  }
+
+  private async runStage(step: Step, run: RunRow, recipe: Recipe): Promise<AnyOutcome> {
+    const s = this.d.stages;
+    switch (step) {
+      case "size":
+        return s.size.run(run, recipe);
+      case "pull":
+        return s.pull.run(run, recipe);
+      case "ingest":
+        return s.ingest.run(run, recipe);
+      case "suppress":
+        return s.suppress.run(run, recipe);
+      case "find_emails":
+        return s.findEmails.run(run, recipe);
+      case "verify":
+        return s.verify.run(run, recipe);
+      case "normalize":
+        return s.normalize.run(run, recipe);
+      case "qa":
+        return s.qa.run(run, recipe);
+      case "route":
+        return s.route.run(run, recipe);
+      case "stage":
+        return s.stage.run(run, recipe);
+      case "import":
+        return s.import.run(run, recipe);
+      case "post_import":
+        return s.postImport.run(run, recipe);
+      default:
+        throw new Error(`no stage for step ${step as string}`);
+    }
+  }
+
+  /**
+   * The step 12 gate's receipt line: campaign, imported, runway before and
+   * after, "ready for ACTIVE" — from the import and post_import step counts.
+   * Spend by vendor and holds are on the receipt card itself.
+   */
+  private async receiptNote(run: RunRow): Promise<string> {
+    const [imp, post] = await Promise.all([this.d.repo.getStep(run.run_id, "import"), this.d.repo.getStep(run.run_id, "post_import")]);
+    const ids = new Set<string>();
+    for (const k of Object.keys(imp?.counts ?? {})) {
+      const m = /^imported_(\d+)$/.exec(k);
+      if (m) ids.add(m[1]);
+    }
+    if (ids.size === 0) return "No campaign received leads on this run.";
+    const days = (v: number | undefined) => (v === undefined ? "n/a" : `${(Number(v) / 10).toFixed(1)}d`);
+    const lines = [...ids].sort().map((id) => {
+      const ready = post?.counts[`ready_${id}`] === 1;
+      return `#${id}: imported ${imp?.counts[`imported_${id}`] ?? 0} · runway ${days(imp?.counts[`runway_before_${id}_x10`])} → ${days(post?.counts[`runway_after_${id}_x10`])} · ${ready ? "ready for ACTIVE" : "not ready (see step 12)"}`;
+    });
+    return `${lines.join("\n")}\nJosh flips ACTIVE by hand; the service never does.`;
   }
 
   /**
@@ -216,7 +305,7 @@ export class Orchestrator {
   /** The receipt is the last gate: nothing is done until it posts, and it is the last event on the lane. */
   private async closeWithReceipt(closed: RunRow, note: string, nextIntent: string): Promise<void> {
     await this.d.console.receipt(closed, note);
-    const counts = Object.entries(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts";
+    const counts = orderCounts(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts";
     await this.ledger((l) => l.setStep(closed.client_tag, closed.lane, null, { run_id: null, line: `Run ${closed.run_id.slice(0, 8)} closed ${closed.status}.`, next_intent: nextIntent }));
     await this.ledger((l) => l.event({ client_tag: closed.client_tag, lane: closed.lane, run_id: closed.run_id, event: "receipt", line: `Receipt: ${closed.status} · ${counts} · ${note}`, next_intent: nextIntent, actor: "service" }));
   }
@@ -237,10 +326,27 @@ export class Orchestrator {
       case "split":
       case "resume":
       case "topup_anyway":
+      // step 5: the list was added (or Josh said go without); step 9: Josh said continue without the pending cells
+      case "list_added":
+      case "no_list":
+      case "continue_without":
         // The waiting stage either sees the resolution in-process or, after a
         // restart, is re-entered here.
         if (runId) void this.drive(runId);
         return;
+      case "accept":
+      case "purge":
+      case "reroute": {
+        // step 8: every row still held under the card's rule takes the choice, then the run goes on
+        if (!runId) return;
+        const run = await this.d.repo.getRun(runId);
+        const full = await this.d.repo.getCard(card.card_id);
+        if (!run || !full || full.kind !== "qa_hold") return;
+        const n = await this.d.stages.qa.applyTap(run, full.payload, card.choice, card.by);
+        await this.d.console.postInThread(run, `QA ${card.choice} on \`${String(full.payload.rule_id)}\` by <@${card.by}>: ${n} leads.`);
+        void this.drive(runId);
+        return;
+      }
       case "resume_run": {
         if (!runId) return;
         const run = await this.d.repo.getRun(runId);
@@ -333,6 +439,10 @@ function summarize(kind: string, payload: Record<string, unknown>): string {
       return `${stepLabel(Number(payload.spine_step))} gate unmet — ${payload.gate}: ${String(payload.reason ?? "").slice(0, 120)}`;
     case "qa_hold":
       return `QA hold ${payload.rule_id}: ${payload.count} leads`;
+    case "client_domain_list":
+      return `step 5 needs ${payload.client_tag}'s customer domain list (MCP add_client_domains)`;
+    case "pending_campaign":
+      return `step 9: ${payload.pending} leads match no campaign in the recipe`;
     default:
       return kind;
   }

@@ -4,7 +4,8 @@ import { describe, it } from "node:test";
 import { ALLOWED_SUPABASE_PROJECT_REF, assertSupabaseProject, loadConfig } from "../config.js";
 import { NEVER_SEND_STATUSES, SENDABLE_LEAD_STATUSES } from "../domain/leadStatus.js";
 import { RUN_STATUSES, TERMINAL_RUN_STATUSES } from "../domain/runs.js";
-import { PHASE1_STEPS } from "../orchestrator.js";
+import { PHASE1_STEPS, PIPELINE_STEPS } from "../orchestrator.js";
+import { stepForStage } from "../spine/steps.js";
 import { BANNED_ACTIONS, BANNED_VENDORS, PRICES, VENDORS } from "../spend/prices.js";
 
 const root = new URL("../../", import.meta.url);
@@ -75,8 +76,21 @@ describe("invariants — the numbers and names the brief fixes", () => {
     }
   });
 
-  it("D17 — Phase 1 runs verify then normalize and nothing after", () => {
-    assert.deepEqual([...PHASE1_STEPS], ["verify", "normalize"], "D17: adding a stage to the pipeline is a new decision; append it and update CANON.md");
+  it("D26 — the pipeline is steps 2 through 12 of the skill, in the skill's order; step 1 and step 13 are Josh's and never in it", () => {
+    assert.deepEqual(
+      [...PIPELINE_STEPS],
+      ["size", "pull", "find_emails", "ingest", "suppress", "verify", "normalize", "qa", "route", "stage", "import", "post_import"],
+      "D26: adding or reordering a stage is a new decision; append it and update CANON.md",
+    );
+    // Spine order: each stage sits on a step no earlier than the one before it.
+    let last = 0;
+    for (const s of PIPELINE_STEPS) {
+      const n = stepForStage(s)?.n ?? 0;
+      assert.ok(n >= last && n >= 2 && n <= 12, `D26: ${s} is on step ${n}, out of order or outside 2..12`);
+      last = n;
+    }
+    assert.ok(!PIPELINE_STEPS.includes("trigger"), "D26: step 1 (the ICP / recipe) is Josh's");
+    assert.deepEqual([...PHASE1_STEPS], ["verify", "normalize"], "D17 (superseded by D26): the Phase 1 pair is history, kept for the record");
   });
 });
 

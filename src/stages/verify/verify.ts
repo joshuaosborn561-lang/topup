@@ -2,7 +2,7 @@ import type { LeadPipe } from "../../clients/leadpipe.js";
 import type { Verifier, VerifierResults, VerifierStatus } from "../../clients/verifier.js";
 import type { Repo } from "../../db/repo.js";
 import { ingestedTable } from "../../db/pool.js";
-import { MAX_STEP_ATTEMPTS, type RunRow } from "../../domain/runs.js";
+import { funnelCounts, MAX_STEP_ATTEMPTS, type RunRow } from "../../domain/runs.js";
 import { parseCsv } from "../../lib/csv.js";
 import { logger } from "../../lib/log.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
@@ -586,7 +586,7 @@ export class VerifyStage {
     const rate = rejectRate({ sendable, rejected, stalled });
     const counts = { verified: sendable, verified_seg: seg, verified_other: sendable - seg, rejected, stalled_unverified: stalled, reject_rate_bp: rate === null ? 0 : Math.round(rate * 10000) };
     await this.d.repo.finishStep(run.run_id, "verify", { useful_output: sendable, counts });
-    await this.d.repo.mergeRunCounts(run.run_id, counts);
+    await this.d.repo.mergeRunCounts(run.run_id, funnelCounts(counts));
     // Step 6 gate: sendable count and reject rate reported; far above the lane's norm stops the run.
     const gate = rejectRateGate({ sendable, rejected, stalled }, recipe.verify.reject_rate_norm);
     if (gate) return gate;

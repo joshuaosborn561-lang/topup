@@ -2,7 +2,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import cron from "node-cron";
+import { GetleadsClient } from "./clients/getleads.js";
 import { LeadPipeClient } from "./clients/leadpipe.js";
+import { SmartleadClient } from "./clients/smartlead.js";
 import { VerifierClient } from "./clients/verifier.js";
 import { buildCommands } from "./commands.js";
 import { assertSupabaseProject, loadConfig } from "./config.js";
@@ -21,7 +23,18 @@ import { slackRouter } from "./slack/http.js";
 import { Roles } from "./slack/roles.js";
 import { readersFromEnv } from "./spend/balances.js";
 import { railsConfigFrom, SpendRails } from "./spend/rails.js";
+import { FindEmailsStage } from "./stages/find_emails/index.js";
+import { ImportStage } from "./stages/import/index.js";
+import { IngestStage } from "./stages/ingest/index.js";
 import { NormalizeStage } from "./stages/normalize/index.js";
+import { PostImportStage } from "./stages/post_import/index.js";
+import { GetleadsPull } from "./stages/pull/getleads.js";
+import { PullStage } from "./stages/pull/index.js";
+import { QaStage } from "./stages/qa/index.js";
+import { RouteStage } from "./stages/route/index.js";
+import { SizeStage } from "./stages/size/index.js";
+import { StageStage } from "./stages/stage/index.js";
+import { SuppressStage } from "./stages/suppress/index.js";
 import { VerifyStage } from "./stages/verify/verify.js";
 
 const log = logger("boot");
@@ -74,11 +87,15 @@ async function main(): Promise<void> {
   const poster = new SlackPoster(cfg.SLACK_BOT_TOKEN);
   const console_ = new SlackConsole(repo, poster, roles, { opsChannel: cfg.SLACK_OPS_CHANNEL, clientChannels: cfg.SLACK_CLIENT_CHANNELS });
 
+  const leadpipe = new LeadPipeClient(cfg.LEADPIPE_MCP_URL, cfg.LEADPIPE_TOKEN);
+  const getleads = new GetleadsClient(cfg.GETLEADS_MCP_URL, cfg.GETLEADS_TOKEN);
+  const smartlead = new SmartleadClient(cfg.SMARTLEAD_MCP_URL, cfg.SMARTLEAD_TOKEN);
+  const jobs = { pollMs: cfg.JOB_POLL_SECONDS * 1000, deadMs: cfg.JOB_DEAD_MINUTES * 60_000 };
   const verify = new VerifyStage({
     repo,
     rails,
     console: console_,
-    leadpipe: new LeadPipeClient(cfg.LEADPIPE_MCP_URL, cfg.LEADPIPE_TOKEN),
+    leadpipe,
     verifier: new VerifierClient(cfg.VERIFIER_BASE_URL),
     cfg: {
       pollMs: cfg.VERIFY_POLL_SECONDS * 1000,
@@ -94,7 +111,28 @@ async function main(): Promise<void> {
   const normalize = new NormalizeStage(repo, console_);
   const ledger = new LaneLedger(db);
   console_.attachLedger(ledger);
-  const orchestrator = new Orchestrator({ repo, console: console_, verify, normalize, ledger, retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000 });
+  const base = { repo, console: console_ };
+  const pull = new PullStage({ ...base, rails, adapters: [new GetleadsPull(getleads)], cfg: jobs });
+  const orchestrator = new Orchestrator({
+    repo,
+    console: console_,
+    ledger,
+    retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000,
+    stages: {
+      size: new SizeStage({ ...base, getleads, rails }),
+      pull,
+      ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
+      suppress: new SuppressStage({ ...base, ledger }),
+      findEmails: new FindEmailsStage(base),
+      verify,
+      normalize,
+      qa: new QaStage({ ...base, ledger }),
+      route: new RouteStage({ ...base, ledger }),
+      stage: new StageStage(base),
+      import: new ImportStage({ ...base, smartlead, rails, cfg: jobs }),
+      postImport: new PostImportStage({ ...base, smartlead, rails }),
+    },
+  });
 
   if (cfg.SLACK_SIGNING_SECRET) {
     app.use(
