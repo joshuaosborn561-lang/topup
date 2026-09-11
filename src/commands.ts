@@ -74,7 +74,8 @@ export function buildCommands(d: { repo: Repo; orchestrator: Orchestrator; ledge
     },
 
     "/suppress": async () =>
-      "Suppression uploads are handled by the suppression stage, which is not in this build. " +
-      "When it lands, `/suppress <client_tag>` with a CSV attached adds every row to lp.<tag>_suppression. The Smartlead block list only ever grows.",
+      "Step 5 (suppress) runs inside every top-up run against the response tables and the client's customer domains. " +
+      "Customer domains are added over MCP with `add_client_domains` (domains only, never rows). " +
+      "A CSV upload command is not in this build; the Smartlead block list only ever grows.",
   };
 }
