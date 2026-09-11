@@ -20,7 +20,10 @@ Read `CANON.md` first. It is one page and it is the current truth.
 - Slack: one thread per run, cards with buttons, slash commands, owner and
   operator roles.
 - `/mcp` with owner and operator tokens.
-- The **lane ledger**: state per lane, event log, queue registry. `/where
+- The **spine**: the thirteen steps of `skills/lead-list-build/SKILL.md` as
+  the state machine (`src/spine/steps.ts`), with gates that halt a run, record
+  why and post one card. Steps 6 and 7 gate today.
+- The **lane ledger**: step per lane, event log, queue registry. `/where
   <client> [lane]`, the `lane_state` MCP tool, and a daily ops digest that
   only names lanes whose state changed or whose campaign health crossed a
   line. Claude sessions hand queue tables to the service with
@@ -55,7 +58,8 @@ src/
   health.ts           the first run report
   db/                 pg pool with app.run_id transactions; typed repo over topup.*
   domain/             lead_status machine, run vocabulary, the "working" rule
-  ledger/             lane state, event log, queue registry, campaign health, /where text, digest
+  spine/              the thirteen steps (number, owner, gate, skill, pipeline stages) and gate outcomes
+  ledger/             lane step + gate, event log, queue registry, campaign health, /where text, digest
   spend/              price table, the five rails, balance readers
   recipes/            recipe schema (zod) and loader
   slack/              signature check, roles, cards, poster, console, router

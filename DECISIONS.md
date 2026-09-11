@@ -43,6 +43,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D21 | Live |
 | D22 | Live |
 | D23 | Live |
+| D24 | Live |
 
 ---
 
@@ -392,3 +393,44 @@ replaced.
 
 **Guard.** `src/guards/invariants.test.ts` (`PHASE1_STEPS` still ends at
 normalize; a new stage is a new decision).
+
+## D24 — The state machine is the thirteen steps of `skills/lead-list-build`
+
+**Decision.** A lane is always on exactly one of the thirteen steps of
+`skills/lead-list-build/SKILL.md`. The ledger (`topup.lane_state.step`,
+`lane_events.step`), `/where`, the `lane_state` MCP tool, every card and every
+log line name the step by **number** and, once the skill supplies them, by the
+skill's **title** — never by a name the service made up. The single table of
+steps is `src/spine/steps.ts`: number, title, owner, gate, skill, and which
+internal pipeline stages (`run_steps.step`) sit on it. Each step's **gate** is
+a check that halts the run at the step, records why (`lane_state.gate_unmet`,
+a `gate_unmet` event, `run_steps.last_error`) and posts **one** card; a run
+never moves past a failed gate on its own and silence never means yes. The
+**receipt** is the last gate: a run is not done until the receipt posts, and
+it is the last event on the lane. Owners: code runs steps 3–12; Josh owns 1,
+9 when copy is needed, and 13; Cayden clears holds in 8 and handles the client
+customer list in 5. Where the skill and the brief disagree, the skill wins on
+the order of steps and their gates; the brief wins on spend, roles and what
+the service must never do.
+
+**Why.** Josh, "build to the spine": "If a piece of code does not map to a
+step, ask me why it exists." A card, a log line, a ledger row and the skill
+must all say the same thing, so the skill's numbering is the vocabulary. The
+gates named first (1 sign-off, 2 useful floor, 3 title audit + ceiling, 5
+response-based scope + cross-campaign check, 6 sendable rule + stall runbook,
+7 every merge field populated, 11 count assert) "are the ones that have
+shipped bad lists."
+
+**Tradeoff.** The skill file is not in this repository or anywhere the agent
+could reach (see the PR), so `src/spine/steps.ts` carries only what the
+prompt stated: titles are null and render as "Step N"; the owner of step 2
+and the gates of 4, 8, 9, 10, 12, 13 are null and are questions, not
+defaults; `trigger` and `stage` are unplaced. Supersedes the invented stage
+vocabulary (`idle | <stage> | parked | waiting`) of the first ledger commit.
+
+**Guard.** `src/guards/spine.test.ts` — thirteen steps in order; owners as
+assigned; the named gates present; every internal stage on exactly one step
+or listed unplaced; labels never invent a title; only `LaneLedger` writes
+`lane_state`; and when `skills/lead-list-build/SKILL.md` is in the repo the
+titles must match its headings (skipped with a message until then).
+`src/spine/gate.test.ts` holds the step 6 and 7 gates. Ask Josh.

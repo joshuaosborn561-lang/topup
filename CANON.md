@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D23** (2026-09-11). One page of current truth. When a new
+Canon as of **D24** (2026-09-11). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -35,11 +35,30 @@ lane recipe says (D9, D15).
   runs, acknowledging receipts.
 - Unclear → judgement column, ask. Nobody automates a decision to save a card.
 
+## The spine (D24)
+
+The business process is the thirteen steps of `skills/lead-list-build/SKILL.md`
+and the service is those steps, the gates between them, and the ledger that
+records which step a lane is on. A lane is always on exactly one step, named
+by **number** (and the skill's title once the file is in the repo) in every
+card, log line and ledger row — `src/spine/steps.ts` is the only table of
+steps. Code runs 3–12; Josh owns 1, 9 when copy is needed, and 13; Cayden
+clears holds in 8 and handles the client customer list in 5. A step's gate
+halts the run, records why, posts one card, and waits; silence never means
+yes. The receipt is the last gate. Gates live today: step 6 (sendable rule:
+zero sendable halts) and step 7 (every merge field populated: an empty
+`first_name_n` or `company_n` halts). Two flavours of step 3 (LinkedIn-native,
+company-first with the yield card and pilot of D21); one pipeline from 4 on.
+
+The skill file is not in the repo yet; titles, the owner of step 2, the
+gates of 4, 8, 9, 10, 12, 13 and where `trigger`/`stage` sit are open
+questions in the PR, not defaults.
+
 ## The service is the memory (D19, D20)
 
 Every lane has a state record, an event log and a queue registry in
-`topup.lane_state / lane_events / queue_registry`. It answers: stage and
-since when; what is queued where (counts by `lead_status`, every registered
+`topup.lane_state / lane_events / queue_registry`. It answers: which step and
+since when, and the gate that is unmet if it halted there; what is queued where (counts by `lead_status`, every registered
 queue with what its rows still lack — domain, person, email — and the next
 method); blocked on whom and what they must do; spend this run and this
 month by vendor; the one-line event log with what the service intends next;
@@ -130,6 +149,7 @@ open cards, open runs and which integrations are configured.
 | Thing | Place |
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
+| Spine | `src/spine/steps.ts` (the thirteen steps), `src/spine/gate.ts` (gate outcomes) |
 | Lane ledger | `src/ledger/` (`lane.ts` state, `health.ts` campaign lines, `render.ts` `/where` + digest text) |
 | Servers | `docs/servers.md` — every vendor server from its code (D22) |
 | Recipes | `recipes/<client>/<lane>.json`, validated at boot, mirrored to `topup.lane_recipes` |
