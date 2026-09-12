@@ -10,6 +10,9 @@ Usage:
     python3 conversational_location.py <input.csv> <output.csv> \
         [--city-col city_normalized] [--state-col state] [--out-col city_normalized]
 
+Never overwrite the raw `city` column. A city that cannot be geocoded
+writes a blank location (NO_GEOCODE), never a broken sentence.
+
 Cities that fall outside every metro radius keep their own cleaned name, which is
 correct -- "Bozeman" is already how someone from Bozeman says where they live.
 """
@@ -171,12 +174,12 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 def conversational_location(city, state):
-    """Return the conversational name for this city's area, or the city itself."""
+    """Return the conversational name for this city's area, the city itself, or blank on NO_GEOCODE."""
     if not city or not city.strip():
-        return city
+        return ""
     coord = geocode(city, state)
     if not coord:
-        return city.strip()
+        return ""  # NO_GEOCODE: blank location, never a broken sentence
     lat, lon = coord
     best, best_d = None, None
     for label, mlat, mlon, radius in METROS:
@@ -192,9 +195,8 @@ def main():
     ap.add_argument('output_csv')
     ap.add_argument('--city-col', default=None)
     ap.add_argument('--state-col', default='state')
-    ap.add_argument('--out-col', default=None,
-                    help='Column to write. Defaults to overwriting the city column '
-                         'given by --city-col (source `city` stays untouched).')
+    ap.add_argument('--out-col', default='city_normalized',
+                    help='Column to write. Defaults to city_normalized. Never overwrite raw city.')
     args = ap.parse_args()
 
     with open(args.input_csv, encoding='utf-8-sig') as f:
@@ -210,7 +212,9 @@ def main():
                 break
     if not city_col:
         sys.exit(f'No city column found. Columns: {fields}')
-    out_col = args.out_col or city_col
+    out_col = args.out_col
+    if out_col == 'city':
+        sys.exit('refusing to overwrite raw city; pass --out-col city_normalized')
     if out_col not in fields:
         fields.insert(fields.index(city_col) + 1, out_col)
 

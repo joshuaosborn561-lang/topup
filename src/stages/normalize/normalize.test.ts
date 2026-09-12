@@ -183,7 +183,7 @@ describe("conversational location — port of conversational_location.py + the S
   it("tighter metros win: Orange County beats the LA blanket", () => {
     assert.equal(metroFor({ lat: 33.6846, lon: -117.8265 }), "Orange County");
   });
-  it("NO_GEOCODE is a blank location, never a broken sentence (index note wins over the script)", () => {
+  it("NO_GEOCODE is a blank location, never a broken sentence", () => {
     const r = conversationalLocation("Nowhere", "TX", coords);
     assert.equal(r.location, "");
     assert.equal(r.source, "no_geocode");

@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bestYieldBuild, parsePullReceipt, receiptConfirmed } from "./receipt.js";
+import {
+  bestYieldBuild,
+  companySourceFromRecipeKind,
+  parsePullReceipt,
+  proposedTam,
+  receiptConfirmed,
+  receiptNeedsRecount,
+} from "./receipt.js";
 
-/** D31 / D32 — a receipt is enough to repeat a build; it never carries rows. */
+/** D31–D33 — a receipt is enough to repeat a build; it never carries rows. */
 
-describe("D31/D32 pull receipts", () => {
+describe("D31/D32/D33 pull receipts", () => {
   const parlay = {
     granularity: "lane" as const,
     client_tag: "parlay",
@@ -102,5 +109,55 @@ describe("D31/D32 pull receipts", () => {
     });
     const pick = bestYieldBuild([lane, small, big]);
     assert.equal(pick?.receipt.build_label, "gc_contacts_valid:gc");
+  });
+
+  it("D33 — other is not a value; named signals parse; a signal needs rerun filters", () => {
+    assert.throws(() => parsePullReceipt({ ...parlay, company_source: "other" }), /invalid pull receipt/);
+    assert.throws(() => parsePullReceipt({ ...parlay, domain_source: "other" }), /invalid pull receipt/);
+    assert.throws(() => parsePullReceipt({ ...parlay, person_source: "other" }), /invalid pull receipt/);
+    assert.throws(() => parsePullReceipt({ ...parlay, email_source: "other" }), /invalid pull receipt/);
+    const signal = parsePullReceipt({
+      ...parlay,
+      company_source: "theirstack_tech_signal",
+      company_filters: { technologies: ["Salesforce"], query: "uses Salesforce" },
+      domain_source: "theirstack",
+      person_source: "leadmagic_employee_finder",
+      notes: null,
+    });
+    assert.equal(signal.company_source, "theirstack_tech_signal");
+    assert.equal(signal.domain_source, "theirstack");
+    assert.equal(signal.person_source, "leadmagic_employee_finder");
+    assert.throws(
+      () => parsePullReceipt({ ...parlay, company_source: "job_posting_signal", company_filters: {} }),
+      /company_filters/,
+    );
+  });
+
+  it("D33 — mixed or unnamed recipe sources raise; they do not become other", () => {
+    assert.equal(companySourceFromRecipeKind("getleads"), "getleads");
+    assert.equal(companySourceFromRecipeKind("supabase_table"), "table");
+    assert.throws(() => companySourceFromRecipeKind("mixed"), /'other' is not a value/);
+    assert.throws(() => companySourceFromRecipeKind("mystery"), /'other' is not a value/);
+  });
+
+  it("D33 — backfill writers and a blank tam_count mean recount before proposing", () => {
+    const backfill = parsePullReceipt({ ...parlay, written_by: "claude_backfill", tam_count: null });
+    assert.equal(receiptNeedsRecount(backfill), true);
+    assert.equal(proposedTam(backfill), null, "do not treat rows_found as TAM");
+    const build = parsePullReceipt({
+      ...parlay,
+      written_by: "claude_backfill_build",
+      granularity: "build",
+      build_label: "old_export",
+      tam_count: null,
+      notes: null,
+    });
+    assert.equal(receiptNeedsRecount(build), true);
+    const counted = parsePullReceipt({ ...parlay, written_by: "leadtopup_acceptance", tam_count: 36810, notes: null });
+    assert.equal(receiptNeedsRecount(counted), false);
+    assert.equal(proposedTam(counted), 36810);
+    const blankTam = parsePullReceipt({ ...parlay, written_by: "claude", tam_count: null, notes: null });
+    assert.equal(receiptNeedsRecount(blankTam), true);
+    assert.equal(proposedTam(blankTam), null);
   });
 });

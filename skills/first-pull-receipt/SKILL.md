@@ -1,13 +1,15 @@
 ---
 name: first-pull-receipt
-description: After you build a first lead list for a SalesGlider campaign in Claude, insert one receipt row to campaignintelligence so leadtopup can get more of those same people automatically. Use after a first pull, first import, or when Josh says write the receipt. Never update an old row. Never write lead rows or emails.
+description: Write the one row receipt in topup.pull_receipts after any first pull or top up for a SalesGlider campaign, so the leadtopup service can repeat the pull without guessing. Use whenever a list has just been imported into Smartlead, whenever Josh says write the receipt, log the pull, or record how we found these, and at the end of any lead build before declaring it done. This is step 11.5 of lead-list-build; read that skill for the full procedure. Counts and campaign ids only, never lead rows.
 ---
 
-# First-pull receipt (for leadtopup)
+# First pull receipt
 
-You are the agent that builds the **first** list. **leadtopup** refills a campaign that is still working. It cannot see this chat.
+You are the agent that just built or topped up a list for a SalesGlider campaign. A Railway service called leadtopup exists to get more of the same people when a campaign performs. It cannot see this chat. Smartlead knows who landed; it does not know how you found them. The receipt is how it finds out.
 
-Write **one new insert** after the pull. Latest row wins. Never `update` a receipt.
+Write **one new insert** after the pull. Latest row wins. Never update an old row.
+
+Write only on Supabase project `azpapwtnrbzywlnxxecz` (campaignintelligence), table `topup.pull_receipts`. Confirm the project first. Never the parcels project, never the CRM project. Never put emails, names, phones, or lead objects in the receipt or in chat. A trigger rejects campaign ids that are not in `public.campaigns.smartlead_campaign_id` — register the campaign before the receipt.
 
 ## Two kinds of row
 
@@ -18,13 +20,20 @@ The lane row is the filter book. The build rows are the yield. When proposing a 
 
 Until Josh confirms a backfill row (`owner_confirmed_at` set, or the notes no longer say "Josh to confirm"), **propose it, do not scale**.
 
-## Where
+If the latest receipt on the lane is `claude_backfill` or `claude_backfill_build`, **recount** (`count_contacts` or the Maps/permit company count) before proposing. Those rows have `tam_count` null and `rows_found` equal to the original export, not the pool. A blank `tam_count` is not TAM.
 
-Only project `azpapwtnrbzywlnxxecz` (campaignintelligence), table `topup.pull_receipts`. Confirm the project. A trigger rejects campaign ids that are not in `public.campaigns.smartlead_campaign_id` — register the campaign before the receipt. Clone flow: `public.campaigns` first.
+## Vocabulary (the table rejects anything else)
 
-## Never
+Classify the typical row you produced. There is no `other`. A receipt that would have needed `other` is a bug to raise, not a value to write.
 
-No emails, names, phones, or lead objects. No mixing two ICPs in one lane row. No FullEnrich `email_max_tier` unless Josh stamped it. No in-place updates.
+1. Companies: `getleads` | `maps` | `permits` | `maps_and_permits` | `parcels` | `ai_ark` | `table` | `serp_tool_mention` | `theirstack_tech_signal` | `linkedin_engagers` | `linkedin_import` | `web_visitor_pixel` | `job_posting_signal` | `public_records`. If the companies came from a signal, name the signal and put the query shape, vendor or technology list, creator roster, or job title terms in `company_filters` so the service can rerun it.
+2. Domain: `already` | `getleads` | `maps` | `domain_waterfall` | `theirstack` | `none`
+3. Person: `already` | `getleads` | `ai_ark` | `people_waterfall` | `serp` | `hard_to_find` | `leadmagic_employee_finder` | `none`
+4. Email: `already` | `getleads` | `name_to_email` | `email_waterfall` | `none`. If a waterfall ran, `email_max_tier` is the last tier allowed (`aiark`, `leadmagic`, `fullenrich`). Do not list a waterfall you did not run. No FullEnrich `email_max_tier` unless Josh stamped it.
+
+getleads VALID exports are usually person plus email from getleads, domain already there. Peterson style physical lanes are usually Maps plus permits, then Domain Waterfall, then Find Named Person, then Name to Email or the email waterfall.
+
+`icp_kind` is `linkedin_native` or `physical`. `persona` and `lane` are snake_case. Headcount bands are labels like `"51 to 200"`, never min or max integers.
 
 ## Counts (this is how the format stays honest)
 
@@ -35,12 +44,11 @@ No emails, names, phones, or lead objects. No mixing two ICPs in one lane row. N
 | `rows_imported` | What landed in Smartlead. |
 | `yield_by_step` | `{companies, with_domain, with_person, with_email, verified_sendable, imported}` plus any named cascade counts (e.g. `email_name_to_email`). |
 | `spend_cents` | This build, from our price table. |
+| `suppression_scope` | Default `response_based_v1`. |
 
 If you only have the export size, put it in `rows_found` and leave `tam_count` null — do not pretend they are the same. A later count_contacts that is 3× `rows_found` is expected when `tam_count` was never written; that is a format miss, not a pool explosion.
 
-## Puzzle + source
-
-Same enums as before: `company_source`, `domain_source`, `person_source`, `email_source`, `email_max_tier`.
+## getleads and physical filters
 
 **getleads `company_filters`:** titles, exact band labels, countries, industries (no commas), `email_status: ["VALID"]`, and `export_caps.max_per_company` if you capped the export. Do not put `max_per_company` in the count filters.
 

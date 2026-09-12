@@ -5,7 +5,7 @@ description: The SalesGlider Growth soup to nuts procedure for building or toppi
 
 # Lead list build, soup to nuts
 
-Thirteen steps. Steps 3 through 12 are mechanical and belong to the top up service (or to Claude when the service does not exist yet for that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a step until its gate passes. Report every count as net useful output, never rows processed.
+Thirteen steps plus the receipt at 11.5. Steps 3 through 12 are mechanical and belong to the top up service (or to Claude when the service does not exist yet for that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a step until its gate passes. Report every count as net useful output, never rows processed.
 
 Rules that apply to every step: no lead rows in chat beyond ten sample rows; data moves server to server; estimate and get approval before any paid call; pass `client_tag` on every job; confirm the Supabase project before writing (`azpapwtnrbzywlnxxecz` campaign and lead data, `kemvxzhcxvynmoutwdrh` parcels, `klomihumrgwoixbzxypr` CRM); one session at a time on a client's tables.
 
@@ -73,7 +73,7 @@ Gate: staged count equals routed count.
 
 What: Smartlead `start_lead_import` from staging (or `stage_leads_from_url`), in chunks. The only success test is `upload_count` equals submitted. A mismatch stops that campaign's import and is reported.
 
-After a successful import (11.5): insert a new row in `topup.pull_receipts` (never update in place). Lane row = the filter book. Build row = this run's `source_label` / method, `rows_found`, `rows_imported`, `tam_count` (the count_contacts or Maps/permit company count, not the export size), `yield_by_step`, `spend_cents`, `segment`, `suppression_scope`. Skill: `first-pull-receipt`.
+After a successful import (11.5): insert a new row in `topup.pull_receipts` on `azpapwtnrbzywlnxxecz` (never update in place). Lane row = the filter book. Build row = this run's `source_label` / method. Where the companies came from is `getleads`, `maps`, `permits`, `maps_and_permits`, `parcels`, `ai_ark`, `table`, or a named signal: `serp_tool_mention`, `theirstack_tech_signal`, `linkedin_engagers`, `linkedin_import`, `web_visitor_pixel`, `job_posting_signal`, `public_records`; never `other`, and a signal must carry its query shape, vendor or technology list, creator roster, or job title terms in `company_filters`. Domain / person / email: `already`, `getleads`, `maps`, `domain_waterfall`, `theirstack`, `people_waterfall`, `serp`, `hard_to_find`, `leadmagic_employee_finder`, `name_to_email`, `email_waterfall`, `none`. `tam_count` is the count_contacts or Maps/permit company count, not the export size (`rows_found`). If the latest receipt is `claude_backfill` or `claude_backfill_build`, recount before proposing — do not trust a blank `tam_count`. Also write `yield_by_step`, `spend_cents`, `segment`, `suppression_scope`. Skill: `first-pull-receipt`.
 
 Gate: counts match on every campaign.
 

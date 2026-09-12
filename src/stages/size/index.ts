@@ -11,7 +11,7 @@ import { recycleDays } from "../suppress/recycle.js";
 import { sizeReport } from "./report.js";
 
 /**
- * Step 2 — Size it (skill lead-list-build; skill tam-sizing; D29).
+ * Step 2 — Size it (skill lead-list-build; skill tam-sizing; D29, D33).
  *
  * Classify each target campaign's ICP first. LinkedIn-native: getleads `count_contacts` is the
  * free second opinion; AI Ark People Preview is the default primary and is
@@ -19,6 +19,10 @@ import { sizeReport } from "./report.js";
  * from Maps / PermitStack, never a getleads number — park until those
  * counters are wired. Partition-check the filter. Subtract emails this
  * client sent in the recycle window. Report the five tam-sizing lines.
+ *
+ * This step always recounts. Backfill receipts (`claude_backfill`,
+ * `claude_backfill_build`) stored the old export in `rows_found` and left
+ * `tam_count` blank — never treat either as TAM (D33).
  */
 export interface SizeDeps extends StageDeps {
   getleads: Getleads;

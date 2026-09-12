@@ -15,18 +15,18 @@ so a merge field like `{{city_normalized}}` reads naturally in a cold email.
 Trigger whenever the user asks for:
 - "the conversational name for the geo" / "conversational location"
 - "metro nickname" / "location2"
-- normalized city that "should read like how they'd say it"
+- normalized city that "should read like they'd say it"
 
 ## How to run it
 
 ```bash
-python3 scripts/conversational_location.py <input.csv> <output.csv> --city-col city_normalized
+python3 scripts/conversational_location.py <input.csv> <output.csv> \
+  --city-col city_normalized --out-col city_normalized
 ```
 
-- `--city-col` defaults to `city_normalized`, then `city`. Point it at whichever column holds
-  the cleaned city.
-- `--out-col` defaults to overwriting the city column you read from. The raw `city` column is
-  never touched, so source data stays auditable.
+- `--city-col` defaults to `city_normalized`, then `city`. Point it at the cleaned city.
+- `--out-col` defaults to `city_normalized`. The raw `city` column is never overwritten.
+  Pass a named `--out-col` only if you need a third column. Passing `--out-col city` is refused.
 - `--state-col` defaults to `state`. Full state names expected ("Texas", not "TX").
 
 Run the name-city-normalization skill FIRST so casing and "Metro Area" suffixes are already
@@ -58,6 +58,10 @@ cities to pass through under their own name, that's a deliberate change to make 
 **Cities outside every metro keep their own name.** Bozeman stays Bozeman, which is correct, that
 IS the conversational name. Never force a distant city into a metro it doesn't belong to.
 
+**NO_GEOCODE rows get a blank location**, never a broken sentence. A city the geocoder cannot
+place is not "Nowhere, TX" in copy — it is empty, and step 7 holds the row when the merge
+field is required.
+
 ## Labels currently covered
 
 ~65 metros spanning California, Texas, Florida, the Northeast, Midwest, South, Mountain West,
@@ -67,8 +71,9 @@ and Pacific Northwest. Some carry a leading article by design ("the DMV", "the B
 
 ## What NOT to do
 
-- Don't overwrite the raw `city` column. Write to `city_normalized` (or a named `--out-col`)
-  so the original is preserved.
+- Don't overwrite the raw `city` column. Always write to `city_normalized` (or a named `--out-col`
+  that is not `city`) so the original is preserved.
+- Don't write a city name into location when geocode fails. Blank, then hold.
 - Don't invent a metro label for a city that falls outside every radius. Leaving the city name
   as-is is the correct answer, not a failure.
 - Don't widen a radius to capture one stray city without checking what else it swallows. Widening

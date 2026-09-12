@@ -51,7 +51,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D29 | Live; recipe-level ICP superseded by D30 |
 | D30 | Live |
 | D31 | Live; per-lane-only receipts superseded by D32 |
-| D32 | Live |
+| D32 | Live; `other` and trusted backfill TAM superseded by D33 |
+| D33 | Live |
 
 ---
 
@@ -875,3 +876,52 @@ no receipt yet.
 **Guard.** `src/recipes/receipt.test.ts` — lane vs build, best-yield
 pick, unconfirmed backfill. `supabase/migrations/0010_pull_receipts_builds.sql`
 mirrors the live table. Ask Josh.
+
+## D33 — Named receipt sources; recount backfill before proposing
+
+**Decision.** Josh / Claude, 2026-09-12. `topup.pull_receipts` dropped
+`other` from `company_source`, `domain_source`, `person_source`, and
+`email_source`. `company_source` gained named signals:
+`serp_tool_mention`, `theirstack_tech_signal`, `linkedin_engagers`,
+`linkedin_import`, `web_visitor_pixel`, `job_posting_signal`,
+`public_records`. `domain_source` gained `theirstack`. `person_source`
+gained `leadmagic_employee_finder`. A signal row must carry its rerun
+parameters in `company_filters`. Writing `other` is a bug to raise, not
+a value to store.
+
+Backfill writers (`claude_backfill`, `claude_backfill_build`) left
+`tam_count` null and put the old export in `rows_found`. The first
+proposal on any such lane recounts (`count_contacts` or Maps/permit
+company count). A blank `tam_count` is not TAM.
+
+The 15 remaining “Josh to confirm” lanes are **segment sign-off**
+(step 1), done once: `bcp/healthcare_exec`, `bcp/it_dm_airpods`,
+`bcp/logistics_exec`, `bcp/pe_firms`, `goliath/displacement`,
+`insight/it_dm_by_offer`, `insight/oem_channel_reps`,
+`parlay/it_dm_tickets`, `peterson/c2_property_managers`,
+`peterson/c3_churches`, `techevo/govt_sub`, `techevo/sfl_it_dm`,
+`techevo/sfl_startup_owners`, `vasco/dealership_principals_and_service`,
+`vasco/signal_warranty_admin_hiring`. Peterson C1
+(`c1_general_contractors`) is off that list — its Maps counts were
+measured; it is the first top-up the service can run. Physical adapters
+still park until Maps/PermitStack are wired; getleads is not the rooftop
+fallback.
+
+`skills/first-pull-receipt` and `skills/lead-list-build` are the Claude
+skills and the Cursor prompt. They share this vocabulary. The stale
+master-dedupe SQL is gone from `parlay-lead-pulls` (the lane receipt is
+the filter book). `conversational-location` writes `city_normalized`
+and blanks NO_GEOCODE.
+
+**Why.** The table changed under the validator. Leaving `other` in the
+writer would fail the live check. Trusting backfill `rows_found` as TAM
+is how Parlay looked 3× too small.
+
+**Tradeoff.** A recipe source the table has no name for (`mixed`) parks
+or raises instead of writing a catch-all. Claude Web still needs Josh
+to replace the installed copies of the two skills.
+
+**Guard.** `src/recipes/receipt.test.ts` — `other` rejected; signals
+need filters; backfill recount. `src/guards/receipt.test.ts` — skill
+and validator share the enums. `supabase/migrations/0011_pull_receipts_named_signals.sql`
+mirrors the live checks. Ask Josh.

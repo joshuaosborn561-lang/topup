@@ -1,20 +1,13 @@
 import type { Repo } from "../../db/repo.js";
 import type { RunRow } from "../../domain/runs.js";
 import { campaignGroups, runTargetCampaignIds } from "../../recipes/campaigns.js";
-import { parsePullReceipt, type COMPANY_SOURCES } from "../../recipes/receipt.js";
+import { companyFiltersFromSource, companySourceFromRecipeKind, parsePullReceipt } from "../../recipes/receipt.js";
 import type { Recipe } from "../../recipes/schema.js";
-
-type CompanySource = (typeof COMPANY_SOURCES)[number];
-
-function companySourceOf(recipe: Recipe, kind: string | undefined): CompanySource {
-  const k = kind ?? recipe.source.kind;
-  if (k === "getleads" || k === "maps" || k === "permits" || k === "ai_ark") return k;
-  return "other";
-}
 
 /**
  * Step 11.5 — insert a build receipt for this run. Never update in place.
  * A failed insert must not fail the import (the leads are already in Smartlead).
+ * Unknown recipe sources throw — there is no `other` (D33).
  */
 export async function writeRunReceipt(
   repo: Pick<Repo, "insertPullReceipt" | "getStep">,
@@ -29,6 +22,7 @@ export async function writeRunReceipt(
   const imported = counts.imported ?? 0;
   const found = counts.rows_exported ?? counts.rows_claimed ?? imported;
   const spend = Object.values(run.spend_cents_by_vendor ?? {}).reduce((a, n) => a + n, 0);
+  const source = g?.source ?? recipe.source;
   const parsed = parsePullReceipt({
     written_by: "leadtopup",
     granularity: "build",
@@ -39,8 +33,8 @@ export async function writeRunReceipt(
     campaign_ids: campaignIds,
     icp_kind: g?.kind ?? "linkedin_native",
     persona: g?.persona ?? recipe.lane,
-    company_source: companySourceOf(recipe, g?.source.kind),
-    company_filters: g?.source.kind === "getleads" ? (g.source.params as unknown as Record<string, unknown>) : {},
+    company_source: companySourceFromRecipeKind(source.kind),
+    company_filters: companyFiltersFromSource(source),
     domain_source: recipe.source.kind === "getleads" ? "already" : "domain_waterfall",
     person_source: recipe.source.kind === "getleads" ? "getleads" : "people_waterfall",
     email_source: recipe.email_finding.enabled ? "email_waterfall" : recipe.source.kind === "getleads" ? "getleads" : "none",

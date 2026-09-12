@@ -2,15 +2,15 @@
 
 These are the skills Josh has built for SalesGlider Growth. Each folder holds a `SKILL.md` and sometimes a `scripts/` folder. They are the institutional knowledge of the business, written from measured results. Read the skill for a stage before writing code for that stage. Where a skill and the brief disagree, the brief wins and you flag it in the PR.
 
-Two skills are known to be stale as of Sept 10 2026 and are called out below. Do not port their stale parts.
+No skills are marked stale as of D33. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE.
 
 ## After a first pull (so leadtopup can repeat it)
 
-* `first-pull-receipt` ... After Claude builds the first list, write one row to `topup.pull_receipts` (campaignintelligence). Company source, filters, puzzle pieces, campaign ids. No lead rows. D31.
+* `first-pull-receipt` ... After Claude builds the first list, write one row to `topup.pull_receipts` (campaignintelligence). Named sources only (`other` is not a value). Lane vs build. Recount before proposing when the latest writer is `claude_backfill` or `claude_backfill_build`. No lead rows. D31–D33.
 
 ## Lead pulls per client (these become recipes)
 
-* `parlay-lead-pulls` ... Randy Haba, MSP, IT decision makers. STALE: the dedupe SQL in this file predates the Aug 25 response based suppression rule and kills good pulls. Use the scope in `global-suppression`. The band widening (11 to 500) and title expansion from Sept 9 are not in this file either.
+* `parlay-lead-pulls` ... Randy Haba, MSP, IT decision makers. Filter book is the live `it_dm_tickets` lane receipt; the service recipe is `recipes/parlay/it_dm.json`. Suppression is `global-suppression`. Do not delete against `public.leads`.
 * `culture-fits-lead-pulls` ... TJ Jackson, MSP owners and C suite. Pool exhaustion reality and corrected getleads parameters.
 * `techevo-lead-pulls` ... Corey Tapper, New England and South Florida IT decision makers, hard geography rule, small company COO fallback.
 * `goliath-lead-pulls` ... Dave Ackley, cybersecurity MSSP. Every lane targets the IT decision maker, not the C suite.
@@ -36,7 +36,7 @@ Two skills are known to be stale as of Sept 10 2026 and are called out below. Do
 
 * `name-city-normalization` ... `scripts/normalize_names_and_cities.py`. Strip titles and suffixes, prefer nicknames, fix casing, consolidate informal variants only.
 * `company-name-normalization` ... conversational company names. Never overwrite the original column. Rules are inline in the SKILL.md.
-* `conversational-location` ... `scripts/conversational_location.py`. Naperville to Chicagoland. STALE: the fix from Sept 9 is missing. Never overwrite the raw `city` column, always write to `city_normalized` or a named output column, and NO_GEOCODE rows must get a blank location, never a broken sentence.
+* `conversational-location` ... `scripts/conversational_location.py`. Naperville to Chicagoland. Writes `city_normalized`. Never overwrite raw `city`. NO_GEOCODE is a blank location, never a broken sentence.
 * `sports-team-assignment` ... `scripts/assign_team.py`. MLB or NFL by distance with college fallback, pro only mode for education lanes. Ambiguous college nicknames go to null, which routes the lead to the AirPods tier.
 
 ## Campaign side

@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D32** (2026-09-12). One page of current truth. When a new
+Canon as of **D33** (2026-09-12). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -107,7 +107,7 @@ floor), **bouncing** (over 5%).
 Before the service calls a vendor server it is documented from its code in
 `docs/servers.md`, and Josh reviews that first (D22).
 
-## First pull (D31, D32)
+## First pull (D31, D32, D33)
 
 The first list for a campaign is built in Claude. After that pull (and
 after every service import, step 11.5) a **new** row goes into
@@ -116,11 +116,22 @@ filter book (titles, bands, Maps runs, permits). **Build** rows are one
 `source_label` / batch and its measured size. Propose the build with the
 best imported count, not the method on the lane row. `tam_count` is
 `count_contacts` or a Maps/permit **company** count; `rows_found` is the
-export. Those are not the same number. Backfill rows whose notes say
-“Josh to confirm” are for proposals only — do not scale until
-`owner_confirmed_at` is set. Campaign ids must already exist in
-`public.campaigns`. Mixed ICPs are two lane rows. A lane with no receipt
-and no recipe cannot be invented.
+export. Those are not the same number. If the latest receipt is
+`claude_backfill` or `claude_backfill_build`, **recount** before
+proposing — a blank `tam_count` is not TAM, and backfill `rows_found` is
+the old export. `other` is not a value on `company_source`,
+`domain_source`, `person_source`, or `email_source`; a receipt that
+would have needed it is a bug. Named company signals
+(`serp_tool_mention`, `theirstack_tech_signal`, `linkedin_engagers`,
+`linkedin_import`, `web_visitor_pixel`, `job_posting_signal`,
+`public_records`) carry rerun parameters in `company_filters`. Domain
+also has `theirstack`; person also has `leadmagic_employee_finder`.
+The 15 remaining “Josh to confirm” lanes are segment sign-off (step 1),
+done once. Peterson C1 (`c1_general_contractors`) is off that list —
+counts were measured; it is the first top-up the service can run once
+Maps/PermitStack are wired (physical still parks until then). Campaign
+ids must already exist in `public.campaigns`. Mixed ICPs are two lane
+rows. A lane with no receipt and no recipe cannot be invented.
 
 ## What this build runs (D26, D27, D28)
 
@@ -258,7 +269,7 @@ open cards, open runs and which integrations are configured.
 | Lane ledger | `src/ledger/` (`lane.ts` state, `health.ts` campaign lines, `render.ts` `/where` + digest text) |
 | Servers | `docs/servers.md` — every vendor server from its code (D22) |
 | Recipes | `recipes/<client>/<lane>.json`, validated at boot, mirrored to `topup.lane_recipes` |
-| First-pull receipts | `topup.pull_receipts` — lane + build rows (D32); Claude and step 11.5 insert, never update; `skills/first-pull-receipt` |
+| First-pull receipts | `topup.pull_receipts` — lane + build rows (D32); named sources only, no `other` (D33); Claude and step 11.5 insert, never update; `skills/first-pull-receipt` |
 | Rails | `src/spend/` |
 | Runbook | `src/stages/verify/runbook.ts` (pure) |
 | Cards | `src/slack/cards.ts`; state in `topup.cards` |

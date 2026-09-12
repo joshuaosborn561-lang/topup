@@ -1,11 +1,23 @@
 import { z } from "zod";
 
 /**
- * A pull receipt (D31, D32). Claude writes one after a first list; this
+ * A pull receipt (D31–D33). Claude writes one after a first list; this
  * service inserts another after every import (never updates in place).
  * Lane rows hold the filter set. Build rows hold one source_label and its
  * measured yield. Counts, ids, filters, method names. Never emails.
+ *
+ * `other` is not a value. A receipt that would have needed it is a bug.
  */
+
+export const SIGNAL_COMPANY_SOURCES = [
+  "serp_tool_mention",
+  "theirstack_tech_signal",
+  "linkedin_engagers",
+  "linkedin_import",
+  "web_visitor_pixel",
+  "job_posting_signal",
+  "public_records",
+] as const;
 
 export const COMPANY_SOURCES = [
   "getleads",
@@ -15,13 +27,25 @@ export const COMPANY_SOURCES = [
   "parcels",
   "ai_ark",
   "table",
-  "other",
+  ...SIGNAL_COMPANY_SOURCES,
 ] as const;
 
-export const DOMAIN_SOURCES = ["already", "getleads", "maps", "domain_waterfall", "none", "other"] as const;
-export const PERSON_SOURCES = ["already", "getleads", "ai_ark", "people_waterfall", "serp", "hard_to_find", "none", "other"] as const;
-export const EMAIL_SOURCES = ["already", "getleads", "name_to_email", "email_waterfall", "none", "other"] as const;
+export const DOMAIN_SOURCES = ["already", "getleads", "maps", "domain_waterfall", "theirstack", "none"] as const;
+export const PERSON_SOURCES = [
+  "already",
+  "getleads",
+  "ai_ark",
+  "people_waterfall",
+  "serp",
+  "hard_to_find",
+  "leadmagic_employee_finder",
+  "none",
+] as const;
+export const EMAIL_SOURCES = ["already", "getleads", "name_to_email", "email_waterfall", "none"] as const;
 export const EMAIL_TIERS = ["getleads", "smartlead", "aiark", "leadmagic", "prospeo", "fullenrich"] as const;
+
+/** Latest receipt from the Sept 12 backfill. Its rows_found is the old export, tam_count is blank. */
+export const BACKFILL_WRITERS = ["claude_backfill", "claude_backfill_build"] as const;
 
 const snake = z.string().regex(/^[a-z][a-z0-9_]*$/);
 
@@ -79,9 +103,18 @@ export const pullReceiptSchema = z
     if (r.granularity === "lane" && r.campaign_ids.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["campaign_ids"], message: "a lane receipt must name at least one campaign" });
     }
+    if ((SIGNAL_COMPANY_SOURCES as readonly string[]).includes(r.company_source) && Object.keys(r.company_filters).length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["company_filters"],
+        message:
+          "a signal receipt must carry rerun parameters in company_filters (query shape, vendor or technology list, creator roster, job title terms)",
+      });
+    }
   });
 
 export type PullReceipt = z.infer<typeof pullReceiptSchema>;
+export type CompanySource = (typeof COMPANY_SOURCES)[number];
 
 export function parsePullReceipt(input: unknown): PullReceipt {
   const r = pullReceiptSchema.safeParse(input);
@@ -92,10 +125,50 @@ export function parsePullReceipt(input: unknown): PullReceipt {
   return r.data;
 }
 
+/**
+ * Map a recipe source.kind onto the table vocabulary. `mixed` and anything
+ * unnamed throw — there is no `other` to write (D33).
+ */
+export function companySourceFromRecipeKind(kind: string): CompanySource {
+  if (kind === "getleads" || kind === "maps" || kind === "permits" || kind === "ai_ark") return kind;
+  if (kind === "supabase_table") return "table";
+  throw new Error(
+    `cannot write company_source for recipe source '${kind}': 'other' is not a value. Name the signal or park.`,
+  );
+}
+
+export function companyFiltersFromSource(source: {
+  kind: string;
+  params?: unknown;
+  table?: string;
+  where?: string;
+}): Record<string, unknown> {
+  if (source.kind === "getleads" || source.kind === "maps" || source.kind === "permits" || source.kind === "ai_ark") {
+    return (source.params as Record<string, unknown>) ?? {};
+  }
+  if (source.kind === "supabase_table") {
+    return { table: source.table, where: source.where };
+  }
+  return {};
+}
+
 /** Backfill rows that say "Josh to confirm" are for proposals only. */
 export function receiptConfirmed(r: Pick<PullReceipt, "owner_confirmed_at" | "notes">): boolean {
   if (r.owner_confirmed_at) return true;
   return !/josh to confirm/i.test(r.notes ?? "");
+}
+
+/**
+ * Backfill writers stored the old export in rows_found and left tam_count
+ * blank. A blank tam_count is also untrusted. Recount before proposing.
+ */
+export function receiptNeedsRecount(r: Pick<PullReceipt, "written_by" | "tam_count">): boolean {
+  return (BACKFILL_WRITERS as readonly string[]).includes(r.written_by) || r.tam_count == null;
+}
+
+/** TAM to print on a proposal. Null means recount first; never use rows_found. */
+export function proposedTam(r: PullReceipt): number | null {
+  return receiptNeedsRecount(r) ? null : r.tam_count;
 }
 
 export type YieldPick = { receipt: PullReceipt; imported: number; found: number };

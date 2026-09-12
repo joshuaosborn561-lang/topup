@@ -9,10 +9,10 @@ import { normalizeCity } from "./names.js";
  * the label too (Chicago -> Chicagoland, on purpose). A city outside every
  * radius keeps its own cleaned name: Bozeman IS the conversational name.
  *
- * Two things the script got wrong that `skills/SKILLS_INDEX.md` corrects, and
- * the index wins: the raw `city` column is never written (this returns a new
- * value), and a city that cannot be geocoded gets a BLANK location, never a
- * broken sentence. The step 7 hold then catches the blank when the copy uses it.
+ * The script (D33) and this port agree: the raw `city` column is never
+ * written (this returns a new value), and a city that cannot be geocoded
+ * gets a BLANK location, never a broken sentence. The step 7 hold then
+ * catches the blank when the copy uses it.
  */
 
 /** (label, anchor lat, anchor lon, radius miles). Tighter metros first so they win on distance. Verbatim from the script. */
