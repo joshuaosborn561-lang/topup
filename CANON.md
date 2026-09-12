@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D30** (2026-09-12). One page of current truth. When a new
+Canon as of **D31** (2026-09-12). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -106,6 +106,17 @@ floor), **bouncing** (over 5%).
 
 Before the service calls a vendor server it is documented from its code in
 `docs/servers.md`, and Josh reviews that first (D22).
+
+## First pull (D31)
+
+The first list for a campaign is built in Claude. After that pull, Claude
+writes one row to `topup.pull_receipts` on campaignintelligence: which
+campaigns, ICP kind and persona, where the companies came from, the
+filters, and which puzzle piece filled domain / person / email. Counts and
+ids only — never lead rows. Mixed ICPs are two receipts. Latest row for
+those campaign ids is how the service knows what “more of these people”
+means. The recipe can be filled from that receipt; a lane with no receipt
+and no recipe cannot be invented.
 
 ## What this build runs (D26, D27, D28)
 
@@ -243,6 +254,7 @@ open cards, open runs and which integrations are configured.
 | Lane ledger | `src/ledger/` (`lane.ts` state, `health.ts` campaign lines, `render.ts` `/where` + digest text) |
 | Servers | `docs/servers.md` — every vendor server from its code (D22) |
 | Recipes | `recipes/<client>/<lane>.json`, validated at boot, mirrored to `topup.lane_recipes` |
+| First-pull receipts | `topup.pull_receipts` — Claude writes after the first list (D31); `skills/first-pull-receipt` |
 | Rails | `src/spend/` |
 | Runbook | `src/stages/verify/runbook.ts` (pure) |
 | Cards | `src/slack/cards.ts`; state in `topup.cards` |

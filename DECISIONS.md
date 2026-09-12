@@ -50,6 +50,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D28 | Live; pipeline list superseded by D29 |
 | D29 | Live; recipe-level ICP superseded by D30 |
 | D30 | Live |
+| D31 | Live |
 
 ---
 
@@ -812,3 +813,28 @@ are not copy-pasted onto every cell.
 recipe-level `icp` is gone. `src/recipes/campaigns.test.ts` — inherit
 vs override, grouping, target ids. `src/stages/pure.test.ts` — mixed
 kinds park; same persona unions bands. Ask Josh.
+
+## D31 — Claude writes a first-pull receipt so leadtopup can repeat it
+
+**Decision.** Josh, 2026-09-12: the point of leadtopup is “this campaign
+is working, get more of those people.” The first list is built in Claude
+Web. The Smartlead mirror then has the people and not the how. After every
+first pull, Claude writes one row to `topup.pull_receipts` on
+campaignintelligence (`azpapwtnrbzywlnxxecz`): client, lane, campaign ids,
+`icp_kind`, persona, company source and filters, and how domain / person /
+email were obtained. Counts and ids only. Two ICPs → two rows. Latest row
+wins. The service does not invent a source from `public.leads`.
+
+**Why.** Title and company size are on the lead. “Came from Maps then
+Domain Waterfall then Name to Email” is not. Without the receipt the
+service cannot automatically refill what Claude did by hand.
+
+**Tradeoff.** The service does not yet drive a run from a receipt alone
+(a recipe is still required to execute). The receipt is the input that
+lets us write that recipe without asking Josh to re-narrate the pull.
+Claude must know the campaign ids before it inserts.
+
+**Guard.** `src/recipes/receipt.test.ts` — Parlay getleads and Peterson
+physical shapes parse; another project, empty campaigns, or a one-word
+how are refused. `skills/first-pull-receipt/SKILL.md` is the prompt
+Claude runs. Ask Josh.

@@ -4,6 +4,10 @@ These are the skills Josh has built for SalesGlider Growth. Each folder holds a 
 
 Two skills are known to be stale as of Sept 10 2026 and are called out below. Do not port their stale parts.
 
+## After a first pull (so leadtopup can repeat it)
+
+* `first-pull-receipt` ... After Claude builds the first list, write one row to `topup.pull_receipts` (campaignintelligence). Company source, filters, puzzle pieces, campaign ids. No lead rows. D31.
+
 ## Lead pulls per client (these become recipes)
 
 * `parlay-lead-pulls` ... Randy Haba, MSP, IT decision makers. STALE: the dedupe SQL in this file predates the Aug 25 response based suppression rule and kills good pulls. Use the scope in `global-suppression`. The band widening (11 to 500) and title expansion from Sept 9 are not in this file either.
