@@ -3,8 +3,9 @@ import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
 import { usd } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
-import { attempt, finish, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, finish, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import type { PullAdapter, PullResult } from "./adapter.js";
+import { routePull } from "./route.js";
 
 /**
  * Step 3 — Pull (skill lead-list-build). Drives one PullAdapter: spend gate,
@@ -34,7 +35,12 @@ export class PullStage {
   }
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
-    return attempt(this.d, run, "pull", "pulling", async () => {
+    return attempt(this.d, run, "pull", "pulling", async (attempts) => {
+      const routed = routePull(recipe);
+      if (routed.kind === "park") {
+        await this.d.repo.failStep(run.run_id, "pull", routed.reason, true);
+        return park(this.d, run, "pull", routed.reason, attempts);
+      }
       const adapter = this.adapterFor(recipe);
       const sizeStep = await this.d.repo.getStep(run.run_id, "size");
       const planRows = Number(sizeStep?.counts.plan_rows ?? 0) || recipe.runway.max_per_run;

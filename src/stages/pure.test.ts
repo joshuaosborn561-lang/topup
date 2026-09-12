@@ -7,7 +7,11 @@ import { importMatched, parseJobs } from "./import/index.js";
 import { sourceLabel, titlePattern } from "./ingest/index.js";
 import { QA_FIELD_COLUMN, scopeSql } from "./qa/index.js";
 import { bandSegment, cellLabel, mailClassSegment, matchRule } from "./route/index.js";
+import { classifyPuzzle } from "./puzzle/classify.js";
+import { routePull, routeSize } from "./pull/route.js";
 import { partitionCheck, rowsNeeded, sourcesAgree } from "./size/index.js";
+import { sizeReport } from "./size/report.js";
+import { recentClientSendSql, recycleDays } from "./suppress/recycle.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 /** The pure halves of steps 2–11. Vendor calls are never made here; the stages that make them are exercised against fakes. */
@@ -73,6 +77,7 @@ describe("step 9 — route to campaign", () => {
     lane: "it_dm",
     smartlead_client_id: 418274,
     supabase_project: "azpapwtnrbzywlnxxecz",
+    icp: { kind: "linkedin_native" },
     source: { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50", "51 to 200"], email_status: ["VALID"] } },
     suppression: { response_based: true, same_offer_any_client: true },
     email_finding: { enabled: false },
@@ -130,5 +135,80 @@ describe("step 11 — import", () => {
 
   it("the Smartlead client can reach exactly five read-or-import tools (D6)", () => {
     assert.deepEqual([...SMARTLEAD_ALLOWED], ["start_lead_import", "get_lead_import_status", "get_sequences", "get_campaign", "list_campaign_mailboxes"]);
+  });
+});
+
+describe("D29 — puzzle pieces", () => {
+  it("classifies name/domain/email gaps the skills name", () => {
+    assert.equal(classifyPuzzle({ first_name: "Ada", last_name: "Lovelace", company_domain: "analyticengine.com", email: "ada@analyticengine.com" }), "ready");
+    assert.equal(classifyPuzzle({ first_name: "Ada", last_name: "Lovelace", company_name: "Analytic Engine" }), "needs_domain");
+    assert.equal(classifyPuzzle({ company_domain: "rooftop.com" }), "needs_person");
+    assert.equal(classifyPuzzle({ first_name: "Ada", last_name: "Lovelace", company_domain: "analyticengine.com" }), "needs_email");
+    assert.equal(classifyPuzzle({ company_name: "Nobody" }), "empty");
+  });
+});
+
+describe("D29 — pull and size routing", () => {
+  const base = {
+    recipe_id: "parlay.it_dm.v3",
+    client_tag: "parlay",
+    lane: "it_dm",
+    smartlead_client_id: 418274,
+    supabase_project: "azpapwtnrbzywlnxxecz",
+    suppression: { response_based: true, same_offer_any_client: true },
+    email_finding: { enabled: false },
+    verify: { seg_split: true },
+    normalize: {},
+    runway: { floor_days: 7, target_days: 30, max_per_run: 10000 },
+    working: { interested_per_2000_sends: 1, variant_min_sends: 300 },
+    spend: { auto_cap_usd: 5 },
+  };
+
+  it("LinkedIn-native + getleads runs; physical + getleads parks; maps/permits park until wired", () => {
+    const linkedin = parseRecipe({ ...base, icp: { kind: "linkedin_native" }, source: { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50"], email_status: ["VALID"] } } });
+    assert.deepEqual(routePull(linkedin), { kind: "run", source: "getleads" });
+    assert.deepEqual(routeSize(linkedin), { kind: "getleads" });
+
+    const rooftop = parseRecipe({ ...base, recipe_id: "peterson.roof.v1", client_tag: "peterson", lane: "roof", icp: { kind: "physical" }, source: { kind: "getleads", params: { job_titles: ["Owner"], company_size: ["1 to 10"], email_status: ["VALID"] } } });
+    assert.equal(routePull(rooftop).kind, "park");
+    assert.match((routePull(rooftop) as { reason: string }).reason, /do not fall back/);
+    assert.equal(routeSize(rooftop).kind, "park");
+
+    const maps = parseRecipe({ ...base, recipe_id: "peterson.roof.v1", client_tag: "peterson", lane: "roof", icp: { kind: "physical" }, source: { kind: "maps", params: { categories: ["roofing contractor"] } } });
+    assert.equal(routePull(maps).kind, "park");
+    assert.match((routePull(maps) as { reason: string }).reason, /not wired/);
+  });
+
+  it("the tam-sizing report is five lines in order", () => {
+    const text = sizeReport({
+      number: 16940,
+      filter: "getleads count_contacts; bands 11 to 50",
+      partition: { bands: 400, others: 600, all: 1000, diff: 0, ok: true },
+      secondVendor: "AI Ark People Preview is not wired",
+      agree: null,
+      netNew: 12000,
+      held: 4940,
+      costUsd: "$0.00",
+    });
+    const lines = text.split("\n");
+    assert.equal(lines.length, 5);
+    assert.match(lines[0], /^1\. Number:/);
+    assert.match(lines[1], /^2\. Partition:/);
+    assert.match(lines[2], /^3\. Second vendor:/);
+    assert.match(lines[3], /^4\. Net-new:/);
+    assert.match(lines[4], /^5\. Cost of sizing:/);
+  });
+});
+
+describe("D29 — recycle window", () => {
+  it("defaults to 90 days and keys prior contact off a recent send, not lifetime leads", () => {
+    assert.equal(recycleDays(undefined), 90);
+    assert.equal(recycleDays(90), 90);
+    const sql = recentClientSendSql("$10");
+    assert.match(sql, /public\.sends/);
+    assert.match(sql, /s\.sent/);
+    assert.match(sql, /s\.sent_at/);
+    assert.match(sql, /smartlead_client_id = \$6/);
+    assert.doesNotMatch(sql, /leads_staging/);
   });
 });

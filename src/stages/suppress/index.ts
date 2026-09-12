@@ -3,11 +3,11 @@ import type { RunRow } from "../../domain/runs.js";
 import { INTERESTED_CATEGORY_IDS } from "../../domain/working.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import type { Recipe } from "../../recipes/schema.js";
-import { clientDomainListCard } from "../../slack/cards.js";
 import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
+import { recentClientSendSql, recycleDays } from "./recycle.js";
 
 /**
- * Step 5 — Suppress and dedupe (skill lead-list-build; skill global-suppression).
+ * Step 5 — Suppress and dedupe (skill lead-list-build; skill global-suppression; D29).
  *
  * One SQL pass, response based only. In priority order a row is removed for
  * the first reason that applies:
@@ -17,18 +17,14 @@ import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js
  *   wrong_person          category Wrong Person, any client
  *   suppression_list      on public.suppression
  *   bounced               a bounced send or a Sender Originated Bounce, any client
- *   client_prior_contact  already in any of this client's campaigns (public.leads for
- *                         the client, or leads_staging for the client's campaigns) —
- *                         older copy wins, it has send history
+ *   client_prior_contact  emailed by this Smartlead client in the last
+ *                         recycle_after_days (default 90) — older sends recycle
  *   same_offer_other_client  received the same offer (registry offer_key) from another client
- *   client_domain         the client's own customer domain list (topup.client_domain_blocklist)
+ *   client_domain         the client's own customer domain list when rows exist
  *
- * Never against all of public.leads (that killed 87% of a good pull). Then
- * within-run dedupe by address. Gate: report raw, removed by reason, net new.
- *
- * The customer domain list "must be applied before anything loads, ask
- * Cayden for it if missing": an empty list for a client whose recipe wants
- * it is a card to Cayden and a halt, not a silent skip.
+ * Never against all of public.leads. Never a lifetime prior-contact suppress.
+ * Step 5 does not wait for a customer-domain-list card (D29): apply the list
+ * if present, proceed and say so if empty.
  */
 export interface SuppressDeps extends StageDeps {
   ledger?: LaneLedger;
@@ -55,10 +51,8 @@ export class SuppressStage {
     return attempt(this.d, run, "suppress", "suppressing", async () => {
       const table = ingestedTable(run.client_tag);
       const db = this.d.repo.raw();
-
-      // The customer domain list gate (Cayden).
-      const domainList = await this.domainListReady(run, recipe);
-      if (domainList.kind === "waiting") return domainList;
+      const domainCount = await this.domainListCount(run.client_tag);
+      const days = recycleDays(recipe.suppression.recycle_after_days);
 
       const t = await this.tables();
       const clientCampaigns = await this.clientCampaignIds(recipe, t);
@@ -67,12 +61,12 @@ export class SuppressStage {
       const raw = Number(rawRows[0]?.n ?? 0);
 
       const removed = await this.d.repo.withRun(run.run_id, async (tx) => {
-        const reasonSql = this.reasonCase(recipe, t, offerKeys.length > 0);
+        const reasonSql = this.reasonCase(recipe, t, offerKeys.length > 0, domainCount > 0);
         const { rows } = await tx.query<{ reason: string; n: string }>(
           `with p as (
-             -- every parameter typed once, so a reason the recipe turns off leaves no untyped placeholder
              select $2::int[] as positive, $3::int as dnc, $4::int as wrong_person, $5::int as bounce,
-                    $6::bigint as smartlead_client_id, $7::bigint[] as client_campaigns, $8::text[] as offer_keys, $9::text as client_tag
+                    $6::bigint as smartlead_client_id, $7::bigint[] as client_campaigns, $8::text[] as offer_keys, $9::text as client_tag,
+                    $10::int as recycle_after_days
            ),
            r as (
              select id, lower(email) as e, split_part(lower(email), '@', 2) as d
@@ -86,12 +80,11 @@ export class SuppressStage {
              returning j.reason
            )
            select reason, count(*)::text as n from hit group by reason`,
-          [run.run_id, INTERESTED_CATEGORY_IDS, DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, recipe.smartlead_client_id, clientCampaigns, offerKeys, run.client_tag],
+          [run.run_id, INTERESTED_CATEGORY_IDS, DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, recipe.smartlead_client_id, clientCampaigns, offerKeys, run.client_tag, days],
         );
         const byReason: Record<string, number> = Object.fromEntries(SUPPRESS_REASONS.map((r) => [r, 0]));
         for (const r of rows) byReason[r.reason] = Number(r.n);
 
-        // Within-run dedupe by address: first row by id stays.
         const dup = await tx.query(
           `with ranked as (
              select id, row_number() over (partition by lower(email) order by id) as rn
@@ -114,25 +107,29 @@ export class SuppressStage {
         deduped: removed.deduped,
         needs_email: removed.needs_email,
         net_new: removed.net_new,
+        recycle_after_days: days,
+        client_domain_list: domainCount,
       };
       const skipped: string[] = [];
       if (!t.leads) skipped.push("response-based (no public.leads mirror here)");
       if (!t.suppression) skipped.push("public.suppression (table missing)");
+      if (!t.sends) skipped.push(`client prior contact recycle (${days}d needs public.sends)`);
       if (recipe.suppression.same_offer_any_client && offerKeys.length === 0) skipped.push("same offer other client (no offer_key in topup.campaign_registry for this lane's campaigns)");
-      if (domainList.kind === "skipped") skipped.push("client customer domain list (Josh chose to proceed without it)");
+      if (recipe.suppression.client_domain_blocklist && domainCount === 0) skipped.push("client customer domain list (empty; applied nothing, no card)");
       const reasons = Object.entries(removed.byReason)
         .filter(([, n]) => n > 0)
         .map(([k, n]) => `${k} ${n}`)
         .join(", ");
       const line =
         `Suppress done: raw ${raw} · removed ${suppressed}${reasons ? ` (${reasons})` : ""} · ${removed.deduped} duplicates within the pull · ${removed.needs_email} with no address · *net new ${removed.net_new}* — the number from here on.` +
+        ` · prior contact is a send by this client in the last ${days} days (older recycles unless positive / DNC / wrong person).` +
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);
     });
   }
 
-  /** The CASE that names the first reason a row is removed. Parameters: $2 positive ids, $3 DNC, $4 wrong person, $5 bounce, $6 smartlead_client_id, $7 client campaign ids, $8 offer keys, $9 client_tag. */
-  private reasonCase(recipe: Recipe, t: Tables, haveOffer: boolean): string {
+  /** The CASE that names the first reason a row is removed. $2–$10 as in run(). */
+  private reasonCase(recipe: Recipe, t: Tables, haveOffer: boolean, haveDomains: boolean): string {
     const whens: string[] = [];
     const inLeads = (cond: string) => `exists (select 1 from public.leads l where lower(l.email) = r.e and ${cond})`;
     if (t.leads) {
@@ -145,9 +142,8 @@ export class SuppressStage {
       const bounce = [t.sends ? `exists (select 1 from public.leads l join public.sends s on s.lead_id = l.id where lower(l.email) = r.e and s.bounced)` : null, inLeads("l.category_id = $5")].filter(Boolean).join(" or ");
       whens.push(`when ${bounce} then 'bounced'`);
     }
-    if (recipe.suppression.client_prior_contacts) {
-      const prior = [t.leads ? inLeads("l.smartlead_client_id = $6") : null, t.staging ? `exists (select 1 from public.leads_staging st where lower(st.email) = r.e and st.campaign_id = any($7::bigint[]))` : null].filter(Boolean).join(" or ");
-      if (prior) whens.push(`when ${prior} then 'client_prior_contact'`);
+    if (recipe.suppression.client_prior_contacts && t.leads && t.sends) {
+      whens.push(`when ${recentClientSendSql("$10")} then 'client_prior_contact'`);
     }
     if (recipe.suppression.same_offer_any_client && haveOffer && t.leads && t.campaigns) {
       whens.push(
@@ -155,7 +151,9 @@ export class SuppressStage {
                        where lower(l.email) = r.e and cr.offer_key = any($8::text[]) and cr.client_tag <> $9) then 'same_offer_other_client'`,
       );
     }
-    if (recipe.suppression.client_domain_blocklist) whens.push(`when exists (select 1 from topup.client_domain_blocklist b where b.client_tag = $9 and b.domain = r.d) then 'client_domain'`);
+    if (recipe.suppression.client_domain_blocklist && haveDomains) {
+      whens.push(`when exists (select 1 from topup.client_domain_blocklist b where b.client_tag = $9 and b.domain = r.d) then 'client_domain'`);
+    }
     return whens.length ? `case ${whens.join(" ")} end` : "null::text";
   }
 
@@ -184,35 +182,8 @@ export class SuppressStage {
     return rows.map((r) => r.offer_key);
   }
 
-  /**
-   * The client's customer domain list. Present → ready. Absent → one card to
-   * Cayden (list_added once the MCP tool add_client_domains has been used;
-   * no_list is Josh's call) and the lane is blocked on the operator.
-   */
-  private async domainListReady(run: RunRow, recipe: Recipe): Promise<{ kind: "ready" } | { kind: "skipped" } | Extract<StageOutcome, { kind: "waiting" }>> {
-    if (!recipe.suppression.client_domain_blocklist) return { kind: "ready" };
-    const db = this.d.repo.raw();
-    const { rows } = await db.query<{ n: string }>(`select count(*)::text as n from topup.client_domain_blocklist where client_tag = $1`, [run.client_tag]);
-    if (Number(rows[0]?.n ?? 0) > 0) {
-      await this.d.ledger?.unblock(run.client_tag, run.lane, `Customer domain list present for ${run.client_tag} (${rows[0].n} domains).`, run.run_id);
-      return { kind: "ready" };
-    }
-    const { rows: cards } = await db.query<{ resolution: string | null; status: string }>(`select resolution, status from topup.cards where run_id = $1 and kind = 'client_domain_list' order by created_at desc limit 1`, [run.run_id]);
-    const last = cards[0];
-    if (last?.status === "resolved" && last.resolution === "no_list") {
-      await this.d.ledger?.unblock(run.client_tag, run.lane, "Josh chose to suppress without a customer domain list.", run.run_id);
-      return { kind: "skipped" };
-    }
-    if (last?.status === "open") return { kind: "waiting", on: "operator", why: "customer domain list missing" };
-    await this.d.console.ask({
-      run,
-      kind: "client_domain_list",
-      audience: "operator",
-      payload: { step: "suppress", client_tag: run.client_tag },
-      text: `Step 5 needs ${run.client_tag}'s customer domain list before anything loads`,
-      blocks: (cardId) => clientDomainListCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane }),
-    });
-    await this.d.ledger?.block(run.client_tag, run.lane, "operator", `customer domain list for ${run.client_tag} is missing (skill: ask Cayden; add with MCP add_client_domains)`, run.run_id);
-    return { kind: "waiting", on: "operator", why: "customer domain list missing" };
+  private async domainListCount(clientTag: string): Promise<number> {
+    const { rows } = await this.d.repo.raw().query<{ n: string }>(`select count(*)::text as n from topup.client_domain_blocklist where client_tag = $1`, [clientTag]);
+    return Number(rows[0]?.n ?? 0);
   }
 }

@@ -93,9 +93,10 @@ src/
   stages/trigger/     step 1: reuse the saved ICP; halt if a cell has no campaign
   stages/size/        step 2: counts, partition check, plan
   stages/pull/        step 3: PullAdapter interface, GetleadsPull
-  stages/find_emails/ step 3: email finding (cascade lands with the company-first adapter)
   stages/ingest/      step 4: LeadPipe ingest_csv, claim, title audit
-  stages/suppress/    step 5: one SQL pass, customer list card
+  stages/suppress/    step 5: one SQL pass, 90-day recycle, no domain-list card
+  stages/puzzle/      after suppress: name/domain/person gaps
+  stages/find_emails/ immediately before verify: Name to Email then Email Waterfall
   stages/verify/      step 6: runbook (pure), sendable rule, the stage
   stages/normalize/   step 7: names, company, geo, location, team (ports of the skill scripts)
   stages/qa/          step 8: topup.qa_rules, hold cards, taps

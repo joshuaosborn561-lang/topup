@@ -57,8 +57,39 @@ const wideningCandidate = z
   })
   .strict();
 
+const mapsParams = z
+  .object({
+    categories: z.array(z.string().min(1)).min(1),
+    states: z.array(z.string()).optional(),
+    cities: z.array(z.string()).optional(),
+  })
+  .strict();
+
+const permitsParams = z
+  .object({
+    permit_types: z.array(z.string().min(1)).min(1),
+    states: z.array(z.string()).optional(),
+    counties: z.array(z.string()).optional(),
+  })
+  .strict();
+
+const aiArkParams = z
+  .object({
+    titles: z.array(z.string().min(1)).min(1),
+    employee_size: z.object({ start: z.number().int().min(1), end: z.number().int().min(1) }).optional(),
+    locations: z.array(z.string()).optional(),
+  })
+  .strict();
+
 const source = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("getleads"), params: getleadsParams, widening_candidates: z.array(wideningCandidate).default([]) }),
+  z.object({ kind: z.literal("ai_ark"), params: aiArkParams }),
+  z.object({ kind: z.literal("maps"), params: mapsParams }),
+  z.object({ kind: z.literal("permits"), params: permitsParams }),
+  z.object({
+    kind: z.literal("mixed"),
+    note: z.string().min(1),
+  }),
   z.object({
     kind: z.literal("supabase_table"),
     project_ref: z.string().optional(),
@@ -66,6 +97,13 @@ const source = z.discriminatedUnion("kind", [
     where: z.string().min(1),
   }),
 ]);
+
+/** Step zero of leadgen-mcp-routing / tam-sizing. The sizing method and the pull stack are completely different for each. */
+const icp = z
+  .object({
+    kind: z.enum(["linkedin_native", "physical"]),
+  })
+  .strict();
 
 const suppression = z
   .object({
@@ -76,6 +114,8 @@ const suppression = z
     client_domain_blocklist: z.boolean().default(true),
     same_offer_any_client: z.literal(true),
     same_gift_any_client: z.boolean().default(false),
+    /** Recycle: a prior send for this Smartlead client is only a suppress if it is newer than this (D29). */
+    recycle_after_days: z.number().int().min(1).default(90),
   })
   .strict();
 
@@ -155,6 +195,7 @@ export const recipeSchema = z
     client_tag: z.string().regex(/^[a-z][a-z0-9_]*$/),
     lane: z.string().regex(/^[a-z][a-z0-9_]*$/),
     smartlead_client_id: z.number().int().positive(),
+    icp,
     supabase_project: z.literal("azpapwtnrbzywlnxxecz"),
     owner_approved_at: z.string().datetime().nullable().default(null),
     source,
@@ -248,9 +289,14 @@ export function recipeAuthorises(recipe: Recipe, step: string, vendor?: string):
       return true;
     case "size":
     case "pull":
-      return recipe.source.kind === "getleads" ? vendor === undefined || vendor === "getleads" : true;
+      if (recipe.source.kind === "getleads") return vendor === undefined || vendor === "getleads";
+      if (recipe.source.kind === "ai_ark") return vendor === undefined || vendor === "aiark";
+      if (recipe.source.kind === "maps") return vendor === undefined || vendor === "apify";
+      if (recipe.source.kind === "permits") return vendor === undefined || vendor === "apify";
+      return true;
+    case "puzzle":
+      return vendor === undefined || vendor === "aiark" || vendor === "apify" || vendor === "getleads" || vendor === "leadmagic" || vendor === "prospeo";
     case "find_emails": {
-      if (!recipe.email_finding.enabled) return false;
       if (!vendor) return true;
       const maxIdx = EMAIL_TIERS.indexOf(recipe.email_finding.max_tier);
       const idx = EMAIL_TIERS.indexOf(vendor as (typeof EMAIL_TIERS)[number]);

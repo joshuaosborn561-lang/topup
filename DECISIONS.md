@@ -45,9 +45,10 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D23 | Live |
 | D24 | Live |
 | D25 | Live |
-| D26 | Live |
+| D26 | Live; pipeline order and find_emails-before-ingest superseded by D29 |
 | D27 | Live |
-| D28 | Live |
+| D28 | Live; pipeline list superseded by D29 |
+| D29 | Live |
 
 ---
 
@@ -693,3 +694,75 @@ required.
 order above, spanning spine steps 1..13. `src/stages/trigger/cells.test.ts`
 — cartesian cells, AirPods rules that omit a dimension, a missing band is
 uncovered. `src/guards/spine.test.ts` — `flip` sits on step 13. Ask Josh.
+
+## D29 — Recycle after 90 days; TAM and pull follow the skills; puzzle + email enrichment sit after suppress; step 5 does not wait
+
+**Decision.** Josh's audit of the walkthrough, 2026-09-12. Six corrections;
+steps 7–13 stay as D26 built them.
+
+1. **Slack console** is channel `C0C135EB76H` (`SLACK_OPS_CHANNEL` default).
+   Client maps may still override per tag.
+2. **Recycle, not lifetime suppress.** `client_prior_contact` is a send for
+   this `smartlead_client_id` in `public.leads` ⋈ `public.sends` (`sent`,
+   `sent_at`) inside `suppression.recycle_after_days` (default 90). Positive
+   reply, DNC, wrong person, `public.suppression`, and bounce stay forever.
+   Being in `leads_staging` is not a suppress reason. Size net-new subtracts
+   the same 90-day send window, not lifetime staging. Campaignintelligence
+   emailed-ever vs emailed-90d (counts only, 2026-09-12): Parlay 20,151 /
+   20,068; SalesGlider 36,449 / 24,590; BCP 25,742 / 25,435.
+3. **Size is tam-sizing, not getleads-only.** Classify `recipe.icp.kind`
+   (`linkedin_native` | `physical`). LinkedIn-native: getleads
+   `count_contacts` is the free second opinion; AI Ark People Preview is the
+   default primary and is not a leadtopup client yet (D22), so the five-line
+   report says so. Physical: a range from Maps `estimate_cost` and/or
+   PermitStack counts — park until those counters are wired; never a
+   getleads TAM. Partition check and useful-floor gate stay.
+4. **Pull is routed, not getleads-shaped.** `leadgen-mcp-routing` step zero:
+   LinkedIn-native → getleads (then AI Ark / LeadMagic / Prospeo /
+   FullEnrich when those adapters exist). Physical → Maps and/or
+   PermitStack, then domain-waterfall and people-waterfall. Mixed clients
+   are per lane. getleads on a physical ICP parks ("do not fall back").
+   maps / permits / AI Ark park with a clear "not wired" until D21's
+   physical cascade. If the buyer is in neither Maps nor permits, ask Josh.
+5. **Step 5 does not need approval.** Apply `topup.client_domain_blocklist`
+   when it has rows; if empty, proceed and say so. `add_client_domains`
+   still fills the list. No `client_domain_list` card.
+6. **Puzzle pieces, then email enrichment, immediately before verify.**
+   `PIPELINE_STEPS` is `trigger, size, pull, ingest, suppress, puzzle,
+   find_emails, verify, normalize, qa, route, stage, import, post_import,
+   flip`. After suppress: name and no domain → Domain Waterfall
+   `resolve_domain` (table source, ≤500/job); domain and no name → Find
+   Named Person `resolve_people` (always pass `approve_cost_usd`); name +
+   domain and no email → Name to Email `verify_person` first (never
+   `start_run` / `export_run`), then Email Waterfall `enrich_waterfall`
+   with `source_table` + writeback. Bank every name in `public.name_bank`.
+   A getleads VALID pull with no leftover names skips both stages.
+
+**Named conflicts (skill vs Josh; recorded and followed).**
+
+- Skill step 3 walks domain / people / email finding before ingest. Josh:
+  do not pay to enrich a suppressed person, so puzzle + find_emails run
+  after step 5 and immediately before verify. The thirteen step numbers
+  stay the skill's; `puzzle` and `find_emails` sit on spine step 5.
+- Skill step 5 body: ask Cayden if the customer domain list is missing.
+  Josh: no approval. Heading is `(code)` only.
+- Skill step 5: anyone already in this client's campaigns via
+  `leads_staging`. Josh: recycle after 90 days if they have not replied
+  positively / DNC.
+
+**Why.** The walkthrough treated getleads as the whole size and pull recipe
+and treated prior contact as forever. The skills (`tam-sizing`,
+`leadgen-mcp-routing`, `domain-waterfall`, `people-waterfall`,
+`unresolved-name-routing`) already said otherwise.
+
+**Tradeoff.** AI Ark People Preview, Maps, and PermitStack are documented
+as servers but are not leadtopup clients yet (D22). A physical recipe
+parks at size/pull rather than guessing a getleads number. Name to Email
+`verify_person` is one row per call (server-to-server; catch-all is never
+treated as valid). Email Waterfall dollars are still hardcoded $0 on that
+server; worst case comes from `src/spend/prices.ts`.
+
+**Guard.** `src/guards/invariants.test.ts` — `PIPELINE_STEPS` is the D29
+order. `src/guards/spine.test.ts` — `puzzle` and `find_emails` on step 5;
+step 5 has no Cayden tap. `src/stages/pure.test.ts` — classifyPuzzle,
+routePull / routeSize, recycle SQL, five-line size report. Ask Josh.

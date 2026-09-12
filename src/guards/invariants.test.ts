@@ -31,6 +31,7 @@ describe("invariants — the numbers and names the brief fixes", () => {
     const cfg = loadConfig({});
     assert.equal(cfg.AUTO_SPEND_CAP_USD, 5, "D9: AUTO_SPEND_CAP_USD default is 5. Josh raises caps, code does not.");
     assert.equal(cfg.DAILY_VENDOR_CAP_USD, 25, "D9: DAILY_VENDOR_CAP_USD default is 25.");
+    assert.equal(cfg.SLACK_OPS_CHANNEL, "C0C135EB76H", "D29: the service console is this Slack channel");
   });
 
   it("D9 — every paid vendor has a non-zero price and every vendor has a price", () => {
@@ -71,16 +72,16 @@ describe("invariants — the numbers and names the brief fixes", () => {
 
   it("D10 — only `routed` may ever be staged; every pre-verification status is in the never-send set", () => {
     assert.deepEqual([...SENDABLE_LEAD_STATUSES], ["routed"], "D10: staging anything but routed rows is how a list bounces");
-    for (const s of ["needs_verify", "verifying", "rejected", "stalled_unverified", "pulled", "ingested"]) {
+    for (const s of ["needs_verify", "verifying", "rejected", "stalled_unverified", "pulled", "ingested", "needs_domain", "needs_person", "needs_email"]) {
       assert.ok(NEVER_SEND_STATUSES.includes(s as never), `D10: ${s} must be in NEVER_SEND_STATUSES`);
     }
   });
 
-  it("D28 — the pipeline is steps 1 through 13 of the skill, in the skill's order", () => {
+  it("D29 — the pipeline is steps 1 through 13; puzzle + find_emails sit after suppress", () => {
     assert.deepEqual(
       [...PIPELINE_STEPS],
-      ["trigger", "size", "pull", "find_emails", "ingest", "suppress", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"],
-      "D28: adding or reordering a stage is a new decision; append it and update CANON.md",
+      ["trigger", "size", "pull", "ingest", "suppress", "puzzle", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"],
+      "D29: adding or reordering a stage is a new decision; append it and update CANON.md",
     );
     let last = 0;
     for (const s of PIPELINE_STEPS) {

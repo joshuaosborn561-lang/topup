@@ -61,7 +61,7 @@ export const SPINE: readonly SpineStep[] = [
     gate: "useful output counted, titles audited, spend within the approved ceiling.",
     skill:
       "the client pull skill, leadgen-mcp-routing; company-first: unmask-shell-llc, domain-waterfall, people-waterfall, serp-dm-discovery, hard-to-find-dm-discovery, unresolved-name-routing",
-    pipeline: ["pull", "find_emails"],
+    pipeline: ["pull"],
     card: "expected yield and cost per usable lead, and the pilot result for company-first lanes",
   },
   {
@@ -78,10 +78,10 @@ export const SPINE: readonly SpineStep[] = [
     n: 5,
     title: "Suppress and dedupe",
     owner: "code",
-    also: { who: "cayden", when: "the client's customer domain list is missing" },
+    also: null,
     gate: "report raw, removed by reason, net new. Net new is the number from here on.",
     skill: "global-suppression",
-    pipeline: ["suppress"],
+    pipeline: ["suppress", "puzzle", "find_emails"],
     card: null,
   },
   {

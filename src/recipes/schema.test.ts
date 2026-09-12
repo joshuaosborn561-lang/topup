@@ -80,8 +80,10 @@ describe("recipe schema", () => {
     const r = parseRecipe(await parlay());
     assert.equal(recipeAuthorises(r, "verify", "millionverifier"), true);
     assert.equal(recipeAuthorises(r, "verify", "leadmagic"), false);
-    assert.equal(recipeAuthorises(r, "find_emails", "aiark"), false, "email_finding.enabled is false");
+    assert.equal(recipeAuthorises(r, "find_emails", "aiark"), true, "leftover names still go through the cascade up to max_tier");
     assert.equal(recipeAuthorises(r, "find_emails", "fullenrich"), false);
     assert.equal(recipeAuthorises(r, "pull", "getleads"), true);
+    assert.equal(r.icp.kind, "linkedin_native");
+    assert.equal(r.suppression.recycle_after_days, 90);
   });
 });

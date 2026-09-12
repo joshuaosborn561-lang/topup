@@ -3,10 +3,11 @@ import type { Recipe } from "../../recipes/schema.js";
 import type { PollVerdict } from "../common.js";
 
 /**
- * Step 3 has two flavors (skill lead-list-build): LinkedIn-native lanes pull
- * people from getleads; company-first lanes start from a business and walk
- * the cascade. Both "end with rows in a table, never in chat". One interface,
- * two adapters; the stage does not know which it is driving.
+ * Step 3 has two flavors (skill lead-list-build / leadgen-mcp-routing):
+ * LinkedIn-native lanes pull people (getleads first); physical lanes start
+ * from Maps or PermitStack and walk the cascade. Both "end with rows in a
+ * table, never in chat". `routePull` picks the adapter; an unwired source
+ * parks rather than falling back to getleads.
  */
 export interface PullHandle {
   /** Vendor's own id for the job; goes on run_steps.vendor_job_id. */

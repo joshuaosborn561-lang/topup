@@ -4,22 +4,20 @@ import { campaignSnapshots } from "../../ledger/health.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
-import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, finish, park, type StageDeps, type StageOutcome } from "../common.js";
+import { routeSize } from "../pull/route.js";
+import { recycleDays } from "../suppress/recycle.js";
+import { sizeReport } from "./report.js";
 
 /**
- * Step 2 — Size it (skill lead-list-build; skill tam-sizing).
+ * Step 2 — Size it (skill lead-list-build; skill tam-sizing; D29).
  *
- * Count the segment on getleads (`count_contacts`, free), run the partition
- * check that proves the band filter binds, subtract what this ICP has already
- * been sent (`public.leads` and `leads_staging` for the lane's campaigns),
- * and hold the result against the useful floor. When thin, count each of the
- * recipe's widening candidates and put the numbers on the gate card; the
- * service never widens on its own and never calls a pool exhausted.
- *
- * tam-sizing wants two sources within ~25% before a number is trusted. Only
- * getleads is wired here (DiscoLike, LeadMagic and AI Ark counters are not in
- * docs/servers.md), so the run proceeds on one source and says so, in the
- * thread and in `size_sources: 1`.
+ * Classify the ICP first. LinkedIn-native: getleads `count_contacts` is the
+ * free second opinion; AI Ark People Preview is the default primary and is
+ * not a leadtopup client yet (D22), so the run says so. Physical: a range
+ * from Maps / PermitStack, never a getleads number — park until those
+ * counters are wired. Partition-check the filter. Subtract emails this
+ * client sent in the recycle window. Report the five tam-sizing lines.
  */
 export interface SizeDeps extends StageDeps {
   getleads: Getleads;
@@ -63,10 +61,16 @@ export class SizeStage {
   constructor(private readonly d: SizeDeps) {}
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
-    return attempt(this.d, run, "size", "sizing", async () => {
-      if (recipe.source.kind !== "getleads") {
-        return finish(this.d, run, "size", 0, { size_sources: 0 }, "Size: the source is a table, not a vendor; nothing to count (the pull reads the table).");
+    return attempt(this.d, run, "size", "sizing", async (attempts) => {
+      const routed = routeSize(recipe);
+      if (routed.kind === "park") {
+        await this.d.repo.failStep(run.run_id, "size", routed.reason, true);
+        return park(this.d, run, "size", routed.reason, attempts);
       }
+      if (routed.kind === "skip") {
+        return finish(this.d, run, "size", 0, { size_sources: 0 }, routed.line);
+      }
+      if (recipe.source.kind !== "getleads") throw new Error("size getleads path without a getleads source");
       const params = recipe.source.params;
       const filters = params as GetleadsFilters;
       const count = async (f: GetleadsFilters, label: string) => {
@@ -86,7 +90,8 @@ export class SizeStage {
       const partition = partitionCheck(segment.total_matching, others.total_matching, all.total_matching, recipe.size.partition_tolerance);
 
       const campaignIds = recipe.routing.map((r) => r.campaign_id);
-      const held = await this.alreadyHeld(campaignIds);
+      const days = recycleDays(recipe.suppression.recycle_after_days);
+      const held = await this.alreadyHeld(campaignIds, days);
       const netNew = Math.max(0, segment.total_matching - held.count);
 
       const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
@@ -107,6 +112,7 @@ export class SizeStage {
         rows_needed: need ?? 0,
         plan_rows: planRows,
         size_sources: 1,
+        recycle_after_days: days,
       };
 
       if (!partition.ok) {
@@ -136,28 +142,48 @@ export class SizeStage {
           counts,
         );
       }
-      const line =
-        `Size done: ${segment.total_matching} matching on getleads (partition check ok, off by ${partition.diff}) · ${held.count} already sent to this ICP · *${netNew}* projected net new (floor ${recipe.size.useful_floor}) · ` +
-        (need === null ? `campaign mirror has no sends in the window, so the pull plans the recipe's max_per_run (${planRows})` : `campaigns need ${need} rows for ${recipe.runway.target_days} days; the pull plans ${planRows}`) +
-        ` · one sizing source (getleads); tam-sizing wants a second, none is wired.` +
-        (held.note ? ` · ${held.note}` : "");
+      const filter = `getleads count_contacts; bands ${params.company_size.join(", ")}; titles ${params.job_titles.length}`;
+      const report = sizeReport({
+        number: segment.total_matching,
+        filter,
+        partition,
+        secondVendor: "AI Ark People Preview is not a leadtopup client yet (D22); getleads is the free second opinion tam-sizing always wants",
+        agree: null,
+        netNew,
+        held: held.count,
+        costUsd: "$0.00",
+      });
+      const plan =
+        need === null
+          ? `campaign mirror has no sends in the window, so the pull plans the recipe's max_per_run (${planRows})`
+          : `campaigns need ${need} rows for ${recipe.runway.target_days} days; the pull plans ${planRows}`;
+      const line = `Size done (linkedin_native):\n${report}\n${plan}.${held.note ? ` ${held.note}` : ""}`;
       return finish(this.d, run, "size", netNew, counts, line);
     });
   }
 
-  /** Distinct addresses already in this ICP's campaigns: the mirror's public.leads and leads_staging for the lane's campaign ids. */
-  private async alreadyHeld(campaignIds: number[]): Promise<{ count: number; note: string | null }> {
+  /** Distinct addresses this ICP's campaigns emailed inside the recycle window. */
+  private async alreadyHeld(campaignIds: number[], days: number): Promise<{ count: number; note: string | null }> {
     if (campaignIds.length === 0) return { count: 0, note: "recipe routes to no campaigns, so nothing was subtracted" };
     const db = this.d.repo.raw();
-    const { rows: has } = await db.query<{ leads: boolean; staging: boolean; campaigns: boolean }>(
-      `select to_regclass('public.leads') is not null as leads, to_regclass('public.leads_staging') is not null as staging, to_regclass('public.campaigns') is not null as campaigns`,
+    const { rows: has } = await db.query<{ leads: boolean; sends: boolean; campaigns: boolean }>(
+      `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends, to_regclass('public.campaigns') is not null as campaigns`,
     );
-    const parts: string[] = [];
-    if (has[0].leads && has[0].campaigns) parts.push(`select lower(l.email) as e from public.leads l join public.campaigns c on c.id = l.campaign_id where c.smartlead_campaign_id = any($1::bigint[])`);
-    if (has[0].staging) parts.push(`select lower(s.email) as e from public.leads_staging s where s.campaign_id = any($1::bigint[])`);
-    if (parts.length === 0) return { count: 0, note: "no campaign mirror or staging table in this database; nothing was subtracted" };
-    const { rows } = await db.query<{ n: string }>(`select count(distinct e)::text as n from (${parts.join(" union all ")}) x where e is not null`, [campaignIds]);
-    return { count: Number(rows[0]?.n ?? 0), note: parts.length < 2 ? "only one of public.leads / leads_staging exists here" : null };
+    if (!has[0].leads || !has[0].sends || !has[0].campaigns) {
+      return { count: 0, note: "no public.leads/sends/campaigns mirror here; nothing was subtracted" };
+    }
+    const { rows } = await db.query<{ n: string }>(
+      `select count(distinct lower(l.email))::text as n
+       from public.leads l
+       join public.sends s on s.lead_id = l.id
+       join public.campaigns c on c.id = l.campaign_id
+       where c.smartlead_campaign_id = any($1::bigint[])
+         and s.sent and s.sent_at is not null
+         and s.sent_at >= now() - ($2::int * interval '1 day')
+         and l.email is not null`,
+      [campaignIds, days],
+    );
+    return { count: Number(rows[0]?.n ?? 0), note: `subtracted sends in the last ${days} days, not lifetime staging` };
   }
 }
 

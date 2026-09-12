@@ -12,6 +12,7 @@ import type { TapListener } from "./slack/http.js";
 import type { StageOutcome } from "./stages/common.js";
 import type { FlipStage } from "./stages/flip/index.js";
 import type { FindEmailsStage } from "./stages/find_emails/index.js";
+import type { PuzzleStage } from "./stages/puzzle/index.js";
 import type { TriggerStage } from "./stages/trigger/index.js";
 import type { ImportStage } from "./stages/import/index.js";
 import type { IngestStage } from "./stages/ingest/index.js";
@@ -29,10 +30,12 @@ const log = logger("orchestrator");
 
 /**
  * The stages a run walks, in spine order: steps 1 through 13 of
- * skills/lead-list-build (D28). Step 1 reuses the saved recipe when the ICP
- * is already signed off; step 13 reminds Josh to flip ACTIVE and never does it.
+ * skills/lead-list-build (D29). Puzzle + find_emails run after suppress so
+ * we do not pay to enrich a suppressed person. Step 1 reuses the saved
+ * recipe when the ICP is already signed off; step 13 reminds Josh to flip
+ * ACTIVE and never does it.
  */
-export const PIPELINE_STEPS: readonly Step[] = ["trigger", "size", "pull", "find_emails", "ingest", "suppress", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"];
+export const PIPELINE_STEPS: readonly Step[] = ["trigger", "size", "pull", "ingest", "suppress", "puzzle", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"];
 
 /** Kept for the invariants guard; the Phase 1 build ran only these two. */
 export const PHASE1_STEPS: readonly Step[] = ["verify", "normalize"];
@@ -43,6 +46,7 @@ export interface Stages {
   pull: PullStage;
   ingest: IngestStage;
   suppress: SuppressStage;
+  puzzle: PuzzleStage;
   findEmails: FindEmailsStage;
   verify: VerifyStage;
   normalize: NormalizeStage;
@@ -258,6 +262,8 @@ export class Orchestrator {
         return s.ingest.run(run, recipe);
       case "suppress":
         return s.suppress.run(run, recipe);
+      case "puzzle":
+        return s.puzzle.run(run, recipe);
       case "find_emails":
         return s.findEmails.run(run, recipe);
       case "verify":

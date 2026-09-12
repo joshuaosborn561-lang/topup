@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D28** (2026-09-12). One page of current truth. When a new
+Canon as of **D29** (2026-09-12). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -45,8 +45,9 @@ index wins over a stale skill. A lane is always on exactly one step, named by
 **number and the skill's title** ("Step 6 — Verify") in every card, log line
 and ledger row — `src/spine/steps.ts` is the only table of steps and a guard
 fails when it differs from the skill's headings or `Gate:` lines. Code runs
-3–12; Josh owns 1, 9 when copy is needed, and 13; Cayden clears holds in 8 and
-supplies the client customer list in 5. A step's gate halts the run, records
+3–12; Josh owns 1, 9 when copy is needed, and 13; Cayden clears holds in 8.
+Step 5 applies the customer domain list when it has rows and proceeds when
+it is empty — no card (D29). A step's gate halts the run, records
 why, posts one card, and waits; silence never means yes. The receipt is the
 last gate. `trigger` is step 1 (the recipe is the signed-off segment),
 `ingest` 4, `stage` 10.
@@ -55,8 +56,9 @@ Gates live today (D25, D26). **Step 2**: the band filter must bind (bands +
 other bands = all, within 1%) and the projected net new must clear
 `size.useful_floor`, else `pool_thin`. **Step 3**: zero rows delivered stops
 the run. **Step 4**: rows read = rows exported; titles audited against the
-recipe as whole phrases, off-title flagged for step 8. **Step 5**: the client
-customer list is present or Josh says go without. **Step 6**: sendable count
+recipe as whole phrases, off-title flagged for step 8. **Step 5**: report raw, removed by reason, net new; prior contact is a send
+by this client in the last 90 days (older recycles unless positive / DNC /
+wrong person). **Step 6**: sendable count
 and reject rate are reported; nothing sendable stops the run; a reject rate
 far above the lane's norm (`verify.reject_rate_norm`, Josh's number; 2× and
 10 points over, on 50+ verdicts) stops it and says the source is bad. **Step
@@ -68,9 +70,11 @@ every target campaign is this client's in the mirror; unmatched leads wait
 as `pending_campaign` for Josh. **Step 10**: every routed row has a staging
 row for this run. **Step 11**: Smartlead's imported count equals rows
 submitted. **Step 12**: every merge tag in the copy resolves on every staged
-lead. Two flavours of step 3 (LinkedIn-native, company-first with the yield
-card and pilot of D21); one pipeline from 4 on. Email finding is inside step
-3, before ingest.
+lead. Two flavours of step 3 (LinkedIn-native vs physical, routed per
+`leadgen-mcp-routing` step zero — getleads is never the rooftop fallback);
+one pipeline from 4 on. Puzzle pieces and email enrichment run after
+suppress, immediately before verify (D29), so a suppressed person is not paid
+for.
 
 ## The service is the memory (D19, D20)
 
@@ -125,21 +129,27 @@ The stages:
 1. **trigger** — the saved recipe is the signed-off ICP. Every cell still
    needs a campaign of this client; missing cells or foreign campaigns halt.
    No card when the saved ICP is complete.
-2. **size** — getleads `count_contacts` for the recipe's bands, their
-   complement and no band filter (partition check); already-sent rows from
-   the mirror; plans `min(max_per_run, max(rows needed for 30 days, floor),
-   net new)`. One sizing source.
-3. **pull** — `GetleadsPull` behind the `PullAdapter` interface:
-   `export_contacts` (confirmed), poll `check_contact_export`. Then
-   **find_emails** — skipped when the recipe has email finding off (a getleads
-   lane); parks with a message otherwise until the company-first adapter lands.
+2. **size** — classify the ICP (`recipe.icp.kind`). LinkedIn-native:
+   getleads `count_contacts` plus the partition check; AI Ark People Preview
+   is the tam-sizing default primary and is not a leadtopup client yet, so
+   the five-line report says so. Physical: park — TAM is a Maps/PermitStack
+   range, never a getleads number. Net-new subtracts emails this client sent
+   in the recycle window (`public.sends`), not lifetime staging.
+3. **pull** — routed by ICP and `source.kind` (`leadgen-mcp-routing` step
+   zero). getleads on a LinkedIn-native recipe runs `GetleadsPull`. getleads
+   on a physical recipe parks (do not fall back). maps / permits / AI Ark
+   park until those adapters are wired.
 4. **ingest** — LeadPipe `ingest_csv` under a run-scoped `source_label`; rows
    claimed for the run; `company_size` / `vertical` filled; title audit.
 5. **suppress** — one SQL pass, response based only: positive reply, DNC,
-   wrong person, suppression list, bounced, client prior contact, same offer
-   other client (needs `offer_key`), client customer domain
-   (`topup.client_domain_blocklist`, filled by Cayden with `add_client_domains`).
-   Duplicates within the pull are `deduped`. Net new is the number from here on.
+   wrong person, suppression list, bounced, client prior contact (a send by
+   this Smartlead client in the last `recycle_after_days`, default 90),
+   same offer other client, client customer domain when the list has rows.
+   An empty domain list is noted and the step continues — no card (D29).
+   Then **puzzle** (name / no domain → Domain Waterfall; domain / no name →
+   Find Named Person; names banked in `public.name_bank`) and
+   **find_emails** (Name to Email `verify_person`, then Email Waterfall
+   `source_table` + writeback). Both sit immediately before verify.
 6. **verify** — LeadPipe signed CSV (row count must match), Email Verifier
    Progression, 60s polls, the stall runbook; `mv_status, n2b_status,
    mail_class, verify_path, ev_status, lead_status` per row. Sendable is `mv
@@ -178,7 +188,7 @@ open cards, open runs and which integrations are configured.
 - Worst case comes from `src/spend/prices.ts` × batch size. Never a
   vendor's number.
 - One `topup.spend_ledger` row per vendor call, free or paid.
-- A bill more than 10% over the approval stops the run and pages `#topup_ops`.
+- A bill more than 10% over the approval stops the run and pages the ops channel (`C0C135EB76H`).
 - Verifier resume is free. A split is spend.
 - Banned: PDL (including wrappers), LeadMagic job change detector,
   BillionVerifier, Clay (D8). FullEnrich off per recipe until Josh stamps
@@ -188,9 +198,9 @@ open cards, open runs and which integrations are configured.
 
 - Owner = Josh, operator = Cayden, by Slack user id in Railway variables.
 - Owner-only taps: approve/decline spend, top up anyway / leave it, split,
-  go without a customer list, continue without pending leads, anything that
-  changes a recipe. Operator taps never spend and never change a recipe; the
-  reply is "This needs Josh."
+  continue without pending leads, anything that changes a recipe. Operator
+  taps never spend and never change a recipe; the reply is "This needs Josh."
+  Step 5 no longer waits on a customer-domain-list card (D29).
 - Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains itself until the suppression stage lands).
 - `/mcp` with owner and operator bearer tokens exposes `lane_state,

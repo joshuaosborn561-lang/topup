@@ -59,7 +59,7 @@ const schema = z.object({
 
   SLACK_BOT_TOKEN: z.string().default(""),
   SLACK_SIGNING_SECRET: z.string().default(""),
-  SLACK_OPS_CHANNEL: z.string().default("#topup_ops"),
+  SLACK_OPS_CHANNEL: z.string().default("C0C135EB76H"),
   SLACK_CLIENT_CHANNELS: jsonMap,
   SLACK_OWNER_USER_IDS: csvIds,
   SLACK_OPERATOR_USER_IDS: csvIds,
@@ -77,6 +77,15 @@ const schema = z.object({
   /** Smartlead server on Railway (steps 11 and 12). It has no inbound auth today; the token slot is for when it does. */
   SMARTLEAD_MCP_URL: z.string().default(""),
   SMARTLEAD_TOKEN: z.string().default(""),
+  /** Puzzle + email enrichment (skills domain-waterfall, people-waterfall, unresolved-name-routing). Empty = park when a row needs that piece. */
+  DOMAIN_WATERFALL_MCP_URL: z.string().default(""),
+  DOMAIN_WATERFALL_TOKEN: z.string().default(""),
+  PEOPLE_WATERFALL_MCP_URL: z.string().default(""),
+  PEOPLE_WATERFALL_TOKEN: z.string().default(""),
+  EMAIL_WATERFALL_MCP_URL: z.string().default(""),
+  EMAIL_WATERFALL_TOKEN: z.string().default(""),
+  NAME_TO_EMAIL_MCP_URL: z.string().default(""),
+  NAME_TO_EMAIL_TOKEN: z.string().default(""),
 
   /** Poll cadence and patience for the vendor jobs in steps 3, 4 and 11. */
   JOB_POLL_SECONDS: numberWithDefault(30),
@@ -142,5 +151,9 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     wizard: Boolean(cfg.WIZARD_HEALTH_URL),
     getleads: Boolean(cfg.GETLEADS_MCP_URL),
     smartlead: Boolean(cfg.SMARTLEAD_MCP_URL),
+    domain_waterfall: Boolean(cfg.DOMAIN_WATERFALL_MCP_URL),
+    people_waterfall: Boolean(cfg.PEOPLE_WATERFALL_MCP_URL),
+    email_waterfall: Boolean(cfg.EMAIL_WATERFALL_MCP_URL),
+    name_to_email: Boolean(cfg.NAME_TO_EMAIL_MCP_URL),
   };
 }

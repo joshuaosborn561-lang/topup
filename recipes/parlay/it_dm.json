@@ -3,6 +3,7 @@
   "client_tag": "parlay",
   "lane": "it_dm",
   "smartlead_client_id": 418274,
+  "icp": { "kind": "linkedin_native" },
   "supabase_project": "azpapwtnrbzywlnxxecz",
   "owner_approved_at": null,
   "source": {
@@ -43,7 +44,8 @@
     "public_suppression": true,
     "client_domain_blocklist": true,
     "same_offer_any_client": true,
-    "same_gift_any_client": false
+    "same_gift_any_client": false,
+    "recycle_after_days": 90
   },
   "email_finding": { "enabled": false, "max_tier": "aiark", "fullenrich": false, "batch_rows": 200 },
   "verify": { "seg_split": true, "reject_rate_norm": null },

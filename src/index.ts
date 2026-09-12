@@ -2,8 +2,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import cron from "node-cron";
+import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
+import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
 import { GetleadsClient } from "./clients/getleads.js";
 import { LeadPipeClient } from "./clients/leadpipe.js";
+import { NameToEmailClient } from "./clients/nameToEmail.js";
+import { PeopleWaterfallClient } from "./clients/peopleWaterfall.js";
 import { SmartleadClient } from "./clients/smartlead.js";
 import { VerifierClient } from "./clients/verifier.js";
 import { buildCommands } from "./commands.js";
@@ -25,6 +29,7 @@ import { readersFromEnv } from "./spend/balances.js";
 import { railsConfigFrom, SpendRails } from "./spend/rails.js";
 import { FlipStage } from "./stages/flip/index.js";
 import { FindEmailsStage } from "./stages/find_emails/index.js";
+import { PuzzleStage } from "./stages/puzzle/index.js";
 import { TriggerStage } from "./stages/trigger/index.js";
 import { ImportStage } from "./stages/import/index.js";
 import { IngestStage } from "./stages/ingest/index.js";
@@ -116,6 +121,10 @@ async function main(): Promise<void> {
   console_.attachLedger(ledger);
   const base = { repo, console: console_ };
   const pull = new PullStage({ ...base, rails, adapters: [new GetleadsPull(getleads)], cfg: jobs });
+  const domain = cfg.DOMAIN_WATERFALL_MCP_URL ? new DomainWaterfallClient(cfg.DOMAIN_WATERFALL_MCP_URL, cfg.DOMAIN_WATERFALL_TOKEN) : null;
+  const people = cfg.PEOPLE_WATERFALL_MCP_URL ? new PeopleWaterfallClient(cfg.PEOPLE_WATERFALL_MCP_URL, cfg.PEOPLE_WATERFALL_TOKEN) : null;
+  const emailWaterfall = cfg.EMAIL_WATERFALL_MCP_URL ? new EmailWaterfallClient(cfg.EMAIL_WATERFALL_MCP_URL, cfg.EMAIL_WATERFALL_TOKEN) : null;
+  const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
   const orchestrator = new Orchestrator({
     repo,
     console: console_,
@@ -127,7 +136,8 @@ async function main(): Promise<void> {
       pull,
       ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
       suppress: new SuppressStage({ ...base, ledger }),
-      findEmails: new FindEmailsStage(base),
+      puzzle: new PuzzleStage({ ...base, ledger, rails, domain, people, cfg: jobs }),
+      findEmails: new FindEmailsStage({ ...base, rails, nameToEmail, emailWaterfall, cfg: jobs }),
       verify,
       normalize,
       qa: new QaStage({ ...base, ledger }),

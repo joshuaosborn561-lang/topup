@@ -21,12 +21,12 @@ describe("the spine — D24", () => {
     SPINE.forEach((s, i) => assert.equal(s.n, i + 1));
   });
 
-  it("owners are as Josh assigned them: code runs 3–12, Josh owns 1 and 13, Cayden clears 5 and 8, Josh taps 9 when copy is needed", () => {
+  it("owners are as Josh assigned them: code runs 3–12, Josh owns 1 and 13, Cayden clears 8, Josh taps 9 when copy is needed", () => {
     const by = (n: number) => SPINE[n - 1];
     assert.equal(by(1).owner, "josh");
     assert.equal(by(13).owner, "josh");
     for (let n = 3; n <= 12; n++) assert.equal(by(n).owner, "code", `D24: step ${n} is run by code`);
-    assert.equal(by(5).also?.who, "cayden");
+    assert.equal(by(5).also, null, "D29: step 5 does not wait on a customer-domain-list card");
     assert.equal(by(8).also?.who, "cayden");
     assert.equal(by(9).also?.who, "josh");
     assert.equal(by(3).also?.who, "josh", "D21/D24: company-first lanes need Josh's yield tap and pilot tap at step 3");
@@ -61,6 +61,8 @@ describe("the spine — D24", () => {
     assert.equal(stepForStage("pull")?.n, 3);
     assert.equal(stepForStage("ingest")?.n, 4, "D25: Ingest is its own step in the skill");
     assert.equal(stepForStage("suppress")?.n, 5);
+    assert.equal(stepForStage("puzzle")?.n, 5, "D29: puzzle pieces sit after the SQL suppress pass");
+    assert.equal(stepForStage("find_emails")?.n, 5, "D29: email enrichment is immediately before verify");
     assert.equal(stepForStage("verify")?.n, 6);
     assert.equal(stepForStage("normalize")?.n, 7);
     assert.equal(stepForStage("qa")?.n, 8);
