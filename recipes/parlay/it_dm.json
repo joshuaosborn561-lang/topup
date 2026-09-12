@@ -3,7 +3,6 @@
   "client_tag": "parlay",
   "lane": "it_dm",
   "smartlead_client_id": 418274,
-  "icp": { "kind": "linkedin_native" },
   "supabase_project": "azpapwtnrbzywlnxxecz",
   "owner_approved_at": null,
   "source": {
@@ -62,12 +61,12 @@
     "gift": ["team", "airpods"]
   },
   "routing": [
-    { "when": { "gift": "airpods", "band": "11_50" }, "campaign_id": 3929973 },
-    { "when": { "gift": "airpods", "band": "51_200" }, "campaign_id": 3929974 },
-    { "when": { "band": "11_50", "mail_class": "OTHER" }, "campaign_id": 3847839 },
-    { "when": { "band": "11_50", "mail_class": "SEG" }, "campaign_id": 3847846 },
-    { "when": { "band": "51_200", "mail_class": "OTHER" }, "campaign_id": 3847837 },
-    { "when": { "band": "51_200", "mail_class": "SEG" }, "campaign_id": 3847844 }
+    { "when": { "gift": "airpods", "band": "11_50" }, "campaign_id": 3929973, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "gift": "airpods", "band": "51_200" }, "campaign_id": 3929974, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "band": "11_50", "mail_class": "OTHER" }, "campaign_id": 3847839, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "band": "11_50", "mail_class": "SEG" }, "campaign_id": 3847846, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "band": "51_200", "mail_class": "OTHER" }, "campaign_id": 3847837, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "band": "51_200", "mail_class": "SEG" }, "campaign_id": 3847844, "icp": { "kind": "linkedin_native", "persona": "it_dm" } }
   ],
   "required_fields": ["first_name_n", "company_n", "location", "local_sports_team", "job_title", "company_size", "vertical"],
   "runway": { "floor_days": 7, "target_days": 30, "max_per_run": 10000 },

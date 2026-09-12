@@ -1,6 +1,7 @@
 import { bandComplement, type Getleads, type GetleadsFilters } from "../../clients/getleads.js";
 import type { RunRow } from "../../domain/runs.js";
 import { campaignSnapshots } from "../../ledger/health.js";
+import { runTargetCampaignIds } from "../../recipes/campaigns.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
@@ -12,7 +13,7 @@ import { sizeReport } from "./report.js";
 /**
  * Step 2 — Size it (skill lead-list-build; skill tam-sizing; D29).
  *
- * Classify the ICP first. LinkedIn-native: getleads `count_contacts` is the
+ * Classify each target campaign's ICP first. LinkedIn-native: getleads `count_contacts` is the
  * free second opinion; AI Ark People Preview is the default primary and is
  * not a leadtopup client yet (D22), so the run says so. Physical: a range
  * from Maps / PermitStack, never a getleads number — park until those
@@ -62,7 +63,8 @@ export class SizeStage {
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
     return attempt(this.d, run, "size", "sizing", async (attempts) => {
-      const routed = routeSize(recipe);
+      const campaignIds = await runTargetCampaignIds(this.d.repo, run, recipe);
+      const routed = routeSize(recipe, campaignIds);
       if (routed.kind === "park") {
         await this.d.repo.failStep(run.run_id, "size", routed.reason, true);
         return park(this.d, run, "size", routed.reason, attempts);
@@ -70,8 +72,7 @@ export class SizeStage {
       if (routed.kind === "skip") {
         return finish(this.d, run, "size", 0, { size_sources: 0 }, routed.line);
       }
-      if (recipe.source.kind !== "getleads") throw new Error("size getleads path without a getleads source");
-      const params = recipe.source.params;
+      const params = routed.source.params;
       const filters = params as GetleadsFilters;
       const count = async (f: GetleadsFilters, label: string) => {
         const r = await this.d.getleads.count(f);
@@ -89,7 +90,6 @@ export class SizeStage {
       ]);
       const partition = partitionCheck(segment.total_matching, others.total_matching, all.total_matching, recipe.size.partition_tolerance);
 
-      const campaignIds = recipe.routing.map((r) => r.campaign_id);
       const days = recycleDays(recipe.suppression.recycle_after_days);
       const held = await this.alreadyHeld(campaignIds, days);
       const netNew = Math.max(0, segment.total_matching - held.count);
@@ -122,7 +122,7 @@ export class SizeStage {
       if (netNew < recipe.size.useful_floor) {
         // Thin: count the widening options; Josh decides. Never widen unasked.
         const widening: string[] = [];
-        for (const [i, w] of recipe.source.widening_candidates.entries()) {
+        for (const [i, w] of routed.source.widening_candidates.entries()) {
           const wf: GetleadsFilters = {
             ...filters,
             ...(w.company_size ? { company_size: [...new Set([...params.company_size, ...w.company_size])] as GetleadsFilters["company_size"] } : {}),
@@ -157,14 +157,14 @@ export class SizeStage {
         need === null
           ? `campaign mirror has no sends in the window, so the pull plans the recipe's max_per_run (${planRows})`
           : `campaigns need ${need} rows for ${recipe.runway.target_days} days; the pull plans ${planRows}`;
-      const line = `Size done (linkedin_native):\n${report}\n${plan}.${held.note ? ` ${held.note}` : ""}`;
+      const line = `Size done (linkedin_native, ${campaignIds.length} campaign(s)):\n${report}\n${plan}.${held.note ? ` ${held.note}` : ""}`;
       return finish(this.d, run, "size", netNew, counts, line);
     });
   }
 
   /** Distinct addresses this ICP's campaigns emailed inside the recycle window. */
   private async alreadyHeld(campaignIds: number[], days: number): Promise<{ count: number; note: string | null }> {
-    if (campaignIds.length === 0) return { count: 0, note: "recipe routes to no campaigns, so nothing was subtracted" };
+    if (campaignIds.length === 0) return { count: 0, note: "this run targets no campaigns, so nothing was subtracted" };
     const db = this.d.repo.raw();
     const { rows: has } = await db.query<{ leads: boolean; sends: boolean; campaigns: boolean }>(
       `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends, to_regclass('public.campaigns') is not null as campaigns`,

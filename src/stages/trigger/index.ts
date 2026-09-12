@@ -1,17 +1,19 @@
 import type { RunRow } from "../../domain/runs.js";
+import { campaignGroups, icpSummary, recipeCampaignIds, targetCampaignIds, targetCountPatch } from "../../recipes/campaigns.js";
 import type { Recipe } from "../../recipes/schema.js";
-import { recipeCampaignIds } from "../../watch/decide.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
 import { cellLabel, uncoveredCells } from "./cells.js";
 
 /**
- * Step 1 — Nail the ICP for the lane.
+ * Step 1 — Nail the ICP (per campaign, D30).
  *
- * Josh signs off once; the recipe is that sign-off. A later run (the watch
- * or `/topup`) does not ask again: it checks the saved recipe still covers
- * every cell, then walks on. Missing cells or campaigns that are not this
- * client's in the mirror are the gate — those need Josh, not a guess.
+ * Josh signs off once; the recipe is that sign-off, and each routing
+ * rule is a campaign's ICP / persona / band. A later run (the watch or
+ * `/topup`) does not ask again: it checks the saved recipe still covers
+ * every cell, then walks on for the campaigns this run named. Missing
+ * cells or campaigns that are not this client's in the mirror are the
+ * gate — those need Josh, not a guess.
  */
 export class TriggerStage {
   constructor(private readonly d: StageDeps) {}
@@ -19,33 +21,39 @@ export class TriggerStage {
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
     return attempt(this.d, run, "trigger", "open", async () => {
       const missing = uncoveredCells(recipe.segments, recipe.routing);
-      const campaignIds = recipeCampaignIds(recipe);
-      if (campaignIds.length === 0) {
+      const allIds = recipeCampaignIds(recipe);
+      const campaignIds = targetCampaignIds(recipe, run);
+      if (allIds.length === 0) {
         return gateUnmet("trigger", "the saved recipe has no campaigns in its routing; Josh signs off on the segment before anything is pulled", { cells: 0, campaigns: 0 });
       }
       if (missing.length) {
         return gateUnmet(
           "trigger",
           `saved ICP is missing a campaign for ${missing.length} cell(s): ${missing.slice(0, 6).map(cellLabel).join("; ")}${missing.length > 6 ? "…" : ""}. Josh knows one must be built.`,
-          { cells: segmentCount(recipe), uncovered: missing.length, campaigns: campaignIds.length },
+          { cells: segmentCount(recipe), uncovered: missing.length, campaigns: allIds.length },
         );
       }
-      const wrong = await this.foreignCampaigns(campaignIds, recipe.smartlead_client_id);
+      const wrong = await this.foreignCampaigns(allIds, recipe.smartlead_client_id);
       if (wrong.length) {
         return gateUnmet(
           "trigger",
           `saved ICP names campaign(s) ${wrong.map((w) => `#${w.id} (${w.reason})`).join(", ")} — every cell needs a campaign of this client before a pull`,
-          { cells: segmentCount(recipe), campaigns: campaignIds.length, foreign: wrong.length },
+          { cells: segmentCount(recipe), campaigns: allIds.length, foreign: wrong.length },
         );
       }
       const cells = segmentCount(recipe);
+      const groups = campaignGroups(recipe, campaignIds);
+      const scope =
+        campaignIds.length === allIds.length
+          ? `${campaignIds.length} campaign(s)`
+          : `${campaignIds.length} of ${allIds.length} campaign(s): ${campaignIds.map((id) => `#${id}`).join(", ")}`;
       return finish(
         this.d,
         run,
         "trigger",
         campaignIds.length,
-        { icp_saved: 1, cells, campaigns: campaignIds.length },
-        `Step 1: using the saved ICP for ${recipe.client_tag}/${recipe.lane} (\`${recipe.recipe_id}\`) · ${cells} cells → ${campaignIds.length} campaign(s). Not asking Josh again.`,
+        { icp_saved: 1, cells, campaigns: campaignIds.length, recipe_campaigns: allIds.length, ...targetCountPatch(campaignIds) },
+        `Step 1: using saved campaign ICPs for ${recipe.client_tag}/${recipe.lane} (\`${recipe.recipe_id}\`) · ${cells} cells → ${scope} (${icpSummary(groups)}). Not asking Josh again.`,
       );
     });
   }

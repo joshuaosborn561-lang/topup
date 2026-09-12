@@ -18,9 +18,10 @@ export class GetleadsPull implements PullAdapter {
 
   constructor(private readonly getleads: Getleads) {}
 
-  async start(_run: RunRow, recipe: Recipe, planRows: number): Promise<PullHandle> {
-    if (recipe.source.kind !== "getleads") throw new Error("GetleadsPull needs a getleads source");
-    const params = recipe.source.params;
+  async start(_run: RunRow, recipe: Recipe, planRows: number, source?: Recipe["source"]): Promise<PullHandle> {
+    const src = source ?? recipe.source;
+    if (src.kind !== "getleads") throw new Error("GetleadsPull needs a getleads source");
+    const params = src.params;
     const maxRows = Math.max(1, Math.min(50_000, planRows));
     const started = await this.getleads.startExport(params as GetleadsFilters, { max_rows: maxRows, max_per_company: params.max_per_company });
     return { handle: started.export_id, worstCaseCents: worstCaseCents("getleads", "export", maxRows) };

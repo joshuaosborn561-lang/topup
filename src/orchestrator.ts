@@ -3,6 +3,7 @@ import type { Repo } from "./db/repo.js";
 import { orderCounts, type Role, type RunRow, type Step } from "./domain/runs.js";
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
+import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
 import { gateCard } from "./slack/cards.js";
 import type { SlackConsole } from "./slack/console.js";
@@ -69,6 +70,8 @@ export interface StartInput {
   drive?: boolean;
   /** The watch names why it opened a run without driving it. */
   hold?: "not_working";
+  /** Campaigns this run sizes/pulls. Omitted = every campaign the recipe names. */
+  campaignIds?: number[];
 }
 
 export type StartResult = { ok: true; run: RunRow } | { ok: false; message: string };
@@ -110,11 +113,13 @@ export class Orchestrator {
     } catch (err) {
       return { ok: false, message: `Recipe ${found.recipe_id} does not validate: ${(err as Error).message}` };
     }
+    const targets = resolveTargetCampaignIds(recipe, input.campaignIds);
+    if (!targets.ok) return { ok: false, message: targets.message };
     const opened = await this.d.repo.openRun({
       recipe_id: recipe.recipe_id,
       client_tag: recipe.client_tag,
       lane: recipe.lane,
-      campaign_id: null,
+      campaign_id: targets.ids.length === 1 ? targets.ids[0]! : null,
       trigger: input.trigger,
       opened_by: input.by,
     });
@@ -127,6 +132,7 @@ export class Orchestrator {
           : `The database refused a second open run for ${recipe.client_tag}/${recipe.lane}.`,
       };
     }
+    if (targets.ids.length) await this.d.repo.mergeRunCounts(opened.run.run_id, targetCountPatch(targets.ids));
     const headline =
       input.hold === "not_working"
         ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch stopped: a campaign is low and not working. This needs Josh.`

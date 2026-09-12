@@ -83,7 +83,24 @@ describe("recipe schema", () => {
     assert.equal(recipeAuthorises(r, "find_emails", "aiark"), true, "leftover names still go through the cascade up to max_tier");
     assert.equal(recipeAuthorises(r, "find_emails", "fullenrich"), false);
     assert.equal(recipeAuthorises(r, "pull", "getleads"), true);
-    assert.equal(r.icp.kind, "linkedin_native");
+    assert.equal(r.routing[0]?.icp.kind, "linkedin_native");
+    assert.equal(r.routing[0]?.icp.persona, "it_dm");
+    assert.equal(
+      new Set(r.routing.map((rule) => `${rule.icp.kind}:${rule.icp.persona}`)).size,
+      1,
+      "Parlay's six campaigns share one persona today; another offer would add a second",
+    );
     assert.equal(r.suppression.recycle_after_days, 90);
+  });
+
+  it("D30 — every routing rule names its own ICP; the recipe does not", async () => {
+    const base = await parlay();
+    assert.equal("icp" in base, false);
+    assert.throws(() => parseRecipe({ ...base, icp: { kind: "linkedin_native" } }), /invalid recipe/);
+    assert.throws(() => parseRecipe(withPath(base, ["routing", "0", "icp"], undefined)), /invalid recipe/);
+    assert.throws(
+      () => parseRecipe(withPath(base, ["routing", "0", "icp"], { kind: "linkedin_native", persona: "IT DM" })),
+      /persona/,
+    );
   });
 });

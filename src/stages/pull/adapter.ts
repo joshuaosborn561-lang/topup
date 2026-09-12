@@ -28,8 +28,8 @@ export interface PullAdapter {
   readonly kind: Recipe["source"]["kind"];
   /** Vendor name for the spend ledger and the recipe's authorisation. */
   readonly vendor: string;
-  /** Start the pull for up to `planRows` rows. Free adapters still return a handle. */
-  start(run: RunRow, recipe: Recipe, planRows: number): Promise<PullHandle>;
+  /** Start the pull for up to `planRows` rows. Free adapters still return a handle. `source` is the campaign group's source (D30); the recipe source is the fallback. */
+  start(run: RunRow, recipe: Recipe, planRows: number, source?: Recipe["source"]): Promise<PullHandle>;
   /** Poll the job; the stage keeps calling until done or failed. */
   check(handle: string): Promise<PollVerdict<PullResult>>;
 }

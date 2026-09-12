@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D29** (2026-09-12). One page of current truth. When a new
+Canon as of **D30** (2026-09-12). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -129,18 +129,25 @@ The stages:
 1. **trigger** — the saved recipe is the signed-off ICP. Every cell still
    needs a campaign of this client; missing cells or foreign campaigns halt.
    No card when the saved ICP is complete.
-2. **size** — classify the ICP (`recipe.icp.kind`). LinkedIn-native:
-   getleads `count_contacts` plus the partition check; AI Ark People Preview
-   is the tam-sizing default primary and is not a leadtopup client yet, so
-   the five-line report says so. Physical: park — TAM is a Maps/PermitStack
-   range, never a getleads number. Net-new subtracts emails this client sent
-   in the recycle window (`public.sends`), not lifetime staging.
-3. **pull** — routed by ICP and `source.kind` (`leadgen-mcp-routing` step
-   zero). getleads on a LinkedIn-native recipe runs `GetleadsPull`. getleads
-   on a physical recipe parks (do not fall back). maps / permits / AI Ark
-   park until those adapters are wired.
+2. **size** — classify each **campaign's** ICP (`routing[].icp.kind` +
+   `persona`, D30). LinkedIn-native: getleads `count_contacts` plus the
+   partition check; AI Ark People Preview is the tam-sizing default primary
+   and is not a leadtopup client yet, so the five-line report says so.
+   Physical: park — TAM is a Maps/PermitStack range, never a getleads
+   number. Campaigns that share kind + persona + source union their bands
+   in one count; mixed kinds or personas in the same run park (split them).
+   Net-new subtracts emails this client sent in the recycle window
+   (`public.sends`), not lifetime staging.
+3. **pull** — routed by the target campaigns' ICP and source
+   (`leadgen-mcp-routing` step zero). getleads on a LinkedIn-native
+   campaign runs `GetleadsPull` with that campaign's bands/titles (or the
+   union when the run's targets share a persona). getleads on a physical
+   campaign parks (do not fall back). maps / permits / AI Ark park until
+   those adapters are wired. The watch passes the needy campaign ids; a
+   `/topup` with no ids sizes the whole lane.
 4. **ingest** — LeadPipe `ingest_csv` under a run-scoped `source_label`; rows
-   claimed for the run; `company_size` / `vertical` filled; title audit.
+   claimed for the run; `company_size` / `vertical` filled; title audit
+   against the union of the target campaigns' titles.
 5. **suppress** — one SQL pass, response based only: positive reply, DNC,
    wrong person, suppression list, bounced, client prior contact (a send by
    this Smartlead client in the last `recycle_after_days`, default 90),

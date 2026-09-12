@@ -14,6 +14,19 @@ import { sizeReport } from "./size/report.js";
 import { recentClientSendSql, recycleDays } from "./suppress/recycle.js";
 import { dedupeKeySql } from "./stage/index.js";
 
+function campaignRecipe(
+  base: Record<string, unknown>,
+  icp: { kind: "linkedin_native" | "physical"; persona: string },
+  source: Record<string, unknown>,
+) {
+  return parseRecipe({
+    ...base,
+    source,
+    segments: { band: ["11_50"] },
+    routing: [{ when: { band: "11_50" }, campaign_id: 1, icp }],
+  });
+}
+
 /** The pure halves of steps 2–11. Vendor calls are never made here; the stages that make them are exercised against fakes. */
 describe("step 2 — size (skill tam-sizing)", () => {
   it("partition check: bands + other bands == no band filter, within tolerance", () => {
@@ -77,7 +90,6 @@ describe("step 9 — route to campaign", () => {
     lane: "it_dm",
     smartlead_client_id: 418274,
     supabase_project: "azpapwtnrbzywlnxxecz",
-    icp: { kind: "linkedin_native" },
     source: { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50", "51 to 200"], email_status: ["VALID"] } },
     suppression: { response_based: true, same_offer_any_client: true },
     email_finding: { enabled: false },
@@ -85,9 +97,9 @@ describe("step 9 — route to campaign", () => {
     normalize: {},
     segments: { band: ["11_50", "51_200"], mail_class: ["SEG", "OTHER"], gift: ["team", "airpods"] },
     routing: [
-      { when: { gift: "airpods", band: "11_50" }, campaign_id: 3929973 },
-      { when: { band: "11_50", mail_class: "OTHER" }, campaign_id: 3847839 },
-      { when: { band: "11_50", mail_class: "SEG" }, campaign_id: 3847846 },
+      { when: { gift: "airpods", band: "11_50" }, campaign_id: 3929973, icp: { kind: "linkedin_native", persona: "it_dm" } },
+      { when: { band: "11_50", mail_class: "OTHER" }, campaign_id: 3847839, icp: { kind: "linkedin_native", persona: "it_dm" } },
+      { when: { band: "11_50", mail_class: "SEG" }, campaign_id: 3847846, icp: { kind: "linkedin_native", persona: "it_dm" } },
     ],
     runway: { floor_days: 7, target_days: 30, max_per_run: 10000 },
     working: { interested_per_2000_sends: 1, variant_min_sends: 300 },
@@ -165,18 +177,54 @@ describe("D29 — pull and size routing", () => {
   };
 
   it("LinkedIn-native + getleads runs; physical + getleads parks; maps/permits park until wired", () => {
-    const linkedin = parseRecipe({ ...base, icp: { kind: "linkedin_native" }, source: { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50"], email_status: ["VALID"] } } });
-    assert.deepEqual(routePull(linkedin), { kind: "run", source: "getleads" });
-    assert.deepEqual(routeSize(linkedin), { kind: "getleads" });
+    const linkedin = campaignRecipe(base, { kind: "linkedin_native", persona: "it_dm" }, { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50"], email_status: ["VALID"] } });
+    assert.equal(routePull(linkedin).kind, "run");
+    assert.equal(routeSize(linkedin).kind, "getleads");
 
-    const rooftop = parseRecipe({ ...base, recipe_id: "peterson.roof.v1", client_tag: "peterson", lane: "roof", icp: { kind: "physical" }, source: { kind: "getleads", params: { job_titles: ["Owner"], company_size: ["1 to 10"], email_status: ["VALID"] } } });
+    const rooftop = campaignRecipe(
+      { ...base, recipe_id: "peterson.roof.v1", client_tag: "peterson", lane: "roof" },
+      { kind: "physical", persona: "owner" },
+      { kind: "getleads", params: { job_titles: ["Owner"], company_size: ["1 to 10"], email_status: ["VALID"] } },
+    );
     assert.equal(routePull(rooftop).kind, "park");
     assert.match((routePull(rooftop) as { reason: string }).reason, /do not fall back/);
     assert.equal(routeSize(rooftop).kind, "park");
 
-    const maps = parseRecipe({ ...base, recipe_id: "peterson.roof.v1", client_tag: "peterson", lane: "roof", icp: { kind: "physical" }, source: { kind: "maps", params: { categories: ["roofing contractor"] } } });
+    const maps = campaignRecipe(
+      { ...base, recipe_id: "peterson.roof.v1", client_tag: "peterson", lane: "roof" },
+      { kind: "physical", persona: "owner" },
+      { kind: "maps", params: { categories: ["roofing contractor"] } },
+    );
     assert.equal(routePull(maps).kind, "park");
     assert.match((routePull(maps) as { reason: string }).reason, /not wired/);
+  });
+
+  it("D30 — mixed campaign ICPs in one run park; same persona unions bands", () => {
+    const mixed = parseRecipe({
+      ...base,
+      source: { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50", "1 to 10"], email_status: ["VALID"] } },
+      segments: { band: ["11_50", "1_10"] },
+      routing: [
+        { when: { band: "11_50" }, campaign_id: 1, icp: { kind: "linkedin_native", persona: "it_dm" } },
+        { when: { band: "1_10" }, campaign_id: 2, icp: { kind: "physical", persona: "owner" } },
+      ],
+    });
+    assert.equal(routeSize(mixed).kind, "park");
+    assert.match((routeSize(mixed) as { reason: string }).reason, /mixed campaign ICPs/);
+    assert.equal(routePull(mixed, [1]).kind, "run", "one campaign of the pair still pulls");
+
+    const same = parseRecipe({
+      ...base,
+      source: { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50", "51 to 200"], email_status: ["VALID"] } },
+      segments: { band: ["11_50", "51_200"] },
+      routing: [
+        { when: { band: "11_50" }, campaign_id: 1, icp: { kind: "linkedin_native", persona: "it_dm" } },
+        { when: { band: "51_200" }, campaign_id: 2, icp: { kind: "linkedin_native", persona: "it_dm" } },
+      ],
+    });
+    const sized = routeSize(same);
+    assert.equal(sized.kind, "getleads");
+    if (sized.kind === "getleads") assert.deepEqual(sized.source.params.company_size, ["11 to 50", "51 to 200"]);
   });
 
   it("the tam-sizing report is five lines in order", () => {

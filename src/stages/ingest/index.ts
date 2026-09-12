@@ -1,6 +1,7 @@
 import { JOB_DONE, JOB_FAILED, type JobStatus, type LeadPipe } from "../../clients/leadpipe.js";
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
+import { jobTitlesFor, runTargetCampaignIds } from "../../recipes/campaigns.js";
 import type { Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
@@ -88,7 +89,8 @@ export class IngestStage {
         return rowCount ?? 0;
       });
       const landed = await this.landedCounts(table, run.run_id, cols);
-      const offTitle = recipe.source.kind === "getleads" ? await this.auditTitles(table, run, recipe.source.params.job_titles, cols) : 0;
+      const titles = jobTitlesFor(recipe, await runTargetCampaignIds(this.d.repo, run, recipe));
+      const offTitle = titles.length ? await this.auditTitles(table, run, titles, cols) : 0;
 
       const rowsRead = status.rows_read;
       const counts: Record<string, number> = {

@@ -104,6 +104,7 @@ export class RunwayWatch {
         lane: recipe.lane,
         by: "watch",
         trigger: "runway",
+        campaignIds: decision.campaigns,
       });
       if (!started.ok) {
         log.info("go refused", { client_tag: recipe.client_tag, lane: recipe.lane, message: started.message });
@@ -120,6 +121,7 @@ export class RunwayWatch {
       trigger: "runway",
       drive: false,
       hold: "not_working",
+      campaignIds: [decision.campaignId],
     });
     if (!started.ok) {
       log.info("ask refused", { client_tag: recipe.client_tag, lane: recipe.lane, message: started.message });

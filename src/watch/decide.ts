@@ -1,17 +1,15 @@
 import type { CampaignHealth } from "../ledger/health.js";
 import type { WorkingVerdict } from "../domain/working.js";
 import type { RunStatus } from "../domain/runs.js";
-import type { Recipe } from "../recipes/schema.js";
+import { recipeCampaignIds } from "../recipes/campaigns.js";
+
+export { recipeCampaignIds };
 
 /**
  * The watch (D27): a lane tops itself up when a campaign it feeds is low
  * (or empty) and still working. Josh is asked only when the reply rate has
  * died. `/topup` is the override, not the normal start.
  */
-
-export function recipeCampaignIds(recipe: Recipe): number[] {
-  return [...new Set(recipe.routing.map((r) => r.campaign_id))];
-}
 
 /** A campaign needs more leads: ACTIVE and either empty or under the floor. Silent is not needy — it already has leads it is not sending. */
 export function isNeedy(h: CampaignHealth): boolean {

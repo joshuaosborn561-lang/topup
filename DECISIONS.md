@@ -48,7 +48,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D26 | Live; pipeline order and find_emails-before-ingest superseded by D29 |
 | D27 | Live |
 | D28 | Live; pipeline list superseded by D29 |
-| D29 | Live |
+| D29 | Live; recipe-level ICP superseded by D30 |
+| D30 | Live |
 
 ---
 
@@ -766,3 +767,48 @@ server; worst case comes from `src/spend/prices.ts`.
 order. `src/guards/spine.test.ts` — `puzzle` and `find_emails` on step 5;
 step 5 has no Cayden tap. `src/stages/pure.test.ts` — classifyPuzzle,
 routePull / routeSize, recycle SQL, five-line size report. Ask Josh.
+
+## D30 — ICP, band, and persona are per campaign, not per recipe
+
+**Decision.** Josh, 2026-09-12: each campaign can have a different ICP,
+band, persona, and source. D29 put `icp.kind` on the recipe; that is
+wrong. Campaign names already follow `Client Offer ICP Gift`. A lane
+(Peterson, Parlay, a mixed client) can feed campaigns that do not share
+a stack — GC-partner vs vacant-land, desk IT vs rooftop owner.
+
+1. **Routing rule carries the ICP.** Every `routing[]` entry has
+   `icp: { kind: linkedin_native | physical, persona }` (snake_case,
+   e.g. `it_dm`, `owner`). Optional `source` overrides the recipe
+   template; omitted means inherit and slice getleads `company_size` to
+   that campaign's `when.band`. The recipe `source` stays as the default
+   template. There is no recipe-level `icp`.
+2. **Size and pull group campaigns.** Same kind + persona + source kind
+   → one count/export, union of bands and titles. Mixed kinds or
+   personas in the same run park ("split them — do not pick one stack").
+   Physical still parks until Maps/PermitStack are wired. getleads on a
+   physical campaign still parks (D29).
+3. **A run names its target campaigns.** The watch passes the needy
+   campaign ids (`decision.campaigns`). `/topup` and MCP with no ids
+   target every campaign the recipe names. Targets are stored as
+   `target_<id>: 1` on the run and on the trigger step. Exactly one
+   target also sets `run.campaign_id`. Unknown ids refuse the open.
+4. **Title audit** uses the union of the target campaigns' getleads
+   titles, not only `recipe.source.params.job_titles`.
+
+**Named conflict (skill vs Josh).** Skill step 1 / tam-sizing talk
+about "the lane" ICP. Josh: the campaign is the unit. The thirteen
+step numbers stay the skill's; classification reads `routing[].icp`.
+
+**Why.** One recipe-level kind cannot describe a client that sells two
+offers, or two bands that happen to share a pull today and will not
+tomorrow.
+
+**Tradeoff.** A full-lane `/topup` on a mixed-ICP recipe parks instead
+of walking two stacks in one run. Sequential multi-stack pulls are a
+later decision. Recipe `source` remains so existing getleads filters
+are not copy-pasted onto every cell.
+
+**Guard.** `src/recipes/schema.test.ts` — every routing rule has ICP;
+recipe-level `icp` is gone. `src/recipes/campaigns.test.ts` — inherit
+vs override, grouping, target ids. `src/stages/pure.test.ts` — mixed
+kinds park; same persona unions bands. Ask Josh.

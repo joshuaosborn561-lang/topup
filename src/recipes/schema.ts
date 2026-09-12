@@ -98,10 +98,17 @@ const source = z.discriminatedUnion("kind", [
   }),
 ]);
 
-/** Step zero of leadgen-mcp-routing / tam-sizing. The sizing method and the pull stack are completely different for each. */
-const icp = z
+/**
+ * Campaign ICP (D30). Kind picks the size/pull stack; persona is the buyer
+ * (it_dm, owner, gc_partner). Both live on the routing rule — a lane can
+ * feed campaigns with different ICPs. The recipe source is only the default
+ * template a campaign inherits when it does not name its own.
+ */
+export const ICP_KINDS = ["linkedin_native", "physical"] as const;
+const campaignIcp = z
   .object({
-    kind: z.enum(["linkedin_native", "physical"]),
+    kind: z.enum(ICP_KINDS),
+    persona: z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case persona (it_dm, owner, gc_partner)"),
   })
   .strict();
 
@@ -167,6 +174,9 @@ const routingRule = z
   .object({
     when: z.record(z.string()),
     campaign_id: z.number().int().positive(),
+    icp: campaignIcp,
+    /** Optional override; omitted means inherit the recipe source, sliced to this campaign's band. */
+    source: source.optional(),
   })
   .strict();
 
@@ -195,7 +205,6 @@ export const recipeSchema = z
     client_tag: z.string().regex(/^[a-z][a-z0-9_]*$/),
     lane: z.string().regex(/^[a-z][a-z0-9_]*$/),
     smartlead_client_id: z.number().int().positive(),
-    icp,
     supabase_project: z.literal("azpapwtnrbzywlnxxecz"),
     owner_approved_at: z.string().datetime().nullable().default(null),
     source,
@@ -263,6 +272,10 @@ export const recipeSchema = z
   });
 
 export type Recipe = z.infer<typeof recipeSchema>;
+export type Source = Recipe["source"];
+export type RoutingRule = Recipe["routing"][number];
+export type CampaignIcp = RoutingRule["icp"];
+export type GetleadsSource = Extract<Source, { kind: "getleads" }>;
 
 export function parseRecipe(input: unknown): Recipe {
   const r = recipeSchema.safeParse(input);
@@ -288,12 +301,19 @@ export function recipeAuthorises(recipe: Recipe, step: string, vendor?: string):
     case "ingest":
       return true;
     case "size":
-    case "pull":
-      if (recipe.source.kind === "getleads") return vendor === undefined || vendor === "getleads";
-      if (recipe.source.kind === "ai_ark") return vendor === undefined || vendor === "aiark";
-      if (recipe.source.kind === "maps") return vendor === undefined || vendor === "apify";
-      if (recipe.source.kind === "permits") return vendor === undefined || vendor === "apify";
-      return true;
+    case "pull": {
+      if (!vendor) return true;
+      const kinds = new Set<string>();
+      const add = (src: Source | undefined) => {
+        if (!src) return;
+        if (src.kind === "getleads") kinds.add("getleads");
+        if (src.kind === "ai_ark") kinds.add("aiark");
+        if (src.kind === "maps" || src.kind === "permits") kinds.add("apify");
+      };
+      add(recipe.source);
+      for (const rule of recipe.routing) add(rule.source);
+      return kinds.has(vendor);
+    }
     case "puzzle":
       return vendor === undefined || vendor === "aiark" || vendor === "apify" || vendor === "getleads" || vendor === "leadmagic" || vendor === "prospeo";
     case "find_emails": {

@@ -1,4 +1,5 @@
 import type { RunRow } from "../../domain/runs.js";
+import { runTargetCampaignIds } from "../../recipes/campaigns.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
 import { usd } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
@@ -28,20 +29,21 @@ export class PullStage {
     this.clock = d.clock ?? realClock;
   }
 
-  adapterFor(recipe: Recipe): PullAdapter {
-    const a = this.d.adapters.find((x) => x.kind === recipe.source.kind);
-    if (!a) throw new Error(`no step 3 adapter for a ${recipe.source.kind} source in this build`);
+  adapterFor(kind: Recipe["source"]["kind"]): PullAdapter {
+    const a = this.d.adapters.find((x) => x.kind === kind);
+    if (!a) throw new Error(`no step 3 adapter for a ${kind} source in this build`);
     return a;
   }
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
     return attempt(this.d, run, "pull", "pulling", async (attempts) => {
-      const routed = routePull(recipe);
+      const campaignIds = await runTargetCampaignIds(this.d.repo, run, recipe);
+      const routed = routePull(recipe, campaignIds);
       if (routed.kind === "park") {
         await this.d.repo.failStep(run.run_id, "pull", routed.reason, true);
         return park(this.d, run, "pull", routed.reason, attempts);
       }
-      const adapter = this.adapterFor(recipe);
+      const adapter = this.adapterFor(routed.source);
       const sizeStep = await this.d.repo.getStep(run.run_id, "size");
       const planRows = Number(sizeStep?.counts.plan_rows ?? 0) || recipe.runway.max_per_run;
 
@@ -63,7 +65,7 @@ export class PullStage {
           // No paid pull adapter exists in this build (getleads is included); a paid one lands with its own card (D21 yield card).
           throw new Error(`pull on ${adapter.vendor} would cost ${usd(decision.worstCaseCents)}; this build has no card for a paid pull. Ask Josh.`);
         }
-        const started = await adapter.start(run, recipe, planRows);
+        const started = await adapter.start(run, recipe, planRows, routed.filters);
         handle = started.handle;
         await this.d.repo.setStepVendorJob(run.run_id, "pull", handle);
         await this.d.console.postInThread(run, `Pull: ${adapter.vendor} export started for up to ${planRows} rows (job \`${handle}\`, worst case ${usd(started.worstCaseCents)}).`);
@@ -86,7 +88,10 @@ export class PullStage {
   async resolve(run: RunRow, recipe: Recipe): Promise<PullResult> {
     const own = await this.d.repo.getStep(run.run_id, "pull");
     if (!own?.vendor_job_id) throw new Error("pull has no vendor job id; nothing to ingest");
-    const v = await this.adapterFor(recipe).check(own.vendor_job_id);
+    const campaignIds = await runTargetCampaignIds(this.d.repo, run, recipe);
+    const routed = routePull(recipe, campaignIds);
+    if (routed.kind !== "run") throw new Error(`pull cannot resolve: ${routed.reason}`);
+    const v = await this.adapterFor(routed.source).check(own.vendor_job_id);
     if (v.state !== "done") throw new Error(`pull job ${own.vendor_job_id} is ${v.state}${v.state === "failed" ? `: ${v.error}` : ""}; cannot ingest`);
     return v.value;
   }
