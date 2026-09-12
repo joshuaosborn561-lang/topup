@@ -47,6 +47,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D25 | Live |
 | D26 | Live |
 | D27 | Live |
+| D28 | Live |
 
 ---
 
@@ -658,3 +659,37 @@ gets topped up. Change that here if it should ask instead.
 
 **Guard.** `src/watch/decide.test.ts` — go / ask / skip / leave-it quiet /
 empty asked first. Ask Josh.
+
+## D28 — Every run walks steps 1 through 13; saved work is reused, not skipped as a different process
+
+**Decision.** A top-up — watch or `/topup` — is the thirteen steps of
+`skills/lead-list-build`, in order, every time. `PIPELINE_STEPS` is
+`trigger, size, pull, find_emails, ingest, suppress, verify, normalize, qa,
+route, stage, import, post_import, flip`.
+
+- **Step 1** is a real stage. The recipe is Josh's sign-off. If it is
+  already there and every cell has a campaign of this client, the step
+  finishes with "using the saved ICP" and does not ask again. Missing cells
+  or campaigns that are not this client's halt. The service never invents
+  an ICP.
+- **Steps 2–12** always run on the new rows. Saved QA rules, routing, the
+  customer domain list and the campaigns are inputs, not a reason to skip
+  the step.
+- **Step 13** is a real stage. It posts the flip reminder and finishes. It
+  never sets a campaign ACTIVE.
+
+This supersedes the D26 line that kept `trigger` out of the pipeline.
+
+**Why.** Josh: it should follow the steps he gave; if a client already has
+step 1 (or other saved work) the service can rely on that, but it still
+goes through the process.
+
+**Tradeoff.** Step 13 does not wait for a "I flipped it" tap. Waiting would
+park every lane on Josh after every fill and stop the next watch tick. The
+receipt and the step 13 line are the handoff. Say if a tap should be
+required.
+
+**Guard.** `src/guards/invariants.test.ts` — `PIPELINE_STEPS` is exactly the
+order above, spanning spine steps 1..13. `src/stages/trigger/cells.test.ts`
+— cartesian cells, AirPods rules that omit a dimension, a missing band is
+uncovered. `src/guards/spine.test.ts` — `flip` sits on step 13. Ask Josh.

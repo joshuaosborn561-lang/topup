@@ -35,7 +35,8 @@ Read `CANON.md` first. It is one page and it is the current truth.
   only names lanes whose state changed or whose campaign health crossed a
   line. Claude sessions hand queue tables to the service with
   `register_queue_table` and leave notes with `lane_note`.
-- **Steps 2 → 12 end to end for a getleads lane** (Parlay `it_dm`): size,
+- **Steps 1 → 13 end to end for a getleads lane** (Parlay `it_dm`): step 1
+  reuses the saved ICP, then size,
   pull (`GetleadsPull` behind one adapter interface), find emails (skipped
   for getleads), ingest through LeadPipe, suppress (one SQL pass, response
   based; client customer domains via the `add_client_domains` MCP tool),
@@ -43,8 +44,9 @@ Read `CANON.md` first. It is one page and it is the current truth.
   per-row verdicts), normalize (the four skill scripts ported), QA (rules in
   `topup.qa_rules`, hold cards for Cayden), route (cell → campaign, client
   check), stage (`public.leads_staging`), import (Smartlead, count assert),
-  pre-launch (merge tags + settings, the `check_merge_tags.py` port), and the
-  receipt. Step 13 — flipping ACTIVE — is Josh's by hand, always.
+  pre-launch (merge tags + settings, the `check_merge_tags.py` port), the
+  step 13 reminder (Josh flips ACTIVE; the service never does), and the
+  receipt.
 - Geocoding needs `topup.ref_cities`: run `npm run seed:cities` once per
   database (downloads the free US cities file, pinned).
 - `docs/servers.md` — every vendor server documented from its code, with the
@@ -88,6 +90,7 @@ src/
   mcp/                /mcp server with per-role tool sets
   clients/            LeadPipe, verifier, getleads and Smartlead (allow-listed) clients — called, never forked
   stages/common.ts    attempt / finish / park / poll — the discipline every stage shares
+  stages/trigger/     step 1: reuse the saved ICP; halt if a cell has no campaign
   stages/size/        step 2: counts, partition check, plan
   stages/pull/        step 3: PullAdapter interface, GetleadsPull
   stages/find_emails/ step 3: email finding (cascade lands with the company-first adapter)
@@ -100,6 +103,7 @@ src/
   stages/stage/       step 10: public.leads_staging
   stages/import/      step 11: Smartlead import, count assert
   stages/post_import/ step 12: merge tags (check_merge_tags.py port), settings findings
+  stages/flip/        step 13: remind Josh to flip ACTIVE; never does it
   guards/             tests that name a decision and who to ask
 recipes/<client>/<lane>.json
 supabase/migrations/*.sql

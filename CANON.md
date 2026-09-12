@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D27** (2026-09-11). One page of current truth. When a new
+Canon as of **D28** (2026-09-12). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -103,7 +103,7 @@ floor), **bouncing** (over 5%).
 Before the service calls a vendor server it is documented from its code in
 `docs/servers.md`, and Josh reviews that first (D22).
 
-## What this build runs (D26, D27)
+## What this build runs (D26, D27, D28)
 
 The **watch** is the normal start. Every six hours (and once on boot) it
 reads the Smartlead mirror for every recipe. A campaign that is ACTIVE and
@@ -114,8 +114,17 @@ Leave it. Leave it stays quiet until the rate recovers or Josh flips
 `/working on`. `/topup` and MCP `start_topup` are the override.
 
 A run is locked in Postgres so there is only ever one per lane (D12). It
-walks steps 2 → 12 in the skill's order, one internal stage per step:
+walks steps **1 → 13** in the skill's order, every time, whether the watch
+or `/topup` started it (D28). Step 1 reuses the saved recipe when the ICP
+is already signed off — it does not ask Josh again. Size, pull, ingest,
+suppress, verify, normalize, QA, route, stage, import and pre-launch run on
+the new rows. Step 13 posts the flip reminder and never sets ACTIVE.
 
+The stages:
+
+1. **trigger** — the saved recipe is the signed-off ICP. Every cell still
+   needs a campaign of this client; missing cells or foreign campaigns halt.
+   No card when the saved ICP is complete.
 2. **size** — getleads `count_contacts` for the recipe's bands, their
    complement and no band filter (partition check); already-sent rows from
    the mirror; plans `min(max_per_run, max(rows needed for 30 days, floor),
@@ -153,9 +162,11 @@ walks steps 2 → 12 in the skill's order, one internal stage per step:
 12. **post_import** — merge tags from `get_sequences` against staged
     coverage (the `check_merge_tags.py` port), settings findings from
     `get_campaign`, runway before → after; one pre-launch post per run.
-13. Closes as `done` with the **receipt**: the funnel in step order and one
-    line per campaign — imported, runway, ready for ACTIVE or not. Step 13 is
-    Josh's by hand; nothing is queued and nothing is ever set ACTIVE here.
+13. **flip** — posts the step 13 line: Josh sets ACTIVE by hand and watches
+    day one. The service never starts, pauses, or stops a campaign. Then the
+    run closes as `done` with the **receipt** (the funnel plus one line per
+    campaign). The watch starts the next fill when a campaign is low and
+    still working.
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
 open cards, open runs and which integrations are configured.
