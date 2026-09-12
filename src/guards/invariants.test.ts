@@ -76,21 +76,21 @@ describe("invariants — the numbers and names the brief fixes", () => {
     }
   });
 
-  it("D26 — the pipeline is steps 2 through 12 of the skill, in the skill's order; step 1 and step 13 are Josh's and never in it", () => {
+  it("D28 — the pipeline is steps 1 through 13 of the skill, in the skill's order", () => {
     assert.deepEqual(
       [...PIPELINE_STEPS],
-      ["size", "pull", "find_emails", "ingest", "suppress", "verify", "normalize", "qa", "route", "stage", "import", "post_import"],
-      "D26: adding or reordering a stage is a new decision; append it and update CANON.md",
+      ["trigger", "size", "pull", "find_emails", "ingest", "suppress", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"],
+      "D28: adding or reordering a stage is a new decision; append it and update CANON.md",
     );
-    // Spine order: each stage sits on a step no earlier than the one before it.
     let last = 0;
     for (const s of PIPELINE_STEPS) {
       const n = stepForStage(s)?.n ?? 0;
-      assert.ok(n >= last && n >= 2 && n <= 12, `D26: ${s} is on step ${n}, out of order or outside 2..12`);
+      assert.ok(n >= last && n >= 1 && n <= 13, `D28: ${s} is on step ${n}, out of order or outside 1..13`);
       last = n;
     }
-    assert.ok(!PIPELINE_STEPS.includes("trigger"), "D26: step 1 (the ICP / recipe) is Josh's");
-    assert.deepEqual([...PHASE1_STEPS], ["verify", "normalize"], "D17 (superseded by D26): the Phase 1 pair is history, kept for the record");
+    assert.equal(stepForStage("trigger")?.n, 1);
+    assert.equal(stepForStage("flip")?.n, 13);
+    assert.deepEqual([...PHASE1_STEPS], ["verify", "normalize"], "D17 (superseded): the Phase 1 pair is history, kept for the record");
   });
 });
 

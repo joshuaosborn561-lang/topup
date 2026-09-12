@@ -10,7 +10,9 @@ import type { GateUnmet } from "./spine/gate.js";
 import { stepForStage, stepLabel } from "./spine/steps.js";
 import type { TapListener } from "./slack/http.js";
 import type { StageOutcome } from "./stages/common.js";
+import type { FlipStage } from "./stages/flip/index.js";
 import type { FindEmailsStage } from "./stages/find_emails/index.js";
+import type { TriggerStage } from "./stages/trigger/index.js";
 import type { ImportStage } from "./stages/import/index.js";
 import type { IngestStage } from "./stages/ingest/index.js";
 import type { NormalizeOutcome, NormalizeStage } from "./stages/normalize/index.js";
@@ -26,16 +28,17 @@ import type { VerifyOutcome, VerifyStage } from "./stages/verify/verify.js";
 const log = logger("orchestrator");
 
 /**
- * The stages a run walks, in spine order: steps 2 through 12 of
- * skills/lead-list-build (D26). Step 1 is Josh's (the recipe) and step 13 is
- * Josh's (the flip); the receipt after post_import is the last gate.
+ * The stages a run walks, in spine order: steps 1 through 13 of
+ * skills/lead-list-build (D28). Step 1 reuses the saved recipe when the ICP
+ * is already signed off; step 13 reminds Josh to flip ACTIVE and never does it.
  */
-export const PIPELINE_STEPS: readonly Step[] = ["size", "pull", "find_emails", "ingest", "suppress", "verify", "normalize", "qa", "route", "stage", "import", "post_import"];
+export const PIPELINE_STEPS: readonly Step[] = ["trigger", "size", "pull", "find_emails", "ingest", "suppress", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"];
 
 /** Kept for the invariants guard; the Phase 1 build ran only these two. */
 export const PHASE1_STEPS: readonly Step[] = ["verify", "normalize"];
 
 export interface Stages {
+  trigger: TriggerStage;
   size: SizeStage;
   pull: PullStage;
   ingest: IngestStage;
@@ -48,6 +51,7 @@ export interface Stages {
   stage: StageStage;
   import: ImportStage;
   postImport: PostImportStage;
+  flip: FlipStage;
 }
 
 type AnyOutcome = StageOutcome | VerifyOutcome | NormalizeOutcome;
@@ -236,14 +240,16 @@ export class Orchestrator {
     }
 
     const run = (await this.d.repo.getRun(initial.run_id))!;
-    await this.d.repo.setRunStatus(run.run_id, "done", "post_import");
+    await this.d.repo.setRunStatus(run.run_id, "done", "flip");
     const closed = (await this.d.repo.getRun(run.run_id))!;
-    await this.closeWithReceipt(closed, await this.receiptNote(closed), "Step 13 is Josh's: flip ACTIVE by hand and watch day one. Nothing queued.");
+    await this.closeWithReceipt(closed, await this.receiptNote(closed), "Step 13 is in Josh's hands: flip ACTIVE and watch day one. The watch will start the next fill when a campaign is low and still working.");
   }
 
   private async runStage(step: Step, run: RunRow, recipe: Recipe): Promise<AnyOutcome> {
     const s = this.d.stages;
     switch (step) {
+      case "trigger":
+        return s.trigger.run(run, recipe);
       case "size":
         return s.size.run(run, recipe);
       case "pull":
@@ -268,6 +274,8 @@ export class Orchestrator {
         return s.import.run(run, recipe);
       case "post_import":
         return s.postImport.run(run, recipe);
+      case "flip":
+        return s.flip.run(run, recipe);
       default:
         throw new Error(`no stage for step ${step as string}`);
     }
@@ -341,7 +349,7 @@ export class Orchestrator {
         if (!runId) return;
         const run = await this.d.repo.getRun(runId);
         if (run) {
-          await this.d.repo.setRunStatus(runId, "open", "size");
+          await this.d.repo.setRunStatus(runId, "open", "trigger");
           await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh chose to top up anyway.`, runId));
           await this.d.console.postInThread(run, `Top up anyway by <@${card.by}>: the watch will run the lane even though the reply rate is under the bar.`);
         }

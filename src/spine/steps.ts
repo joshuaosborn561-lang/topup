@@ -161,7 +161,7 @@ export const SPINE: readonly SpineStep[] = [
     also: null,
     gate: "Josh sets the campaign ACTIVE by hand. Nothing automated ever starts, pauses, or stops a campaign.",
     skill: null,
-    pipeline: [],
+    pipeline: ["flip"],
     card: null,
   },
 ];

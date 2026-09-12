@@ -23,7 +23,9 @@ import { slackRouter } from "./slack/http.js";
 import { Roles } from "./slack/roles.js";
 import { readersFromEnv } from "./spend/balances.js";
 import { railsConfigFrom, SpendRails } from "./spend/rails.js";
+import { FlipStage } from "./stages/flip/index.js";
 import { FindEmailsStage } from "./stages/find_emails/index.js";
+import { TriggerStage } from "./stages/trigger/index.js";
 import { ImportStage } from "./stages/import/index.js";
 import { IngestStage } from "./stages/ingest/index.js";
 import { NormalizeStage } from "./stages/normalize/index.js";
@@ -120,6 +122,7 @@ async function main(): Promise<void> {
     ledger,
     retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000,
     stages: {
+      trigger: new TriggerStage(base),
       size: new SizeStage({ ...base, getleads, rails }),
       pull,
       ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
@@ -132,6 +135,7 @@ async function main(): Promise<void> {
       stage: new StageStage(base),
       import: new ImportStage({ ...base, smartlead, rails, cfg: jobs }),
       postImport: new PostImportStage({ ...base, smartlead, rails }),
+      flip: new FlipStage(base),
     },
   });
 

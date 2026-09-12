@@ -59,6 +59,7 @@ export const STEPS = [
   "stage",
   "import",
   "post_import",
+  "flip",
 ] as const;
 export type Step = (typeof STEPS)[number];
 

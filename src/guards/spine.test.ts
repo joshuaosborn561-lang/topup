@@ -68,6 +68,7 @@ describe("the spine — D24", () => {
     assert.equal(stepForStage("stage")?.n, 10, "D25: Stage is step 10 in the skill");
     assert.equal(stepForStage("import")?.n, 11);
     assert.equal(stepForStage("post_import")?.n, 12);
+    assert.equal(stepForStage("flip")?.n, 13, "D28: Flip active is step 13; the service walks it and never sets ACTIVE");
   });
 
   it("labels never invent a name: the label is the number and the skill's title", () => {
