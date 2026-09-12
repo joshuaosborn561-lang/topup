@@ -72,6 +72,9 @@ Gate: staged count equals routed count.
 ## Step 11. Import (code)
 
 What: Smartlead `start_lead_import` from staging (or `stage_leads_from_url`), in chunks. The only success test is `upload_count` equals submitted. A mismatch stops that campaign's import and is reported.
+
+After a successful import (11.5): insert a new row in `topup.pull_receipts` (never update in place). Lane row = the filter book. Build row = this run's `source_label` / method, `rows_found`, `rows_imported`, `tam_count` (the count_contacts or Maps/permit company count, not the export size), `yield_by_step`, `spend_cents`, `segment`, `suppression_scope`. Skill: `first-pull-receipt`.
+
 Gate: counts match on every campaign.
 
 ## Step 12. Pre launch check (code, wizard helps)

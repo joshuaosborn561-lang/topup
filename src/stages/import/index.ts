@@ -7,6 +7,7 @@ import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { STAGING_TABLE } from "../stage/index.js";
 import { attempt, finish, poll, realClock, type Clock, type PollVerdict, type StageDeps, type StageOutcome } from "../common.js";
+import { writeRunReceipt } from "./receipt.js";
 
 /**
  * Step 11 — Import (skill lead-list-build). Smartlead `start_lead_import`
@@ -125,6 +126,15 @@ export class ImportStage {
         results.map((r) => ` · #${r.campaign_id} ${r.imported}/${r.submitted}${r.duplicates ? ` (${r.duplicates} dup)` : ""}`).join("") +
         (unmarked.length ? ` · staging rows not yet marked imported by the import job: ${unmarked.map((r) => `#${r.campaign_id} ${stagingMarked[r.campaign_id] ?? 0}/${r.submitted}`).join(", ")}` : "") +
         ".";
+      try {
+        const id = await writeRunReceipt(this.d.repo, run, recipe, {
+          ...counts,
+          rows_exported: Number((await this.d.repo.getStep(run.run_id, "pull"))?.counts.rows_exported ?? 0),
+        });
+        if (id) counts.receipt_written = 1;
+      } catch {
+        counts.receipt_written = 0;
+      }
       return finish(this.d, run, "import", counts.imported, counts, line);
     });
   }

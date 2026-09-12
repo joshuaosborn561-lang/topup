@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D31** (2026-09-12). One page of current truth. When a new
+Canon as of **D32** (2026-09-12). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -107,15 +107,19 @@ floor), **bouncing** (over 5%).
 Before the service calls a vendor server it is documented from its code in
 `docs/servers.md`, and Josh reviews that first (D22).
 
-## First pull (D31)
+## First pull (D31, D32)
 
-The first list for a campaign is built in Claude. After that pull, Claude
-writes one row to `topup.pull_receipts` on campaignintelligence: which
-campaigns, ICP kind and persona, where the companies came from, the
-filters, and which puzzle piece filled domain / person / email. Counts and
-ids only — never lead rows. Mixed ICPs are two receipts. Latest row for
-those campaign ids is how the service knows what “more of these people”
-means. The recipe can be filled from that receipt; a lane with no receipt
+The first list for a campaign is built in Claude. After that pull (and
+after every service import, step 11.5) a **new** row goes into
+`topup.pull_receipts` — never an in-place update. **Lane** rows are the
+filter book (titles, bands, Maps runs, permits). **Build** rows are one
+`source_label` / batch and its measured size. Propose the build with the
+best imported count, not the method on the lane row. `tam_count` is
+`count_contacts` or a Maps/permit **company** count; `rows_found` is the
+export. Those are not the same number. Backfill rows whose notes say
+“Josh to confirm” are for proposals only — do not scale until
+`owner_confirmed_at` is set. Campaign ids must already exist in
+`public.campaigns`. Mixed ICPs are two lane rows. A lane with no receipt
 and no recipe cannot be invented.
 
 ## What this build runs (D26, D27, D28)
@@ -254,7 +258,7 @@ open cards, open runs and which integrations are configured.
 | Lane ledger | `src/ledger/` (`lane.ts` state, `health.ts` campaign lines, `render.ts` `/where` + digest text) |
 | Servers | `docs/servers.md` — every vendor server from its code (D22) |
 | Recipes | `recipes/<client>/<lane>.json`, validated at boot, mirrored to `topup.lane_recipes` |
-| First-pull receipts | `topup.pull_receipts` — Claude writes after the first list (D31); `skills/first-pull-receipt` |
+| First-pull receipts | `topup.pull_receipts` — lane + build rows (D32); Claude and step 11.5 insert, never update; `skills/first-pull-receipt` |
 | Rails | `src/spend/` |
 | Runbook | `src/stages/verify/runbook.ts` (pure) |
 | Cards | `src/slack/cards.ts`; state in `topup.cards` |

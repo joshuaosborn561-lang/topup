@@ -50,7 +50,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D28 | Live; pipeline list superseded by D29 |
 | D29 | Live; recipe-level ICP superseded by D30 |
 | D30 | Live |
-| D31 | Live |
+| D31 | Live; per-lane-only receipts superseded by D32 |
+| D32 | Live |
 
 ---
 
@@ -838,3 +839,39 @@ Claude must know the campaign ids before it inserts.
 physical shapes parse; another project, empty campaigns, or a one-word
 how are refused. `skills/first-pull-receipt/SKILL.md` is the prompt
 Claude runs. Ask Josh.
+
+## D32 — Receipts are per build; tam_count is not rows_found
+
+**Decision.** Josh / Claude backfill, 2026-09-12. One row per lane hid how
+leads were actually found (Peterson C1 was nine builds). Receipts are
+now **lane** (filter book) plus **build** (`build_label` = source_label /
+batch). 28 lane + 104 build rows are seeded. Propose the build with the
+best measured imported count. Empty `campaign_ids` is legal on a build
+that never loaded. The four columns `segment`, `yield_by_step`,
+`spend_cents`, `suppression_scope` are written on every service run
+(step 11.5, after import). Campaign-id trigger and project check stay.
+
+**Acceptance test (this entry).** Parlay `it_dm_tickets` lane filters
+run through getleads `count_contacts` on 2026-09-12: **36,810** matching
+(`VALID`, US, 17 titles, bands 11–50 / 51–200 / 201–500). The receipt
+stored `rows_found = 11,405` and `tam_count` null. Staging on those six
+campaigns: 17,135 rows / 12,012 distinct emails. Net new vs distinct
+staged: 36,810 − 12,012 = **24,798**. The format was missing `tam_count`
+as a separate field from the export size — that is the miss, not a 3×
+pool change. Peterson `c1_general_contractors` `maps_runs` reconstruct
+exactly from `client_peterson.leads`: run `peterson` 76,830 businesses /
+72 categories / 832 zips; run `0290c562d4f6` 1,309 / 1 / 265. Permit
+counts stay as recorded on the lane row (147,366 permits, 28,767
+contractors) — no PermitStack adapter in this service yet. Backfill
+notes saying “Josh to confirm” (15 of 28 lane rows) mean propose, do
+not scale.
+
+**Why.** Tables remember source_label and vendor better than chat.
+
+**Tradeoff.** The service still needs a recipe to execute. Unconfirmed
+backfill is not an auto-export. Earthworks nonprofit Maps (29,647) has
+no receipt yet.
+
+**Guard.** `src/recipes/receipt.test.ts` — lane vs build, best-yield
+pick, unconfirmed backfill. `supabase/migrations/0010_pull_receipts_builds.sql`
+mirrors the live table. Ask Josh.

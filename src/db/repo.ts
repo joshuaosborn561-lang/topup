@@ -513,6 +513,73 @@ export class Repo {
     }
   }
 
+  /** Insert-only. Latest row wins; never update a receipt in place (D32). */
+  async insertPullReceipt(row: {
+    written_by: string;
+    client_tag: string;
+    smartlead_client_id: number | null;
+    lane: string;
+    campaign_ids: number[];
+    icp_kind: string;
+    persona: string;
+    company_source: string;
+    company_filters: Record<string, unknown>;
+    domain_source: string;
+    person_source: string;
+    email_source: string;
+    email_max_tier: string | null;
+    rows_found: number | null;
+    rows_imported: number | null;
+    tam_count: number | null;
+    how_i_did_it: string;
+    notes: string | null;
+    segment: Record<string, unknown> | null;
+    yield_by_step: Record<string, unknown> | null;
+    spend_cents: number | null;
+    suppression_scope: string | null;
+    build_label: string | null;
+    granularity: "build" | "lane";
+  }): Promise<string> {
+    const { rows } = await this.db.query<{ receipt_id: string }>(
+      `insert into topup.pull_receipts (
+         written_by, client_tag, smartlead_client_id, lane, campaign_ids,
+         icp_kind, persona, company_source, company_filters,
+         domain_source, person_source, email_source, email_max_tier,
+         rows_found, rows_imported, tam_count, how_i_did_it, notes,
+         segment, yield_by_step, spend_cents, suppression_scope, build_label, granularity
+       ) values (
+         $1,$2,$3,$4,$5::bigint[],$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24
+       ) returning receipt_id::text`,
+      [
+        row.written_by,
+        row.client_tag,
+        row.smartlead_client_id,
+        row.lane,
+        row.campaign_ids,
+        row.icp_kind,
+        row.persona,
+        row.company_source,
+        JSON.stringify(row.company_filters),
+        row.domain_source,
+        row.person_source,
+        row.email_source,
+        row.email_max_tier,
+        row.rows_found,
+        row.rows_imported,
+        row.tam_count,
+        row.how_i_did_it,
+        row.notes,
+        row.segment ? JSON.stringify(row.segment) : null,
+        row.yield_by_step ? JSON.stringify(row.yield_by_step) : null,
+        row.spend_cents,
+        row.suppression_scope,
+        row.build_label,
+        row.granularity,
+      ],
+    );
+    return rows[0]!.receipt_id;
+  }
+
   async missingPieceGroups(clientTag?: string): Promise<Record<string, unknown>[]> {
     const { rows } = await this.db.query(
       `select * from topup.missing_piece_groups where ($1::text is null or client_tag = $1) order by 1,2,3`,

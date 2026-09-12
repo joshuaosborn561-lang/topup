@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 /**
- * A first-pull receipt (D31). Claude writes one after the first list for a
- * campaign; this service reads the latest row to get more of the same people.
- * Counts, ids, filters, method names. Never emails.
+ * A pull receipt (D31, D32). Claude writes one after a first list; this
+ * service inserts another after every import (never updates in place).
+ * Lane rows hold the filter set. Build rows hold one source_label and its
+ * measured yield. Counts, ids, filters, method names. Never emails.
  */
 
 export const COMPANY_SOURCES = [
@@ -24,6 +25,26 @@ export const EMAIL_TIERS = ["getleads", "smartlead", "aiark", "leadmagic", "pros
 
 const snake = z.string().regex(/^[a-z][a-z0-9_]*$/);
 
+export const yieldByStepSchema = z
+  .object({
+    companies: z.number().int().nonnegative().optional(),
+    with_domain: z.number().int().nonnegative().optional(),
+    with_person: z.number().int().nonnegative().optional(),
+    with_email: z.number().int().nonnegative().optional(),
+    verified_sendable: z.number().int().nonnegative().optional(),
+    imported: z.number().int().nonnegative().optional(),
+  })
+  .passthrough();
+
+export const segmentSchema = z
+  .object({
+    band: z.array(z.string()).optional(),
+    mail_class: z.array(z.string()).optional(),
+    gift: z.union([z.string(), z.array(z.string())]).optional(),
+    offer_key: z.union([z.string(), z.array(z.string())]).optional(),
+  })
+  .passthrough();
+
 export const pullReceiptSchema = z
   .object({
     written_by: z.string().min(1).default("claude"),
@@ -31,7 +52,7 @@ export const pullReceiptSchema = z
     client_tag: snake,
     smartlead_client_id: z.number().int().positive().nullable().default(null),
     lane: snake,
-    campaign_ids: z.array(z.number().int().positive()).min(1),
+    campaign_ids: z.array(z.number().int().positive()).default([]),
     icp_kind: z.enum(["linkedin_native", "physical"]),
     persona: snake,
     company_source: z.enum(COMPANY_SOURCES),
@@ -45,8 +66,20 @@ export const pullReceiptSchema = z
     tam_count: z.number().int().nonnegative().nullable().default(null),
     how_i_did_it: z.string().min(20),
     notes: z.string().nullable().default(null),
+    segment: segmentSchema.nullable().default(null),
+    yield_by_step: yieldByStepSchema.nullable().default(null),
+    spend_cents: z.number().int().nonnegative().nullable().default(null),
+    suppression_scope: z.string().nullable().default("response_based_v1"),
+    build_label: z.string().nullable().default(null),
+    granularity: z.enum(["build", "lane"]).default("build"),
+    owner_confirmed_at: z.string().datetime().nullable().default(null),
   })
-  .strict();
+  .strict()
+  .superRefine((r, ctx) => {
+    if (r.granularity === "lane" && r.campaign_ids.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["campaign_ids"], message: "a lane receipt must name at least one campaign" });
+    }
+  });
 
 export type PullReceipt = z.infer<typeof pullReceiptSchema>;
 
@@ -57,4 +90,30 @@ export function parsePullReceipt(input: unknown): PullReceipt {
     throw new Error(`invalid pull receipt:\n  ${issues}`);
   }
   return r.data;
+}
+
+/** Backfill rows that say "Josh to confirm" are for proposals only. */
+export function receiptConfirmed(r: Pick<PullReceipt, "owner_confirmed_at" | "notes">): boolean {
+  if (r.owner_confirmed_at) return true;
+  return !/josh to confirm/i.test(r.notes ?? "");
+}
+
+export type YieldPick = { receipt: PullReceipt; imported: number; found: number };
+
+/** Best measured build for a lane. Lane rows are the filter book; builds are the yield. */
+export function bestYieldBuild(receipts: PullReceipt[]): YieldPick | null {
+  const builds = receipts.filter((r) => r.granularity === "build");
+  if (builds.length === 0) return null;
+  const scored = builds
+    .map((receipt) => ({
+      receipt,
+      imported: receipt.rows_imported ?? receipt.yield_by_step?.imported ?? 0,
+      found: receipt.rows_found ?? 0,
+    }))
+    .sort((a, b) => b.imported - a.imported || b.found - a.found);
+  return scored[0] ?? null;
+}
+
+export function latestLaneReceipt(receipts: PullReceipt[]): PullReceipt | null {
+  return receipts.find((r) => r.granularity === "lane") ?? null;
 }
