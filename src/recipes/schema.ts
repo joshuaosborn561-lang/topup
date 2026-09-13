@@ -46,6 +46,9 @@ const getleadsParams = z
   .strict()
   .refine((p) => !("employee_count_min" in p) && !("employee_count_max" in p), {
     message: "headcount must be band labels, never numeric bounds",
+  })
+  .refine((p) => !p.employee_profiles_on_linkedin, {
+    message: "cannot send company_size band labels and employee_profiles_on_linkedin together (silent band overlap)",
   });
 
 const wideningCandidate = z
@@ -121,8 +124,8 @@ const suppression = z
     client_domain_blocklist: z.boolean().default(true),
     same_offer_any_client: z.literal(true),
     same_gift_any_client: z.boolean().default(false),
-    /** Recycle: a prior send for this Smartlead client is only a suppress if it is newer than this (D29). */
-    recycle_after_days: z.number().int().min(1).default(90),
+    /** Opt-in recycle (D34). Null = lifetime prior contact. Set only to lift STOPPED/COMPLETED campaigns older than this. */
+    recycle_after_days: z.number().int().min(1).nullable().optional().default(null),
   })
   .strict();
 

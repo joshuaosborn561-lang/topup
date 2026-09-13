@@ -69,13 +69,25 @@ export class StageStage {
            select ${pairs.map(([, e]) => e).join(", ")}
            from ${table} t ${campaignsJoin}
            where t.run_id = $1 and t.lead_status in (${sendable}) and t.routed_campaign_id is not null and coalesce(t.email, '') <> ''
+             and not exists (
+               select 1 from ${STAGING_TABLE} s
+               where s.campaign_id = t.routed_campaign_id and lower(s.email) = lower(t.email)
+             )
+             and not exists (
+               select 1 from public.leads l
+               join public.campaigns c on c.id = l.campaign_id
+               where c.smartlead_campaign_id = t.routed_campaign_id and lower(l.email) = lower(t.email)
+             )
            on conflict (source_dedupe_key) do nothing`,
           [run.run_id],
         );
         const upd = await tx.query(
           `update ${table} t set lead_status = 'staged', status_changed_at = now()
            where t.run_id = $1 and t.lead_status in (${sendable})
-             and exists (select 1 from ${STAGING_TABLE} s where s.run_id = $1 and s.source_dedupe_key = ${dedupeKeySql("t.routed_campaign_id", "t.email")})`,
+             and exists (
+               select 1 from ${STAGING_TABLE} s
+               where s.run_id = $1 and s.campaign_id = t.routed_campaign_id and lower(s.email) = lower(t.email)
+             )`,
           [run.run_id],
         );
         const left = await tx.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status in (${sendable})`, [run.run_id]);

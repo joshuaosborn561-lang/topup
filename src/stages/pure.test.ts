@@ -11,7 +11,7 @@ import { classifyPuzzle } from "./puzzle/classify.js";
 import { routePull, routeSize } from "./pull/route.js";
 import { partitionCheck, rowsNeeded, sourcesAgree } from "./size/index.js";
 import { sizeReport } from "./size/report.js";
-import { recentClientSendSql, recycleDays } from "./suppress/recycle.js";
+import { alreadyInClientSql, clientPriorContactSql, recycleDays } from "./suppress/recycle.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 function campaignRecipe(
@@ -248,15 +248,27 @@ describe("D29 — pull and size routing", () => {
   });
 });
 
-describe("D29 — recycle window", () => {
-  it("defaults to 90 days and keys prior contact off a recent send, not lifetime leads", () => {
-    assert.equal(recycleDays(undefined), 90);
+describe("D34 — prior contact is lifetime by default", () => {
+  it("recycle is off unless the recipe sets a positive window", () => {
+    assert.equal(recycleDays(undefined), null);
+    assert.equal(recycleDays(null), null);
+    assert.equal(recycleDays(0), null);
     assert.equal(recycleDays(90), 90);
-    const sql = recentClientSendSql("$10");
-    assert.match(sql, /public\.sends/);
-    assert.match(sql, /s\.sent/);
-    assert.match(sql, /s\.sent_at/);
+  });
+
+  it("client_prior_contact matches public.leads or leads_staging for this client, sent or not", () => {
+    const sql = alreadyInClientSql();
+    assert.match(sql, /public\.leads/);
+    assert.match(sql, /leads_staging/);
     assert.match(sql, /smartlead_client_id = \$6/);
-    assert.doesNotMatch(sql, /leads_staging/);
+    assert.doesNotMatch(sql, /public\.sends/);
+  });
+
+  it("opt-in recycle only lifts STOPPED or COMPLETED campaigns older than the window", () => {
+    const sql = clientPriorContactSql("$10");
+    assert.match(sql, /STOPPED/);
+    assert.match(sql, /COMPLETED/);
+    assert.match(sql, /public\.sends/);
+    assert.match(sql, /leads_staging/);
   });
 });

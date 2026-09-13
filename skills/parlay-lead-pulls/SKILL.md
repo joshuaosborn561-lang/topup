@@ -27,7 +27,7 @@ If that receipt's `written_by` is `claude_backfill` or `claude_backfill_build`, 
 
 ## Suppression
 
-Use `global-suppression`: response-based only, 90-day recycle. Never delete against all of `public.leads`. That killed 87 percent of a good pull. The master-dedupe SQL that used to live in this skill is gone on purpose.
+Use `global-suppression`: response-based only, this-client prior contact for life (any email in `public.leads` for this Smartlead client or in `leads_staging` for any of this client's campaigns, sent or not). Never delete against all of `public.leads`. That killed 87 percent of a good pull. The master-dedupe SQL that used to live in this skill is gone on purpose.
 
 ## Pipeline (context discipline: no lead rows in chat, ever)
 

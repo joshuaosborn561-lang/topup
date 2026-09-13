@@ -32,6 +32,9 @@ describe("recipe schema", () => {
     const withBounds = structuredClone(base) as { source: { params: Record<string, unknown> } };
     withBounds.source.params.employee_count_min = 51;
     assert.throws(() => parseRecipe(withBounds), /invalid recipe/);
+    const withProfiles = structuredClone(base) as { source: { params: Record<string, unknown> } };
+    withProfiles.source.params.employee_profiles_on_linkedin = { min: 11, max: 200 };
+    assert.throws(() => parseRecipe(withProfiles), /employee_profiles_on_linkedin/);
   });
 
   it("D13 — industry names with commas are rejected", async () => {
@@ -90,7 +93,8 @@ describe("recipe schema", () => {
       1,
       "Parlay's six campaigns share one persona today; another offer would add a second",
     );
-    assert.equal(r.suppression.recycle_after_days, 90);
+    assert.equal(r.suppression.recycle_after_days, null, "D34: lifetime prior contact; recycle is opt-in");
+    assert.equal("employee_profiles_on_linkedin" in (await parlay()).source.params, false);
   });
 
   it("D30 — every routing rule names its own ICP; the recipe does not", async () => {

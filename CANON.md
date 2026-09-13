@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D33** (2026-09-12). One page of current truth. When a new
+Canon as of **D34** (2026-09-13). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -162,8 +162,8 @@ The stages:
    Physical: park — TAM is a Maps/PermitStack range, never a getleads
    number. Campaigns that share kind + persona + source union their bands
    in one count; mixed kinds or personas in the same run park (split them).
-   Net-new subtracts emails this client sent in the recycle window
-   (`public.sends`), not lifetime staging.
+   Net-new subtracts emails already on this client in `public.leads` or
+   `leads_staging` (lifetime; D34). Recycle after N days is opt-in.
 3. **pull** — routed by the target campaigns' ICP and source
    (`leadgen-mcp-routing` step zero). getleads on a LinkedIn-native
    campaign runs `GetleadsPull` with that campaign's bands/titles (or the
@@ -175,10 +175,14 @@ The stages:
    claimed for the run; `company_size` / `vertical` filled; title audit
    against the union of the target campaigns' titles.
 5. **suppress** — one SQL pass, response based only: positive reply, DNC,
-   wrong person, suppression list, bounced, client prior contact (a send by
-   this Smartlead client in the last `recycle_after_days`, default 90),
-   same offer other client, client customer domain when the list has rows.
-   An empty domain list is noted and the step continues — no card (D29).
+   wrong person, suppression list, bounced, client prior contact, same
+   offer other client, client customer domain. Prior contact is lifetime:
+   the email is in `public.leads` for this `smartlead_client_id` or in
+   `leads_staging` for any campaign of this client, sent or not (D34).
+   Recycle after N days is opt-in and only lifts STOPPED or COMPLETED
+   campaigns. An empty customer domain list halts with a Cayden card
+   until Josh sets `confirmed_empty` (D34). Same-offer suppression
+   halts, not skips, when the registry has no `offer_key` for the lane.
    Then **puzzle** (name / no domain → Domain Waterfall; domain / no name →
    Find Named Person; names banked in `public.name_bank`) and
    **find_emails** (Name to Email `verify_person`, then Email Waterfall
@@ -186,7 +190,9 @@ The stages:
 6. **verify** — LeadPipe signed CSV (row count must match), Email Verifier
    Progression, 60s polls, the stall runbook; `mv_status, n2b_status,
    mail_class, verify_path, ev_status, lead_status` per row. Sendable is `mv
-   ok` or `catch_all + N2B deliverable`; nothing else (D10).
+   ok` or `catch_all + N2B deliverable`; nothing else (D10). Every
+   sendable domain must have a mail class; the service's MX lookup
+   fills gaps the verifier CSV left blank (D34).
 7. **normalize** — `first_name_n, company_n, location, local_sports_team`
    and flags from the four skill-script ports (D25); empty required merge
    field → hold. `topup.ref_cities` via `npm run seed:cities`, once.
@@ -199,6 +205,8 @@ The stages:
    `pending_campaign` and a card to Josh (continue without, or abort).
 10. **stage** — `public.leads_staging` with normalized `first_name` /
     `company_name`, `job_title`, `vendor`, `source_dedupe_key`, `imported = false`.
+    Dedupe on `(campaign_id, lower(email))` against staging and the
+    mirror; the md5 key is a write convention, not the guard (D34).
 11. **import** — Smartlead `start_lead_import` per campaign, poll
     `get_lead_import_status`, count assert; a mismatch stops before the next
     campaign. Restart-safe through `run_steps.vendor_job_id`.
@@ -212,7 +220,8 @@ The stages:
     still working.
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
-open cards, open runs and which integrations are configured.
+open cards, open runs and which integrations are configured. It is
+`ok: false` (HTTP 503) when a required `topup` table is missing (D34).
 
 ## Money (D9)
 
@@ -233,7 +242,8 @@ open cards, open runs and which integrations are configured.
 - Owner-only taps: approve/decline spend, top up anyway / leave it, split,
   continue without pending leads, anything that changes a recipe. Operator
   taps never spend and never change a recipe; the reply is "This needs Josh."
-  Step 5 no longer waits on a customer-domain-list card (D29).
+  Step 5 waits on a customer-domain-list card when the list is empty and
+  Josh has not set `confirmed_empty` (D34). The heading stays `(code)`.
 - Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains itself until the suppression stage lands).
 - `/mcp` with owner and operator bearer tokens exposes `lane_state,
@@ -251,7 +261,8 @@ open cards, open runs and which integrations are configured.
 - Never start, pause, stop or delete anything in Smartlead; never remove an
   API-added block-list entry.
 - Never send getleads numeric headcount bounds or comma industries; only
-  `VALID` emails count.
+  `VALID` emails count. The client refuses a filter that carries both
+  `company_size` band labels and a numeric employee bound (D34).
 - Never patch around a broken vendor server; bound the damage by batch size
   and say so in the PR.
 - Never trust "processed" or a zero-verdict resume as a verification.

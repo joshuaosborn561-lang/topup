@@ -39,7 +39,7 @@ Gate: row count equals the export count.
 
 ## Step 5. Suppress and dedupe (code)
 
-What, in one SQL pass, response based only: positive repliers, do not contact, wrong person from any client; `public.suppression`; the client's own customer domain list (must be applied before anything loads, ask Cayden for it if missing); bounces from any client; anyone already in any of this client's campaigns via `leads_staging` (older copy wins, it has send history; Smartlead only dedupes inside one campaign); anyone who already received the same offer from another client. Other clients emailing the same person with a different offer is allowed.
+What, in one SQL pass, response based only: positive repliers, do not contact, wrong person from any client; `public.suppression`; the client's own customer domain list (must be applied before anything loads — halt with a Cayden card if the list is empty and Josh has not set `confirmed_empty`); bounces from any client; anyone already in `public.leads` for this `smartlead_client_id` (any status) or in `leads_staging` for any campaign of this client (imported or not; Smartlead only dedupes inside one campaign); anyone who already received the same offer from another client. Other clients emailing the same person with a different offer is allowed. Recycle after N days is opt-in on the recipe and only lifts STOPPED or COMPLETED campaigns.
 Skill: `global-suppression`. Never dedupe against all of `public.leads`; that killed 87 percent of a good pull.
 Gate: report raw, removed by reason, net new. Net new is the number from here on.
 

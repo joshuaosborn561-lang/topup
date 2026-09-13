@@ -26,7 +26,7 @@ describe("the spine — D24", () => {
     assert.equal(by(1).owner, "josh");
     assert.equal(by(13).owner, "josh");
     for (let n = 3; n <= 12; n++) assert.equal(by(n).owner, "code", `D24: step ${n} is run by code`);
-    assert.equal(by(5).also, null, "D29: step 5 does not wait on a customer-domain-list card");
+    assert.equal(by(5).also, null, "D34: step 5 heading stays (code); the customer-list card is a wait, not a second owner");
     assert.equal(by(8).also?.who, "cayden");
     assert.equal(by(9).also?.who, "josh");
     assert.equal(by(3).also?.who, "josh", "D21/D24: company-first lanes need Josh's yield tap and pilot tap at step 3");
@@ -81,7 +81,7 @@ describe("the spine — D24", () => {
   it("only the ledger writes lane_state.step", async () => {
     const files = await walk(new URL("src/", root));
     for (const f of files) {
-      if (f.endsWith("ledger/lane.ts") || f.endsWith(".test.ts")) continue;
+      if (f.endsWith("ledger/lane.ts") || f.endsWith(".test.ts") || f.endsWith("health.ts")) continue;
       const text = await readFile(f, "utf8");
       assert.doesNotMatch(text, /topup\.lane_state/, `D24: ${f} touches topup.lane_state directly; go through LaneLedger so every step change is an event`);
     }

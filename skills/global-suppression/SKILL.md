@@ -17,8 +17,14 @@ Suppress:
 - Everything in `public.suppression`
 
 Do **not** suppress someone merely because another client emailed them. Prior contact by any
-client is no longer a suppression reason. Two clients in different verticals reaching the same
+other client is no longer a suppression reason. Two clients in different verticals reaching the same
 person is acceptable; two clients reaching someone who already asked out is not.
+
+**This client's prior contacts are excluded for life** (D34). Anyone already in `public.leads`
+for this `smartlead_client_id` (any status) or in `public.leads_staging` for any campaign of
+this client (imported or not) is a duplicate. Smartlead only dedupes inside one campaign;
+an untouched lead in campaign A is still a duplicate in B. A recycle window is opt-in on the
+recipe and only lifts STOPPED or COMPLETED campaigns whose last send is older than the window.
 
 **Any pool-exhaustion figure computed before 2026-08-25 used the old contact-history scope and
 is understated.** Recount before telling a client their pool is dry.
