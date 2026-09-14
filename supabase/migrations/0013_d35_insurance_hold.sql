@@ -9,7 +9,7 @@ begin
   end if;
   update topup.qa_rules
      set pattern = '\y(bank|bancorp|credit union|fcu\y|savings and loan|trust company|federal credit union|federal savings|federal reserve|insurance|county of|city of|state of|department of|u\.?s\.? government)\y',
-         notes = 'Banks, credit unions, insurance and government: flag before a gift campaign; default stay in'
+         reason = 'Banks, credit unions, insurance and government: flag before a gift campaign; default stay in'
    where rule_id = 'regulated_gift_hold';
 end
 $d35qa$;
