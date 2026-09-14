@@ -14,7 +14,7 @@ import { domainSql } from "../puzzle/classify.js";
  * Email enrichment, immediately before verify (D29; skills leadgen-mcp-routing
  * stage 3 and unresolved-name-routing). Name to Email first, then Email
  * Finder Waterfall on a source_table with writeback. Never inline rows into
- * start_run. A getleads VALID pull with no leftover names is a skip.
+ * start_run. A getleads pull with no leftover names is a skip.
  */
 export interface FindEmailsDeps extends StageDeps {
   rails?: SpendRails;
@@ -44,7 +44,7 @@ export class FindEmailsStage {
           "find_emails",
           0,
           { email_finding_skipped: 1, needs_email: 0 },
-          "Find emails skipped: no name+domain rows without an address (a getleads VALID pull arrives with one).",
+          "Find emails skipped: no name+domain rows without an address (a getleads pull that already has emails skips this).",
         );
       }
 

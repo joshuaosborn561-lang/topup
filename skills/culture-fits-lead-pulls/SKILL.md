@@ -15,33 +15,21 @@ MSP owners and C suite at small MSPs.
 - `job_titles`: ["Owner", "CEO", "President", "Founder", "Co-Founder", "CIO", "CTO", "VP of IT", "Director of IT"]
 - `company_size`: ["11 to 50"]  (exact band label, NEVER employees_min/max, band overlap bug pulled ~2,700 wrong band rows once)
 - `countries`: ["United States"]
-- `email_status`: ["VALID"]  (CATCH_ALL is no longer accepted by getleads, only VALID)
+- `email_status`: omit (D35 item 15 — pull every status; we verify anyway)
 - `max_per_company`: 3
 - Note: revenue caps barely filter MSP searches, the description match is the binding constraint. Skip revenue_max.
 
 ## Pool reality, do not skip this
 
-TJ's strict ICP was nearly exhausted at ~527 net-new survivors as of mid Aug 2026. Before promising volume, run `count_contacts`, ingest, master dedupe, and report the honest net-new number. If it is small, the options are: AI Ark as a second people source (paid, estimate and get approval first), or an ICP expansion conversation with TJ. Do not silently re-pull duplicates to hit a number.
+TJ's strict ICP was nearly exhausted at ~527 net-new survivors as of mid Aug 2026. Before promising volume, run `count_contacts`, ingest, `global-suppression`, and report the honest net-new number. If it is small, show widening options with counts — do not widen until TJ says so (item 25). Do not silently re-pull duplicates to hit a number.
 
 ## Pipeline (no lead rows in chat, ever)
 
 1. `getleads:count_contacts` with the filters above (free).
 2. `getleads:export_contacts` confirmed=true, poll `check_contact_export`, take the S3 export_url.
 3. `Context Saver:lp_run` job_kind `ingest_csv`, client_tag `culture_fits`, params `{urls:[export_url], dedupe_key:"email", source_label:"getleads_culturefits_<date>"}`.
-4. Master dedupe in Supabase project `azpapwtnrbzywlnxxecz` against `public.leads` (hourly Smartlead sync, all clients ever contacted) union `public.suppression`:
-
-```sql
-with master as (
-  select lower(email) e from public.leads where email is not null
-  union
-  select lower(email) from public.suppression where email is not null
-)
-delete from lp.culture_fits_ingested_leads t using master m where lower(t.email)=m.e;
-```
-
+4. Suppress with `global-suppression` (90-day send window for this client; forever only for positive / DNC / wrong person). Do **not** delete against all of `public.leads` — that is the Aug contact-history scope that killed 87 percent of a good pull.
 5. `lp_export` client_tag `culture_fits`, table `ingested_leads` for a signed CSV URL into verification. Verification intake is by file URL only, never inline emails into tool args.
-
-Re-run the master dedupe after every ingest, ingests re-add previously deleted dupes.
 
 ## Downstream
 

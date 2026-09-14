@@ -29,9 +29,8 @@ describe("D34 — review fixtures", () => {
     assert.match(sql, /target \(inc\|corp\|stores\?\|pharmacy\)/);
   });
 
-  it("Parlay recipe has no numeric employee bound and no recycle window", async () => {
+  it("Parlay recipe has no numeric employee bound", async () => {
     const recipe = await readFile(new URL("recipes/parlay/it_dm.json", root), "utf8");
     assert.doesNotMatch(recipe, /employee_profiles_on_linkedin/);
-    assert.doesNotMatch(recipe, /recycle_after_days/);
   });
 });

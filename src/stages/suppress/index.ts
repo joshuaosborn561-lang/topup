@@ -19,10 +19,10 @@ import { clientPriorContactSql, recycleDays } from "./recycle.js";
  *   wrong_person          category Wrong Person, any client
  *   suppression_list      on public.suppression
  *   bounced               a bounced send or a Sender Originated Bounce, any client
- *   client_prior_contact  email in public.leads for this smartlead_client_id
- *                         or in leads_staging for any campaign of this client
- *                         (sent or not). Recycle is opt-in and only lifts
- *                         STOPPED/COMPLETED campaigns older than the window.
+ *   client_prior_contact  this client sent to the address in the last
+ *                         recycle_after_days (default 90). Rule-1 responses
+ *                         stay blocked forever above this. Live-campaign
+ *                         exclusion is pending Josh's tap (D35 item 2).
  *   same_offer_other_client  received the same offer (registry offer_key) from another client
  *   client_domain         the client's own customer domain list
  *
@@ -137,13 +137,13 @@ export class SuppressStage {
         deduped: removed.deduped,
         needs_email: removed.needs_email,
         net_new: removed.net_new,
-        recycle_after_days: days ?? 0,
+        recycle_after_days: days,
         client_domain_list: domainCount,
       };
       const skipped: string[] = [];
       if (!t.leads) skipped.push("response-based (no public.leads mirror here)");
       if (!t.suppression) skipped.push("public.suppression (table missing)");
-      if (!t.leads && !t.staging) skipped.push("client prior contact (no public.leads or leads_staging)");
+      if (!t.leads || !t.sends) skipped.push("client prior contact (no public.leads/sends mirror)");
       if (recipe.suppression.client_domain_blocklist && domainCount === 0) skipped.push("client customer domain list (confirmed empty)");
       const reasons = Object.entries(removed.byReason)
         .filter(([, n]) => n > 0)
@@ -151,8 +151,8 @@ export class SuppressStage {
         .join(", ");
       const line =
         `Suppress done: raw ${raw} · removed ${suppressed}${reasons ? ` (${reasons})` : ""} · ${removed.deduped} duplicates within the pull · ${removed.needs_email} with no address · *net new ${removed.net_new}* — the number from here on.` +
-        ` · prior contact is this client's leads or staging, lifetime` +
-        (days ? ` (recycle ${days}d only on STOPPED/COMPLETED).` : ".") +
+        ` · prior contact is a send by this client in the last ${days} days` +
+        (recipe.suppression.exclude_other_live_campaigns ? ` (plus anyone already in a live campaign).` : ".") +
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);
     });
@@ -172,9 +172,8 @@ export class SuppressStage {
       const bounce = [t.sends ? `exists (select 1 from public.leads l join public.sends s on s.lead_id = l.id where lower(l.email) = r.e and s.bounced)` : null, inLeads("l.category_id = $5")].filter(Boolean).join(" or ");
       whens.push(`when ${bounce} then 'bounced'`);
     }
-    if (recipe.suppression.client_prior_contacts && (t.leads || t.staging)) {
-      const recycleParam = daysForSql(recipe) && t.sends && t.campaigns ? "$10" : null;
-      whens.push(`when ${clientPriorContactSql(recycleParam)} then 'client_prior_contact'`);
+    if (recipe.suppression.client_prior_contacts && t.leads && t.sends) {
+      whens.push(`when ${clientPriorContactSql("$10", recipe.suppression.exclude_other_live_campaigns && t.staging && t.campaigns)} then 'client_prior_contact'`);
     }
     if (recipe.suppression.same_offer_any_client && haveOffer && t.leads && t.campaigns) {
       whens.push(
@@ -221,8 +220,4 @@ export class SuppressStage {
     const { rows } = await this.d.repo.raw().query<{ n: string }>(`select count(*)::text as n from topup.client_domain_blocklist where client_tag = $1`, [clientTag]);
     return Number(rows[0]?.n ?? 0);
   }
-}
-
-function daysForSql(recipe: Recipe): number | null {
-  return recycleDays(recipe.suppression.recycle_after_days);
 }

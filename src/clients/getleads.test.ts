@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { assertGetleadsFilters, type GetleadsFilters } from "./getleads.js";
+import { assertGetleadsFilters, outboundFilters, type GetleadsFilters } from "./getleads.js";
 
 /** D34 — band labels plus a numeric employee bound is the August overlap. */
 
@@ -27,5 +27,11 @@ describe("getleads filters — D34", () => {
 
   it("refuses company_size together with employee_count_min", () => {
     assert.throws(() => assertGetleadsFilters(bands({ employee_count_min: 11 })), /band overlap/);
+  });
+
+  it("D35 item 15 — omits empty email_status so getleads returns every status", () => {
+    const out = outboundFilters({ job_titles: ["IT Director"], company_size: ["11 to 50"] } as GetleadsFilters);
+    assert.equal("email_status" in out, false);
+    assert.deepEqual(outboundFilters(bands()).email_status, ["VALID"]);
   });
 });

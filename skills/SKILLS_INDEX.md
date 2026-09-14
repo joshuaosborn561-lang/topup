@@ -2,7 +2,11 @@
 
 These are the skills Josh has built for SalesGlider Growth. Each folder holds a `SKILL.md` and sometimes a `scripts/` folder. They are the institutional knowledge of the business, written from measured results. Read the skill for a stage before writing code for that stage. Where a skill and the brief disagree, the brief wins and you flag it in the PR.
 
-No skills are marked stale as of D33. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE.
+No skills are marked stale as of D35. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; pending taps stay questions.
+
+## Rulebook
+
+* `merged-list` ... Josh's 78-item list of how every client's lists are built (D35). Pending taps: 2's addition, 26, 27, 53, 58, 71.
 
 ## After a first pull (so leadtopup can repeat it)
 

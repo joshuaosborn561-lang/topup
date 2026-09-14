@@ -11,13 +11,15 @@ Client: TechEvo. Smartlead client_id 521881 (campaign "TechEvo New England Red S
 
 MA, CT, RI, NH, VT, ME. getleads `states` filters loosely (company or person), so the export WILL contain out-of-region contacts. Geography must be re-verified on the contact's own location before anything ships. Roughly half of a states-filtered NE export was out of region on Aug 16 2026.
 
+Pending Josh's tap — do not encode as decided: whether NE IT DM includes New York and New Jersey (item 26); whether Florida IT DM is statewide while the SFL owners lane stays metro (item 27).
+
 ## ICP
 
 Primary: named IT decision makers.
 - `job_titles`: ["IT Director", "Director of IT", "Director of Information Technology", "Director of Technology", "VP of IT", "CIO", "Chief Information Officer", "IT Manager", "Head of IT", "Head of Information Technology"]
 - `company_size`: ["11 to 50", "51 to 200", "201 to 500"]
 - `states`: ["Massachusetts", "Connecticut", "Rhode Island", "New Hampshire", "Vermont", "Maine"]
-- `countries`: ["United States"], `email_status`: ["VALID"], `max_per_company`: 3
+- `countries`: ["United States"], omit `email_status` (D35 item 15), `max_per_company`: 3
 
 Fallback (Josh's rule: "a COO at a very small company" is acceptable where no named IT DM exists):
 - Second export: `job_titles` ["COO", "Chief Operating Officer"], `company_size` ["11 to 50"] only, `max_per_company` 1, same states.

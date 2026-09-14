@@ -17,7 +17,7 @@ Education lane also adds: "Assistant Director of Technology", "Director of Techn
 
 ## Four lanes
 
-All: `countries` ["United States"], `email_status` ["VALID"], `max_per_company` 3, `company_size` ["51 to 200", "201 to 500", "501 to 1000"] except Education which runs unsized. Josh rejected widening bands past 1000.
+All: `countries` ["United States"], omit `email_status` (D35 item 15), `max_per_company` 3, `company_size` ["51 to 200", "201 to 500", "501 to 1000"] except Education which runs unsized. Josh rejected widening bands past 1000.
 
 - L1 FinServ: `industries` ["Banking", "Financial Services", "Insurance", "Investment Management"]
 - L2 Healthcare: `industries` ["Hospitals and Health Care", "Medical Practices", "Physicians", "Outpatient Care Centers"]
