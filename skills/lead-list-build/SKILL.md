@@ -26,7 +26,7 @@ Gate: projected net new is above the useful floor (default 200). If thin, presen
 
 Two flavors. Both end with rows in a table, never in chat.
 
-LinkedIn native lanes (Parlay, BCP, Culture Fits, TechEvo, Goliath, Insight, SG lanes): getleads `export_contacts` with `company_size` as exact band labels like `["51 to 200"]`, `email_status ["VALID"]` only, industries validated against the catalog (commas shred silently). Poll, take the S3 URL. If getleads under delivers on the companies, cascade: AI Ark people discovery on the misses (audit titles after, it returns whoever appears first at a domain), then LeadMagic bulk `employee_finder`, title filter in SQL, then `work_email_finder` (nine times cheaper than `search_people`). FullEnrich last and only if stamped on.
+LinkedIn native lanes (Parlay, BCP, Culture Fits, TechEvo, Goliath, Insight, SG lanes): getleads `export_contacts` with `company_size` as exact band labels like `["51 to 200"]`, every email status (we verify anyway), industries validated against the catalog (commas shred silently). Poll, take the S3 URL. If getleads under delivers on the companies, cascade: AI Ark people discovery on the misses (audit titles after, it returns whoever appears first at a domain), then LeadMagic bulk `employee_finder`, title filter in SQL, then `work_email_finder` (nine times cheaper than `search_people`). FullEnrich last and only if stamped on.
 Skill: the client pull skill, `leadgen-mcp-routing`.
 
 Company first lanes (Peterson roofing, Earthworks, Vasco, trades): the source gives a business or a name, not an email. Google Maps Scraper (outcome mode, `estimate_only` first) by category and geography, PermitStack by permit type and date and county, parcels by use code and county, IRS 990 and Texas Comptroller officers for names. Then walk it: `unmask-shell-llc` for address named owners; Domain Waterfall for domains (`domain-waterfall`); Find Named Person or getleads by domain or LeadMagic employee finder for people with the client's titles (`people-waterfall`, `serp-dm-discovery`, `hard-to-find-dm-discovery`); Name to Email first, then Email Finder Waterfall in `source_table` plus `writeback` mode for addresses. Bank every name with no email (`unresolved-name-routing`). Run a pilot of about 100 through the full cascade before scaling and report cost per usable lead.
@@ -39,7 +39,7 @@ Gate: row count equals the export count.
 
 ## Step 5. Suppress and dedupe (code)
 
-What, in one SQL pass, response based only: positive repliers, do not contact, wrong person from any client; `public.suppression`; the client's own customer domain list (must be applied before anything loads, ask Cayden for it if missing); bounces from any client; anyone already in any of this client's campaigns via `leads_staging` (older copy wins, it has send history; Smartlead only dedupes inside one campaign); anyone who already received the same offer from another client. Other clients emailing the same person with a different offer is allowed.
+What, in one SQL pass, response based only: positive repliers, do not contact, wrong person from any client (forever); `public.suppression`; the client's own customer domain list (must be applied before anything loads — halt with a Cayden card if the list is empty and Josh has not set `confirmed_empty`); bounces from any client; anyone this client sent to in the last 90 days (older sends recycle unless they hit a forever response); anyone who already received the same offer from another client. Other clients emailing the same person with a different offer is allowed. Never putting someone in two live campaigns of the same client is pending Josh's tap.
 Skill: `global-suppression`. Never dedupe against all of `public.leads`; that killed 87 percent of a good pull.
 Gate: report raw, removed by reason, net new. Net new is the number from here on.
 
@@ -56,7 +56,7 @@ Gate: every merge field the copy uses is populated or the row is held.
 
 ## Step 8. QA (code purges silently, Cayden clears holds)
 
-What: purge junk titles, students, associates on PE lanes, retail, school districts, and verticals outside the ICP. Hold regulated industries on gift campaigns (banks, credit unions), acronym or broken company names, unresolved teams. Reroute nonprofits and churches to the EOS style offer, never to ticket analytics. Look at ten sample rows before moving on.
+What: purge junk titles, students, associates on PE lanes, retail, school districts, and verticals outside the ICP. Hold regulated industries on gift campaigns (banks, credit unions, insurance, government; default stay in), acronym or broken company names, unresolved teams. Reroute nonprofits and churches to the EOS style offer, never to ticket analytics. Look at ten sample rows before moving on.
 Gate: holds cleared or excluded; counts of purged and held reported.
 
 ## Step 9. Route to campaign (code; Josh when copy is needed)

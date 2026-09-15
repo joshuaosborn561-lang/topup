@@ -27,12 +27,12 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D5 | Live |
 | D6 | Live |
 | D7 | Live |
-| D8 | Live |
+| D8 | Live; Hunter added by D35 |
 | D9 | Live |
 | D10 | Live |
-| D11 | Live |
+| D11 | Live; variant volume floor 300 superseded by D35 (1,000) |
 | D12 | Live |
-| D13 | Live |
+| D13 | Live; VALID-only superseded by D35 item 15 |
 | D14 | Live |
 | D15 | Live |
 | D16 | Live |
@@ -48,11 +48,13 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D26 | Live; pipeline order and find_emails-before-ingest superseded by D29 |
 | D27 | Live |
 | D28 | Live; pipeline list superseded by D29 |
-| D29 | Live; recipe-level ICP superseded by D30 |
+| D29 | Live; recipe-level ICP superseded by D30; empty-list-proceeds superseded by D34; 90-day send window restored by D35 |
 | D30 | Live |
 | D31 | Live; per-lane-only receipts superseded by D32 |
 | D32 | Live; `other` and trusted backfill TAM superseded by D33 |
 | D33 | Live |
+| D34 | Live; lifetime prior contact superseded by D35 item 2; empty-list halt, staging dedupe, mixed headcount, MX, health, QA regex stay |
+| D35 | Live |
 
 ---
 
@@ -925,3 +927,105 @@ to replace the installed copies of the two skills.
 need filters; backfill recount. `src/guards/receipt.test.ts` — skill
 and validator share the enums. `supabase/migrations/0011_pull_receipts_named_signals.sql`
 mirrors the live checks. Ask Josh.
+
+## D34 — Lifetime prior contact; staging dedupe; empty customer list halts
+
+**Decision.** Josh / Claude review of the branch against the Parlay, BCP,
+Insight, Peterson, and Earthworks builds, 2026-09-13. Four fixes before
+the first unattended run; four soon. Everything else in that review is
+faithful and stays.
+
+1. **Prior contact is lifetime by default.** `client_prior_contact` is
+   an email in `public.leads` for this `smartlead_client_id` (any
+   status) or in `public.leads_staging` for any campaign of this client
+   (imported or not). Smartlead only dedupes inside one campaign; an
+   untouched lead in campaign A is still a duplicate in B (BCP's 1,782
+   cross-campaign dupes; Parlay's ~11,500 unsent). `recycle_after_days`
+   is opt-in (default null). When set, it only lifts STOPPED or
+   COMPLETED campaigns whose last send is older than the window. D29's
+   90-day send window and "staging is not a suppress" are superseded.
+2. **Stage dedupes on `(campaign_id, lower(email))`** against
+   `leads_staging` and `public.leads`. `source_dedupe_key` is a write
+   convention (284k of 306k live staging rows are null). Migration 0012
+   backfills the key and adds the unique index when it can.
+3. **getleads refuses mixed headcount filters.** Band labels and a
+   numeric employee bound together silently overlap (2,700 wrong-band
+   rows in August). Strip `employee_profiles_on_linkedin` from the
+   Parlay recipe. The SalesGlider PE 5-plus floor stays a later recipe
+   that has no `company_size`.
+4. **Empty customer domain list halts.** Step 5 posts the Cayden card
+   and waits unless `topup.client_domain_list_state.confirmed_empty_at`
+   is set for that client. D29's "proceed with no card" is superseded.
+   Josh's *Go without* sets the flag.
+
+Soon, same PR: same-offer suppression **halts** when the recipe asks
+and the registry has no `offer_key` for the lane (seed from lane
+receipts + campaign names); step 6 gates on every sendable domain
+having a mail class, with the service's MX lookup as fallback; `/health`
+is `ok: false` / 503 when a required `topup` table is missing;
+`regulated_gift_hold` is `federal credit union|federal savings|federal
+reserve`, not the word `federal`; retail `target` is
+`target (inc|corp|stores?|pharmacy)`.
+
+D29's Slack console, puzzle-after-suppress, and physical-never-getleads
+stay.
+
+**Why.** Those four would load thousands of people already waiting in a
+campaign, miss 93% of staging history, pull the wrong headcount band,
+and skip customer suppression on every first run. The live project had
+only `topup.pull_receipts`.
+
+**Tradeoff.** Lifetime prior contact shrinks net-new versus a 90-day
+recycle. Re-emailing someone who ignored a June sequence is a decision,
+not a default. An empty customer list that Josh has not confirmed
+blocks the run.
+
+**Guard.** `src/stages/pure.test.ts` — lifetime SQL, recycle opt-in.
+`src/recipes/schema.test.ts` — Parlay has no numeric bound and no
+recycle window. `src/clients/getleads.ts` `assertGetleadsFilters`.
+`src/health.ts` required tables. `src/guards/spine.test.ts` — step 5
+heading stays `(code)`. Ask Josh.
+
+## D35 — The merged list is the rulebook; 90-day send recycle is back
+
+**Decision.** Josh's full merged list, 2026-09-14 (`skills/merged-list`).
+Seventy-eight items. Six stay pending his tap: item 2's addition (never
+two live campaigns of the same client), 26, 27, 53, 58, 71.
+
+Confirmed deltas from D34 / D13 / D11:
+
+1. **Item 2.** Do not load anyone this client sent to in the last 90
+   days. Past 90 days with no rule-1 response, they are fair game.
+   D34's lifetime prior contact is superseded. The live-campaign
+   exclusion SQL exists behind `exclude_other_live_campaigns` (default
+   false) until he taps.
+2. **Item 15.** Pull every email status. We verify anyway. D13's
+   VALID-only is superseded. Omit `email_status` on the getleads call.
+3. **Item 12.** Working is one interested per 2,000 at campaign level,
+   or any variant with **1,000** sends clearing that rate. D11's 300
+   is superseded.
+4. **Item 14.** Hunter is banned with PDL, BillionVerifier, Clay.
+5. **Item 8.** Gift-lane hold includes insurance. Default stay in.
+
+D34's staging `(campaign_id, lower(email))` dedupe, mixed-headcount
+refuse, empty-list halt, MX mail-class gate, `/health` 503, and
+federal/Target QA regexes stay.
+
+Client-specific items (18–68) and methods (69–78) are the spec for
+recipes and later adapters. The shipped Parlay recipe still pulls
+bands 11–50 and 51–200 and counts 201–500 as widening (item 19) until
+those cells have campaigns. Currency check (item 17) is required and
+has no cheap method yet.
+
+**Why.** The Sept 13 review inferred lifetime prior contact from a
+month of builds. Josh's list is the policy: 90-day send window, with
+the live-campaign addition still a question. VALID-only was leaving
+catch-alls out of the pull that verification would have kept.
+
+**Tradeoff.** Without the pending live-campaign exclude, an unsent
+lead in campaign A can load into campaign B (BCP's 1,782). That is
+the tap, not a silent default.
+
+**Guard.** `src/guards/d35_merged_list.test.ts`. `src/stages/pure.test.ts`
+— 90-day default, send-window SQL. `src/recipes/schema.test.ts` — Parlay
+omits `email_status`, variant 1,000, recycle 90. Ask Josh.

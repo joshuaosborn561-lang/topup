@@ -580,6 +580,34 @@ export class Repo {
     return rows[0]!.receipt_id;
   }
 
+  async clientDomainListConfirmedEmpty(clientTag: string): Promise<boolean> {
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('topup.client_domain_list_state') is not null as ok`);
+    if (!t[0]?.ok) return false;
+    const { rows } = await this.db.query<{ ok: boolean }>(
+      `select confirmed_empty_at is not null as ok from topup.client_domain_list_state where client_tag = $1`,
+      [clientTag],
+    );
+    return Boolean(rows[0]?.ok);
+  }
+
+  async confirmClientDomainListEmpty(clientTag: string, by: string): Promise<void> {
+    await this.db.query(
+      `insert into topup.client_domain_list_state (client_tag, confirmed_empty_at, confirmed_empty_by)
+       values ($1, now(), $2)
+       on conflict (client_tag) do update set confirmed_empty_at = now(), confirmed_empty_by = excluded.confirmed_empty_by`,
+      [clientTag, by],
+    );
+  }
+
+  async missingTopupTables(required: readonly string[]): Promise<string[]> {
+    const missing: string[] = [];
+    for (const name of required) {
+      const { rows } = await this.db.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [name]);
+      if (!rows[0]?.ok) missing.push(name);
+    }
+    return missing;
+  }
+
   async missingPieceGroups(clientTag?: string): Promise<Record<string, unknown>[]> {
     const { rows } = await this.db.query(
       `select * from topup.missing_piece_groups where ($1::text is null or client_tag = $1) order by 1,2,3`,

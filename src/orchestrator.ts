@@ -370,7 +370,13 @@ export class Orchestrator {
       }
       // step 5: the list was added (or Josh said go without); step 9: Josh said continue without the pending cells
       case "list_added":
-      case "no_list":
+      case "no_list": {
+        if (card.choice === "no_list" && runId) {
+          const run = await this.d.repo.getRun(runId);
+          if (run) await this.d.repo.confirmClientDomainListEmpty(run.client_tag, card.by);
+        }
+      }
+      // fall through: list added (or Josh confirmed none) and step 9 continue
       case "continue_without":
         // The waiting stage either sees the resolution in-process or, after a
         // restart, is re-entered here.

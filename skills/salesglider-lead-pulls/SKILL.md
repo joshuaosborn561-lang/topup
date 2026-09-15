@@ -11,7 +11,7 @@ Josh's own agency outbound. Smartlead client_id 345263. LeadPipe client_tag `sal
 
 1. **Minimum 11 employees on every SG lane.** Never include the "2 to 10" band. The one exception: the PE / deal origination lane may go down to 5 employees. Bands cannot express 5 plus, so use `employee_profiles_on_linkedin_min: 5` (hard cutoff, does not band-overlap) instead of `employees_min` which silently pulls the whole 2 to 10 band.
 2. **Financial advisors lane is DEAD.** Josh: "I don't wanna work with financial advisers anymore." Do not pull, do not suggest.
-3. All lanes: `countries` ["United States"], `email_status` ["VALID"], `max_per_company` 3, exact `company_size` band labels only.
+3. All lanes: `countries` ["United States"], omit `email_status` (D35 item 15), `max_per_company` 3, exact `company_size` band labels only. 11+ employees; PE alone may use a 5+ numeric floor with no bands.
 
 ## Lane: Trades
 

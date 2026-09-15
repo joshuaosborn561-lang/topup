@@ -18,7 +18,8 @@ import { sizeReport } from "./report.js";
  * not a leadtopup client yet (D22), so the run says so. Physical: a range
  * from Maps / PermitStack, never a getleads number — park until those
  * counters are wired. Partition-check the filter. Subtract emails this
- * client sent in the recycle window. Report the five tam-sizing lines.
+ * client sent in the last recycle_after_days (default 90; D35 item 2).
+ * Report the five tam-sizing lines.
  *
  * This step always recounts. Backfill receipts (`claude_backfill`,
  * `claude_backfill_build`) stored the old export in `rows_found` and left
@@ -95,7 +96,7 @@ export class SizeStage {
       const partition = partitionCheck(segment.total_matching, others.total_matching, all.total_matching, recipe.size.partition_tolerance);
 
       const days = recycleDays(recipe.suppression.recycle_after_days);
-      const held = await this.alreadyHeld(campaignIds, days);
+      const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days);
       const netNew = Math.max(0, segment.total_matching - held.count);
 
       const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
@@ -166,28 +167,29 @@ export class SizeStage {
     });
   }
 
-  /** Distinct addresses this ICP's campaigns emailed inside the recycle window. */
-  private async alreadyHeld(campaignIds: number[], days: number): Promise<{ count: number; note: string | null }> {
+  /** Distinct addresses this client sent in the recycle window. Matches step 5. */
+  private async alreadyHeld(clientId: number, campaignIds: number[], days: number): Promise<{ count: number; note: string | null }> {
     if (campaignIds.length === 0) return { count: 0, note: "this run targets no campaigns, so nothing was subtracted" };
     const db = this.d.repo.raw();
-    const { rows: has } = await db.query<{ leads: boolean; sends: boolean; campaigns: boolean }>(
-      `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends, to_regclass('public.campaigns') is not null as campaigns`,
+    const { rows: has } = await db.query<{ leads: boolean; sends: boolean }>(
+      `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends`,
     );
-    if (!has[0].leads || !has[0].sends || !has[0].campaigns) {
-      return { count: 0, note: "no public.leads/sends/campaigns mirror here; nothing was subtracted" };
+    if (!has[0].leads || !has[0].sends) {
+      return { count: 0, note: "no public.leads/sends mirror here; nothing was subtracted" };
     }
     const { rows } = await db.query<{ n: string }>(
       `select count(distinct lower(l.email))::text as n
        from public.leads l
        join public.sends s on s.lead_id = l.id
-       join public.campaigns c on c.id = l.campaign_id
-       where c.smartlead_campaign_id = any($1::bigint[])
+       where l.smartlead_client_id = $1 and l.email is not null
          and s.sent and s.sent_at is not null
-         and s.sent_at >= now() - ($2::int * interval '1 day')
-         and l.email is not null`,
-      [campaignIds, days],
+         and s.sent_at >= now() - ($2::int * interval '1 day')`,
+      [clientId, days],
     );
-    return { count: Number(rows[0]?.n ?? 0), note: `subtracted sends in the last ${days} days, not lifetime staging` };
+    return {
+      count: Number(rows[0]?.n ?? 0),
+      note: `subtracted addresses this client sent in the last ${days} days`,
+    };
   }
 }
 

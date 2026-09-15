@@ -4,8 +4,9 @@ import type { Queryable } from "../db/pool.js";
  * "Working" (decision D11 in DECISIONS.md): at least one interested reply per
  * 2,000 sends, counted from interested / meeting-request categories only,
  * never raw reply rate. Checked at the campaign level and per variant: if any
- * variant with real volume clears the bar the campaign counts as working and
- * the dead variant is named. An owner override from Slack wins.
+ * variant with at least 1,000 sends (D35 item 12) clears the bar the campaign
+ * counts as working and the dead variant is named. An owner override from Slack
+ * wins. The function takes `variantMinSends` so a recipe can set the floor.
  */
 
 /** Smartlead lead categories that count as interested (design 3.3 A). */

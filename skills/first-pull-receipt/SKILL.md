@@ -31,7 +31,7 @@ Classify the typical row you produced. There is no `other`. A receipt that would
 3. Person: `already` | `getleads` | `ai_ark` | `people_waterfall` | `serp` | `hard_to_find` | `leadmagic_employee_finder` | `none`
 4. Email: `already` | `getleads` | `name_to_email` | `email_waterfall` | `none`. If a waterfall ran, `email_max_tier` is the last tier allowed (`aiark`, `leadmagic`, `fullenrich`). Do not list a waterfall you did not run. No FullEnrich `email_max_tier` unless Josh stamped it.
 
-getleads VALID exports are usually person plus email from getleads, domain already there. Peterson style physical lanes are usually Maps plus permits, then Domain Waterfall, then Find Named Person, then Name to Email or the email waterfall.
+getleads exports are usually person plus email from getleads, domain already there. Peterson style physical lanes are usually Maps plus permits, then Domain Waterfall, then Find Named Person, then Name to Email or the email waterfall.
 
 `icp_kind` is `linkedin_native` or `physical`. `persona` and `lane` are snake_case. Headcount bands are labels like `"51 to 200"`, never min or max integers.
 
@@ -50,7 +50,7 @@ If you only have the export size, put it in `rows_found` and leave `tam_count` n
 
 ## getleads and physical filters
 
-**getleads `company_filters`:** titles, exact band labels, countries, industries (no commas), `email_status: ["VALID"]`, and `export_caps.max_per_company` if you capped the export. Do not put `max_per_company` in the count filters.
+**getleads `company_filters`:** titles, exact band labels, countries, industries (no commas), every email status (omit `email_status`; D35 item 15), and `export_caps.max_per_company` if you capped the export. Do not put `max_per_company` in the count filters.
 
 **physical `company_filters`:** store the scrape recipe and the ICP slice separately.
 
@@ -84,7 +84,7 @@ insert into topup.pull_receipts (
   'linkedin_native',
   'it_dm',
   'getleads',
-  '{"job_titles":["IT Director","CIO"],"company_size":["11 to 50","51 to 200"],"countries":["United States"],"email_status":["VALID"],"export_caps":{"max_per_company":3}}'::jsonb,
+  '{"job_titles":["IT Director","CIO"],"company_size":["11 to 50","51 to 200"],"countries":["United States"],"export_caps":{"max_per_company":3}}'::jsonb,
   'already', 'getleads', 'getleads', null,
   400, 380, 16000,
   '{"imported":380}'::jsonb,

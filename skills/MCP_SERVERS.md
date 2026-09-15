@@ -31,7 +31,7 @@ Property owners and parcels: the parcel records live in Supabase project `kemvxz
 
 | Server | URL | Role and cost |
 |---|---|---|
-| getleads | `https://app.getleads.io/api/mcp` | Primary contact database, unlimited plan, free. Band labels only, `VALID` only, industries with commas break |
+| getleads | `https://app.getleads.io/api/mcp` | Primary contact database, unlimited plan, free. Band labels only, every email status (omit `email_status`; D35 item 15), industries with commas break |
 | AI Ark | `https://api.ai-ark.com/v1/mcp` | People discovery tier, paid. Returns first person at a domain not by title. Reverse email endpoint 404s |
 | LeadMagic | `https://mcp.leadmagic.io/mcp` | Enrichment tier, paid. Bulk `employee_finder` then SQL title filter then `work_email_finder` is 9x cheaper than `search_people`. `detect_job_change` bills on every call, banned |
 | Prospeo | `https://mcp.prospeo.io` | Cheaper name and company enrichment, paid |

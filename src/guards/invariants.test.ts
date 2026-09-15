@@ -44,7 +44,7 @@ describe("invariants — the numbers and names the brief fixes", () => {
   });
 
   it("D8 — PDL, BillionVerifier, Clay and the job-change detector are banned", () => {
-    for (const v of ["pdl", "peopledatalabs", "billionverifier", "clay"]) assert.ok(BANNED_VENDORS.includes(v), `D8: ${v} must stay banned`);
+    for (const v of ["pdl", "peopledatalabs", "billionverifier", "clay", "hunter"]) assert.ok(BANNED_VENDORS.includes(v), `D8: ${v} must stay banned`);
     assert.ok(BANNED_ACTIONS.includes("detect_job_change"), "D8: detect_job_change bills on every call and stays banned");
     for (const v of VENDORS) assert.ok(!BANNED_VENDORS.includes(v), `D8: ${v} is both priced and banned`);
   });

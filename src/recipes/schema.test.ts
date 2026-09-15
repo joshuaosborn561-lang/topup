@@ -32,6 +32,9 @@ describe("recipe schema", () => {
     const withBounds = structuredClone(base) as { source: { params: Record<string, unknown> } };
     withBounds.source.params.employee_count_min = 51;
     assert.throws(() => parseRecipe(withBounds), /invalid recipe/);
+    const withProfiles = structuredClone(base) as { source: { params: Record<string, unknown> } };
+    withProfiles.source.params.employee_profiles_on_linkedin = { min: 11, max: 200 };
+    assert.throws(() => parseRecipe(withProfiles), /employee_profiles_on_linkedin/);
   });
 
   it("D13 — industry names with commas are rejected", async () => {
@@ -40,9 +43,10 @@ describe("recipe schema", () => {
     assert.doesNotThrow(() => parseRecipe(withPath(base, ["source", "params", "industries"], ["Banking", "Finance"])));
   });
 
-  it("D13 — only VALID email status", async () => {
+  it("D35 item 15 — every email status may be pulled; unknown names are rejected", async () => {
     const base = await parlay();
-    assert.throws(() => parseRecipe(withPath(base, ["source", "params", "email_status"], ["VALID", "CATCH_ALL"])), /invalid recipe/);
+    assert.doesNotThrow(() => parseRecipe(withPath(base, ["source", "params", "email_status"], ["VALID", "CATCH_ALL"])));
+    assert.throws(() => parseRecipe(withPath(base, ["source", "params", "email_status"], ["GUESSED"])), /invalid recipe/);
   });
 
   it("D7 — FullEnrich needs the owner stamp on that recipe", async () => {
@@ -57,6 +61,7 @@ describe("recipe schema", () => {
     const base = await parlay();
     assert.throws(() => parseRecipe(withPath(base, ["email_finding", "steps"], ["detect_job_change"])), /banned/);
     assert.throws(() => parseRecipe(withPath(base, ["email_finding", "steps"], ["pdl"])), /out of the stack/);
+    assert.throws(() => parseRecipe(withPath(base, ["email_finding", "steps"], ["hunter"])), /out of the stack/);
   });
 
   it("D1 — a recipe must name campaignintelligence", async () => {
@@ -90,7 +95,11 @@ describe("recipe schema", () => {
       1,
       "Parlay's six campaigns share one persona today; another offer would add a second",
     );
-    assert.equal(r.suppression.recycle_after_days, 90);
+    assert.equal(r.suppression.recycle_after_days, 90, "D35 item 2: 90-day send window");
+    assert.equal(r.suppression.exclude_other_live_campaigns, false, "D35: live-campaign exclude is pending");
+    assert.equal(r.working.variant_min_sends, 1000, "D35 item 12: variant bar is 1,000 sends");
+    assert.equal("email_status" in (await parlay()).source.params, false, "D35 item 15: omit email_status to pull every status");
+    assert.equal("employee_profiles_on_linkedin" in (await parlay()).source.params, false);
   });
 
   it("D30 — every routing rule names its own ICP; the recipe does not", async () => {

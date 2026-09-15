@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D33** (2026-09-12). One page of current truth. When a new
+Canon as of **D35** (2026-09-14). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -46,8 +46,9 @@ index wins over a stale skill. A lane is always on exactly one step, named by
 and ledger row — `src/spine/steps.ts` is the only table of steps and a guard
 fails when it differs from the skill's headings or `Gate:` lines. Code runs
 3–12; Josh owns 1, 9 when copy is needed, and 13; Cayden clears holds in 8.
-Step 5 applies the customer domain list when it has rows and proceeds when
-it is empty — no card (D29). A step's gate halts the run, records
+Step 5 applies the customer domain list; an empty list without
+`confirmed_empty` waits on a Cayden card (D34, D35 item 4). A step's gate
+halts the run, records
 why, posts one card, and waits; silence never means yes. The receipt is the
 last gate. `trigger` is step 1 (the recipe is the signed-off segment),
 `ingest` 4, `stage` 10.
@@ -57,8 +58,9 @@ other bands = all, within 1%) and the projected net new must clear
 `size.useful_floor`, else `pool_thin`. **Step 3**: zero rows delivered stops
 the run. **Step 4**: rows read = rows exported; titles audited against the
 recipe as whole phrases, off-title flagged for step 8. **Step 5**: report raw, removed by reason, net new; prior contact is a send
-by this client in the last 90 days (older recycles unless positive / DNC /
-wrong person). **Step 6**: sendable count
+by this client in the last 90 days (D35 item 2; older recycles unless
+positive / DNC / wrong person). Never putting someone in two live
+campaigns of the same client is pending Josh's tap. **Step 6**: sendable count
 and reject rate are reported; nothing sendable stops the run; a reject rate
 far above the lane's norm (`verify.reject_rate_norm`, Josh's number; 2× and
 10 points over, on 50+ verdicts) stops it and says the source is bad. **Step
@@ -138,7 +140,8 @@ rows. A lane with no receipt and no recipe cannot be invented.
 The **watch** is the normal start. Every six hours (and once on boot) it
 reads the Smartlead mirror for every recipe. A campaign that is ACTIVE and
 empty or under the runway floor, and still **working** (one interested reply
-per 2,000 sends, D11), opens a run by itself — no `/topup`, no card. A
+per 2,000 sends, or any variant with 1,000 sends clearing that rate; D11,
+D35 item 12), opens a run by itself — no `/topup`, no card. A
 campaign that is low and **not** working posts one card: Top up anyway, or
 Leave it. Leave it stays quiet until the rate recovers or Josh flips
 `/working on`. `/topup` and MCP `start_topup` are the override.
@@ -162,8 +165,8 @@ The stages:
    Physical: park — TAM is a Maps/PermitStack range, never a getleads
    number. Campaigns that share kind + persona + source union their bands
    in one count; mixed kinds or personas in the same run park (split them).
-   Net-new subtracts emails this client sent in the recycle window
-   (`public.sends`), not lifetime staging.
+   Net-new subtracts emails this client sent in the last 90 days (D35
+   item 2). Recycle window is `recycle_after_days` (default 90).
 3. **pull** — routed by the target campaigns' ICP and source
    (`leadgen-mcp-routing` step zero). getleads on a LinkedIn-native
    campaign runs `GetleadsPull` with that campaign's bands/titles (or the
@@ -175,10 +178,14 @@ The stages:
    claimed for the run; `company_size` / `vertical` filled; title audit
    against the union of the target campaigns' titles.
 5. **suppress** — one SQL pass, response based only: positive reply, DNC,
-   wrong person, suppression list, bounced, client prior contact (a send by
-   this Smartlead client in the last `recycle_after_days`, default 90),
-   same offer other client, client customer domain when the list has rows.
-   An empty domain list is noted and the step continues — no card (D29).
+   wrong person, suppression list, bounced, client prior contact, same
+   offer other client, client customer domain. Prior contact is a send
+   by this client in the last 90 days (D35 item 2). Rule-1 responses
+   (positive / DNC / wrong person) stay blocked forever. Live-campaign
+   exclusion is pending. An empty customer domain list halts with a
+   Cayden card until Josh sets `confirmed_empty` (D34, item 4).
+   Same-offer suppression halts, not skips, when the registry has no
+   `offer_key` for the lane.
    Then **puzzle** (name / no domain → Domain Waterfall; domain / no name →
    Find Named Person; names banked in `public.name_bank`) and
    **find_emails** (Name to Email `verify_person`, then Email Waterfall
@@ -186,7 +193,9 @@ The stages:
 6. **verify** — LeadPipe signed CSV (row count must match), Email Verifier
    Progression, 60s polls, the stall runbook; `mv_status, n2b_status,
    mail_class, verify_path, ev_status, lead_status` per row. Sendable is `mv
-   ok` or `catch_all + N2B deliverable`; nothing else (D10).
+   ok` or `catch_all + N2B deliverable`; nothing else (D10). Every
+   sendable domain must have a mail class; the service's MX lookup
+   fills gaps the verifier CSV left blank (D34).
 7. **normalize** — `first_name_n, company_n, location, local_sports_team`
    and flags from the four skill-script ports (D25); empty required merge
    field → hold. `topup.ref_cities` via `npm run seed:cities`, once.
@@ -199,6 +208,8 @@ The stages:
    `pending_campaign` and a card to Josh (continue without, or abort).
 10. **stage** — `public.leads_staging` with normalized `first_name` /
     `company_name`, `job_title`, `vendor`, `source_dedupe_key`, `imported = false`.
+    Dedupe on `(campaign_id, lower(email))` against staging and the
+    mirror; the md5 key is a write convention, not the guard (D34).
 11. **import** — Smartlead `start_lead_import` per campaign, poll
     `get_lead_import_status`, count assert; a mismatch stops before the next
     campaign. Restart-safe through `run_steps.vendor_job_id`.
@@ -212,7 +223,8 @@ The stages:
     still working.
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
-open cards, open runs and which integrations are configured.
+open cards, open runs and which integrations are configured. It is
+`ok: false` (HTTP 503) when a required `topup` table is missing (D34).
 
 ## Money (D9)
 
@@ -224,8 +236,8 @@ open cards, open runs and which integrations are configured.
 - A bill more than 10% over the approval stops the run and pages the ops channel (`C0C135EB76H`).
 - Verifier resume is free. A split is spend.
 - Banned: PDL (including wrappers), LeadMagic job change detector,
-  BillionVerifier, Clay (D8). FullEnrich off per recipe until Josh stamps
-  `owner_approved_at` (D7).
+  BillionVerifier, Clay, Hunter (D8, D35 item 14). FullEnrich off per
+  recipe until Josh stamps `owner_approved_at` (D7).
 
 ## People (Slack, D2)
 
@@ -233,7 +245,8 @@ open cards, open runs and which integrations are configured.
 - Owner-only taps: approve/decline spend, top up anyway / leave it, split,
   continue without pending leads, anything that changes a recipe. Operator
   taps never spend and never change a recipe; the reply is "This needs Josh."
-  Step 5 no longer waits on a customer-domain-list card (D29).
+  Step 5 waits on a customer-domain-list card when the list is empty and
+  Josh has not set `confirmed_empty` (D34). The heading stays `(code)`.
 - Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains itself until the suppression stage lands).
 - `/mcp` with owner and operator bearer tokens exposes `lane_state,
@@ -250,19 +263,48 @@ open cards, open runs and which integrations are configured.
 - Never hardcode a secret. Never call a vendor in a test.
 - Never start, pause, stop or delete anything in Smartlead; never remove an
   API-added block-list entry.
-- Never send getleads numeric headcount bounds or comma industries; only
-  `VALID` emails count.
+- Never send getleads numeric headcount bounds or comma industries. Pull
+  every email status; we verify anyway (D35 item 15). The client refuses
+  a filter that carries both `company_size` band labels and a numeric
+  employee bound (D34).
 - Never patch around a broken vendor server; bound the damage by batch size
   and say so in the PR.
 - Never trust "processed" or a zero-verdict resume as a verification.
 - Never run more than one replica.
+
+## The merged list (D35)
+
+Josh's rulebook of how lists are built. The full 78 items live in
+`skills/merged-list/SKILL.md`. Service behaviour that this decision
+changes:
+
+- **Item 2.** Prior contact is a send by this client in the last 90 days.
+  Rule 1 (positive / DNC / wrong person) is forever. The addition "never
+  two live campaigns of the same client" is **pending**.
+- **Item 4.** Empty customer list still halts (D34).
+- **Item 8.** Gift-lane QA hold includes insurance. Default stay in.
+- **Item 12.** Variant volume floor is 1,000 sends.
+- **Item 14.** Hunter is banned with PDL / BillionVerifier / Clay.
+- **Item 15.** getleads pulls every email status. Omit `email_status`.
+- **Item 19.** Parlay bands are 11–50, 51–200, 201–500. The shipped
+  recipe still pulls 11–50 and 51–200 and counts 201–500 as widening
+  until those cells have campaigns.
+- **Item 65.** SalesGlider 11+; PE alone may use a 5+ numeric floor
+  with no `company_size` bands.
+- **Item 75.** Stall runbook unchanged (resume, split, quarantine;
+  zero-result resume is a stall).
+
+**Pending Josh's tap — do not encode as decided:** item 2's live-campaign
+addition; 26 (TechEvo NE includes NY/NJ); 27 (Florida IT DM statewide);
+53 (Earthworks 3,958 operators); 58 (Insight gateway catch-alls dropped);
+71 (Name to Email paused / DiscoLike first rung).
 
 ## Where things are
 
 | Thing | Place |
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
-| Skills | `skills/` — Josh's skills, the specification; `skills/SKILLS_INDEX.md` says what is stale (D25) |
+| Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/SKILLS_INDEX.md` says what is stale (D25) |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
 | Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |

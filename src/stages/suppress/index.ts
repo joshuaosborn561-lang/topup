@@ -3,8 +3,10 @@ import type { RunRow } from "../../domain/runs.js";
 import { INTERESTED_CATEGORY_IDS } from "../../domain/working.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import type { Recipe } from "../../recipes/schema.js";
+import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
-import { recentClientSendSql, recycleDays } from "./recycle.js";
+import { clientDomainListCard } from "../../slack/cards.js";
+import { clientPriorContactSql, recycleDays } from "./recycle.js";
 
 /**
  * Step 5 — Suppress and dedupe (skill lead-list-build; skill global-suppression; D29).
@@ -17,14 +19,16 @@ import { recentClientSendSql, recycleDays } from "./recycle.js";
  *   wrong_person          category Wrong Person, any client
  *   suppression_list      on public.suppression
  *   bounced               a bounced send or a Sender Originated Bounce, any client
- *   client_prior_contact  emailed by this Smartlead client in the last
- *                         recycle_after_days (default 90) — older sends recycle
+ *   client_prior_contact  this client sent to the address in the last
+ *                         recycle_after_days (default 90). Rule-1 responses
+ *                         stay blocked forever above this. Live-campaign
+ *                         exclusion is pending Josh's tap (D35 item 2).
  *   same_offer_other_client  received the same offer (registry offer_key) from another client
- *   client_domain         the client's own customer domain list when rows exist
+ *   client_domain         the client's own customer domain list
  *
- * Never against all of public.leads. Never a lifetime prior-contact suppress.
- * Step 5 does not wait for a customer-domain-list card (D29): apply the list
- * if present, proceed and say so if empty.
+ * Never against all of public.leads (every client). This client's leads are
+ * in-campaign duplicates, not "someone else emailed them."
+ * Empty customer list: halt with a Cayden card unless confirmed_empty (D34).
  */
 export interface SuppressDeps extends StageDeps {
   ledger?: LaneLedger;
@@ -56,7 +60,33 @@ export class SuppressStage {
 
       const t = await this.tables();
       const clientCampaigns = await this.clientCampaignIds(recipe, t);
-      const offerKeys = await this.offerKeys(recipe);
+      const offerKeys = await this.offerKeys(recipe, t);
+      if (recipe.suppression.same_offer_any_client && offerKeys.length === 0) {
+        return gateUnmet(
+          "suppress",
+          "same_offer_any_client is on and topup.campaign_registry has no offer_key for this lane's campaigns. Seed the registry; do not skip.",
+          { raw: 0, offer_keys: 0 },
+        );
+      }
+      if (recipe.suppression.client_domain_blocklist && domainCount === 0) {
+        const confirmed = await this.d.repo.clientDomainListConfirmedEmpty(run.client_tag);
+        if (!confirmed) {
+          const open = await this.d.repo.openCardsForRun(run.run_id);
+          const card = open.find((c) => c.kind === "client_domain_list");
+          if (!card) {
+            await this.d.console.ask({
+              run,
+              kind: "client_domain_list",
+              audience: "operator",
+              payload: { step: "suppress", client_tag: run.client_tag },
+              text: `Step 5: no customer list on file for ${run.client_tag}`,
+              blocks: (cardId) => clientDomainListCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane }),
+            });
+            await this.d.ledger?.block(run.client_tag, run.lane, "operator", `no customer list on file for ${run.client_tag}; Cayden uploads or Josh confirms none`, run.run_id);
+          }
+          return { kind: "waiting", on: "operator", why: `no customer list on file for ${run.client_tag}` };
+        }
+      }
       const { rows: rawRows } = await db.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status = 'ingested'`, [run.run_id]);
       const raw = Number(rawRows[0]?.n ?? 0);
 
@@ -113,16 +143,16 @@ export class SuppressStage {
       const skipped: string[] = [];
       if (!t.leads) skipped.push("response-based (no public.leads mirror here)");
       if (!t.suppression) skipped.push("public.suppression (table missing)");
-      if (!t.sends) skipped.push(`client prior contact recycle (${days}d needs public.sends)`);
-      if (recipe.suppression.same_offer_any_client && offerKeys.length === 0) skipped.push("same offer other client (no offer_key in topup.campaign_registry for this lane's campaigns)");
-      if (recipe.suppression.client_domain_blocklist && domainCount === 0) skipped.push("client customer domain list (empty; applied nothing, no card)");
+      if (!t.leads || !t.sends) skipped.push("client prior contact (no public.leads/sends mirror)");
+      if (recipe.suppression.client_domain_blocklist && domainCount === 0) skipped.push("client customer domain list (confirmed empty)");
       const reasons = Object.entries(removed.byReason)
         .filter(([, n]) => n > 0)
         .map(([k, n]) => `${k} ${n}`)
         .join(", ");
       const line =
         `Suppress done: raw ${raw} · removed ${suppressed}${reasons ? ` (${reasons})` : ""} · ${removed.deduped} duplicates within the pull · ${removed.needs_email} with no address · *net new ${removed.net_new}* — the number from here on.` +
-        ` · prior contact is a send by this client in the last ${days} days (older recycles unless positive / DNC / wrong person).` +
+        ` · prior contact is a send by this client in the last ${days} days` +
+        (recipe.suppression.exclude_other_live_campaigns ? ` (plus anyone already in a live campaign).` : ".") +
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);
     });
@@ -143,7 +173,7 @@ export class SuppressStage {
       whens.push(`when ${bounce} then 'bounced'`);
     }
     if (recipe.suppression.client_prior_contacts && t.leads && t.sends) {
-      whens.push(`when ${recentClientSendSql("$10")} then 'client_prior_contact'`);
+      whens.push(`when ${clientPriorContactSql("$10", recipe.suppression.exclude_other_live_campaigns && t.staging && t.campaigns)} then 'client_prior_contact'`);
     }
     if (recipe.suppression.same_offer_any_client && haveOffer && t.leads && t.campaigns) {
       whens.push(
@@ -175,14 +205,18 @@ export class SuppressStage {
     return [...ids];
   }
 
-  private async offerKeys(recipe: Recipe): Promise<string[]> {
+  private async offerKeys(recipe: Recipe, _t: Tables): Promise<string[]> {
     const ids = recipe.routing.map((r) => r.campaign_id);
     if (ids.length === 0) return [];
+    const { rows: have } = await this.d.repo.raw().query<{ ok: boolean }>(`select to_regclass('topup.campaign_registry') is not null as ok`);
+    if (!have[0]?.ok) return [];
     const { rows } = await this.d.repo.raw().query<{ offer_key: string }>(`select distinct offer_key from topup.campaign_registry where campaign_id = any($1::bigint[]) and offer_key is not null`, [ids]);
     return rows.map((r) => r.offer_key);
   }
 
   private async domainListCount(clientTag: string): Promise<number> {
+    const { rows: have } = await this.d.repo.raw().query<{ ok: boolean }>(`select to_regclass('topup.client_domain_blocklist') is not null as ok`);
+    if (!have[0]?.ok) return 0;
     const { rows } = await this.d.repo.raw().query<{ n: string }>(`select count(*)::text as n from topup.client_domain_blocklist where client_tag = $1`, [clientTag]);
     return Number(rows[0]?.n ?? 0);
   }

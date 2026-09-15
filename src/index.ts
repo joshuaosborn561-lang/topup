@@ -66,7 +66,9 @@ async function main(): Promise<void> {
   // /health is mounted first and answers even while the rest is still coming up.
   app.get("/health", async (_req, res) => {
     try {
-      res.json(await buildHealth({ cfg, repo, rails, recipes: recipeFiles.map((r) => r.recipe_id) }));
+      const body = await buildHealth({ cfg, repo, rails, recipes: recipeFiles.map((r) => r.recipe_id) });
+      const missing = Array.isArray((body as { missing_tables?: unknown }).missing_tables);
+      res.status(missing ? 503 : 200).json(body);
     } catch (err) {
       res.status(200).json({ ok: false, service: "leadtopup", error: (err as Error).message });
     }

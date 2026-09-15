@@ -5,6 +5,21 @@ import { usd } from "./spend/prices.js";
 
 const startedAt = Date.now();
 
+/** Tables a run needs. /health is ok: false until they exist (D34). */
+export const REQUIRED_TOPUP_TABLES = [
+  "topup.qa_rules",
+  "topup.ref_cities",
+  "topup.ref_acronyms",
+  "topup.campaign_registry",
+  "topup.client_domain_blocklist",
+  "topup.client_domain_list_state",
+  "topup.mx_class",
+  "topup.lane_state",
+  "topup.runs",
+  "topup.spend_ledger",
+  "topup.pull_receipts",
+] as const;
+
 /**
  * The first run report (design section 7): counts by lead_status, spend by
  * vendor, stall events, open cards. Counts and ids only. Always answers, and
@@ -27,6 +42,11 @@ export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: Sp
 
   const db = await d.repo.raw().ping();
   if (!db) return { ok: false, ...base, db: false };
+
+  const missing = await d.repo.missingTopupTables(REQUIRED_TOPUP_TABLES);
+  if (missing.length) {
+    return { ok: false, ...base, db: true, missing_tables: missing, note: `apply migrations 0001–0012 and npm run seed:cities; missing ${missing.join(", ")}` };
+  }
 
   const [leads, spend30, spendToday, stalls, cards, openRuns, mtd] = await Promise.all([
     d.repo.leadStatusCounts(),

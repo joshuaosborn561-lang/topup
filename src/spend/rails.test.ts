@@ -93,7 +93,7 @@ describe("spend rails (D9)", () => {
 
   it("D8 — banned vendors and actions are blocked with no number", () => {
     const { rails: r } = rails();
-    for (const vendor of ["pdl", "PeopleDataLabs", "billionverifier", "clay"]) assert.equal(r.decide(req({ vendor }), 0).kind, "blocked", vendor);
+    for (const vendor of ["pdl", "PeopleDataLabs", "billionverifier", "clay", "hunter"]) assert.equal(r.decide(req({ vendor }), 0).kind, "blocked", vendor);
     assert.equal(r.decide(req({ vendor: "leadmagic", action: "detect_job_change" }), 0).kind, "blocked");
   });
 

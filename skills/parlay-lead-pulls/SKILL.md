@@ -21,13 +21,13 @@ order by written_at desc
 limit 1;
 ```
 
-The service recipe `recipes/parlay/it_dm.json` is what a top-up run executes today (bands `11 to 50` and `51 to 200`, the recipe title list, `VALID`, US). The backfill receipt is wider (also `201 to 500` and extra titles) and is a **proposal** until Josh scales it — do not silently export the widened set.
+The service recipe `recipes/parlay/it_dm.json` is what a top-up run executes today (bands `11 to 50` and `51 to 200`, the recipe title list, every email status, US). The backfill receipt is wider (also `201 to 500` and extra titles) and is a **proposal** until Josh scales it — do not silently export the widened set.
 
 If that receipt's `written_by` is `claude_backfill` or `claude_backfill_build`, **recount** with getleads `count_contacts` before proposing. `rows_found` on those rows is the old export, not the pool. `tam_count` is blank until someone recounts.
 
 ## Suppression
 
-Use `global-suppression`: response-based only, 90-day recycle. Never delete against all of `public.leads`. That killed 87 percent of a good pull. The master-dedupe SQL that used to live in this skill is gone on purpose.
+Use `global-suppression`: response-based only, this-client sends in the last 90 days (D35 item 2). Never delete against all of `public.leads`. That killed 87 percent of a good pull. The master-dedupe SQL that used to live in this skill is gone on purpose. Pull every email status; we verify anyway. Three contacts per company. Bands 11–50 and 51–200 in the recipe; 201–500 is a widening option until those cells have campaigns.
 
 ## Pipeline (context discipline: no lead rows in chat, ever)
 

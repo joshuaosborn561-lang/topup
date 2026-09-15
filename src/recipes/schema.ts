@@ -8,7 +8,7 @@ import { BANNED_ACTIONS, BANNED_VENDORS } from "../spend/prices.js";
  *
  *   - company_size is exact band labels ("51 to 200"), never numeric bounds
  *   - industry names may not contain commas (they silently shred to nothing)
- *   - email_status may only be ["VALID"]
+ *   - email_status is optional: omit it to pull every status (D35 item 15)
  *   - fullenrich may not be true without owner_approved_at
  *   - detect_job_change is never a step; PDL / BillionVerifier / Clay never a vendor
  */
@@ -26,6 +26,9 @@ export const GETLEADS_BANDS = [
 
 export const bandLabel = z.enum(GETLEADS_BANDS);
 
+/** getleads email_status values. Omit the field to pull every status (D35 item 15). */
+export const GETLEADS_EMAIL_STATUSES = ["VALID", "CATCH_ALL", "UNKNOWN", "INVALID"] as const;
+
 const noComma = z.string().refine((s) => !s.includes(","), {
   message: "industry names containing commas silently shred in getleads; split into separate values",
 });
@@ -40,12 +43,15 @@ const getleadsParams = z
     cities: z.array(z.string()).optional(),
     industries: z.array(noComma).optional(),
     companyIndustry: z.array(noComma).optional(),
-    email_status: z.array(z.literal("VALID")).min(1),
+    email_status: z.array(z.enum(GETLEADS_EMAIL_STATUSES)).min(1).optional(),
     max_per_company: z.number().int().min(1).optional(),
   })
   .strict()
   .refine((p) => !("employee_count_min" in p) && !("employee_count_max" in p), {
     message: "headcount must be band labels, never numeric bounds",
+  })
+  .refine((p) => !p.employee_profiles_on_linkedin, {
+    message: "cannot send company_size band labels and employee_profiles_on_linkedin together (silent band overlap)",
   });
 
 const wideningCandidate = z
@@ -121,8 +127,13 @@ const suppression = z
     client_domain_blocklist: z.boolean().default(true),
     same_offer_any_client: z.literal(true),
     same_gift_any_client: z.boolean().default(false),
-    /** Recycle: a prior send for this Smartlead client is only a suppress if it is newer than this (D29). */
-    recycle_after_days: z.number().int().min(1).default(90),
+    /** Days since last send by this client. Default 90 (D35 item 2). */
+    recycle_after_days: z.number().int().min(1).nullable().optional().default(90),
+    /**
+     * Pending item 2 addition. When true, also exclude anyone already in
+     * another live campaign of this client. Default false until Josh taps.
+     */
+    exclude_other_live_campaigns: z.boolean().default(false),
   })
   .strict();
 
@@ -141,7 +152,7 @@ const emailFinding = z
     message: "detect_job_change is banned; it bills on every call",
   })
   .refine((e) => !e.steps.some((s) => BANNED_VENDORS.includes(s.toLowerCase())), {
-    message: "PDL, BillionVerifier and Clay are out of the stack",
+    message: "PDL, BillionVerifier, Clay and Hunter are out of the stack",
   });
 
 const normalize = z

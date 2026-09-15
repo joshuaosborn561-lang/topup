@@ -10,7 +10,8 @@ import { parkedCard, spendApprovalCard, stallCard } from "../../slack/cards.js";
 import type { SlackConsole } from "../../slack/console.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
-import { pct, rejectRate, rejectRateGate, type GateUnmet } from "../../spine/gate.js";
+import { gateUnmet, pct, rejectRate, rejectRateGate, type GateUnmet } from "../../spine/gate.js";
+import { mailClassFromMxHost, resolveMxHost, type MxResolver } from "./mx.js";
 import { decide, observe, splitNames, type BatchState, type RunbookConfig } from "./runbook.js";
 import { verdictFromCsvRow, type Verdict } from "./sendable.js";
 
@@ -32,6 +33,7 @@ export interface VerifyDeps {
   cfg: VerifyConfig;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  resolveMx?: MxResolver;
 }
 
 export type VerifyOutcome =
@@ -567,6 +569,7 @@ export class VerifyStage {
   }
 
   private async finish(run: RunRow, recipe: Recipe, table: string): Promise<VerifyOutcome> {
+    await this.fillMissingMailClass(table, run.run_id);
     const { rows } = await this.d.repo.raw().query<{ lead_status: string; mail_class: string | null; n: string }>(
       `select lead_status, mail_class, count(*)::text as n from ${table} where run_id = $1 group by 1, 2`,
       [run.run_id],
@@ -588,6 +591,16 @@ export class VerifyStage {
     await this.d.repo.finishStep(run.run_id, "verify", { useful_output: sendable, counts });
     await this.d.repo.mergeRunCounts(run.run_id, funnelCounts(counts));
     // Step 6 gate: sendable count and reject rate reported; far above the lane's norm stops the run.
+    const unclassified = rows
+      .filter((r) => r.lead_status === "verified" && (r.mail_class == null || r.mail_class === "unknown" || r.mail_class === ""))
+      .reduce((a, r) => a + Number(r.n), 0);
+    if (unclassified > 0 && seg === 0) {
+      return gateUnmet(
+        "verify",
+        `${unclassified} sendable rows have no mail class after MX fallback and none classified SEG. Gateway domains would route OTHER. Classify or stop.`,
+        { ...counts, unclassified_mail_class: unclassified },
+      );
+    }
     const gate = rejectRateGate({ sendable, rejected, stalled }, recipe.verify.reject_rate_norm);
     if (gate) return gate;
     const norm = recipe.verify.reject_rate_norm;
@@ -597,6 +610,50 @@ export class VerifyStage {
         (norm === null ? " (no norm on the recipe yet; ask Josh for this lane's)." : ` (lane norm ${pct(norm)}).`),
     );
     return { kind: "done", sendable, seg, other: sendable - seg, rejected, stalled };
+  }
+
+  /** Fill unknown mail_class from the MX cache, then a free DNS lookup (D34). */
+  private async fillMissingMailClass(table: string, runId: string): Promise<void> {
+    const db = this.d.repo.raw();
+    const { rows: have } = await db.query<{ ok: boolean }>(`select to_regclass('topup.mx_class') is not null as ok`);
+    if (have[0]?.ok) {
+      await db.query(
+        `update ${table} t set mail_class = m.mail_class
+         from topup.mx_class m
+         where t.run_id = $1 and t.lead_status = 'verified'
+           and (t.mail_class is null or t.mail_class in ('', 'unknown'))
+           and m.domain = split_part(lower(t.email), '@', 2)
+           and m.mail_class is not null and m.mail_class not in ('', 'unknown')`,
+        [runId],
+      );
+    }
+    const { rows } = await db.query<{ domain: string }>(
+      `select distinct split_part(lower(email), '@', 2) as domain
+       from ${table}
+       where run_id = $1 and lead_status = 'verified'
+         and (mail_class is null or mail_class in ('', 'unknown'))
+         and coalesce(email, '') <> ''`,
+      [runId],
+    );
+    for (const r of rows) {
+      const host = await resolveMxHost(r.domain, this.d.resolveMx);
+      const mailClass = mailClassFromMxHost(host);
+      if (mailClass === "unknown") continue;
+      await db.query(
+        `update ${table} set mail_class = $3
+         where run_id = $1 and lead_status = 'verified' and split_part(lower(email), '@', 2) = $2
+           and (mail_class is null or mail_class in ('', 'unknown'))`,
+        [runId, r.domain, mailClass],
+      );
+      if (have[0]?.ok) {
+        await db.query(
+          `insert into topup.mx_class (domain, mx_host, mail_class)
+           values ($1, $2, $3)
+           on conflict (domain) do update set mx_host = excluded.mx_host, mail_class = excluded.mail_class, checked_at = now()`,
+          [r.domain, host, mailClass],
+        );
+      }
+    }
   }
 
   private async park(run: RunRow, reason: string, attempts: number): Promise<VerifyOutcome> {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { mailClassFromMxHost } from "./mx.js";
 import { segmentFor, verdictFromCsvRow } from "./sendable.js";
 
 /** D10 — sendable is mv ok, or catch_all + N2B confirmed. Nothing else. */
@@ -48,5 +49,16 @@ describe("sendable rule (D10)", () => {
     assert.equal(segmentFor("seg"), "SEG");
     assert.equal(segmentFor("native_filter"), "OTHER");
     assert.equal(segmentFor(null), "OTHER");
+  });
+});
+
+describe("D34 — MX fallback classifies gateway hosts", () => {
+  it("proofpoint / mimecast / pphosted are SEG; empty is unknown; a random host is direct", () => {
+    assert.equal(mailClassFromMxHost("mx1.pphosted.com"), "seg");
+    assert.equal(mailClassFromMxHost("us-smtp-inbound-1.mimecast.com"), "seg");
+    assert.equal(mailClassFromMxHost(""), "unknown");
+    assert.equal(mailClassFromMxHost(null), "unknown");
+    assert.equal(mailClassFromMxHost("aspmx.l.google.com"), "seg");
+    assert.equal(mailClassFromMxHost("mx.example.com"), "direct");
   });
 });
