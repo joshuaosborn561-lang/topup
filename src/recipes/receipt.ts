@@ -41,7 +41,7 @@ export const PERSON_SOURCES = [
   "leadmagic_employee_finder",
   "none",
 ] as const;
-export const EMAIL_SOURCES = ["already", "getleads", "name_to_email", "email_waterfall", "none"] as const;
+export const EMAIL_SOURCES = ["already", "getleads", "discolike", "name_to_email", "email_waterfall", "none"] as const;
 export const EMAIL_TIERS = ["getleads", "smartlead", "aiark", "leadmagic", "prospeo", "fullenrich"] as const;
 
 /** Latest receipt from the Sept 12 backfill. Its rows_found is the old export, tam_count is blank. */

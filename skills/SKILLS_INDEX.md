@@ -2,11 +2,11 @@
 
 These are the skills Josh has built for SalesGlider Growth. Each folder holds a `SKILL.md` and sometimes a `scripts/` folder. They are the institutional knowledge of the business, written from measured results. Read the skill for a stage before writing code for that stage. Where a skill and the brief disagree, the brief wins and you flag it in the PR.
 
-No skills are marked stale as of D35. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; pending taps stay questions.
+No skills are marked stale as of D36. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; the six pending taps are yes.
 
 ## Rulebook
 
-* `merged-list` ... Josh's 78-item list of how every client's lists are built (D35). Pending taps: 2's addition, 26, 27, 53, 58, 71.
+* `merged-list` ... Josh's 78-item list of how every client's lists are built (D35, D36). The six taps are yes.
 
 ## After a first pull (so leadtopup can repeat it)
 
@@ -16,9 +16,11 @@ No skills are marked stale as of D35. The Sept 10 notes on `parlay-lead-pulls` a
 
 * `parlay-lead-pulls` ... Randy Haba, MSP, IT decision makers. Filter book is the live `it_dm_tickets` lane receipt; the service recipe is `recipes/parlay/it_dm.json`. Suppression is `global-suppression`. Do not delete against `public.leads`.
 * `culture-fits-lead-pulls` ... TJ Jackson, MSP owners and C suite. Pool exhaustion reality and corrected getleads parameters.
-* `techevo-lead-pulls` ... Corey Tapper, New England and South Florida IT decision makers, hard geography rule, small company COO fallback.
+* `techevo-lead-pulls` ... Corey Tapper. NE IT DM includes NY/NJ. Florida IT DM is statewide; SFL owners stay metro. Small company COO fallback.
 * `goliath-lead-pulls` ... Dave Ackley, cybersecurity MSSP. Every lane targets the IT decision maker, not the C suite.
 * `salesglider-lead-pulls` ... Josh's own lanes: trades, staffing, PE deal origination. 11 plus employee minimum, PE lane exception, dead lanes.
+* `earthworks-lead-pulls` ... Own tag. 180 miles of Dallas. Four lanes. Improved commercial owners: 2+ parcels, 3,958 operators. No getleads.
+* `insight-lead-pulls` ... Director+ at 201–2,000 with IT dept ≤15. Gateway catch-alls dropped, not segmented.
 
 ## Sourcing and cascade for physical and hard ICPs
 

@@ -164,8 +164,12 @@ operations director, so the roster is sales by construction.
 
 ## Stage 3: find the email
 
-**First stop is always Name to Email Finder, which now runs Hunter.io internally.** As of
-2026-08-14 the finder is a different tool than plain permutation:
+**First stop is DiscoLike find emails** (D36 item 71). Name to Email is paused — it now
+runs Hunter.io internally, and Hunter is banned (item 14). DiscoLike is the cheap first
+rung. It is not a leadtopup client yet; leftover names go to Email Waterfall.
+
+Historical note, Name to Email Finder, which ran Hunter.io internally as of
+2026-08-14 (do not turn it back on without Josh):
 
 - Flow per person: **pattern cache → Hunter domain-search (limit 10) → pattern candidate →
   SMTP or verifier**. A Hunter-sighted address is promoted to top candidate. An accept-all

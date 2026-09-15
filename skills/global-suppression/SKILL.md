@@ -23,8 +23,8 @@ person is acceptable; two clients reaching someone who already asked out is not.
 **This client's prior sends are excluded for 90 days** (D35 item 2). Anyone this
 `smartlead_client_id` sent to in the last 90 days is skipped. Past 90 days with no
 positive / DNC / wrong-person response, they are fair game. Those three responses
-are blocked forever. Never putting someone in two live campaigns of the same client
-is pending Josh's tap — do not treat it as decided.
+are blocked forever. Never put someone in two live campaigns of the same client
+at once (D36 item 2).
 
 **Any pool-exhaustion figure computed before 2026-08-25 used the old contact-history scope and
 is understated.** Recount before telling a client their pool is dry.

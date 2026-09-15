@@ -570,6 +570,7 @@ export class VerifyStage {
 
   private async finish(run: RunRow, recipe: Recipe, table: string): Promise<VerifyOutcome> {
     await this.fillMissingMailClass(table, run.run_id);
+    const droppedGateway = await this.dropGatewayCatchalls(table, run.run_id, recipe);
     const { rows } = await this.d.repo.raw().query<{ lead_status: string; mail_class: string | null; n: string }>(
       `select lead_status, mail_class, count(*)::text as n from ${table} where run_id = $1 group by 1, 2`,
       [run.run_id],
@@ -587,7 +588,15 @@ export class VerifyStage {
       else if (r.lead_status === "stalled_unverified") stalled += n;
     }
     const rate = rejectRate({ sendable, rejected, stalled });
-    const counts = { verified: sendable, verified_seg: seg, verified_other: sendable - seg, rejected, stalled_unverified: stalled, reject_rate_bp: rate === null ? 0 : Math.round(rate * 10000) };
+    const counts = {
+      verified: sendable,
+      verified_seg: seg,
+      verified_other: sendable - seg,
+      rejected,
+      stalled_unverified: stalled,
+      dropped_gateway_catchalls: droppedGateway,
+      reject_rate_bp: rate === null ? 0 : Math.round(rate * 10000),
+    };
     await this.d.repo.finishStep(run.run_id, "verify", { useful_output: sendable, counts });
     await this.d.repo.mergeRunCounts(run.run_id, funnelCounts(counts));
     // Step 6 gate: sendable count and reject rate reported; far above the lane's norm stops the run.
@@ -610,6 +619,28 @@ export class VerifyStage {
         (norm === null ? " (no norm on the recipe yet; ask Josh for this lane's)." : ` (lane norm ${pct(norm)}).`),
     );
     return { kind: "done", sendable, seg, other: sendable - seg, rejected, stalled };
+  }
+
+  /**
+   * D36 item 58. After mail class is known, Insight drops SEG catch-alls
+   * instead of routing them. Other lanes keep item 6 (segment, do not throw out).
+   */
+  private async dropGatewayCatchalls(table: string, runId: string, recipe: Recipe): Promise<number> {
+    if (!recipe.verify.drop_gateway_catchalls) return 0;
+    const { rowCount } = await this.d.repo.withRun(runId, async (tx) =>
+      tx.query(
+        `update ${table} set lead_status = 'rejected', ev_status = 'rejected', status_changed_at = now(),
+           qa_flags = coalesce(qa_flags, '{}'::jsonb) || '{"dropped_reason":"gateway_catchall"}'::jsonb
+         where run_id = $1 and lead_status = 'verified'
+           and lower(coalesce(mail_class, '')) = 'seg'
+           and (
+             lower(coalesce(mv_status, '')) like '%catch%'
+             or lower(coalesce(verify_path, '')) like '%catch_all%'
+           )`,
+        [runId],
+      ),
+    );
+    return rowCount ?? 0;
   }
 
   /** Fill unknown mail_class from the MX cache, then a free DNS lookup (D34). */

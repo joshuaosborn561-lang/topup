@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mailClassFromMxHost } from "./mx.js";
-import { segmentFor, verdictFromCsvRow } from "./sendable.js";
+import { isGatewayCatchallDrop, segmentFor, verdictFromCsvRow } from "./sendable.js";
 
 /** D10 — sendable is mv ok, or catch_all + N2B confirmed. Nothing else. */
 
