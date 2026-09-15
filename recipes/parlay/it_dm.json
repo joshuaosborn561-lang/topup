@@ -1,0 +1,73 @@
+{
+  "recipe_id": "parlay.it_dm.v3",
+  "client_tag": "parlay",
+  "lane": "it_dm",
+  "smartlead_client_id": 418274,
+  "supabase_project": "azpapwtnrbzywlnxxecz",
+  "owner_approved_at": null,
+  "source": {
+    "kind": "getleads",
+    "params": {
+      "job_titles": [
+        "IT Director",
+        "Director of IT",
+        "Director of Information Technology",
+        "Director of Technology",
+        "VP of IT",
+        "VP of Information Technology",
+        "CIO",
+        "Chief Information Officer",
+        "IT Manager",
+        "Head of IT",
+        "Senior Director of IT",
+        "Director of IT Operations",
+        "Director of IT Infrastructure",
+        "IT Operations Manager",
+        "Technology Director"
+      ],
+      "company_size": ["11 to 50", "51 to 200"],
+      "countries": ["United States"],
+      "max_per_company": 3
+    },
+    "widening_candidates": [
+      { "company_size": ["201 to 500"] },
+      { "add_titles": ["COO", "Director of Operations"] }
+    ]
+  },
+  "suppression": {
+    "response_based": true,
+    "client_prior_contacts": true,
+    "bounced_any_client": true,
+    "public_suppression": true,
+    "client_domain_blocklist": true,
+    "same_offer_any_client": true,
+    "same_gift_any_client": false
+  },
+  "email_finding": { "enabled": false, "max_tier": "aiark", "fullenrich": false, "batch_rows": 200 },
+  "verify": { "seg_split": true, "reject_rate_norm": null },
+  "normalize": {
+    "names_cities": true,
+    "company": true,
+    "location": true,
+    "sports_team": { "league": "both", "pro_only": false }
+  },
+  "qa": ["junk_titles", "retail_school_purge", "regulated_gift_hold", "nonprofit_to_eos", "company_name_acronym_hold"],
+  "segments": {
+    "band": ["11_50", "51_200"],
+    "mail_class": ["SEG", "OTHER"],
+    "gift": ["team", "airpods"]
+  },
+  "routing": [
+    { "when": { "gift": "airpods", "band": "11_50" }, "campaign_id": 3929973, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "gift": "airpods", "band": "51_200" }, "campaign_id": 3929974, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "band": "11_50", "mail_class": "OTHER" }, "campaign_id": 3847839, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "band": "11_50", "mail_class": "SEG" }, "campaign_id": 3847846, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "band": "51_200", "mail_class": "OTHER" }, "campaign_id": 3847837, "icp": { "kind": "linkedin_native", "persona": "it_dm" } },
+    { "when": { "band": "51_200", "mail_class": "SEG" }, "campaign_id": 3847844, "icp": { "kind": "linkedin_native", "persona": "it_dm" } }
+  ],
+  "required_fields": ["first_name_n", "company_n", "location", "local_sports_team", "job_title", "company_size", "vertical"],
+  "runway": { "floor_days": 7, "target_days": 30, "max_per_run": 10000 },
+  "working": { "interested_per_2000_sends": 1, "variant_min_sends": 1000 },
+  "spend": { "auto_cap_usd": 5 },
+  "owner_approvals": ["icp_change", "new_campaign", "spend_over_cap", "copy"]
+}

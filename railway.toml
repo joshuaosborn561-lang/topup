@@ -1,0 +1,12 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm run start"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+# One replica, pinned. Runs are locked in Postgres, but the cron loops and the
+# Slack card state assume a single process (D-scaffold in DECISIONS.md).
+multiRegionConfig = { "us-west2" = { numReplicas = 1 } }
