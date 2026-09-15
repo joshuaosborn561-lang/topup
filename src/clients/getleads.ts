@@ -9,8 +9,9 @@ import { McpHttpClient } from "./mcpHttp.js";
  *
  * The brief's getleads rules are enforced by the recipe schema before a
  * filter reaches this file: headcount is band labels, industries carry no
- * commas, `email_status` is `["VALID"]`. `assertGetleadsFilters` also
- * refuses band labels plus a numeric employee bound (D34).
+ * commas, `email_status` omitted pulls every status (D35 item 15).
+ * `assertGetleadsFilters` also refuses band labels plus a numeric
+ * employee bound (D34).
  */
 export type GetleadsFilters = Recipe["source"] extends infer S ? (S extends { kind: "getleads"; params: infer P } ? P : never) : never;
 
@@ -68,6 +69,14 @@ export function assertGetleadsFilters(filters: GetleadsFilters): void {
   }
 }
 
+/** Omit empty email_status so getleads returns every status (D35 item 15). */
+export function outboundFilters(filters: GetleadsFilters): Record<string, unknown> {
+  const out = { ...(filters as unknown as Record<string, unknown>) };
+  const statuses = out.email_status;
+  if (!Array.isArray(statuses) || statuses.length === 0) delete out.email_status;
+  return out;
+}
+
 export class GetleadsClient implements Getleads {
   private readonly mcp: McpHttpClient;
 
@@ -86,7 +95,7 @@ export class GetleadsClient implements Getleads {
   async count(filters: GetleadsFilters): Promise<CountResult> {
     this.ready();
     assertGetleadsFilters(filters);
-    const res = await this.mcp.call<Record<string, unknown>>("count_contacts", filters as unknown as Record<string, unknown>);
+    const res = await this.mcp.call<Record<string, unknown>>("count_contacts", outboundFilters(filters));
     const total = Number(res.total_matching ?? res.total ?? res.count ?? NaN);
     if (!Number.isFinite(total)) throw new Error(`count_contacts returned no total_matching: ${JSON.stringify(Object.keys(res))}`);
     const exportable = res.exportable_rows === undefined || res.exportable_rows === null ? null : Number(res.exportable_rows);
@@ -97,7 +106,7 @@ export class GetleadsClient implements Getleads {
     this.ready();
     assertGetleadsFilters(filters);
     if (!(opts.max_rows >= 1 && opts.max_rows <= 50_000)) throw new Error(`export max_rows must be 1..50000, got ${opts.max_rows}`);
-    const args: Record<string, unknown> = { ...(filters as unknown as Record<string, unknown>), max_rows: opts.max_rows, confirmed: true };
+    const args: Record<string, unknown> = { ...outboundFilters(filters), max_rows: opts.max_rows, confirmed: true };
     if (opts.max_per_company !== undefined) args.max_per_company = opts.max_per_company;
     const res = await this.mcp.call<Record<string, unknown>>("export_contacts", args);
     const id = res.export_id ?? res.id;

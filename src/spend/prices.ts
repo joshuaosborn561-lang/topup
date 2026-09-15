@@ -81,7 +81,7 @@ export const PRICES: Readonly<Record<Vendor, VendorPrice>> = {
 };
 
 /** Vendors that must never be wired, including through wrappers (brief section 8). */
-export const BANNED_VENDORS: readonly string[] = ["pdl", "peopledatalabs", "people_data_labs", "billionverifier", "clay"];
+export const BANNED_VENDORS: readonly string[] = ["pdl", "peopledatalabs", "people_data_labs", "billionverifier", "clay", "hunter", "hunterio"];
 
 /** Vendor actions that bill on every call and are banned outright. */
 export const BANNED_ACTIONS: readonly string[] = ["detect_job_change", "job_change", "job_change_detector"];

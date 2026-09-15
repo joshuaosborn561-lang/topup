@@ -1,64 +1,55 @@
 /**
- * Prior contact (D34). Anyone already in this Smartlead client's
- * `public.leads` or in `public.leads_staging` for any of this client's
- * campaigns is excluded — sent or not. Smartlead only dedupes inside one
- * campaign; an untouched lead in campaign A is still a duplicate in B.
+ * Prior contact (D35 item 2). Do not load anyone this client *sent to*
+ * in the last N days (default 90). Past that window, with no rule-1
+ * response (positive / DNC / wrong person — those stay blocked forever
+ * in the reason CASE), they are fair game.
  *
- * A 90-day recycle is opt-in (`recycle_after_days` set on the recipe) and
- * only lifts the exclude when every prior campaign is STOPPED or COMPLETED
- * and the last send is older than the window. Default is never.
+ * "Never put someone in two live campaigns of the same client at once"
+ * is pending Josh's tap. The SQL lives here; the recipe flag
+ * `exclude_other_live_campaigns` defaults false until he taps.
  */
 
-export function recycleDays(recipeDays: number | null | undefined): number | null {
-  return recipeDays && recipeDays > 0 ? recipeDays : null;
+export const DEFAULT_RECYCLE_DAYS = 90;
+
+export function recycleDays(recipeDays: number | null | undefined): number {
+  return recipeDays && recipeDays > 0 ? recipeDays : DEFAULT_RECYCLE_DAYS;
 }
 
-/** Email already belongs to this Smartlead client in the mirror or staging. */
-export function alreadyInClientSql(): string {
+/** Sent by this Smartlead client inside the recycle window. */
+export function recentClientSendSql(daysParam: string): string {
+  return `exists (
+    select 1 from public.leads l
+    join public.sends s on s.lead_id = l.id
+    where lower(l.email) = r.e and l.smartlead_client_id = $6
+      and s.sent and s.sent_at is not null
+      and s.sent_at >= now() - (${daysParam}::int * interval '1 day')
+  )`;
+}
+
+/**
+ * Pending addition to item 2: already sitting in another live campaign
+ * of this client (mirror or staging), regardless of send state.
+ */
+export function liveCampaignSql(): string {
+  const live = `upper(coalesce(c.status, '')) not in ('STOPPED', 'COMPLETED')`;
   return `(
     exists (
       select 1 from public.leads l
+      join public.campaigns c on c.id = l.campaign_id
       where lower(l.email) = r.e and l.smartlead_client_id = $6
+        and ${live}
     )
     or exists (
       select 1 from public.leads_staging s
       join public.campaigns c on c.smartlead_campaign_id = s.campaign_id
       where lower(s.email) = r.e and c.smartlead_client_id = $6
+        and ${live}
     )
   )`;
 }
 
-/**
- * Opt-in recycle: every prior campaign is STOPPED/COMPLETED and the last
- * send is older than `$N` days. Otherwise they stay excluded.
- */
-export function recycleExceptionSql(daysParam: string): string {
-  const stopped = `upper(coalesce(c.status, '')) in ('STOPPED', 'COMPLETED')`;
-  return `(
-    not exists (
-      select 1 from public.leads l
-      join public.campaigns c on c.id = l.campaign_id
-      where lower(l.email) = r.e and l.smartlead_client_id = $6
-        and not (${stopped})
-    )
-    and not exists (
-      select 1 from public.leads_staging s
-      join public.campaigns c on c.smartlead_campaign_id = s.campaign_id
-      where lower(s.email) = r.e and c.smartlead_client_id = $6
-        and not (${stopped})
-    )
-    and not exists (
-      select 1 from public.leads l
-      join public.sends s on s.lead_id = l.id
-      where lower(l.email) = r.e and l.smartlead_client_id = $6
-        and s.sent and s.sent_at is not null
-        and s.sent_at >= now() - (${daysParam}::int * interval '1 day')
-    )
-  )`;
-}
-
-export function clientPriorContactSql(recycleDaysParam: string | null): string {
-  const already = alreadyInClientSql();
-  if (!recycleDaysParam) return already;
-  return `(${already} and not ${recycleExceptionSql(recycleDaysParam)})`;
+export function clientPriorContactSql(daysParam: string, includeLiveCampaigns: boolean): string {
+  const sent = recentClientSendSql(daysParam);
+  if (!includeLiveCampaigns) return sent;
+  return `(${sent} or ${liveCampaignSql()})`;
 }

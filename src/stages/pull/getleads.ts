@@ -8,7 +8,7 @@ import type { PullAdapter, PullHandle, PullResult } from "./adapter.js";
 /**
  * The LinkedIn-native flavor of step 3 (skill parlay-lead-pulls and the other
  * client pull skills): getleads `export_contacts` with the recipe's filters —
- * band labels, `VALID` only, `max_per_company` — then poll
+ * band labels, every email status (D35 item 15), `max_per_company` — then poll
  * `check_contact_export` for the URL and the real row count. Included plan:
  * $0, but the ledger row is written all the same.
  */

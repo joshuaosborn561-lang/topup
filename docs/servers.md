@@ -805,7 +805,7 @@ Those `leadtopup` calls; everything else on the server is out of scope.
 
 | Tool | Arguments (required in bold) | Sync / job | Returns |
 |---|---|---|---|
-| `count_contacts` | the contact filters: `job_titles[]`, `company_size[]` (**band labels** — `"11 to 50"`, `"51 to 200"`, …), `employee_profiles_on_linkedin {min,max}`, `countries[]`, `states[]`, `cities[]`, `industries[]` / `companyIndustry[]` (no commas — they shred silently), `email_status[]` (`["VALID"]` only), … | sync, **free, always** | `{total_matching, exportable_rows}` |
+| `count_contacts` | the contact filters: `job_titles[]`, `company_size[]` (**band labels** — `"11 to 50"`, `"51 to 200"`, …), `employee_profiles_on_linkedin {min,max}`, `countries[]`, `states[]`, `cities[]`, `industries[]` / `companyIndustry[]` (no commas — they shred silently), `email_status[]` (omit to pull every status; D35 item 15), … | sync, **free, always** | `{total_matching, exportable_rows}` |
 | `export_contacts` | same filters + `columns[]`, `max_per_company` (1–50), `max_rows` (1–50 000), **`confirmed: true`** (refused without it) | **export id** | `{export_id}`; later `cap_reason ∈ per_company \| max_rows \| hard_ceiling \| fair_use \| credits \| filtered` says why fewer rows than asked |
 | `check_contact_export` | **export_id** | sync poll | `{job_status, export_url, rows_exported, rows_available, cap_reason, cap_message}` |
 | `get_fair_use` | — | sync, free | remaining daily/monthly budget, `resets_at` |
@@ -876,7 +876,7 @@ is a decision for Josh (D18: unclear → judgement column).
 | Name to Email | `verify_person` (single, on a card), `get_run` | `start_run` (inline rows), `export_run` |
 | Email Verifier Progression | `start_verification`, `get_verification_status`, `get_verification_results`, `resume_verification`, `list_verification_runs` | `export_all_sendable` (aggregate is a judgement) |
 | Smartlead server | `stage_leads_from_url`, `start_lead_import`, `get_lead_*_status`, `list_lead_*_runs`, `list_campaigns`, `get_campaign*`, `get_sequences`, `list_campaign_mailboxes`, analytics/statistics, `get_lead_by_email`, `add_to_block_list`, `list_email_accounts` | `update_campaign_status`, `delete_campaign`, `start_lead_purge`, `unsubscribe_lead`, `pause_lead`, `unlink_mailboxes`, `import_leads`, `list_campaign_leads`, `export_campaign_leads`, `smartlead_request` |
-| getleads (hosted) | `count_contacts`, `export_contacts` (`confirmed: true`, band labels, `VALID` only), `check_contact_export`, `get_fair_use` | every tool that returns contacts inline (`search_contacts`, `lookup_*`, `*_batch`), every wallet-funded scrape |
+| getleads (hosted) | `count_contacts`, `export_contacts` (`confirmed: true`, band labels, omit `email_status` so every status comes back; D35 item 15), `check_contact_export`, `get_fair_use` | every tool that returns contacts inline (`search_contacts`, `lookup_*`, `*_batch`), every wallet-funded scrape |
 
 `src/clients/smartlead.ts` carries the Smartlead allow list in code
 (`SMARTLEAD_ALLOWED`: `start_lead_import`, `get_lead_import_status`,

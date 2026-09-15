@@ -27,7 +27,6 @@
       ],
       "company_size": ["11 to 50", "51 to 200"],
       "countries": ["United States"],
-      "email_status": ["VALID"],
       "max_per_company": 3
     },
     "widening_candidates": [
@@ -68,7 +67,7 @@
   ],
   "required_fields": ["first_name_n", "company_n", "location", "local_sports_team", "job_title", "company_size", "vertical"],
   "runway": { "floor_days": 7, "target_days": 30, "max_per_run": 10000 },
-  "working": { "interested_per_2000_sends": 1, "variant_min_sends": 300 },
+  "working": { "interested_per_2000_sends": 1, "variant_min_sends": 1000 },
   "spend": { "auto_cap_usd": 5 },
   "owner_approvals": ["icp_change", "new_campaign", "spend_over_cap", "copy"]
 }

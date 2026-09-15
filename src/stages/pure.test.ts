@@ -11,7 +11,7 @@ import { classifyPuzzle } from "./puzzle/classify.js";
 import { routePull, routeSize } from "./pull/route.js";
 import { partitionCheck, rowsNeeded, sourcesAgree } from "./size/index.js";
 import { sizeReport } from "./size/report.js";
-import { alreadyInClientSql, clientPriorContactSql, recycleDays } from "./suppress/recycle.js";
+import { clientPriorContactSql, recycleDays } from "./suppress/recycle.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 function campaignRecipe(
@@ -248,27 +248,25 @@ describe("D29 — pull and size routing", () => {
   });
 });
 
-describe("D34 — prior contact is lifetime by default", () => {
-  it("recycle is off unless the recipe sets a positive window", () => {
-    assert.equal(recycleDays(undefined), null);
-    assert.equal(recycleDays(null), null);
-    assert.equal(recycleDays(0), null);
-    assert.equal(recycleDays(90), 90);
+describe("D35 — prior contact is a 90-day send window", () => {
+  it("recycle defaults to 90 days", () => {
+    assert.equal(recycleDays(undefined), 90);
+    assert.equal(recycleDays(null), 90);
+    assert.equal(recycleDays(0), 90);
+    assert.equal(recycleDays(60), 60);
   });
 
-  it("client_prior_contact matches public.leads or leads_staging for this client, sent or not", () => {
-    const sql = alreadyInClientSql();
-    assert.match(sql, /public\.leads/);
-    assert.match(sql, /leads_staging/);
+  it("client_prior_contact is a send by this client inside the window", () => {
+    const sql = clientPriorContactSql("$10", false);
+    assert.match(sql, /public\.sends/);
     assert.match(sql, /smartlead_client_id = \$6/);
-    assert.doesNotMatch(sql, /public\.sends/);
+    assert.doesNotMatch(sql, /leads_staging/);
   });
 
-  it("opt-in recycle only lifts STOPPED or COMPLETED campaigns older than the window", () => {
-    const sql = clientPriorContactSql("$10");
+  it("live-campaign exclusion is opt-in and pending", () => {
+    const sql = clientPriorContactSql("$10", true);
+    assert.match(sql, /leads_staging/);
     assert.match(sql, /STOPPED/);
     assert.match(sql, /COMPLETED/);
-    assert.match(sql, /public\.sends/);
-    assert.match(sql, /leads_staging/);
   });
 });
