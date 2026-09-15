@@ -29,9 +29,9 @@ Classify the typical row you produced. There is no `other`. A receipt that would
 1. Companies: `getleads` | `maps` | `permits` | `maps_and_permits` | `parcels` | `ai_ark` | `table` | `serp_tool_mention` | `theirstack_tech_signal` | `linkedin_engagers` | `linkedin_import` | `web_visitor_pixel` | `job_posting_signal` | `public_records`. If the companies came from a signal, name the signal and put the query shape, vendor or technology list, creator roster, or job title terms in `company_filters` so the service can rerun it.
 2. Domain: `already` | `getleads` | `maps` | `domain_waterfall` | `theirstack` | `none`
 3. Person: `already` | `getleads` | `ai_ark` | `people_waterfall` | `serp` | `hard_to_find` | `leadmagic_employee_finder` | `none`
-4. Email: `already` | `getleads` | `name_to_email` | `email_waterfall` | `none`. If a waterfall ran, `email_max_tier` is the last tier allowed (`aiark`, `leadmagic`, `fullenrich`). Do not list a waterfall you did not run. No FullEnrich `email_max_tier` unless Josh stamped it.
+4. Email: `already` | `getleads` | `discolike` | `name_to_email` | `email_waterfall` | `none`. If a waterfall ran, `email_max_tier` is the last tier allowed (`aiark`, `leadmagic`, `fullenrich`). Do not list a waterfall you did not run. No FullEnrich `email_max_tier` unless Josh stamped it. Name to Email is paused (D36 item 71).
 
-getleads exports are usually person plus email from getleads, domain already there. Peterson style physical lanes are usually Maps plus permits, then Domain Waterfall, then Find Named Person, then Name to Email or the email waterfall.
+getleads exports are usually person plus email from getleads, domain already there. Peterson style physical lanes are usually Maps plus permits, then Domain Waterfall, then Find Named Person, then DiscoLike find emails or the email waterfall.
 
 `icp_kind` is `linkedin_native` or `physical`. `persona` and `lane` are snake_case. Headcount bands are labels like `"51 to 200"`, never min or max integers.
 

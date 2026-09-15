@@ -20,9 +20,10 @@ import { clientPriorContactSql, recycleDays } from "./recycle.js";
  *   suppression_list      on public.suppression
  *   bounced               a bounced send or a Sender Originated Bounce, any client
  *   client_prior_contact  this client sent to the address in the last
- *                         recycle_after_days (default 90). Rule-1 responses
- *                         stay blocked forever above this. Live-campaign
- *                         exclusion is pending Josh's tap (D35 item 2).
+ *                         recycle_after_days (default 90), or the address
+ *                         is already in a live campaign of this client
+ *                         (D36 item 2). Rule-1 responses stay blocked
+ *                         forever above this.
  *   same_offer_other_client  received the same offer (registry offer_key) from another client
  *   client_domain         the client's own customer domain list
  *

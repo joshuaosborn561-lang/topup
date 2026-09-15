@@ -100,7 +100,7 @@ export class PuzzleStage {
       const line =
         `Puzzle: ${classified.needs_domain} needed a domain · ${classified.needs_person} needed a person · ${needsEmail} already name+domain, no email · banked ${banked} names` +
         (domainsResolved || peopleResolved ? ` · resolved domain ${domainsResolved} / person ${peopleResolved}` : "") +
-        `. Next is Name to Email then Email Waterfall.`;
+        `. Next is DiscoLike find emails (Name to Email is paused), then Email Waterfall.`;
       return finish(this.d, run, "puzzle", needsEmail + (byStatus.needs_email ?? 0), counts, line);
     });
   }
@@ -166,7 +166,7 @@ export class PuzzleStage {
         source_table: src,
         where_sql: `run_id = '${run.run_id}' and lead_status = 'needs_email'`,
         missing: "email",
-        next_method: "name_to_email",
+        next_method: "discolike",
         registered_by: "puzzle",
       });
     }

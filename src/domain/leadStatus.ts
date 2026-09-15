@@ -45,7 +45,7 @@ const EDGES: Record<LeadStatus, readonly LeadStatus[]> = {
   email_not_found: [],
   needs_verify: ["verifying"],
   verifying: ["verified", "rejected", "stalled_unverified", "needs_verify"],
-  verified: ["normalized"],
+  verified: ["normalized", "rejected"], // Insight item 58: drop gateway catch-alls after classify
   rejected: [],
   // Residue of a stall is never sent; a later run may re-queue it explicitly.
   stalled_unverified: ["needs_verify"],

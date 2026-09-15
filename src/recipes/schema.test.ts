@@ -96,7 +96,9 @@ describe("recipe schema", () => {
       "Parlay's six campaigns share one persona today; another offer would add a second",
     );
     assert.equal(r.suppression.recycle_after_days, 90, "D35 item 2: 90-day send window");
-    assert.equal(r.suppression.exclude_other_live_campaigns, false, "D35: live-campaign exclude is pending");
+    assert.equal(r.suppression.exclude_other_live_campaigns, true, "D36 item 2: never two live campaigns of the same client");
+    assert.equal(r.email_finding.name_to_email, false, "D36 item 71: Name to Email is paused");
+    assert.equal(r.verify.drop_gateway_catchalls, false, "D36 item 58: Insight-only; Parlay still segments");
     assert.equal(r.working.variant_min_sends, 1000, "D35 item 12: variant bar is 1,000 sends");
     assert.equal("email_status" in (await parlay()).source.params, false, "D35 item 15: omit email_status to pull every status");
     assert.equal("employee_profiles_on_linkedin" in (await parlay()).source.params, false);

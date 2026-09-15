@@ -96,7 +96,7 @@ src/
   stages/ingest/      step 4: LeadPipe ingest_csv, claim, title audit
   stages/suppress/    step 5: one SQL pass, 90-day recycle, no domain-list card
   stages/puzzle/      after suppress: name/domain/person gaps
-  stages/find_emails/ immediately before verify: Name to Email then Email Waterfall
+  stages/find_emails/ immediately before verify: DiscoLike first (paused Name to Email), then Email Waterfall
   stages/verify/      step 6: runbook (pure), sendable rule, the stage
   stages/normalize/   step 7: names, company, geo, location, team (ports of the skill scripts)
   stages/qa/          step 8: topup.qa_rules, hold cards, taps

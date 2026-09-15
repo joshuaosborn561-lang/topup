@@ -54,7 +54,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D32 | Live; `other` and trusted backfill TAM superseded by D33 |
 | D33 | Live |
 | D34 | Live; lifetime prior contact superseded by D35 item 2; empty-list halt, staging dedupe, mixed headcount, MX, health, QA regex stay |
-| D35 | Live |
+| D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36 |
+| D36 | Live |
 
 ---
 
@@ -1029,3 +1030,38 @@ the tap, not a silent default.
 **Guard.** `src/guards/d35_merged_list.test.ts`. `src/stages/pure.test.ts`
 — 90-day default, send-window SQL. `src/recipes/schema.test.ts` — Parlay
 omits `email_status`, variant 1,000, recycle 90. Ask Josh.
+
+## D36 — The six pending taps are yes
+
+**Decision.** Josh tapped yes on every item D35 left pending
+(2026-09-15).
+
+1. **Item 2 addition.** Never put someone in two live campaigns of the
+   same client. `exclude_other_live_campaigns` defaults true. Size
+   subtracts those addresses too.
+2. **Item 26.** TechEvo New England IT DM includes New York and New
+   Jersey. Re-filter on the contact's city after export (item 28).
+3. **Item 27.** Florida IT DM is statewide. The South Florida owners
+   lane stays metro (Miami-Dade, Broward, Palm Beach).
+4. **Item 53.** Earthworks improved commercial owners means 2+ parcels.
+   All 3,958 operators are in scope.
+5. **Item 58.** Insight drops gateway catch-alls. It does not route
+   them to SEG campaigns. Other clients still segment (item 6).
+   `verify.drop_gateway_catchalls` is the recipe flag, default false.
+6. **Item 71.** Name to Email is paused. DiscoLike find emails is the
+   cheap first rung. DiscoLike is not a leadtopup client yet (D22);
+   leftover names go to Email Waterfall. `email_finding.name_to_email`
+   defaults false.
+
+**Why.** He said yes to all six. The live-campaign hole was the BCP
+1,782 case. Name to Email now runs Hunter inside, which item 14 banned.
+
+**Tradeoff.** Live-campaign exclude shrinks net-new versus send-window
+alone. Insight will look thinner than a SEG-split lane with the same
+pull. DiscoLike find emails is specified and not wired — the service
+says so and uses the waterfall, it does not invent an adapter.
+
+**Guard.** `src/guards/d36_pending_taps.test.ts`.
+`src/stages/verify/sendable.ts` `isGatewayCatchallDrop`.
+`src/recipes/schema.test.ts` — Parlay live-campaign on, Name to Email
+off, Insight drop off. Ask Josh.

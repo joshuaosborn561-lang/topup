@@ -11,10 +11,11 @@ import { attempt, columnsOf, finish, park, poll, realClock, type Clock, type Sta
 import { domainSql } from "../puzzle/classify.js";
 
 /**
- * Email enrichment, immediately before verify (D29; skills leadgen-mcp-routing
- * stage 3 and unresolved-name-routing). Name to Email first, then Email
- * Finder Waterfall on a source_table with writeback. Never inline rows into
- * start_run. A getleads pull with no leftover names is a skip.
+ * Email enrichment, immediately before verify (D29; D36 item 71).
+ * DiscoLike find emails is the cheap first rung and is not a leadtopup
+ * client yet (D22). Name to Email is paused. Email Waterfall on a
+ * source_table with writeback is the configured cascade. Never inline
+ * rows into start_run. A getleads pull with no leftover names is a skip.
  */
 export interface FindEmailsDeps extends StageDeps {
   rails?: SpendRails;
@@ -49,7 +50,7 @@ export class FindEmailsStage {
       }
 
       let fromFinder = 0;
-      if (this.d.nameToEmail) {
+      if (recipe.email_finding.name_to_email && this.d.nameToEmail) {
         fromFinder = await this.runNameToEmail(run, recipe, table);
       }
 
@@ -60,12 +61,8 @@ export class FindEmailsStage {
         const w = await this.runWaterfall(run, recipe, table, remaining);
         if (w.kind !== "ran") return w;
         fromWaterfall = w.resolved;
-      } else if (remaining > 0 && !this.d.emailWaterfall && !this.d.nameToEmail) {
-        const reason = `Find emails parked: ${remaining} name+domain rows have no address. Configure NAME_TO_EMAIL_MCP_URL (verify_person only) and EMAIL_WATERFALL_MCP_URL (source_table + writeback).`;
-        await this.d.repo.failStep(run.run_id, "find_emails", reason, true);
-        return park(this.d, run, "find_emails", reason, attempts);
       } else if (remaining > 0 && !this.d.emailWaterfall) {
-        const reason = `Find emails parked: Name to Email resolved ${fromFinder}; ${remaining} remain and Email Waterfall is not configured (EMAIL_WATERFALL_MCP_URL).`;
+        const reason = `Find emails parked: ${remaining} name+domain rows have no address. DiscoLike find emails is the first rung and is not wired (D22). Configure EMAIL_WATERFALL_MCP_URL (source_table + writeback). Name to Email is paused.`;
         await this.d.repo.failStep(run.run_id, "find_emails", reason, true);
         return park(this.d, run, "find_emails", reason, attempts);
       }
@@ -73,14 +70,14 @@ export class FindEmailsStage {
       const promoted = await this.promoteFound(run, table);
       const leftover = await db.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status = 'needs_email'`, [run.run_id]);
       const unresolved = Number(leftover.rows[0]?.n ?? 0);
-      const counts = { needs_email: need, from_name_to_email: fromFinder, from_waterfall: fromWaterfall, promoted, unresolved };
+      const counts = { needs_email: need, from_discolike: 0, from_name_to_email: fromFinder, from_waterfall: fromWaterfall, promoted, unresolved };
       return finish(
         this.d,
         run,
         "find_emails",
         promoted,
         counts,
-        `Find emails: ${need} needed an address · Name to Email ${fromFinder} · Waterfall ${fromWaterfall} · *${promoted}* now ready to verify · ${unresolved} banked with no address (not discarded).`,
+        `Find emails: ${need} needed an address · DiscoLike not wired · Name to Email ${recipe.email_finding.name_to_email ? fromFinder : "paused"} · Waterfall ${fromWaterfall} · *${promoted}* now ready to verify · ${unresolved} banked with no address (not discarded).`,
       );
     });
   }
