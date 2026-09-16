@@ -76,7 +76,7 @@ export const PRICES: Readonly<Record<Vendor, VendorPrice>> = {
     creditsPerRow: 1,
     source: "per-result placeholder; Phase 3 hard-ICP lanes only",
   },
-  getleads: { kind: "included", unitCents: 0, creditsPerRow: 1, source: "unlimited plan" },
+  getleads: { kind: "included", unitCents: 0, creditsPerRow: 1, source: "unlimited plan (D38: count and export freely; no spend card)" },
   smartlead: { kind: "included", unitCents: 0, creditsPerRow: 1, source: "plan email finder allotment" },
 };
 

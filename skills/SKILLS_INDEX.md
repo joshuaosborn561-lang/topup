@@ -2,7 +2,7 @@
 
 These are the skills Josh has built for SalesGlider Growth. Each folder holds a `SKILL.md` and sometimes a `scripts/` folder. They are the institutional knowledge of the business, written from measured results. Read the skill for a stage before writing code for that stage. Where a skill and the brief disagree, the brief wins and you flag it in the PR.
 
-No skills are marked stale as of D37. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; the six pending taps are yes. Positives expire 90 days after the reply and replace the customer-list upload (D37).
+No skills are marked stale as of D38. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; the six pending taps are yes. Positives expire 90 days after the reply and replace the customer-list upload (D37). Default top-up infers ICP from the existing list plus receipt tags (D38).
 
 ## Rulebook
 
@@ -10,7 +10,7 @@ No skills are marked stale as of D37. The Sept 10 notes on `parlay-lead-pulls` a
 
 ## After a first pull (so leadtopup can repeat it)
 
-* `first-pull-receipt` ... After Claude builds the first list, write one row to `topup.pull_receipts` (campaignintelligence). Named sources only (`other` is not a value). Lane vs build. Recount before proposing when the latest writer is `claude_backfill` or `claude_backfill_build`. No lead rows. D31–D33.
+* `first-pull-receipt` ... After Claude builds the first list, write one row to `topup.pull_receipts` (campaignintelligence). Named sources only (`other` is not a value). Lane vs build. Recount before proposing when the latest writer is `claude_backfill` or `claude_backfill_build`. No lead rows. D31–D33. leadtopup infers the next pull from this receipt plus the list (D38).
 
 ## Lead pulls per client (these become recipes)
 

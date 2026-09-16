@@ -35,6 +35,8 @@ export interface ExportStatus {
 
 export interface Getleads {
   count(filters: GetleadsFilters): Promise<CountResult>;
+  /** D38 backfill / partition: any count_contacts filter set. Still $0. */
+  countRaw(filters: Record<string, unknown>): Promise<CountResult>;
   startExport(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }): Promise<ExportStarted>;
   checkExport(exportId: string): Promise<ExportStatus>;
 }
@@ -93,9 +95,26 @@ export class GetleadsClient implements Getleads {
   }
 
   async count(filters: GetleadsFilters): Promise<CountResult> {
-    this.ready();
     assertGetleadsFilters(filters);
-    const res = await this.mcp.call<Record<string, unknown>>("count_contacts", outboundFilters(filters));
+    return this.countRaw(outboundFilters(filters));
+  }
+
+  async countRaw(filters: Record<string, unknown>): Promise<CountResult> {
+    this.ready();
+    const f = filters;
+    const bands = Array.isArray(f.company_size) && f.company_size.length > 0;
+    const numeric =
+      f.employee_profiles_on_linkedin != null ||
+      f.employee_count_min != null ||
+      f.employee_count_max != null ||
+      f.employees_min != null ||
+      f.employees_max != null;
+    if (bands && numeric) {
+      throw new Error(
+        "getleads filter cannot carry company_size band labels and a numeric employee bound together (silent band overlap)",
+      );
+    }
+    const res = await this.mcp.call<Record<string, unknown>>("count_contacts", f);
     const total = Number(res.total_matching ?? res.total ?? res.count ?? NaN);
     if (!Number.isFinite(total)) throw new Error(`count_contacts returned no total_matching: ${JSON.stringify(Object.keys(res))}`);
     const exportable = res.exportable_rows === undefined || res.exportable_rows === null ? null : Number(res.exportable_rows);

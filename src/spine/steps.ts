@@ -39,7 +39,7 @@ export const SPINE: readonly SpineStep[] = [
     also: null,
     gate: "every cell has a campaign or Josh knows one must be built. Josh signs off on the segment before anything is pulled.",
     skill: "the client's lead pull skill (parlay-lead-pulls, culture-fits-lead-pulls, techevo-lead-pulls, goliath-lead-pulls, salesglider-lead-pulls) plus the latest client call in Fireflies",
-    // The recipe is the signed-off segment; `trigger` checks a recipe exists for the lane before a run opens.
+    // File recipe or D38 infer-from-list + receipt tags; `trigger` checks campaigns before a pull.
     pipeline: ["trigger"],
     card: "the segment with counts and ten sample rows",
   },

@@ -19,6 +19,7 @@ describe("health — D34 required tables", () => {
       "topup.runs",
       "topup.spend_ledger",
       "topup.pull_receipts",
+      "topup.company_size_cache",
     ]) {
       assert.ok(REQUIRED_TOPUP_TABLES.includes(t as (typeof REQUIRED_TOPUP_TABLES)[number]), t);
     }

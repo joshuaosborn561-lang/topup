@@ -97,3 +97,5 @@ insert into topup.pull_receipts (
 ```
 
 Then tell Josh: client, lane, granularity, build_label, source, campaign ids, tam / found / imported. No rows.
+
+leadtopup infers the next pull from this receipt plus the titles already on the list (D38). It does not invent a find-method from `public.leads`. Missing headcount bands are backfilled (getleads first, then other free sources, then ≤ $5 paid for the whole leftover set).

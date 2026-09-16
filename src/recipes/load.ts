@@ -38,20 +38,23 @@ export async function loadRecipeFiles(root: string): Promise<Recipe[]> {
   return out;
 }
 
+/** Mirror one validated recipe into topup.lane_recipes. */
+export async function persistRecipe(repo: Repo, r: Recipe): Promise<void> {
+  const version = Number(r.recipe_id.split(".v").pop());
+  await repo.upsertRecipe({
+    recipe_id: r.recipe_id,
+    client_tag: r.client_tag,
+    lane: r.lane,
+    version,
+    body: r,
+    owner_approved_at: r.owner_approved_at,
+  });
+}
+
 /** Mirror validated recipe files into topup.lane_recipes on deploy. */
 export async function syncRecipes(repo: Repo, root: string): Promise<number> {
   const recipes = await loadRecipeFiles(root);
-  for (const r of recipes) {
-    const version = Number(r.recipe_id.split(".v").pop());
-    await repo.upsertRecipe({
-      recipe_id: r.recipe_id,
-      client_tag: r.client_tag,
-      lane: r.lane,
-      version,
-      body: r,
-      owner_approved_at: r.owner_approved_at,
-    });
-  }
+  for (const r of recipes) await persistRecipe(repo, r);
   log.info("recipes synced", { count: recipes.length, ids: recipes.map((r) => r.recipe_id) });
   return recipes.length;
 }

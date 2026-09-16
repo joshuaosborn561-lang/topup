@@ -36,7 +36,8 @@ Read `CANON.md` first. It is one page and it is the current truth.
   line. Claude sessions hand queue tables to the service with
   `register_queue_table` and leave notes with `lane_note`.
 - **Steps 1 → 13 end to end for a getleads lane** (Parlay `it_dm`): step 1
-  reuses the saved ICP, then size,
+  reuses a file recipe, or infers ICP from the list already in the campaign
+  plus pull-receipt tags (D38), then size,
   pull (`GetleadsPull` behind one adapter interface), find emails (skipped
   for getleads), ingest through LeadPipe, suppress (one SQL pass, response
   based; campaignintelligence positives expire 90 days after the reply;
@@ -91,7 +92,7 @@ src/
   mcp/                /mcp server with per-role tool sets
   clients/            LeadPipe, verifier, getleads and Smartlead (allow-listed) clients — called, never forked
   stages/common.ts    attempt / finish / park / poll — the discipline every stage shares
-  stages/trigger/     step 1: reuse the saved ICP; halt if a cell has no campaign
+  stages/trigger/     step 1: saved ICP or infer-from-list + tags; backfill blank company_size
   stages/size/        step 2: counts, partition check, plan
   stages/pull/        step 3: PullAdapter interface, GetleadsPull
   stages/ingest/      step 4: LeadPipe ingest_csv, claim, title audit
@@ -124,6 +125,8 @@ scripts/seed-cities.ts  load topup.ref_cities once (npm run seed:cities)
 
 ## Adding a recipe
 
-Create `recipes/<client_tag>/<lane>.json` matching `src/recipes/schema.ts`.
-It is validated on boot (a bad recipe fails the deploy) and mirrored to
-`topup.lane_recipes`. Recipes change in git only.
+A handwritten `recipes/<client_tag>/<lane>.json` is an override. The default
+(D38) is: infer titles from the leads already in the campaign, infer the
+find-method from `topup.pull_receipts` tags, backfill missing headcount
+bands, and run that. File recipes are validated on boot and mirrored to
+`topup.lane_recipes`.

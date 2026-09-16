@@ -57,6 +57,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
 | D36 | Live |
 | D37 | Live |
+| D38 | Live |
 
 ---
 
@@ -1088,3 +1089,41 @@ positive send inside the window.
 
 **Guard.** `src/guards/d37_positive_expiry.test.ts`.
 `src/stages/pure.test.ts` — dated `positiveReplySql`. Ask Josh.
+
+## D38 — Infer the ICP from the list; backfill missing bands
+
+**Decision.** Josh (2026-09-16): handwritten recipes and a step-1 sign-off
+card are too heavy. Infer titles from the leads already in the campaign,
+infer the find-method from pull-receipt tags (`company_source`,
+`domain_source`, `person_source`, `email_source`, `icp_kind`), write
+`client.lane.v0` with `owner_approvals: ["inferred_from_list"]`, and run
+that. A file recipe still wins. Campaign ids come from the receipt; the
+service never invents them.
+
+If `company_size` is blank on the list, backfill it. Order: domain cache
+and other already-sized leads (free), getleads `count_contacts` per
+domain × band (unlimited, $0 — Josh is unlimited on getleads), Wikidata
+employees and Clearbit suggest (free), then one paid leftover pass
+whose worst case for the **entire backfill** is $5, not per lead. Stop
+when the next paid call would break that cap. Never invent a band.
+Never call getleads tools that return contacts inline.
+
+D28's "the service never invents an ICP" is superseded for a lane that
+already has leads and a receipt. D31's "do not invent a source from
+`public.leads`" stays for the find-method; titles may come from the
+list. Physical / signal sources still park. getleads spend is $0 and
+does not ask.
+
+**Why.** The list plus the tags is the ICP. Asking Josh to retype it
+into JSON was the thing blocking first use.
+
+**Tradeoff.** Inferred recipes use empty `segments` and one routing
+rule per campaign, so they do not do the eight-cell Parlay split.
+`recipes/parlay/it_dm.json` stays the override for that lane. Wikidata
+and Clearbit suggest only hit notable companies; leftovers past the
+$5 paid cap stay unsized and QA holds them like any other empty
+merge field.
+
+**Guard.** `src/guards/d38_infer_from_list.test.ts`.
+`src/recipes/infer.test.ts`. `src/recipes/backfillSize.test.ts`.
+Ask Josh.

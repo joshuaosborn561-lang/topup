@@ -1,22 +1,25 @@
+import type { Getleads } from "../../clients/getleads.js";
 import type { RunRow } from "../../domain/runs.js";
+import { backfillCompanySizes } from "../../recipes/backfillSize.js";
+import { normalizeBand, type Band } from "../../recipes/bands.js";
 import { campaignGroups, icpSummary, recipeCampaignIds, targetCampaignIds, targetCountPatch } from "../../recipes/campaigns.js";
+import { isInferredRecipe } from "../../recipes/infer.js";
 import type { Recipe } from "../../recipes/schema.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
 import { cellLabel, uncoveredCells } from "./cells.js";
 
 /**
- * Step 1 — Nail the ICP (per campaign, D30).
+ * Step 1 — Nail the ICP (per campaign, D30 / D38).
  *
- * Josh signs off once; the recipe is that sign-off, and each routing
- * rule is a campaign's ICP / persona / band. A later run (the watch or
- * `/topup`) does not ask again: it checks the saved recipe still covers
- * every cell, then walks on for the campaigns this run named. Missing
- * cells or campaigns that are not this client's in the mirror are the
- * gate — those need Josh, not a guess.
+ * A handwritten recipe is the sign-off. When there is none, the service
+ * infers titles from the list already in the campaign and the find-method
+ * from receipt tags. Missing company_size bands are backfilled via
+ * getleads counts (unlimited, no contact rows). Missing cells or
+ * campaigns that are not this client's still halt.
  */
 export class TriggerStage {
-  constructor(private readonly d: StageDeps) {}
+  constructor(private readonly d: StageDeps & { getleads?: Getleads }) {}
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
     return attempt(this.d, run, "trigger", "open", async () => {
@@ -41,19 +44,60 @@ export class TriggerStage {
           { cells: segmentCount(recipe), campaigns: allIds.length, foreign: wrong.length },
         );
       }
+
+      const inferred = isInferredRecipe(recipe);
+      let backfilled = 0;
+      let unknown = 0;
+      let paidCents = 0;
+      if (this.d.getleads) {
+        const progress = await backfillCompanySizes(
+          {
+            listUnsizedDomains: (ids) => this.d.repo.listUnsizedDomains(ids),
+            companyNameForDomain: (ids, domain) => this.d.repo.companyNameForDomain(ids, domain),
+            cachedBand: async (domain) => normalizeBand((await this.d.repo.cachedCompanySize(domain)) ?? "") as Band | null,
+            siblingBand: async (domain) => normalizeBand((await this.d.repo.siblingCompanySize(domain)) ?? "") as Band | null,
+            applySiblingSizes: (ids) => this.d.repo.applySiblingSizes(ids),
+            rememberBand: (domain, band, source) => this.d.repo.rememberCompanySize(domain, band, source),
+            applyBand: (ids, domain, band) => this.d.repo.applyCompanySize(ids, domain, band),
+            count: (filters) => this.d.getleads!.countRaw(filters),
+          },
+          campaignIds,
+        );
+        backfilled = progress.leads_updated;
+        unknown = progress.unknown;
+        paidCents = progress.paid_cents;
+      }
+
       const cells = segmentCount(recipe);
       const groups = campaignGroups(recipe, campaignIds);
       const scope =
         campaignIds.length === allIds.length
           ? `${campaignIds.length} campaign(s)`
           : `${campaignIds.length} of ${allIds.length} campaign(s): ${campaignIds.map((id) => `#${id}`).join(", ")}`;
+      const fill =
+        backfilled || unknown
+          ? ` · backfilled company_size on ${backfilled} lead(s)${unknown ? `, ${unknown} domain(s) still unknown` : ""}${paidCents ? ` · paid $${(paidCents / 100).toFixed(2)} of $5.00` : ""}`
+          : "";
+      const line = inferred
+        ? `Step 1: inferred ICP from the list already in the campaign + receipt tags for ${recipe.client_tag}/${recipe.lane} (\`${recipe.recipe_id}\`) · ${scope} (${icpSummary(groups)})${fill}. Not asking Josh for a handwritten recipe.`
+        : `Step 1: using saved campaign ICPs for ${recipe.client_tag}/${recipe.lane} (\`${recipe.recipe_id}\`) · ${cells} cells → ${scope} (${icpSummary(groups)})${fill}. Not asking Josh again.`;
       return finish(
         this.d,
         run,
         "trigger",
         campaignIds.length,
-        { icp_saved: 1, cells, campaigns: campaignIds.length, recipe_campaigns: allIds.length, ...targetCountPatch(campaignIds) },
-        `Step 1: using saved campaign ICPs for ${recipe.client_tag}/${recipe.lane} (\`${recipe.recipe_id}\`) · ${cells} cells → ${scope} (${icpSummary(groups)}). Not asking Josh again.`,
+        {
+          icp_saved: inferred ? 0 : 1,
+          icp_inferred: inferred ? 1 : 0,
+          cells,
+          campaigns: campaignIds.length,
+          recipe_campaigns: allIds.length,
+          sizes_backfilled: backfilled,
+          sizes_unknown: unknown,
+          sizes_paid_cents: paidCents,
+          ...targetCountPatch(campaignIds),
+        },
+        line,
       );
     });
   }
@@ -66,7 +110,7 @@ export class TriggerStage {
       `select smartlead_campaign_id::text as id, smartlead_client_id::text as client from public.campaigns where smartlead_campaign_id = any($1::bigint[])`,
       [ids],
     );
-    const out: Array<{ id: number; reason: string }> = [];
+    const out: Array<{ id: number; reason: string }>> = [];
     for (const id of ids) {
       const row = rows.find((r) => Number(r.id) === id);
       if (!row) out.push({ id, reason: "not in the mirror" });

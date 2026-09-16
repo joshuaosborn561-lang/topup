@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D37** (2026-09-16). One page of current truth. When a new
+Canon as of **D38** (2026-09-16). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -27,7 +27,7 @@ lane recipe says (D9, D15).
   the count assert, merge field checks, receipts, ledger, digest, free
   retries and resumes, splits under the spend rules, registering a cloned
   campaign, keeping missing-piece groups current.
-- **Judgement (Josh, on a card):** which segment / whether to widen; whether
+- **Judgement (Josh, on a card):** whether to widen; whether
   a low campaign is worth topping up; spend above cap; whether a pilot's
   yield justifies scaling; copy for a new cell; ICP changes; a client's
   expanded titles; flipping a campaign active.
@@ -51,7 +51,8 @@ Step 5 applies campaignintelligence positives as the global list
 customer list does not halt (D37). A step's gate
 halts the run, records
 why, posts one card, and waits; silence never means yes. The receipt is the
-last gate. `trigger` is step 1 (the recipe is the signed-off segment),
+last gate. `trigger` is step 1 (a file recipe, or the list + receipt tags
+as the ICP — D38),
 `ingest` 4, `stage` 10.
 
 Gates live today (D25, D26). **Step 2**: the band filter must bind (bands +
@@ -134,12 +135,19 @@ done once. Peterson C1 (`c1_general_contractors`) is off that list —
 counts were measured; it is the first top-up the service can run once
 Maps/PermitStack are wired (physical still parks until then). Campaign
 ids must already exist in `public.campaigns`. Mixed ICPs are two lane
-rows. A lane with no receipt and no recipe cannot be invented.
+rows. A lane with no receipt cannot invent a find-method. A lane that
+already has leads and receipt tags does not need a handwritten recipe
+(D38). Missing `company_size` is backfilled before size/pull: other
+sized leads and the domain cache first, then getleads counts
+(unlimited, $0), then Wikidata / Clearbit suggest (free), then one
+paid leftover pass whose worst case for the **whole backfill** is $5.
 
 ## What this build runs (D26, D27, D28)
 
 The **watch** is the normal start. Every six hours (and once on boot) it
-reads the Smartlead mirror for every recipe. A campaign that is ACTIVE and
+reads the Smartlead mirror for every file recipe and every inferred
+getleads lane whose campaigns a file recipe does not already cover (D38).
+A campaign that is ACTIVE and
 empty or under the runway floor, and still **working** (one interested reply
 per 2,000 sends, or any variant with 1,000 sends clearing that rate; D11,
 D35 item 12), opens a run by itself — no `/topup`, no card. A
@@ -149,16 +157,18 @@ Leave it. Leave it stays quiet until the rate recovers or Josh flips
 
 A run is locked in Postgres so there is only ever one per lane (D12). It
 walks steps **1 → 13** in the skill's order, every time, whether the watch
-or `/topup` started it (D28). Step 1 reuses the saved recipe when the ICP
-is already signed off — it does not ask Josh again. Size, pull, ingest,
+or `/topup` started it (D28). Step 1 uses a file recipe when one exists;
+otherwise it infers titles from the list and the find-method from receipt
+tags (D38) and does not ask Josh for a handwritten JSON. Size, pull, ingest,
 suppress, verify, normalize, QA, route, stage, import and pre-launch run on
 the new rows. Step 13 posts the flip reminder and never sets ACTIVE.
 
 The stages:
 
-1. **trigger** — the saved recipe is the signed-off ICP. Every cell still
-   needs a campaign of this client; missing cells or foreign campaigns halt.
-   No card when the saved ICP is complete.
+1. **trigger** — a file recipe is the signed-off ICP. With none, infer from
+   the list + receipt tags (D38). Every cell still needs a campaign of this
+   client; missing cells or foreign campaigns halt. Blank `company_size`
+   on existing leads is backfilled here. No card when the ICP is complete.
 2. **size** — classify each **campaign's** ICP (`routing[].icp.kind` +
    `persona`, D30). LinkedIn-native: getleads `count_contacts` plus the
    partition check; AI Ark People Preview is the tam-sizing default primary
@@ -320,7 +330,7 @@ changes:
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |
 | Lane ledger | `src/ledger/` (`lane.ts` state, `health.ts` campaign lines, `render.ts` `/where` + digest text) |
 | Servers | `docs/servers.md` — every vendor server from its code (D22) |
-| Recipes | `recipes/<client>/<lane>.json`, validated at boot, mirrored to `topup.lane_recipes` |
+| Recipes | `recipes/<client>/<lane>.json` (override) or inferred `client.lane.v0` from the list + receipt tags (D38), mirrored to `topup.lane_recipes` |
 | First-pull receipts | `topup.pull_receipts` — lane + build rows (D32); named sources only, no `other` (D33); Claude and step 11.5 insert, never update; `skills/first-pull-receipt` |
 | Rails | `src/spend/` |
 | Runbook | `src/stages/verify/runbook.ts` (pure) |
