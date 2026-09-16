@@ -4,9 +4,8 @@
  * response (positive / DNC / wrong person — those stay blocked forever
  * in the reason CASE), they are fair game.
  *
- * "Never put someone in two live campaigns of the same client at once"
- * is pending Josh's tap. The SQL lives here; the recipe flag
- * `exclude_other_live_campaigns` defaults false until he taps.
+ * Never put someone in two live campaigns of the same client at once
+ * (D36 item 2 addition). `exclude_other_live_campaigns` defaults true.
  */
 
 export const DEFAULT_RECYCLE_DAYS = 90;

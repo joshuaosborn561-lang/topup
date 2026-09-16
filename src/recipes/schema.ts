@@ -130,10 +130,10 @@ const suppression = z
     /** Days since last send by this client. Default 90 (D35 item 2). */
     recycle_after_days: z.number().int().min(1).nullable().optional().default(90),
     /**
-     * Pending item 2 addition. When true, also exclude anyone already in
-     * another live campaign of this client. Default false until Josh taps.
+     * Item 2 addition (D36): never put someone in two live campaigns of
+     * the same client at once. Default on.
      */
-    exclude_other_live_campaigns: z.boolean().default(false),
+    exclude_other_live_campaigns: z.boolean().default(true),
   })
   .strict();
 
@@ -146,6 +146,8 @@ const emailFinding = z
     fullenrich: z.boolean().default(false),
     batch_rows: z.number().int().min(1).max(500).default(200),
     steps: z.array(z.string()).default([]),
+    /** D36 item 71: paused. DiscoLike find emails is the cheap first rung. */
+    name_to_email: z.boolean().default(false),
   })
   .strict()
   .refine((e) => !e.steps.some((s) => BANNED_ACTIONS.includes(s.toLowerCase())), {
@@ -178,6 +180,11 @@ const verify = z
   .object({
     seg_split: z.literal(true),
     reject_rate_norm: z.number().min(0).max(1).nullable().default(null),
+    /**
+     * D36 item 58 (Insight). Gateway catch-alls are dropped, not routed
+     * to SEG campaigns. Default off — item 6 still segments everyone else.
+     */
+    drop_gateway_catchalls: z.boolean().default(false),
   })
   .strict();
 

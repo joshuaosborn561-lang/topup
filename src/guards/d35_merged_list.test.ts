@@ -5,17 +5,16 @@ import { parseRecipe } from "../recipes/schema.js";
 import { BANNED_VENDORS } from "../spend/prices.js";
 import { DEFAULT_RECYCLE_DAYS, recycleDays } from "../stages/suppress/recycle.js";
 
-/** D35 — Josh's merged list. Pending taps stay questions. */
+/** D35 — Josh's merged list. Live-campaign default and the six taps moved to D36. */
 
 const root = new URL("../../", import.meta.url);
 
 describe("D35 — merged list", () => {
-  it("recycle defaults to 90 days; live-campaign exclude is off until Josh taps", async () => {
+  it("recycle defaults to 90 days", async () => {
     assert.equal(DEFAULT_RECYCLE_DAYS, 90);
     assert.equal(recycleDays(undefined), 90);
     const r = parseRecipe(JSON.parse(await readFile(new URL("recipes/parlay/it_dm.json", root), "utf8")));
     assert.equal(r.suppression.recycle_after_days, 90);
-    assert.equal(r.suppression.exclude_other_live_campaigns, false);
   });
 
   it("Hunter is banned; variant bar is 1,000 sends; Parlay omits email_status", async () => {
@@ -38,12 +37,13 @@ describe("D35 — merged list", () => {
     assert.match(sql, /'hold'/);
   });
 
-  it("the skill lists every pending tap and does not treat them as decided", async () => {
+  it("the skill still lists the six items D36 later decided", async () => {
     const skill = await readFile(new URL("skills/merged-list/SKILL.md", root), "utf8");
-    for (const needle of ["2's addition", "26", "27", "53", "58", "71"]) {
-      assert.match(skill, new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    }
-    assert.match(skill, /Pending Josh's tap/);
-    assert.match(skill, /Do not encode those as decided/);
+    assert.match(skill, /two live campaigns/);
+    assert.match(skill, /New York and New Jersey/);
+    assert.match(skill, /Florida IT DM is statewide/);
+    assert.match(skill, /3,958 operators/);
+    assert.match(skill, /Gateway catch alls dropped/);
+    assert.match(skill, /Name to Email is paused/);
   });
 });

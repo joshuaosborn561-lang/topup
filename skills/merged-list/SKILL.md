@@ -1,16 +1,16 @@
 ---
 name: merged-list
-description: The full merged list-build rulebook (D35). Use before any pull, top-up, recipe, or suppression change. Pending taps stay questions — do not treat them as decided.
+description: The full merged list-build rulebook (D35, D36). Use before any pull, top-up, recipe, or suppression change. The six taps Josh left pending are yes.
 ---
 
 # Merged list
 
-Josh's rulebook, 2026-09-14. Canon as of D35. Pending taps: **2's addition, 26, 27, 53, 58, 71**.
+Josh's rulebook, 2026-09-14. Canon as of D36. The six taps he left pending are yes (D36).
 
 ## Every client
 
 1. Only block people who replied positively, said don't contact, or said wrong person. Forever.
-2. Don't load anyone the client sent to in the last 90 days. Past 90 days with no response from rule 1, they're fair game. *(Addition pending: never put someone in two live campaigns of the same client at once.)*
+2. Don't load anyone the client sent to in the last 90 days. Past 90 days with no response from rule 1, they're fair game. Never put someone in two live campaigns of the same client at once.
 3. Two clients can email the same person. The same offer from two clients can't.
 4. Don't load until the client's customer list is blocked.
 5. Verify everything before Smartlead, whatever the vendor says. Verified means MillionVerifier good, or catch all plus No2Bounce deliverable.
@@ -43,8 +43,8 @@ Josh's rulebook, 2026-09-14. Canon as of D35. Pending taps: **2's addition, 26, 
 
 ## TechEvo
 
-26. New England IT DM includes New York and New Jersey. *Pending confirm.*
-27. Florida IT DM is statewide. SFL owners lane still metro. *Pending.*
+26. New England IT DM includes New York and New Jersey.
+27. Florida IT DM is statewide. SFL owners lane still metro.
 28. Check region on the contact's city after export; getleads' state filter is loose.
 29. IT titles first. COO only at 11 to 50, one per company.
 30. Govt sub lane is CMMC defense contractors, both regions, owners allowed.
@@ -82,7 +82,7 @@ Josh's rulebook, 2026-09-14. Canon as of D35. Pending taps: **2's addition, 26, 
 50. Own tag, own tables.
 51. 180 miles of Dallas. Four lanes: nonprofit named, nonprofit role inbox, vacant land plus permit, vacant land owners with role inboxes. General businesses out.
 52. Role inboxes allowed as their own lane here.
-53. Improved commercial owners means 2 plus parcels. All 3,958 operators in scope. *Pending.*
+53. Improved commercial owners means 2 plus parcels. All 3,958 operators in scope.
 54. getleads is wrong for this persona. Don't use it.
 55. Shell LLCs unmasked by mailing address, never name.
 
@@ -90,7 +90,7 @@ Josh's rulebook, 2026-09-14. Canon as of D35. Pending taps: **2's addition, 26, 
 
 56. Director and above at US companies 201 to 2,000 with IT departments of 15 or fewer. No SLED. Managers only under 500. Three per company.
 57. Modeled on Embark, Awardco, DocGo, Shane Co. Growth rate is a score, never a filter.
-58. Gateway catch alls dropped, not segmented. *Pending.*
+58. Gateway catch alls dropped, not segmented.
 59. OEM reps pulled by employer and role.
 
 ## Vasco
@@ -112,7 +112,7 @@ Josh's rulebook, 2026-09-14. Canon as of D35. Pending taps: **2's addition, 26, 
 
 69. Tell getleads company size as exact band labels. Check industry names against its list.
 70. Order: getleads, then AI Ark for people, then LeadMagic, then FullEnrich last.
-71. Name to Email is paused; DiscoLike find emails is the cheap first rung. *Pending ruling.*
+71. Name to Email is paused; DiscoLike find emails is the cheap first rung.
 72. The Smartlead email lookup in the waterfall is a real tier. 89% on Peterson GCs.
 73. Audit titles after every AI Ark pull.
 74. LeadMagic: employee finder, filter titles in SQL, then email finder. Prospeo for names, 25x cheaper.
@@ -121,4 +121,4 @@ Josh's rulebook, 2026-09-14. Canon as of D35. Pending taps: **2's addition, 26, 
 77. Vacancy signal: backfill job postings, target the peer who inherited, never the empty seat.
 78. Cold call lists: Maps first, firmographic verify by getleads domain lookup, exclude solo operator categories.
 
-Pending Josh's tap: 2's addition, 26, 27, 53, 58, 71. Do not encode those as decided.
+All six taps (2's addition, 26, 27, 53, 58, 71) are decided yes as of D36.

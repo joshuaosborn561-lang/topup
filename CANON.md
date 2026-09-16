@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D35** (2026-09-14). One page of current truth. When a new
+Canon as of **D36** (2026-09-15). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -59,8 +59,8 @@ other bands = all, within 1%) and the projected net new must clear
 the run. **Step 4**: rows read = rows exported; titles audited against the
 recipe as whole phrases, off-title flagged for step 8. **Step 5**: report raw, removed by reason, net new; prior contact is a send
 by this client in the last 90 days (D35 item 2; older recycles unless
-positive / DNC / wrong person). Never putting someone in two live
-campaigns of the same client is pending Josh's tap. **Step 6**: sendable count
+positive / DNC / wrong person). Never put someone in two live
+campaigns of the same client (D36 item 2). **Step 6**: sendable count
 and reject rate are reported; nothing sendable stops the run; a reject rate
 far above the lane's norm (`verify.reject_rate_norm`, Josh's number; 2× and
 10 points over, on 50+ verdicts) stops it and says the source is bad. **Step
@@ -166,7 +166,8 @@ The stages:
    number. Campaigns that share kind + persona + source union their bands
    in one count; mixed kinds or personas in the same run park (split them).
    Net-new subtracts emails this client sent in the last 90 days (D35
-   item 2). Recycle window is `recycle_after_days` (default 90).
+   item 2) and anyone already in a live campaign of this client (D36).
+   Recycle window is `recycle_after_days` (default 90).
 3. **pull** — routed by the target campaigns' ICP and source
    (`leadgen-mcp-routing` step zero). getleads on a LinkedIn-native
    campaign runs `GetleadsPull` with that campaign's bands/titles (or the
@@ -180,22 +181,25 @@ The stages:
 5. **suppress** — one SQL pass, response based only: positive reply, DNC,
    wrong person, suppression list, bounced, client prior contact, same
    offer other client, client customer domain. Prior contact is a send
-   by this client in the last 90 days (D35 item 2). Rule-1 responses
-   (positive / DNC / wrong person) stay blocked forever. Live-campaign
-   exclusion is pending. An empty customer domain list halts with a
-   Cayden card until Josh sets `confirmed_empty` (D34, item 4).
-   Same-offer suppression halts, not skips, when the registry has no
-   `offer_key` for the lane.
+   by this client in the last 90 days (D35 item 2). Anyone already in
+   a live campaign of this client is also held (D36 item 2). Rule-1
+   responses (positive / DNC / wrong person) stay blocked forever. An
+   empty customer domain list halts with a Cayden card until Josh sets
+   `confirmed_empty` (D34, item 4). Same-offer suppression halts, not
+   skips, when the registry has no `offer_key` for the lane.
    Then **puzzle** (name / no domain → Domain Waterfall; domain / no name →
    Find Named Person; names banked in `public.name_bank`) and
-   **find_emails** (Name to Email `verify_person`, then Email Waterfall
+   **find_emails** (DiscoLike find emails is the first rung and is not a
+   leadtopup client yet; Name to Email is paused; Email Waterfall
    `source_table` + writeback). Both sit immediately before verify.
 6. **verify** — LeadPipe signed CSV (row count must match), Email Verifier
    Progression, 60s polls, the stall runbook; `mv_status, n2b_status,
    mail_class, verify_path, ev_status, lead_status` per row. Sendable is `mv
    ok` or `catch_all + N2B deliverable`; nothing else (D10). Every
    sendable domain must have a mail class; the service's MX lookup
-   fills gaps the verifier CSV left blank (D34).
+   fills gaps the verifier CSV left blank (D34). Insight
+   (`drop_gateway_catchalls`) drops SEG catch-alls instead of routing
+   them (D36 item 58).
 7. **normalize** — `first_name_n, company_n, location, local_sports_team`
    and flags from the four skill-script ports (D25); empty required merge
    field → hold. `topup.ref_cities` via `npm run seed:cities`, once.
@@ -279,8 +283,8 @@ Josh's rulebook of how lists are built. The full 78 items live in
 changes:
 
 - **Item 2.** Prior contact is a send by this client in the last 90 days.
-  Rule 1 (positive / DNC / wrong person) is forever. The addition "never
-  two live campaigns of the same client" is **pending**.
+  Rule 1 (positive / DNC / wrong person) is forever. Never put someone
+  in two live campaigns of the same client (D36).
 - **Item 4.** Empty customer list still halts (D34).
 - **Item 8.** Gift-lane QA hold includes insurance. Default stay in.
 - **Item 12.** Variant volume floor is 1,000 sends.
@@ -289,15 +293,17 @@ changes:
 - **Item 19.** Parlay bands are 11–50, 51–200, 201–500. The shipped
   recipe still pulls 11–50 and 51–200 and counts 201–500 as widening
   until those cells have campaigns.
+- **Item 26.** TechEvo NE IT DM includes New York and New Jersey.
+- **Item 27.** Florida IT DM is statewide. SFL owners lane stays metro.
+- **Item 53.** Earthworks improved commercial owners: 2+ parcels; all
+  3,958 operators in scope.
+- **Item 58.** Insight drops gateway catch-alls; it does not segment them.
 - **Item 65.** SalesGlider 11+; PE alone may use a 5+ numeric floor
   with no `company_size` bands.
+- **Item 71.** Name to Email is paused. DiscoLike find emails is the
+  cheap first rung (not a leadtopup client yet).
 - **Item 75.** Stall runbook unchanged (resume, split, quarantine;
   zero-result resume is a stall).
-
-**Pending Josh's tap — do not encode as decided:** item 2's live-campaign
-addition; 26 (TechEvo NE includes NY/NJ); 27 (Florida IT DM statewide);
-53 (Earthworks 3,958 operators); 58 (Insight gateway catch-alls dropped);
-71 (Name to Email paused / DiscoLike first rung).
 
 ## Where things are
 

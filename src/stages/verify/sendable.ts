@@ -67,3 +67,17 @@ export function verdictFromCsvRow(row: Record<string, string>, file: "sendable" 
 
   return { email, domain, mv_status, n2b_status, mail_class, mx_host, gateway_provider, sendable, verify_path, ev_status };
 }
+
+/** D36 item 58: Insight drops gateway catch-alls instead of routing them to SEG. */
+export function isGatewayCatchallDrop(opts: {
+  drop: boolean;
+  mailClass: string | null | undefined;
+  mvStatus: string | null | undefined;
+  verifyPath: string | null | undefined;
+}): boolean {
+  if (!opts.drop) return false;
+  if ((opts.mailClass ?? "").toLowerCase() !== "seg") return false;
+  const mv = (opts.mvStatus ?? "").toLowerCase();
+  const path = (opts.verifyPath ?? "").toLowerCase();
+  return mv.includes("catch") || path.includes("catch_all");
+}

@@ -263,7 +263,7 @@ describe("D35 — prior contact is a 90-day send window", () => {
     assert.doesNotMatch(sql, /leads_staging/);
   });
 
-  it("live-campaign exclusion is opt-in and pending", () => {
+  it("live-campaign exclusion SQL is used when the flag is on", () => {
     const sql = clientPriorContactSql("$10", true);
     assert.match(sql, /leads_staging/);
     assert.match(sql, /STOPPED/);
