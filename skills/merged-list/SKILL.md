@@ -1,18 +1,18 @@
 ---
 name: merged-list
-description: The full merged list-build rulebook (D35, D36). Use before any pull, top-up, recipe, or suppression change. The six taps Josh left pending are yes.
+description: The full merged list-build rulebook (D35–D37). Use before any pull, top-up, recipe, or suppression change. The six taps Josh left pending are yes. Positives expire 90 days after the reply.
 ---
 
 # Merged list
 
-Josh's rulebook, 2026-09-14. Canon as of D36. The six taps he left pending are yes (D36).
+Josh's rulebook, 2026-09-14. Canon as of D37. The six taps he left pending are yes (D36). Positives expire 90 days after the reply and are the global list for every client (D37).
 
 ## Every client
 
-1. Only block people who replied positively, said don't contact, or said wrong person. Forever.
-2. Don't load anyone the client sent to in the last 90 days. Past 90 days with no response from rule 1, they're fair game. Never put someone in two live campaigns of the same client at once.
+1. Only block people who replied positively, said don't contact, or said wrong person. DNC and wrong person forever. Positives expire 90 days after the reply (D37).
+2. Don't load anyone the client sent to in the last 90 days. Past 90 days with no DNC / wrong-person response, they're fair game. Never put someone in two live campaigns of the same client at once.
 3. Two clients can email the same person. The same offer from two clients can't.
-4. Don't load until the client's customer list is blocked.
+4. Customer domain lists are optional. The global list is campaignintelligence positives (D37). Do not halt a run for an empty customer list.
 5. Verify everything before Smartlead, whatever the vendor says. Verified means MillionVerifier good, or catch all plus No2Bounce deliverable.
 6. SEG split is always on. Gateway companies go to the SEG campaigns, not thrown out.
 7. If the lane has a gift: no team found means AirPods. If no gift, teams don't matter.

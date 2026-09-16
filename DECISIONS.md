@@ -53,9 +53,10 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D31 | Live; per-lane-only receipts superseded by D32 |
 | D32 | Live; `other` and trusted backfill TAM superseded by D33 |
 | D33 | Live |
-| D34 | Live; lifetime prior contact superseded by D35 item 2; empty-list halt, staging dedupe, mixed headcount, MX, health, QA regex stay |
-| D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36 |
+| D34 | Live; lifetime prior contact superseded by D35 item 2; empty-list halt superseded by D37; staging dedupe, mixed headcount, MX, health, QA regex stay |
+| D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
 | D36 | Live |
+| D37 | Live |
 
 ---
 
@@ -1065,3 +1066,25 @@ says so and uses the waterfall, it does not invent an adapter.
 `src/stages/verify/sendable.ts` `isGatewayCatchallDrop`.
 `src/recipes/schema.test.ts` — Parlay live-campaign on, Name to Email
 off, Insight drop off. Ask Josh.
+
+## D37 — Campaignintelligence positives are the global list; they expire
+
+**Decision.** Josh (2026-09-16): do not ask for a customer-domain upload.
+Who replied positively on campaignintelligence is the suppression list
+for every client, and that block expires 90 days after the reply. DNC
+and wrong person stay forever. An empty `topup.client_domain_blocklist`
+does not halt a run and does not wait on `confirmed_empty`. Optional
+customer domains still apply when rows exist.
+
+**Why.** The empty-list card was blocking first use. The reply tables
+already name the people nobody should email. A positive from June is
+fair game again in September; a DNC is not.
+
+**Tradeoff.** Thirty-eight dated positives older than 90 days recycle.
+Forty-seven currently-Interested leads with no `replied_at` stay
+blocked (sync gap) so we do not re-email someone still marked
+Interested. A later category change on a lead does not lift a dated
+positive send inside the window.
+
+**Guard.** `src/guards/d37_positive_expiry.test.ts`.
+`src/stages/pure.test.ts` — dated `positiveReplySql`. Ask Josh.

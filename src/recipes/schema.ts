@@ -124,6 +124,7 @@ const suppression = z
     client_prior_contacts: z.boolean().default(true),
     bounced_any_client: z.boolean().default(true),
     public_suppression: z.boolean().default(true),
+    /** Optional per-client domains. Empty does not halt (D37). */
     client_domain_blocklist: z.boolean().default(true),
     same_offer_any_client: z.literal(true),
     same_gift_any_client: z.boolean().default(false),

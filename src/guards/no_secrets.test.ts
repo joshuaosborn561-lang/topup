@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
  */
 
 const root = new URL("../../", import.meta.url);
-const SCAN_DIRS = ["src/", "recipes/", "supabase/", "scripts/", "skills/", "docs/"];
+const SCAN_DIRS = ["src/", "recipes/", "supabase/", "scripts/", "skills/", "docs/", "slack/"];
 const SCAN_FILES = [".env.example", "railway.toml", "Dockerfile", "package.json"];
 
 const PATTERNS: Array<[string, RegExp]> = [

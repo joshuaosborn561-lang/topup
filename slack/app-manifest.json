@@ -1,0 +1,79 @@
+{
+  "display_information": {
+    "name": "leadtopup",
+    "description": "Keeps SalesGlider client campaigns topped up. Slash commands and run cards.",
+    "background_color": "#1a1d21"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "leadtopup",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/where",
+        "url": "https://leadtopup-production.up.railway.app/slack/commands",
+        "description": "Where a client lane stands",
+        "usage_hint": "<client_tag> [lane]",
+        "should_escape": false
+      },
+      {
+        "command": "/topup",
+        "url": "https://leadtopup-production.up.railway.app/slack/commands",
+        "description": "Start a top-up run (override; the watch is the normal start)",
+        "usage_hint": "<client_tag> <lane>",
+        "should_escape": false
+      },
+      {
+        "command": "/holds",
+        "url": "https://leadtopup-production.up.railway.app/slack/commands",
+        "description": "Open holds waiting on Josh or Cayden",
+        "usage_hint": "[client_tag]",
+        "should_escape": false
+      },
+      {
+        "command": "/runs",
+        "url": "https://leadtopup-production.up.railway.app/slack/commands",
+        "description": "Recent top-up runs",
+        "usage_hint": "[client_tag]",
+        "should_escape": false
+      },
+      {
+        "command": "/working",
+        "url": "https://leadtopup-production.up.railway.app/slack/commands",
+        "description": "Force a campaign working on, off, or auto (Josh)",
+        "usage_hint": "<campaign_id> on|off|auto",
+        "should_escape": false
+      },
+      {
+        "command": "/suppress",
+        "url": "https://leadtopup-production.up.railway.app/slack/commands",
+        "description": "How step 5 suppression works",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.public",
+        "commands",
+        "channels:history",
+        "channels:read",
+        "groups:history",
+        "groups:read",
+        "im:write"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://leadtopup-production.up.railway.app/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

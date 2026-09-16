@@ -213,7 +213,7 @@ export interface ClientDomainListCard {
   lane: string;
 }
 
-/** Step 5: the client's customer domain list is missing. Cayden adds it (MCP add_client_domains); only Josh may say to go without. */
+/** Leftover Step 5 card (D34). D37 no longer posts this; keep the renderer so an old open card can still resolve. */
 export function clientDomainListCard(c: ClientDomainListCard): Block[] {
   return [
     section(`:card_index: *Customer domain list missing — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\``),

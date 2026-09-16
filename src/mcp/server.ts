@@ -136,7 +136,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "add_client_domains",
     {
       description:
-        "Step 5 of skills/lead-list-build: the client's own customer domain list, applied before anything loads. Adds domains (not addresses) to topup.client_domain_blocklist for the client; existing rows are kept. Then tap 'List added' on the step 5 card. Operator may call. Domains only — never a lead row.",
+        "Optional per-client customer domains (D37: not required to start a run). Adds domains (not addresses) to topup.client_domain_blocklist; existing rows are kept. The global list is campaignintelligence positives, 90 days after the reply. Operator may call. Domains only — never a lead row.",
       inputSchema: {
         client_tag: snake,
         domains: z.array(z.string().min(3).max(253)).min(1).max(5000),
@@ -161,7 +161,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
       const { rows } = await d.repo.raw().query<{ n: string }>(`select count(*)::text as n from topup.client_domain_blocklist where client_tag = $1`, [client_tag]);
       const lanes = await d.ledger.lanes(client_tag).catch(() => []);
       for (const l of lanes) {
-        await d.ledger.event({ client_tag, lane: l.lane, event: "note", line: `Customer domain list: ${rowCount ?? 0} domains added (${rows[0]?.n ?? 0} total). Tap 'List added' on the step 5 card if a run waits.`, actor: `mcp:${role}` }).catch(() => undefined);
+        await d.ledger.event({ client_tag, lane: l.lane, event: "note", line: `Customer domain list: ${rowCount ?? 0} domains added (${rows[0]?.n ?? 0} total). Optional; an empty list does not halt (D37).`, actor: `mcp:${role}` }).catch(() => undefined);
       }
       return text({ ok: true, client_tag, added: rowCount ?? 0, total: Number(rows[0]?.n ?? 0), rejected_count: rejected.length, rejected: rejected.slice(0, 10) });
     },

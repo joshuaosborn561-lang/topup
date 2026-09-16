@@ -47,7 +47,7 @@ export const CHOICE_ROLE: Readonly<Record<string, Role>> = {
   // pending_campaign: a new campaign is Josh's; continuing without the pending rows is his call too
   clone_campaign: "owner",
   continue_without: "owner",
-  // client_domain_list (step 5): Cayden adds the list; going without one is Josh's call
+  // leftover client_domain_list card (D34). D37 no longer posts it.
   list_added: "operator",
   no_list: "owner",
   // yield card and pilot gate (Phase 3, D21): nothing scales without Josh's second tap

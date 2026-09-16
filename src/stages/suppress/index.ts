@@ -5,8 +5,7 @@ import type { LaneLedger } from "../../ledger/lane.js";
 import type { Recipe } from "../../recipes/schema.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
-import { clientDomainListCard } from "../../slack/cards.js";
-import { clientPriorContactSql, recycleDays } from "./recycle.js";
+import { clientPriorContactSql, positiveReplySql, recycleDays } from "./recycle.js";
 
 /**
  * Step 5 — Suppress and dedupe (skill lead-list-build; skill global-suppression; D29).
@@ -14,22 +13,24 @@ import { clientPriorContactSql, recycleDays } from "./recycle.js";
  * One SQL pass, response based only. In priority order a row is removed for
  * the first reason that applies:
  *
- *   positive_reply        replied Interested / Meeting Request / Positive Reply to any client
- *   do_not_contact        category Do Not Contact, any client
- *   wrong_person          category Wrong Person, any client
+ *   positive_reply        replied Interested / Meeting Request / Positive Reply
+ *                         to any client, for 90 days after the reply (D37)
+ *   do_not_contact        category Do Not Contact, any client, forever
+ *   wrong_person          category Wrong Person, any client, forever
  *   suppression_list      on public.suppression
  *   bounced               a bounced send or a Sender Originated Bounce, any client
  *   client_prior_contact  this client sent to the address in the last
  *                         recycle_after_days (default 90), or the address
  *                         is already in a live campaign of this client
- *                         (D36 item 2). Rule-1 responses stay blocked
- *                         forever above this.
+ *                         (D36 item 2). DNC / wrong person stay blocked
+ *                         forever above this. Positives expire (D37).
  *   same_offer_other_client  received the same offer (registry offer_key) from another client
- *   client_domain         the client's own customer domain list
+ *   client_domain         the client's own customer domain list, when one exists
  *
  * Never against all of public.leads (every client). This client's leads are
  * in-campaign duplicates, not "someone else emailed them."
- * Empty customer list: halt with a Cayden card unless confirmed_empty (D34).
+ * Empty customer list does not halt (D37). Positives from
+ * campaignintelligence are the global list for every client.
  */
 export interface SuppressDeps extends StageDeps {
   ledger?: LaneLedger;
@@ -68,25 +69,6 @@ export class SuppressStage {
           "same_offer_any_client is on and topup.campaign_registry has no offer_key for this lane's campaigns. Seed the registry; do not skip.",
           { raw: 0, offer_keys: 0 },
         );
-      }
-      if (recipe.suppression.client_domain_blocklist && domainCount === 0) {
-        const confirmed = await this.d.repo.clientDomainListConfirmedEmpty(run.client_tag);
-        if (!confirmed) {
-          const open = await this.d.repo.openCardsForRun(run.run_id);
-          const card = open.find((c) => c.kind === "client_domain_list");
-          if (!card) {
-            await this.d.console.ask({
-              run,
-              kind: "client_domain_list",
-              audience: "operator",
-              payload: { step: "suppress", client_tag: run.client_tag },
-              text: `Step 5: no customer list on file for ${run.client_tag}`,
-              blocks: (cardId) => clientDomainListCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane }),
-            });
-            await this.d.ledger?.block(run.client_tag, run.lane, "operator", `no customer list on file for ${run.client_tag}; Cayden uploads or Josh confirms none`, run.run_id);
-          }
-          return { kind: "waiting", on: "operator", why: `no customer list on file for ${run.client_tag}` };
-        }
       }
       const { rows: rawRows } = await db.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status = 'ingested'`, [run.run_id]);
       const raw = Number(rawRows[0]?.n ?? 0);
@@ -145,7 +127,7 @@ export class SuppressStage {
       if (!t.leads) skipped.push("response-based (no public.leads mirror here)");
       if (!t.suppression) skipped.push("public.suppression (table missing)");
       if (!t.leads || !t.sends) skipped.push("client prior contact (no public.leads/sends mirror)");
-      if (recipe.suppression.client_domain_blocklist && domainCount === 0) skipped.push("client customer domain list (confirmed empty)");
+      if (recipe.suppression.client_domain_blocklist && domainCount === 0) skipped.push("client customer domain list (none on file; not required)");
       const reasons = Object.entries(removed.byReason)
         .filter(([, n]) => n > 0)
         .map(([k, n]) => `${k} ${n}`)
@@ -153,7 +135,8 @@ export class SuppressStage {
       const line =
         `Suppress done: raw ${raw} · removed ${suppressed}${reasons ? ` (${reasons})` : ""} · ${removed.deduped} duplicates within the pull · ${removed.needs_email} with no address · *net new ${removed.net_new}* — the number from here on.` +
         ` · prior contact is a send by this client in the last ${days} days` +
-        (recipe.suppression.exclude_other_live_campaigns ? ` (plus anyone already in a live campaign).` : ".") +
+        (recipe.suppression.exclude_other_live_campaigns ? ` (plus anyone already in a live campaign)` : "") +
+        `; positives expire ${days} days after the reply; DNC and wrong person stay forever.` +
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);
     });
@@ -164,7 +147,7 @@ export class SuppressStage {
     const whens: string[] = [];
     const inLeads = (cond: string) => `exists (select 1 from public.leads l where lower(l.email) = r.e and ${cond})`;
     if (t.leads) {
-      whens.push(`when ${inLeads("l.category_id = any($2::int[])")} then 'positive_reply'`);
+      whens.push(`when ${positiveReplySql("$10")} then 'positive_reply'`);
       whens.push(`when ${inLeads("l.category_id = $3")} then 'do_not_contact'`);
       whens.push(`when ${inLeads("l.category_id = $4")} then 'wrong_person'`);
     }

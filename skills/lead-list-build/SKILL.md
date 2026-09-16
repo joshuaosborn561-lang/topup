@@ -39,7 +39,7 @@ Gate: row count equals the export count.
 
 ## Step 5. Suppress and dedupe (code)
 
-What, in one SQL pass, response based only: positive repliers, do not contact, wrong person from any client (forever); `public.suppression`; the client's own customer domain list (must be applied before anything loads — halt with a Cayden card if the list is empty and Josh has not set `confirmed_empty`); bounces from any client; anyone this client sent to in the last 90 days (older sends recycle unless they hit a forever response); anyone already in a live campaign of this client; anyone who already received the same offer from another client. Other clients emailing the same person with a different offer is allowed.
+What, in one SQL pass, response based only: positive repliers from any client (expire 90 days after the reply); do not contact and wrong person from any client (forever); `public.suppression`; the client's own customer domain list when one exists (an empty list does not halt); bounces from any client; anyone this client sent to in the last 90 days (older sends recycle unless they hit a forever response); anyone already in a live campaign of this client; anyone who already received the same offer from another client. Other clients emailing the same person with a different offer is allowed. The global list is campaignintelligence positives, applied to every client.
 Skill: `global-suppression`. Never dedupe against all of `public.leads`; that killed 87 percent of a good pull.
 Gate: report raw, removed by reason, net new. Net new is the number from here on.
 
