@@ -1103,10 +1103,12 @@ service never invents them.
 If `company_size` is blank on the list, backfill it. Order: domain cache
 and other already-sized leads (free), getleads `count_contacts` per
 domain × band (unlimited, $0 — Josh is unlimited on getleads), Wikidata
-employees and Clearbit suggest (free), then one paid leftover pass
-whose worst case for the **entire backfill** is $5, not per lead. Stop
-when the next paid call would break that cap. Never invent a band.
-Never call getleads tools that return contacts inline.
+employees (domain or company name), Clearbit suggest, and
+OpenCorporates (free), then one LeadMagic company-search leftover pass
+whose spend for the **entire backfill** is $5, not per lead. Misses
+are free; a returned company is 1 credit. Stop when the next paid call
+would break that cap. Never invent a band. Never call getleads tools
+that return contacts inline.
 
 D28's "the service never invents an ICP" is superseded for a lane that
 already has leads and a receipt. D31's "do not invent a source from
@@ -1121,8 +1123,8 @@ into JSON was the thing blocking first use.
 rule per campaign, so they do not do the eight-cell Parlay split.
 `recipes/parlay/it_dm.json` stays the override for that lane. Wikidata
 and Clearbit suggest only hit notable companies; leftovers past the
-$5 paid cap stay unsized and QA holds them like any other empty
-merge field.
+$5 LeadMagic cap stay unsized and QA holds them like any other empty
+merge field. Need `LEADMAGIC_API_KEY` for the paid leftover pass.
 
 **Guard.** `src/guards/d38_infer_from_list.test.ts`.
 `src/recipes/infer.test.ts`. `src/recipes/backfillSize.test.ts`.

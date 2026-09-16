@@ -86,6 +86,8 @@ const schema = z.object({
   EMAIL_WATERFALL_TOKEN: z.string().default(""),
   NAME_TO_EMAIL_MCP_URL: z.string().default(""),
   NAME_TO_EMAIL_TOKEN: z.string().default(""),
+  /** Paid leftover company-size backfill only (D38). Empty = skip the $5 pass. */
+  LEADMAGIC_API_KEY: z.string().default(""),
 
   /** Poll cadence and patience for the vendor jobs in steps 3, 4 and 11. */
   JOB_POLL_SECONDS: numberWithDefault(30),
@@ -155,5 +157,6 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     people_waterfall: Boolean(cfg.PEOPLE_WATERFALL_MCP_URL),
     email_waterfall: Boolean(cfg.EMAIL_WATERFALL_MCP_URL),
     name_to_email: Boolean(cfg.NAME_TO_EMAIL_MCP_URL),
+    leadmagic: Boolean(cfg.LEADMAGIC_API_KEY),
   };
 }

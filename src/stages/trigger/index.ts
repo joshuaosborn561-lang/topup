@@ -3,6 +3,7 @@ import type { RunRow } from "../../domain/runs.js";
 import { backfillCompanySizes } from "../../recipes/backfillSize.js";
 import { normalizeBand, type Band } from "../../recipes/bands.js";
 import { campaignGroups, icpSummary, recipeCampaignIds, targetCampaignIds, targetCountPatch } from "../../recipes/campaigns.js";
+import { leadmagicBackfillWorstCents, leadmagicCompanyBand, type PaidSizeHit } from "../../recipes/elsewhereSize.js";
 import { isInferredRecipe } from "../../recipes/infer.js";
 import type { Recipe } from "../../recipes/schema.js";
 import { gateUnmet } from "../../spine/gate.js";
@@ -15,11 +16,21 @@ import { cellLabel, uncoveredCells } from "./cells.js";
  * A handwritten recipe is the sign-off. When there is none, the service
  * infers titles from the list already in the campaign and the find-method
  * from receipt tags. Missing company_size bands are backfilled via
- * getleads counts (unlimited, no contact rows). Missing cells or
- * campaigns that are not this client's still halt.
+ * getleads counts (unlimited, no contact rows), then free sources, then
+ * one LeadMagic leftover pass under $5 for the whole backfill. Missing
+ * cells or campaigns that are not this client's still halt.
  */
 export class TriggerStage {
-  constructor(private readonly d: StageDeps & { getleads?: Getleads }) {}
+  constructor(
+    private readonly d: StageDeps & {
+      getleads?: Getleads;
+      leadmagicApiKey?: string;
+      paidSize?: {
+        lookup: (domain: string, companyName: string | null) => Promise<PaidSizeHit | null>;
+        worstCaseCents: number;
+      };
+    },
+  ) {}
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
     return attempt(this.d, run, "trigger", "open", async () => {
@@ -50,6 +61,7 @@ export class TriggerStage {
       let unknown = 0;
       let paidCents = 0;
       if (this.d.getleads) {
+        const paid = this.d.paidSize ?? paidSizeFromKey(this.d.leadmagicApiKey);
         const progress = await backfillCompanySizes(
           {
             listUnsizedDomains: (ids) => this.d.repo.listUnsizedDomains(ids),
@@ -60,6 +72,9 @@ export class TriggerStage {
             rememberBand: (domain, band, source) => this.d.repo.rememberCompanySize(domain, band, source),
             applyBand: (ids, domain, band) => this.d.repo.applyCompanySize(ids, domain, band),
             count: (filters) => this.d.getleads!.countRaw(filters),
+            ...(paid
+              ? { paidLookup: paid.lookup, paidWorstCaseCents: paid.worstCaseCents }
+              : {}),
           },
           campaignIds,
         );
@@ -118,6 +133,18 @@ export class TriggerStage {
     }
     return out;
   }
+}
+
+function paidSizeFromKey(apiKey: string | undefined): {
+  lookup: (domain: string, companyName: string | null) => Promise<PaidSizeHit | null>;
+  worstCaseCents: number;
+} | undefined {
+  const key = apiKey?.trim();
+  if (!key) return undefined;
+  return {
+    worstCaseCents: leadmagicBackfillWorstCents(),
+    lookup: (domain, companyName) => leadmagicCompanyBand(domain, companyName, { apiKey: key }),
+  };
 }
 
 function segmentCount(recipe: Recipe): number {

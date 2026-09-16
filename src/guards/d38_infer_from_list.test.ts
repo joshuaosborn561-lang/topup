@@ -31,7 +31,18 @@ describe("D38 — infer from the list; backfill missing bands", () => {
     assert.equal(PRICES.getleads.kind, "included");
     assert.equal(worstCaseCents("getleads", "export", 10_000), 0);
     assert.equal(BACKFILL_PAID_CAP_CENTS, 500);
+    assert.equal(worstCaseCents("leadmagic", "company_search", 1), 5);
     assert.ok(isInferredRecipe({ recipe_id: "parlay.it_dm_tickets.v0", owner_approvals: ["inferred_from_list"] }));
+  });
+
+  it("trigger wires the leftover paid pass; $5 is the whole-backfill ceiling", async () => {
+    const trigger = await readFile(new URL("src/stages/trigger/index.ts", root), "utf8");
+    assert.match(trigger, /leadmagicCompanyBand/);
+    assert.match(trigger, /paidWorstCaseCents/);
+    const boot = await readFile(new URL("src/index.ts", root), "utf8");
+    assert.match(boot, /LEADMAGIC_API_KEY/);
+    const env = await readFile(new URL(".env.example", root), "utf8");
+    assert.match(env, /LEADMAGIC_API_KEY/);
   });
 
   it("the cache migration exists and health requires the table", async () => {

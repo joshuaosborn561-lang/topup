@@ -1,13 +1,20 @@
 import { GETLEADS_BANDS } from "./schema.js";
 import { normalizeDomain, pickBandFromCounts, type Band } from "./bands.js";
-import { BACKFILL_PAID_CAP_CENTS, canAffordBackfill, freeElsewhereBand, type FetchLike } from "./elsewhereSize.js";
+import {
+  BACKFILL_PAID_CAP_CENTS,
+  canAffordBackfill,
+  freeElsewhereBand,
+  type FetchLike,
+  type PaidSizeHit,
+} from "./elsewhereSize.js";
 
 /**
  * D38 — fill blank company_size on the existing list.
  *
  * Order: cache → other leads already sized (free) → getleads counts
- * (unlimited, $0) → Wikidata / Clearbit suggest (free) → one paid
- * leftover pass whose worst case for *every* remaining lead is ≤ $5.
+ * (unlimited, $0) → Wikidata / Clearbit / OpenCorporates (free) → one
+ * paid leftover pass (LeadMagic company search) whose spend for
+ * *every* remaining lead is ≤ $5.
  * Never pull a contact row. Never invent a band.
  */
 
@@ -94,7 +101,7 @@ export type BackfillProgress = {
   skipped_free_mail: number;
 };
 
-export type PaidSizeHit = { band: Band; cents: number; source: string };
+export type { PaidSizeHit };
 
 export type BackfillDeps = {
   listUnsizedDomains: (campaignIds: number[]) => Promise<string[]>;
@@ -172,10 +179,12 @@ export async function backfillCompanySizes(
         const hit = await deps.paidLookup(domain, name);
         if (hit && canAffordBackfill(progress.paid_cents, hit.cents, cap)) {
           progress.paid_cents += hit.cents;
-          await deps.rememberBand(domain, hit.band, hit.source);
-          progress.leads_updated += await deps.applyBand(campaignIds, domain, hit.band);
-          progress.paid += 1;
-          continue;
+          if (hit.band) {
+            await deps.rememberBand(domain, hit.band, hit.source);
+            progress.leads_updated += await deps.applyBand(campaignIds, domain, hit.band);
+            progress.paid += 1;
+            continue;
+          }
         }
       } catch {
         /* count as unknown */
@@ -214,6 +223,15 @@ async function placeBand(
     }
   }
 
+  let name: string | null = null;
+  if (deps.companyNameForDomain) {
+    try {
+      name = await deps.companyNameForDomain(campaignIds, domain);
+    } catch {
+      name = null;
+    }
+  }
+
   try {
     const fromGetleads = await classifyDomainBand(deps.count, domain);
     if (fromGetleads) return apply(fromGetleads, "getleads_count", "classified");
@@ -221,20 +239,17 @@ async function placeBand(
     /* continue */
   }
 
-  if (deps.companyNameForDomain) {
+  if (name) {
     try {
-      const name = await deps.companyNameForDomain(campaignIds, domain);
-      if (name) {
-        const byName = await classifyCompanyNameBand(deps.count, name);
-        if (byName) return apply(byName, "getleads_company_name", "classified");
-      }
+      const byName = await classifyCompanyNameBand(deps.count, name);
+      if (byName) return apply(byName, "getleads_company_name", "classified");
     } catch {
       /* continue */
     }
   }
 
   try {
-    const elsewhere = await freeElsewhereBand(domain, deps.fetchImpl);
+    const elsewhere = await freeElsewhereBand(domain, deps.fetchImpl, name);
     if (elsewhere) return apply(elsewhere.band, elsewhere.source, "elsewhere");
   } catch {
     /* continue */

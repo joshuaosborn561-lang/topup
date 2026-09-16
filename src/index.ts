@@ -134,7 +134,7 @@ async function main(): Promise<void> {
     getleadsCount: (filters) => getleads.countRaw(filters),
     retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000,
     stages: {
-      trigger: new TriggerStage({ ...base, getleads }),
+      trigger: new TriggerStage({ ...base, getleads, leadmagicApiKey: cfg.LEADMAGIC_API_KEY }),
       size: new SizeStage({ ...base, getleads, rails }),
       pull,
       ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),

@@ -67,7 +67,8 @@ curl localhost:3000/health
 ```
 
 Deploying this build on Railway needs, beyond the Phase 1 variables:
-`GETLEADS_MCP_URL`, `GETLEADS_TOKEN`, `SMARTLEAD_MCP_URL`, `SMARTLEAD_TOKEN`
+`GETLEADS_MCP_URL`, `GETLEADS_TOKEN`, `SMARTLEAD_MCP_URL`, `SMARTLEAD_TOKEN`,
+and `LEADMAGIC_API_KEY` for leftover company-size backfill (≤ $5 total).
 (see `.env.example`). Then `npm run migrate` for 0007 and 0008.
 
 `npm test` runs the unit tests and the guards. No test calls a vendor.

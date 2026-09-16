@@ -102,7 +102,7 @@ describe("D38 infer from the list + receipt tags", () => {
           icp_kind: "physical",
           persona: "gc_owner_pm",
           company_source: "maps_and_permits",
-          company_filters: { maps_runs: [{ businesses: 10 }] },
+          company_filters: { job_titles: ["Owner"], company_size: ["1 to 10"], maps_runs: [{ businesses: 10 }] },
           domain_source: "domain_waterfall",
           person_source: "people_waterfall",
           email_source: "email_waterfall",

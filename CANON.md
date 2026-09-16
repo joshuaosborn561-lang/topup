@@ -139,8 +139,9 @@ rows. A lane with no receipt cannot invent a find-method. A lane that
 already has leads and receipt tags does not need a handwritten recipe
 (D38). Missing `company_size` is backfilled before size/pull: other
 sized leads and the domain cache first, then getleads counts
-(unlimited, $0), then Wikidata / Clearbit suggest (free), then one
-paid leftover pass whose worst case for the **whole backfill** is $5.
+(unlimited, $0), then Wikidata / Clearbit suggest / OpenCorporates
+(free), then one LeadMagic company-search leftover pass whose spend
+for the **whole backfill** is $5.
 
 ## What this build runs (D26, D27, D28)
 
