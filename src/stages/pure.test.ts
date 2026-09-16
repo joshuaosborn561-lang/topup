@@ -11,7 +11,7 @@ import { classifyPuzzle } from "./puzzle/classify.js";
 import { routePull, routeSize } from "./pull/route.js";
 import { partitionCheck, rowsNeeded, sourcesAgree } from "./size/index.js";
 import { sizeReport } from "./size/report.js";
-import { clientPriorContactSql, recycleDays } from "./suppress/recycle.js";
+import { clientPriorContactSql, positiveReplySql, recycleDays } from "./suppress/recycle.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 function campaignRecipe(
@@ -268,5 +268,16 @@ describe("D35 — prior contact is a 90-day send window", () => {
     assert.match(sql, /leads_staging/);
     assert.match(sql, /STOPPED/);
     assert.match(sql, /COMPLETED/);
+  });
+});
+
+describe("D37 — positives expire 90 days after the reply", () => {
+  it("positive SQL is dated against replied_at and does not lifetime-block on category alone", () => {
+    const sql = positiveReplySql("$10");
+    assert.match(sql, /replied_at/);
+    assert.match(sql, /positive_reply/);
+    assert.match(sql, /\$10::int \* interval '1 day'/);
+    assert.match(sql, /not exists/);
+    assert.doesNotMatch(sql, /confirmed_empty/);
   });
 });

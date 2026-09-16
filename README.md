@@ -39,7 +39,8 @@ Read `CANON.md` first. It is one page and it is the current truth.
   reuses the saved ICP, then size,
   pull (`GetleadsPull` behind one adapter interface), find emails (skipped
   for getleads), ingest through LeadPipe, suppress (one SQL pass, response
-  based; client customer domains via the `add_client_domains` MCP tool),
+  based; campaignintelligence positives expire 90 days after the reply;
+  optional customer domains via the `add_client_domains` MCP tool),
   verify (LeadPipe export → Email Verifier Progression → stall runbook →
   per-row verdicts), normalize (the four skill scripts ported), QA (rules in
   `topup.qa_rules`, hold cards for Cayden), route (cell → campaign, client

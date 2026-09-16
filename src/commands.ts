@@ -74,8 +74,9 @@ export function buildCommands(d: { repo: Repo; orchestrator: Orchestrator; ledge
     },
 
     "/suppress": async () =>
-      "Step 5 (suppress) runs inside every top-up run against the response tables and the client's customer domains. " +
-      "Customer domains are added over MCP with `add_client_domains` (domains only, never rows). " +
-      "A CSV upload command is not in this build; the Smartlead block list only ever grows.",
+      "Step 5 (suppress) runs inside every top-up run against campaignintelligence replies. " +
+      "Positive replies from any client expire 90 days after the reply (D37). DNC and wrong person stay forever. " +
+      "An empty customer-domain list does not halt the run. Optional domains still apply via MCP `add_client_domains`. " +
+      "The Smartlead block list only ever grows.",
   };
 }

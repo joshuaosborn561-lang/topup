@@ -1,8 +1,10 @@
 /**
  * Prior contact (D35 item 2). Do not load anyone this client *sent to*
- * in the last N days (default 90). Past that window, with no rule-1
- * response (positive / DNC / wrong person — those stay blocked forever
- * in the reason CASE), they are fair game.
+ * in the last N days (default 90). Past that window, with no DNC or
+ * wrong-person response, they are fair game.
+ *
+ * Positive replies are global and expire 90 days after the reply (D37).
+ * DNC and wrong person stay blocked forever in the reason CASE.
  *
  * Never put someone in two live campaigns of the same client at once
  * (D36 item 2 addition). `exclude_other_live_campaigns` defaults true.
@@ -12,6 +14,43 @@ export const DEFAULT_RECYCLE_DAYS = 90;
 
 export function recycleDays(recipeDays: number | null | undefined): number {
   return recipeDays && recipeDays > 0 ? recipeDays : DEFAULT_RECYCLE_DAYS;
+}
+
+/**
+ * Global positive-reply suppress (D37). Campaignintelligence positives
+ * block every client for `recycle_after_days` (default 90) after the
+ * reply. A send flagged `positive_reply` or tagged with an interested
+ * category, or a lead still carrying that category, counts. Undated
+ * current positives stay blocked (sync gap) so we do not re-email
+ * someone still marked Interested.
+ */
+export function positiveReplySql(daysParam: string): string {
+  const inWindow = `s.replied_at is not null and s.replied_at >= now() - (${daysParam}::int * interval '1 day')`;
+  const positiveSend = `(s.positive_reply or s.lead_category_id = any($2::int[]))`;
+  return `exists (
+    select 1 from public.leads l
+    where lower(l.email) = r.e
+      and (
+        exists (
+          select 1 from public.sends s
+          where s.lead_id = l.id and ${positiveSend} and ${inWindow}
+        )
+        or (
+          l.category_id = any($2::int[])
+          and exists (
+            select 1 from public.sends s
+            where s.lead_id = l.id and ${inWindow}
+          )
+        )
+        or (
+          l.category_id = any($2::int[])
+          and not exists (
+            select 1 from public.sends s
+            where s.lead_id = l.id and s.replied_at is not null
+          )
+        )
+      )
+  )`;
 }
 
 /** Sent by this Smartlead client inside the recycle window. */

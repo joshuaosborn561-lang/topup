@@ -11,9 +11,9 @@ Suppress on **response**, not on contact history.
 
 Suppress:
 
-- Positive replies, any client, any campaign
-- Do Not Contact replies
-- Wrong Person replies
+- Positive replies, any client, any campaign, for 90 days after the reply (D37)
+- Do Not Contact replies (forever)
+- Wrong Person replies (forever)
 - Everything in `public.suppression`
 
 Do **not** suppress someone merely because another client emailed them. Prior contact by any
@@ -22,9 +22,10 @@ person is acceptable; two clients reaching someone who already asked out is not.
 
 **This client's prior sends are excluded for 90 days** (D35 item 2). Anyone this
 `smartlead_client_id` sent to in the last 90 days is skipped. Past 90 days with no
-positive / DNC / wrong-person response, they are fair game. Those three responses
-are blocked forever. Never put someone in two live campaigns of the same client
-at once (D36 item 2).
+DNC / wrong-person response, they are fair game. DNC and wrong person stay
+blocked forever. Positive replies expire 90 days after the reply and apply to
+every client (D37). Never put someone in two live campaigns of the same client
+at once (D36 item 2). An empty customer domain list does not halt a run.
 
 **Any pool-exhaustion figure computed before 2026-08-25 used the old contact-history scope and
 is understated.** Recount before telling a client their pool is dry.

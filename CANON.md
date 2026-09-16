@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D36** (2026-09-15). One page of current truth. When a new
+Canon as of **D37** (2026-09-16). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -46,8 +46,9 @@ index wins over a stale skill. A lane is always on exactly one step, named by
 and ledger row — `src/spine/steps.ts` is the only table of steps and a guard
 fails when it differs from the skill's headings or `Gate:` lines. Code runs
 3–12; Josh owns 1, 9 when copy is needed, and 13; Cayden clears holds in 8.
-Step 5 applies the customer domain list; an empty list without
-`confirmed_empty` waits on a Cayden card (D34, D35 item 4). A step's gate
+Step 5 applies campaignintelligence positives as the global list
+(90 days after the reply) and optional customer domains; an empty
+customer list does not halt (D37). A step's gate
 halts the run, records
 why, posts one card, and waits; silence never means yes. The receipt is the
 last gate. `trigger` is step 1 (the recipe is the signed-off segment),
@@ -182,11 +183,12 @@ The stages:
    wrong person, suppression list, bounced, client prior contact, same
    offer other client, client customer domain. Prior contact is a send
    by this client in the last 90 days (D35 item 2). Anyone already in
-   a live campaign of this client is also held (D36 item 2). Rule-1
-   responses (positive / DNC / wrong person) stay blocked forever. An
-   empty customer domain list halts with a Cayden card until Josh sets
-   `confirmed_empty` (D34, item 4). Same-offer suppression halts, not
-   skips, when the registry has no `offer_key` for the lane.
+   a live campaign of this client is also held (D36 item 2). DNC and
+   wrong person stay blocked forever. Positive replies from any client
+   expire 90 days after the reply and are the global list for every
+   client (D37). An empty customer domain list does not halt. Same-offer
+   suppression still halts, not skips, when the registry has no
+   `offer_key` for the lane.
    Then **puzzle** (name / no domain → Domain Waterfall; domain / no name →
    Find Named Person; names banked in `public.name_bank`) and
    **find_emails** (DiscoLike find emails is the first rung and is not a
@@ -249,10 +251,10 @@ open cards, open runs and which integrations are configured. It is
 - Owner-only taps: approve/decline spend, top up anyway / leave it, split,
   continue without pending leads, anything that changes a recipe. Operator
   taps never spend and never change a recipe; the reply is "This needs Josh."
-  Step 5 waits on a customer-domain-list card when the list is empty and
-  Josh has not set `confirmed_empty` (D34). The heading stays `(code)`.
+  Step 5 does not wait on a customer-domain-list card (D37). The
+  heading stays `(code)`.
 - Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
-  `/suppress` (explains itself until the suppression stage lands).
+  `/suppress` (explains the 90-day global positive list).
 - `/mcp` with owner and operator bearer tokens exposes `lane_state,
   run_status, list_runs, list_holds, resolve_hold, start_topup,
   add_client_domains` (domains only, never rows) to both and
@@ -283,9 +285,11 @@ Josh's rulebook of how lists are built. The full 78 items live in
 changes:
 
 - **Item 2.** Prior contact is a send by this client in the last 90 days.
-  Rule 1 (positive / DNC / wrong person) is forever. Never put someone
-  in two live campaigns of the same client (D36).
-- **Item 4.** Empty customer list still halts (D34).
+  DNC / wrong person are forever. Positives expire 90 days after the
+  reply (D37). Never put someone in two live campaigns of the same
+  client (D36).
+- **Item 4.** Empty customer list does not halt (D37). The global list
+  is campaignintelligence positives.
 - **Item 8.** Gift-lane QA hold includes insurance. Default stay in.
 - **Item 12.** Variant volume floor is 1,000 sends.
 - **Item 14.** Hunter is banned with PDL / BillionVerifier / Clay.
