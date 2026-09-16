@@ -92,6 +92,7 @@ export function emailFindingFromTags(receipt: Pick<PullReceipt, "email_source" |
     max_tier: needsFind ? max : "aiark",
     fullenrich: false,
     batch_rows: 200,
+    steps: [],
     name_to_email: false,
   };
 }

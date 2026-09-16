@@ -125,7 +125,7 @@ export class TriggerStage {
       `select smartlead_campaign_id::text as id, smartlead_client_id::text as client from public.campaigns where smartlead_campaign_id = any($1::bigint[])`,
       [ids],
     );
-    const out: Array<{ id: number; reason: string }>> = [];
+    const out: Array<{ id: number; reason: string }> = [];
     for (const id of ids) {
       const row = rows.find((r) => Number(r.id) === id);
       if (!row) out.push({ id, reason: "not in the mirror" });
