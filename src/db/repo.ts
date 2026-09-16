@@ -1,6 +1,7 @@
 import type { Db, Queryable } from "./pool.js";
 import type { Role, RunRow, RunStepRow, RunStatus, Step } from "../domain/runs.js";
 import { MAX_STEP_ATTEMPTS } from "../domain/runs.js";
+import { receiptsFromRows } from "../recipes/receipt.js";
 
 export interface CardRow {
   card_id: string;
@@ -457,6 +458,280 @@ export class Repo {
       [clientTag, lane],
     );
     return rows[0] ?? null;
+  }
+
+  async listPullReceipts(clientTag: string, lane: string): Promise<import("../recipes/receipt.js").PullReceipt[]> {
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('topup.pull_receipts') is not null as ok`);
+    if (!t[0]?.ok) return [];
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      `select * from topup.pull_receipts
+       where client_tag = $1 and lane = $2
+       order by (granularity = 'lane') desc, written_at desc`,
+      [clientTag, lane],
+    );
+    return receiptsFromRows(rows);
+  }
+
+  async listReceiptLanes(): Promise<Array<{ client_tag: string; lane: string; campaign_ids: number[] }>> {
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('topup.pull_receipts') is not null as ok`);
+    if (!t[0]?.ok) return [];
+    const { rows } = await this.db.query<{ client_tag: string; lane: string; campaign_ids: unknown }>(
+      `select distinct on (client_tag, lane) client_tag, lane, campaign_ids
+       from topup.pull_receipts
+       order by client_tag, lane, (granularity = 'lane') desc, written_at desc`,
+    );
+    return rows.map((r) => ({
+      client_tag: r.client_tag,
+      lane: r.lane,
+      campaign_ids: Array.isArray(r.campaign_ids) ? r.campaign_ids.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0) : [],
+    }));
+  }
+
+  async smartleadClientIdFor(campaignIds: number[]): Promise<number | null> {
+    if (campaignIds.length === 0) return null;
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('public.campaigns') is not null as ok`);
+    if (!t[0]?.ok) return null;
+    const { rows } = await this.db.query<{ id: string }>(
+      `select smartlead_client_id::text as id from public.campaigns
+       where smartlead_campaign_id = any($1::bigint[]) and smartlead_client_id is not null limit 1`,
+      [campaignIds],
+    );
+    const n = Number(rows[0]?.id);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+
+  async leadIcpSnapshot(campaignIds: number[]): Promise<{
+    total: number;
+    titled: number;
+    sized: number;
+    titles: Array<{ value: string; n: number }>;
+    sizes: Array<{ value: string; n: number }>;
+  }> {
+    const empty = { total: 0, titled: 0, sized: 0, titles: [], sizes: [] };
+    if (campaignIds.length === 0) return empty;
+    const { rows: t } = await this.db.query<{ ok: boolean }>(
+      `select to_regclass('public.leads') is not null and to_regclass('public.campaigns') is not null as ok`,
+    );
+    if (!t[0]?.ok) return empty;
+    const { rows: cols } = await this.db.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+       where table_schema = 'public' and table_name = 'leads'
+         and column_name in ('title', 'job_title', 'company_size', 'employee_range')`,
+    );
+    const have = new Set(cols.map((c) => c.column_name));
+    const titleBits = [have.has("job_title") ? "nullif(trim(l.job_title), '')" : null, have.has("title") ? "nullif(trim(l.title), '')" : null].filter(Boolean);
+    const titleExpr = titleBits.length ? `coalesce(${titleBits.join(", ")})` : "null";
+    const sizeBits = [have.has("company_size") ? "nullif(trim(l.company_size), '')" : null, have.has("employee_range") ? "nullif(trim(l.employee_range), '')" : null].filter(Boolean);
+    const sizeExpr = sizeBits.length ? `coalesce(${sizeBits.join(", ")})` : "null";
+    const { rows: totals } = await this.db.query<{ total: string; titled: string; sized: string }>(
+      `select count(*)::text as total,
+              count(*) filter (where ${titleExpr} is not null)::text as titled,
+              count(*) filter (where ${sizeExpr} is not null)::text as sized
+       from public.leads l
+       join public.campaigns c on c.id = l.campaign_id
+       where c.smartlead_campaign_id = any($1::bigint[])`,
+      [campaignIds],
+    );
+    const titles =
+      titleBits.length === 0
+        ? []
+        : (
+            await this.db.query<{ value: string; n: string }>(
+              `select ${titleExpr} as value, count(*)::text as n
+               from public.leads l
+               join public.campaigns c on c.id = l.campaign_id
+               where c.smartlead_campaign_id = any($1::bigint[]) and ${titleExpr} is not null
+               group by 1 order by 2 desc limit 80`,
+              [campaignIds],
+            )
+          ).rows.map((r) => ({ value: r.value, n: Number(r.n) }));
+    const sizes =
+      sizeBits.length === 0
+        ? []
+        : (
+            await this.db.query<{ value: string; n: string }>(
+              `select ${sizeExpr} as value, count(*)::text as n
+               from public.leads l
+               join public.campaigns c on c.id = l.campaign_id
+               where c.smartlead_campaign_id = any($1::bigint[]) and ${sizeExpr} is not null
+               group by 1 order by 2 desc limit 20`,
+              [campaignIds],
+            )
+          ).rows.map((r) => ({ value: r.value, n: Number(r.n) }));
+    return {
+      total: Number(totals[0]?.total ?? 0),
+      titled: Number(totals[0]?.titled ?? 0),
+      sized: Number(totals[0]?.sized ?? 0),
+      titles,
+      sizes,
+    };
+  }
+
+  async listUnsizedDomains(campaignIds: number[]): Promise<string[]> {
+    if (campaignIds.length === 0) return [];
+    const { rows: t } = await this.db.query<{ ok: boolean }>(
+      `select to_regclass('public.leads') is not null and to_regclass('public.campaigns') is not null as ok`,
+    );
+    if (!t[0]?.ok) return [];
+    const { rows: cols } = await this.db.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+       where table_schema = 'public' and table_name = 'leads'
+         and column_name in ('email', 'domain', 'website', 'company_domain', 'company_size')`,
+    );
+    const have = new Set(cols.map((c) => c.column_name));
+    if (!have.has("company_size")) return [];
+    const domainBits = [
+      have.has("company_domain") ? "nullif(trim(l.company_domain), '')" : null,
+      have.has("domain") ? "nullif(trim(l.domain), '')" : null,
+      have.has("website") ? "nullif(trim(l.website), '')" : null,
+      have.has("email") ? "nullif(split_part(l.email, '@', 2), '')" : null,
+    ].filter(Boolean);
+    if (domainBits.length === 0) return [];
+    const domainExpr = `lower(coalesce(${domainBits.join(", ")}))`;
+    const { rows } = await this.db.query<{ domain: string }>(
+      `select distinct ${domainExpr} as domain
+       from public.leads l
+       join public.campaigns c on c.id = l.campaign_id
+       where c.smartlead_campaign_id = any($1::bigint[])
+         and (l.company_size is null or trim(l.company_size) = '')
+         and ${domainExpr} is not null`,
+      [campaignIds],
+    );
+    return rows.map((r) => r.domain).filter(Boolean);
+  }
+
+  async cachedCompanySize(domain: string): Promise<string | null> {
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('topup.company_size_cache') is not null as ok`);
+    if (!t[0]?.ok) return null;
+    const { rows } = await this.db.query<{ company_size: string }>(
+      `select company_size from topup.company_size_cache where domain = $1`,
+      [domain],
+    );
+    return rows[0]?.company_size ?? null;
+  }
+
+  async rememberCompanySize(domain: string, band: string, source = "getleads_count"): Promise<void> {
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('topup.company_size_cache') is not null as ok`);
+    if (!t[0]?.ok) return;
+    await this.db.query(
+      `insert into topup.company_size_cache (domain, company_size, source, updated_at)
+       values ($1, $2, $3, now())
+       on conflict (domain) do update set company_size = excluded.company_size, source = excluded.source, updated_at = now()`,
+      [domain, band, source],
+    );
+  }
+
+  /** A band already sitting on any lead / staging row with this domain. Free. */
+  async siblingCompanySize(domain: string): Promise<string | null> {
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('public.leads') is not null as ok`);
+    if (!t[0]?.ok) return null;
+    const { rows } = await this.db.query<{ company_size: string }>(
+      `select l.company_size
+       from public.leads l
+       where (l.company_size is not null and trim(l.company_size) <> '')
+         and (
+           lower(split_part(l.email, '@', 2)) = $1
+           or lower(trim(coalesce(l.domain, ''))) = $1
+         )
+       group by 1 order by count(*) desc limit 1`,
+      [domain],
+    );
+    if (rows[0]?.company_size) return rows[0].company_size;
+    const { rows: st } = await this.db.query<{ ok: boolean }>(`select to_regclass('public.leads_staging') is not null as ok`);
+    if (!st[0]?.ok) return null;
+    const { rows: staged } = await this.db.query<{ company_size: string }>(
+      `select company_size from public.leads_staging
+       where company_size is not null and trim(company_size) <> ''
+         and lower(split_part(email, '@', 2)) = $1
+       group by 1 order by count(*) desc limit 1`,
+      [domain],
+    );
+    return staged[0]?.company_size ?? null;
+  }
+
+  async companyNameForDomain(campaignIds: number[], domain: string): Promise<string | null> {
+    if (campaignIds.length === 0) return null;
+    const { rows: t } = await this.db.query<{ ok: boolean }>(
+      `select to_regclass('public.leads') is not null and to_regclass('public.campaigns') is not null as ok`,
+    );
+    if (!t[0]?.ok) return null;
+    const { rows } = await this.db.query<{ company_name: string }>(
+      `select l.company_name
+       from public.leads l
+       join public.campaigns c on c.id = l.campaign_id
+       where c.smartlead_campaign_id = any($1::bigint[])
+         and l.company_name is not null and trim(l.company_name) <> ''
+         and lower(split_part(l.email, '@', 2)) = $2
+       group by 1 order by count(*) desc limit 1`,
+      [campaignIds, domain],
+    );
+    return rows[0]?.company_name ?? null;
+  }
+
+  /** Copy a known band from any sized lead of the same domain onto this run's blank rows. */
+  async applySiblingSizes(campaignIds: number[]): Promise<number> {
+    if (campaignIds.length === 0) return 0;
+    const { rows: t } = await this.db.query<{ ok: boolean }>(
+      `select to_regclass('public.leads') is not null and to_regclass('public.campaigns') is not null as ok`,
+    );
+    if (!t[0]?.ok) return 0;
+    const { rowCount } = await this.db.query(
+      `update public.leads l
+       set company_size = s.company_size
+       from public.campaigns c,
+            (
+              select lower(split_part(email, '@', 2)) as domain, company_size
+              from (
+                select lower(split_part(email, '@', 2)) as d, company_size, count(*) as n,
+                       row_number() over (partition by lower(split_part(email, '@', 2)) order by count(*) desc) as rn
+                from public.leads
+                where company_size is not null and trim(company_size) <> ''
+                  and email like '%@%'
+                group by 1, 2
+              ) x
+              where rn = 1
+            ) s
+       where l.campaign_id = c.id
+         and c.smartlead_campaign_id = any($1::bigint[])
+         and (l.company_size is null or trim(l.company_size) = '')
+         and lower(split_part(l.email, '@', 2)) = s.domain`,
+      [campaignIds],
+    );
+    return rowCount ?? 0;
+  }
+
+  async applyCompanySize(campaignIds: number[], domain: string, band: string): Promise<number> {
+    if (campaignIds.length === 0) return 0;
+    const { rows: t } = await this.db.query<{ ok: boolean }>(
+      `select to_regclass('public.leads') is not null and to_regclass('public.campaigns') is not null as ok`,
+    );
+    if (!t[0]?.ok) return 0;
+    const { rows: cols } = await this.db.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+       where table_schema = 'public' and table_name = 'leads'
+         and column_name in ('email', 'domain', 'website', 'company_domain', 'company_size')`,
+    );
+    const have = new Set(cols.map((c) => c.column_name));
+    if (!have.has("company_size")) return 0;
+    const match = [
+      have.has("company_domain") ? `lower(trim(l.company_domain)) = $3` : null,
+      have.has("domain") ? `lower(trim(l.domain)) = $3` : null,
+      have.has("website") ? `lower(trim(regexp_replace(regexp_replace(l.website, '^https?://', ''), '^www\\.', ''))) like $3 || '%'` : null,
+      have.has("email") ? `lower(split_part(l.email, '@', 2)) = $3` : null,
+    ]
+      .filter(Boolean)
+      .join(" or ");
+    const { rowCount } = await this.db.query(
+      `update public.leads l
+       set company_size = $2
+       from public.campaigns c
+       where l.campaign_id = c.id
+         and c.smartlead_campaign_id = any($1::bigint[])
+         and (l.company_size is null or trim(l.company_size) = '')
+         and (${match})`,
+      [campaignIds, band, domain],
+    );
+    return rowCount ?? 0;
   }
 
   async campaignRegistry(clientTag?: string): Promise<Record<string, unknown>[]> {

@@ -190,3 +190,59 @@ export function bestYieldBuild(receipts: PullReceipt[]): YieldPick | null {
 export function latestLaneReceipt(receipts: PullReceipt[]): PullReceipt | null {
   return receipts.find((r) => r.granularity === "lane") ?? null;
 }
+
+function asIntList(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0);
+}
+
+function isoOrNull(value: unknown): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string" && value.trim()) return value;
+  return null;
+}
+
+/** Map a `topup.pull_receipts` row onto the validator. Extra columns are dropped. */
+export function receiptFromRow(row: Record<string, unknown>): PullReceipt {
+  return parsePullReceipt({
+    written_by: row.written_by ?? "claude",
+    supabase_project: row.supabase_project ?? "azpapwtnrbzywlnxxecz",
+    client_tag: row.client_tag,
+    smartlead_client_id: row.smartlead_client_id == null ? null : Number(row.smartlead_client_id),
+    lane: row.lane,
+    campaign_ids: asIntList(row.campaign_ids),
+    icp_kind: row.icp_kind,
+    persona: row.persona,
+    company_source: row.company_source,
+    company_filters: row.company_filters && typeof row.company_filters === "object" ? row.company_filters : {},
+    domain_source: row.domain_source,
+    person_source: row.person_source,
+    email_source: row.email_source,
+    email_max_tier: row.email_max_tier ?? null,
+    rows_found: row.rows_found == null ? null : Number(row.rows_found),
+    rows_imported: row.rows_imported == null ? null : Number(row.rows_imported),
+    tam_count: row.tam_count == null ? null : Number(row.tam_count),
+    how_i_did_it: row.how_i_did_it,
+    notes: row.notes ?? null,
+    segment: row.segment && typeof row.segment === "object" ? row.segment : null,
+    yield_by_step: row.yield_by_step && typeof row.yield_by_step === "object" ? row.yield_by_step : null,
+    spend_cents: row.spend_cents == null ? null : Number(row.spend_cents),
+    suppression_scope: row.suppression_scope ?? "response_based_v1",
+    build_label: row.build_label ?? null,
+    granularity: row.granularity ?? "build",
+    owner_confirmed_at: isoOrNull(row.owner_confirmed_at),
+  });
+}
+
+export function receiptsFromRows(rows: Array<Record<string, unknown>>): PullReceipt[] {
+  const out: PullReceipt[] = [];
+  for (const row of rows) {
+    try {
+      out.push(receiptFromRow(row));
+    } catch {
+      // A row that no longer matches the vocabulary is skipped, not invented.
+    }
+  }
+  return out;
+}

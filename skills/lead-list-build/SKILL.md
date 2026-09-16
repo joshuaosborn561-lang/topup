@@ -15,6 +15,8 @@ What: titles, headcount bands, geography, industries, offer family, gift tier. D
 Source: the client's lead pull skill (`parlay-lead-pulls`, `culture-fits-lead-pulls`, `techevo-lead-pulls`, `goliath-lead-pulls`, `salesglider-lead-pulls`) plus the latest client call in Fireflies. ICP drift is common; the call wins over the skill and the skill gets updated.
 Gate: every cell has a campaign or Josh knows one must be built. Josh signs off on the segment before anything is pulled.
 
+Default (D38): infer titles from the leads already in the campaign, infer the find-method from pull-receipt tags (`company_source`, `domain_source`, `person_source`, `email_source`, `icp_kind`), write `client.lane.v0`, and run that. A handwritten `recipes/<client>/<lane>.json` still wins. Missing `company_size` is backfilled: cache and other sized leads first, then getleads counts (unlimited, $0), then Wikidata / Clearbit suggest / OpenCorporates (free), then one LeadMagic company-search leftover pass whose spend for the whole backfill is $5. Physical / signal sources park until those adapters are wired.
+
 ## Step 2. Size it (code)
 
 What: count the segment on more than one free or near free source before pulling. getleads `count_contacts`, DiscoLike counters, LeadMagic and AI Ark counts, Maps or PermitStack counts for physical lanes. Run the partition check that proves the filters bind. Trust a number only when two sources agree.

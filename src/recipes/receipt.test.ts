@@ -6,6 +6,7 @@ import {
   parsePullReceipt,
   proposedTam,
   receiptConfirmed,
+  receiptFromRow,
   receiptNeedsRecount,
 } from "./receipt.js";
 
@@ -159,5 +160,18 @@ describe("D31/D32/D33 pull receipts", () => {
     const blankTam = parsePullReceipt({ ...parlay, written_by: "claude", tam_count: null, notes: null });
     assert.equal(receiptNeedsRecount(blankTam), true);
     assert.equal(proposedTam(blankTam), null);
+  });
+
+  it("D38 — a table row maps onto the validator without extra columns", () => {
+    const r = receiptFromRow({
+      ...parlay,
+      receipt_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      written_at: new Date("2026-09-12T00:00:00Z"),
+      campaign_ids: ["3847839", "3847846"],
+      smartlead_client_id: "418274",
+    });
+    assert.equal(r.client_tag, "parlay");
+    assert.deepEqual(r.campaign_ids, [3847839, 3847846]);
+    assert.equal(r.smartlead_client_id, 418274);
   });
 });

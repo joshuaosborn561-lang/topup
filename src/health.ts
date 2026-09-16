@@ -18,6 +18,7 @@ export const REQUIRED_TOPUP_TABLES = [
   "topup.runs",
   "topup.spend_ledger",
   "topup.pull_receipts",
+  "topup.company_size_cache",
 ] as const;
 
 /**
@@ -45,7 +46,7 @@ export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: Sp
 
   const missing = await d.repo.missingTopupTables(REQUIRED_TOPUP_TABLES);
   if (missing.length) {
-    return { ok: false, ...base, db: true, missing_tables: missing, note: `apply migrations 0001–0012 and npm run seed:cities; missing ${missing.join(", ")}` };
+    return { ok: false, ...base, db: true, missing_tables: missing, note: `apply migrations 0001–0015 and npm run seed:cities; missing ${missing.join(", ")}` };
   }
 
   const [leads, spend30, spendToday, stalls, cards, openRuns, mtd] = await Promise.all([

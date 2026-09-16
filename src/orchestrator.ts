@@ -4,6 +4,7 @@ import { orderCounts, type Role, type RunRow, type Step } from "./domain/runs.js
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
+import { recipeResolveDeps, resolveOrInfer } from "./recipes/infer.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
 import { gateCard } from "./slack/cards.js";
 import type { SlackConsole } from "./slack/console.js";
@@ -33,8 +34,9 @@ const log = logger("orchestrator");
  * The stages a run walks, in spine order: steps 1 through 13 of
  * skills/lead-list-build (D29). Puzzle + find_emails run after suppress so
  * we do not pay to enrich a suppressed person. Step 1 reuses the saved
- * recipe when the ICP is already signed off; step 13 reminds Josh to flip
- * ACTIVE and never does it.
+ * recipe when a file exists; otherwise it infers ICP from the list already
+ * in the campaign and the find-method from receipt tags (D38). Step 13
+ * reminds Josh to flip ACTIVE and never does it.
  */
 export const PIPELINE_STEPS: readonly Step[] = ["trigger", "size", "pull", "ingest", "suppress", "puzzle", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"];
 
@@ -89,6 +91,8 @@ export class Orchestrator {
       stages: Stages;
       /** The lane ledger; every stage change and outcome is written to it as it happens. */
       ledger?: LaneLedger;
+      /** D38: optional getleads count for band partition when the list has no sizes. */
+      getleadsCount?: (filters: Record<string, unknown>) => Promise<{ total_matching: number }>;
       /** Pause between a failed step attempt and the next (default 30s). */
       retryDelayMs?: number;
       sleep?: (ms: number) => Promise<void>;
@@ -100,19 +104,13 @@ export class Orchestrator {
 
   /** `/topup <client> <lane>` or MCP start_topup. Opens the run and drives it in the background. */
   async startTopup(input: StartInput): Promise<StartResult> {
-    const found = await this.d.repo.findRecipe(input.clientTag, input.lane);
-    if (!found) {
-      return {
-        ok: false,
-        message: `No recipe for ${input.clientTag}/${input.lane}. Recipes live in recipes/<client>/<lane>.json in the repo; the service never invents one.`,
-      };
-    }
-    let recipe: Recipe;
-    try {
-      recipe = parseRecipe(found.body);
-    } catch (err) {
-      return { ok: false, message: `Recipe ${found.recipe_id} does not validate: ${(err as Error).message}` };
-    }
+    const resolved = await resolveOrInfer(recipeResolveDeps(this.d.repo, this.d.getleadsCount), {
+      clientTag: input.clientTag,
+      lane: input.lane,
+      campaignIds: input.campaignIds,
+    });
+    if (!resolved.ok) return { ok: false, message: resolved.message };
+    const recipe = resolved.recipe;
     const targets = resolveTargetCampaignIds(recipe, input.campaignIds);
     if (!targets.ok) return { ok: false, message: targets.message };
     const opened = await this.d.repo.openRun({

@@ -28,7 +28,7 @@ export function buildCommands(d: { repo: Repo; orchestrator: Orchestrator; ledge
 
     "/topup": async (ctx) => {
       const [clientTag, lane] = ctx.args;
-      if (!clientTag || !lane) return "Usage: `/topup <client_tag> <lane>` — for example `/topup parlay it_dm`.";
+      if (!clientTag || !lane) return "Usage: `/topup <client_tag> <lane>` — for example `/topup parlay it_dm`. No handwritten recipe needed when the list and a pull receipt already exist.";
       if (!SNAKE.test(clientTag) || !SNAKE.test(lane)) return "client_tag and lane are snake_case.";
       const res = await d.orchestrator.startTopup({ clientTag, lane, by: ctx.userId, trigger: "manual" });
       if (!res.ok) return res.message;

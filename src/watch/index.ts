@@ -5,6 +5,7 @@ import { assessCampaign, campaignSnapshots } from "../ledger/health.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
 import type { Orchestrator } from "../orchestrator.js";
+import { inferWatchRecipes, recipeResolveDeps } from "../recipes/infer.js";
 import type { Recipe } from "../recipes/schema.js";
 import { notWorkingCard } from "../slack/cards.js";
 import type { SlackConsole } from "../slack/console.js";
@@ -15,7 +16,9 @@ const log = logger("watch");
 /**
  * Step 1 after the recipe is signed off: every WATCH_CRON the service looks
  * at the Smartlead mirror, and if a campaign is low and still working it
- * opens a run itself (D27). Josh is asked only when the rate has died.
+ * opens a run itself (D27). File recipes first; inferred getleads lanes
+ * from receipts are added when a file does not already cover them (D38).
+ * Josh is asked only when the rate has died.
  */
 export class RunwayWatch {
   constructor(
@@ -25,14 +28,17 @@ export class RunwayWatch {
       orchestrator: Orchestrator;
       console: SlackConsole;
       recipes: Recipe[];
+      getleadsCount?: (filters: Record<string, unknown>) => Promise<{ total_matching: number }>;
       dryRun: boolean;
       ledger?: LaneLedger;
     },
   ) {}
 
   async tick(): Promise<{ looked: number; went: number; asked: number; skipped: number }> {
+    const extras = await inferWatchRecipes(recipeResolveDeps(this.d.repo, this.d.getleadsCount), this.d.recipes);
+    const recipes = [...this.d.recipes, ...extras];
     const tally = { looked: 0, went: 0, asked: 0, skipped: 0 };
-    for (const recipe of this.d.recipes) {
+    for (const recipe of recipes) {
       tally.looked += 1;
       try {
         const action = await this.lane(recipe);
