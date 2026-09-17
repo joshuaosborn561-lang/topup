@@ -231,27 +231,33 @@ describe("D39 dry-mode replays", () => {
       target: 200,
       tools,
       calls,
-      reasoner: async () => ({
-        lane: "insight/it_dm_by_offer",
-        basis_receipt_ids: ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
-        basis_verdicts: { "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": "repeat" },
-        action: "repeat",
-        segment: {
-          icp_kind: "linkedin_native",
-          company_source: "getleads",
-          company_filters: { job_titles: ["IT Director"], company_size: ["201 to 500"] },
-          domain_source: "already",
-          person_source: "getleads",
-          email_source: "getleads",
-        },
-        counts: { pool: 50, already_in_client: 0, suppressed: 0, projected_net_new: 50, projected_verified: 40, expected_interested_per_2000: 1.6 },
-        cost: { worst_case_usd: 0, by_step: {} },
-        flags: ["notes: Gateway catch alls bounced 23%."],
-        pilot_required: false,
-        confidence: "medium",
-        reasons: ["repeat: 2500 sends, 1.6 interested per 2000; bounce_rate is not a verdict"],
-        count_call_id: "getleads_count:1",
-      }),
+      reasoner: async () => {
+        const counted = await tools.getleads_count({
+          job_titles: ["IT Director"],
+          company_size: ["201 to 500"],
+        });
+        return {
+          lane: "insight/it_dm_by_offer",
+          basis_receipt_ids: ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+          basis_verdicts: { "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": "repeat" },
+          action: "repeat",
+          segment: {
+            icp_kind: "linkedin_native",
+            company_source: "getleads",
+            company_filters: { job_titles: ["IT Director"], company_size: ["201 to 500"] },
+            domain_source: "already",
+            person_source: "getleads",
+            email_source: "getleads",
+          },
+          counts: { pool: counted.total_matching, already_in_client: 0, suppressed: 0, projected_net_new: 50, projected_verified: 40, expected_interested_per_2000: 1.6 },
+          cost: { worst_case_usd: 0, by_step: {} },
+          flags: ["notes: Gateway catch alls bounced 23%."],
+          pilot_required: false,
+          confidence: "medium",
+          reasons: ["repeat: 2500 sends, 1.6 interested per 2000; bounce_rate is not a verdict"],
+          count_call_id: counted.call_id,
+        };
+      },
     });
     assert.equal(result.kind, "proposal");
     if (result.kind !== "proposal") return;
