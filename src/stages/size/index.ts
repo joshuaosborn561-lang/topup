@@ -97,7 +97,7 @@ export class SizeStage {
       const partition = partitionCheck(segment.total_matching, others.total_matching, all.total_matching, recipe.size.partition_tolerance);
 
       const days = recycleDays(recipe.suppression.recycle_after_days);
-      const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns);
+      const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days, true);
       const netNew = Math.max(0, segment.total_matching - held.count);
 
       const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);

@@ -1,11 +1,14 @@
 import type { Getleads } from "../../clients/getleads.js";
 import type { RunRow } from "../../domain/runs.js";
+import type { ProposeResult } from "../../reason/propose.js";
 import { backfillCompanySizes } from "../../recipes/backfillSize.js";
 import { normalizeBand, type Band } from "../../recipes/bands.js";
 import { campaignGroups, icpSummary, recipeCampaignIds, targetCampaignIds, targetCountPatch } from "../../recipes/campaigns.js";
 import { leadmagicBackfillWorstCents, leadmagicCompanyBand, type PaidSizeHit } from "../../recipes/elsewhereSize.js";
 import { isInferredRecipe } from "../../recipes/infer.js";
 import type { Recipe } from "../../recipes/schema.js";
+import { segmentCard } from "../../slack/cards.js";
+import { usd } from "../../spend/prices.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
 import { cellLabel, uncoveredCells } from "./cells.js";
@@ -29,6 +32,8 @@ export class TriggerStage {
         lookup: (domain: string, companyName: string | null) => Promise<PaidSizeHit | null>;
         worstCaseCents: number;
       };
+      /** D39: receipt + outcome → proposal. Empty = skip (tests / no reasoner). */
+      propose?: (recipe: Recipe, run: RunRow) => Promise<ProposeResult>;
     },
   ) {}
 
@@ -57,6 +62,63 @@ export class TriggerStage {
       }
 
       const inferred = isInferredRecipe(recipe);
+      if (this.d.propose) {
+        const open = await this.d.repo.openCardsForRun(run.run_id);
+        if (open.some((c) => c.kind === "segment")) {
+          return { kind: "waiting", on: "owner", why: "segment card is open" };
+        }
+        const tap = await this.d.repo.latestCardResolution(run.run_id, "segment");
+        if (!tap) {
+          const proposed = await this.d.propose(recipe, run);
+          const p = proposed.proposal;
+          const action = p?.action ?? "hold";
+          const summary =
+            proposed.kind === "hold"
+              ? proposed.message
+              : `${action} · pool ${p!.counts.pool} · net new ${p!.counts.projected_net_new} · ${p!.reasons[0]}`;
+          await this.d.console.ask({
+            run,
+            kind: "segment",
+            audience: "owner",
+            payload: { step: "trigger", proposal: p, skipped_llm: proposed.kind === "proposal" ? proposed.skipped_llm : false, prompt_hash: proposed.prompt_hash },
+            text: `Segment ${action}: ${summary}`,
+            blocks: (cardId) =>
+              segmentCard({
+                cardId,
+                runId: run.run_id,
+                clientTag: recipe.client_tag,
+                lane: recipe.lane,
+                action,
+                alert: action === "new_segment",
+                summary,
+                basis: (p?.basis_receipt_ids ?? []).map((id) => `\`${id.slice(0, 8)}\` ${p?.basis_verdicts[id] ?? ""}`).join(" · ") || "none",
+                segment: p
+                  ? `${p.segment.icp_kind} · ${p.segment.company_source}/${p.segment.person_source}/${p.segment.email_source}`
+                  : "hold",
+                diff: (p?.diff_from_basis ?? []).map((d) => `${d.field}: ${d.why}`).join("\n"),
+                counts: [
+                  ["Pool", String(p?.counts.pool ?? 0)],
+                  ["Already in client", String(p?.counts.already_in_client ?? 0)],
+                  ["Suppressed", String(p?.counts.suppressed ?? 0)],
+                  ["Net new", String(p?.counts.projected_net_new ?? 0)],
+                  ["Verified", String(p?.counts.projected_verified ?? 0)],
+                  ["Interested / 2k", p?.counts.expected_interested_per_2000 == null ? "n/a" : String(p.counts.expected_interested_per_2000)],
+                ],
+                cost: usd(Math.round((p?.cost.worst_case_usd ?? 0) * 100)),
+                widening: (p?.widening_options ?? []).map((w) => `${w.label} · pool ${w.pool} · net ${w.net_new} · $${w.cost_usd}`),
+                flags: p?.flags ?? ["hold"],
+                confidence: p?.confidence ?? "low",
+                reasons: p?.reasons ?? [proposed.kind === "hold" ? proposed.message : ""],
+                samples: [],
+                split: proposed.kind === "proposal" ? proposed.validation.split : false,
+              }),
+          });
+          return { kind: "waiting", on: "owner", why: `segment ${action}` };
+        }
+        if (tap === "decline_segment") {
+          return gateUnmet("trigger", "Josh stopped the segment card; nothing was pulled", { segment_declined: 1 });
+        }
+      }
       let backfilled = 0;
       let unknown = 0;
       let paidCents = 0;

@@ -30,6 +30,7 @@ import { railsConfigFrom, SpendRails } from "./spend/rails.js";
 import { FlipStage } from "./stages/flip/index.js";
 import { FindEmailsStage } from "./stages/find_emails/index.js";
 import { PuzzleStage } from "./stages/puzzle/index.js";
+import { makeProposer } from "./reason/wire.js";
 import { TriggerStage } from "./stages/trigger/index.js";
 import { ImportStage } from "./stages/import/index.js";
 import { IngestStage } from "./stages/ingest/index.js";
@@ -134,7 +135,18 @@ async function main(): Promise<void> {
     getleadsCount: (filters) => getleads.countRaw(filters),
     retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000,
     stages: {
-      trigger: new TriggerStage({ ...base, getleads, leadmagicApiKey: cfg.LEADMAGIC_API_KEY }),
+      trigger: new TriggerStage({
+        ...base,
+        getleads,
+        leadmagicApiKey: cfg.LEADMAGIC_API_KEY,
+        propose: makeProposer({
+          repo,
+          root: path.resolve(here, ".."),
+          getleadsCount: (filters) => getleads.countRaw(filters),
+          anthropicKey: cfg.ANTHROPIC_API_KEY,
+          model: cfg.ANTHROPIC_MODEL,
+        }),
+      }),
       size: new SizeStage({ ...base, getleads, rails }),
       pull,
       ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),

@@ -336,6 +336,78 @@ export function gateCard(c: GateCard): Block[] {
   ];
 }
 
+export interface SegmentCard {
+  cardId: string;
+  runId: string;
+  clientTag: string;
+  lane: string;
+  action: string;
+  /** Red header for new_segment. */
+  alert: boolean;
+  summary: string;
+  basis: string;
+  segment: string;
+  diff: string;
+  counts: Array<[string, string]>;
+  cost: string;
+  widening: string[];
+  flags: string[];
+  confidence: string;
+  reasons: string[];
+  /** Company names or titles, never emails. */
+  samples: string[];
+  split: boolean;
+}
+
+/** D39: Josh taps the segment before any paid step. Contents come from the receipt + reasoner. */
+export function segmentCard(c: SegmentCard): Block[] {
+  const samples = c.samples.slice(0, 10).map((s) => `• ${s}`).join("\n");
+  const widen = c.widening.slice(0, 6).map((w, i) => `${i + 1}. ${w}`).join("\n");
+  const choices: CardChoice[] = [
+    { choice: "approve_segment", label: c.action === "hold" ? "Got it" : "Proceed", style: "primary" },
+    { choice: "decline_segment", label: "Stop", style: "danger" },
+  ];
+  for (const [i, w] of c.widening.slice(0, 4).entries()) {
+    choices.push({ choice: `widen_${i}`, label: w.slice(0, 48) });
+  }
+  return [
+    section(
+      `${c.alert ? ":red_circle:" : ":dart:"} *Segment — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\` · *${c.action}* · ${c.confidence}`,
+    ),
+    section(c.summary),
+    section(`*Basis*\n${c.basis}\n\n*Segment*\n${c.segment}${c.diff ? `\n\n*Diff*\n${c.diff}` : ""}`),
+    fields(c.counts),
+    section(`*Cost*\n${c.cost}${c.split ? "\nOver $5/step — this is a split, not a proceed." : ""}`),
+    ...(widen ? [section(`*Widening*\n${widen}`)] : []),
+    ...(c.flags.length ? [section(`*Flags*\n${c.flags.map((f) => `• ${f}`).join("\n")}`)] : []),
+    ...(c.reasons.length ? [context(c.reasons.slice(0, 6).join(" · "))] : []),
+    ...(samples ? [section(`Samples (${Math.min(10, c.samples.length)}):\n${samples}`)] : []),
+    actions(c.cardId, choices),
+  ];
+}
+
+export interface ReceiptConfirmCard {
+  cardId: string;
+  receiptId: string;
+  clientTag: string;
+  lane: string;
+  filters: string;
+  writtenBy: string;
+}
+
+/** D39: confirm or edit a reconstructed backfill lane row. */
+export function receiptConfirmCard(c: ReceiptConfirmCard): Block[] {
+  return [
+    section(`:receipt: *Confirm receipt — ${c.clientTag} / ${c.lane}*`),
+    section(`Written by \`${c.writtenBy}\`. Filters as reconstructed:\n${c.filters}`),
+    context("Confirm sets josh_confirmed. Edit opens a thread; the service writes a new josh_correction row."),
+    actions(c.cardId, [
+      { choice: "confirm_receipt", label: "Confirm", style: "primary" },
+      { choice: "edit_receipt", label: "Edit" },
+    ]),
+  ];
+}
+
 export interface ReceiptInput {
   runId: string;
   clientTag: string;

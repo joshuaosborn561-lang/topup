@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { LEAD_FIELD_KEYS, redact } from "../lib/log.js";
 import { maskEmail, SAMPLE_ROWS_MAX } from "../mcp/server.js";
-import { qaHoldCard } from "../slack/cards.js";
+import { qaHoldCard, segmentCard } from "../slack/cards.js";
 
 /**
  * D2 — no lead rows in chat, Slack, or logs beyond ten sample rows on a card.
@@ -34,5 +34,30 @@ describe("D2 — lead rows never leave the database", () => {
     const blocks = qaHoldCard({ cardId: "c", runId: "r", clientTag: "parlay", ruleId: "junk_titles", reason: "why", count: 40, samples: Array.from({ length: 25 }, (_, i) => `Co ${i}`), rerouteTo: null });
     const text = JSON.stringify(blocks);
     assert.ok(text.includes("Co 9") && !text.includes("Co 10"), "D2: qaHoldCard must slice samples to ten");
+  });
+
+  it("a segment card shows at most ten samples", () => {
+    const blocks = segmentCard({
+      cardId: "c",
+      runId: "r",
+      clientTag: "parlay",
+      lane: "it_dm_tickets",
+      action: "repeat",
+      alert: false,
+      summary: "repeat",
+      basis: "r1",
+      segment: "getleads",
+      diff: "",
+      counts: [["Pool", "1"]],
+      cost: "$0.00",
+      widening: [],
+      flags: [],
+      confidence: "high",
+      reasons: ["x"],
+      samples: Array.from({ length: 25 }, (_, i) => `Co ${i}`),
+      split: false,
+    });
+    const text = JSON.stringify(blocks);
+    assert.ok(text.includes("Co 9") && !text.includes("Co 10"), "D2: segmentCard must slice samples to ten");
   });
 });

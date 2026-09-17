@@ -1,5 +1,6 @@
 import type { Smartlead } from "../../clients/smartlead.js";
 import type { RunRow } from "../../domain/runs.js";
+import { postBackfillConfirmations } from "../../reason/confirm.js";
 import type { Recipe } from "../../recipes/schema.js";
 import { preLaunchBlocks } from "../../slack/cards.js";
 import type { SpendRails } from "../../spend/rails.js";
@@ -97,6 +98,11 @@ export class PostImportStage {
         { type: "context", elements: [{ type: "mrkdwn", text: "Not checked here: mailbox signatures, pod staffing, placement test — the deliverability wizard's. Only Josh sets a campaign ACTIVE." }] },
       ]);
       await this.d.repo.mergeStepCounts(run.run_id, "post_import", counts);
+      try {
+        counts.receipt_confirms = await postBackfillConfirmations(this.d, run);
+      } catch {
+        counts.receipt_confirms = 0;
+      }
       if (fails.length) {
         return gateUnmet("post_import", `merge tag check failed: ${fails.join(" | ")}. The leads are in the campaign; do not flip it active until the tag or the field is fixed.`, counts);
       }

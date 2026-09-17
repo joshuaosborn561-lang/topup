@@ -359,6 +359,76 @@ export class Repo {
     return rows;
   }
 
+  async latestCardResolution(runId: string, kind: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ resolution: string | null }>(
+      `select resolution from topup.cards where run_id = $1 and kind = $2 and status = 'resolved' order by resolved_at desc limit 1`,
+      [runId, kind],
+    );
+    return rows[0]?.resolution ?? null;
+  }
+
+  async insertRunReasoning(input: {
+    run_id?: string | null;
+    client_tag: string;
+    lane: string;
+    prompt_hash?: string | null;
+    tool_calls?: unknown;
+    proposal?: unknown;
+    validation?: unknown;
+    tap?: string | null;
+    dry_run?: boolean;
+  }): Promise<void> {
+    if (!(await this.tableExists("topup.run_reasoning"))) return;
+    await this.db.query(
+      `insert into topup.run_reasoning (run_id, client_tag, lane, prompt_hash, tool_calls, proposal, validation, tap, dry_run)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        input.run_id ?? null,
+        input.client_tag,
+        input.lane,
+        input.prompt_hash ?? null,
+        JSON.stringify(input.tool_calls ?? []),
+        input.proposal == null ? null : JSON.stringify(input.proposal),
+        input.validation == null ? null : JSON.stringify(input.validation),
+        input.tap ?? null,
+        input.dry_run ?? false,
+      ],
+    );
+  }
+
+  async latestReasoning(clientTag: string, lane?: string): Promise<{ looked: string; proposed: string; happened: string } | null> {
+    if (!(await this.tableExists("topup.run_reasoning"))) return null;
+    const { rows } = await this.db.query<{ proposal: unknown; validation: unknown; tap: string | null; written_at: string }>(
+      `select proposal, validation, tap, written_at::text
+         from topup.run_reasoning
+        where client_tag = $1 and ($2::text is null or lane = $2)
+        order by written_at desc limit 1`,
+      [clientTag, lane ?? null],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const p = row.proposal && typeof row.proposal === "object" ? (row.proposal as { action?: string; reasons?: string[]; counts?: { pool?: number } }) : {};
+    const v = row.validation && typeof row.validation === "object" ? (row.validation as { ok?: boolean; message?: string }) : {};
+    return {
+      looked: `Last reasoning ${row.written_at.slice(0, 16)}`,
+      proposed: `${p.action ?? "hold"} · pool ${p.counts?.pool ?? 0} · ${(p.reasons ?? [])[0] ?? ""}`.trim(),
+      happened: row.tap ? `Josh tapped ${row.tap}` : v.ok === false ? `validation: ${v.message}` : "card not tapped yet",
+    };
+  }
+
+  async confirmReceipt(receiptId: string): Promise<boolean> {
+    const { rowCount } = await this.db.query(
+      `update topup.pull_receipts set josh_confirmed = true, owner_confirmed_at = coalesce(owner_confirmed_at, now()) where receipt_id = $1`,
+      [receiptId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  private async tableExists(name: string): Promise<boolean> {
+    const { rows } = await this.db.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [name]);
+    return Boolean(rows[0]?.ok);
+  }
+
   async openCards(kind?: string, clientTag?: string): Promise<CardRow[]> {
     const { rows } = await this.db.query<CardRow>(
       `select c.* from topup.cards c left join topup.runs r on r.run_id = c.run_id
