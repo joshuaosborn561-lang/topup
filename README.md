@@ -36,8 +36,8 @@ Read `CANON.md` first. It is one page and it is the current truth.
   line. Claude sessions hand queue tables to the service with
   `register_queue_table` and leave notes with `lane_note`.
 - **Steps 1 → 13 end to end for a getleads lane** (Parlay `it_dm`): step 1
-  reuses a file recipe, or infers ICP from the list already in the campaign
-  plus pull-receipt tags (D38), then size,
+  reuses a file recipe, or proposes from the receipt + outcome (D39) and
+  waits for Josh's segment tap, then size,
   pull (`GetleadsPull` behind one adapter interface), find emails (skipped
   for getleads), ingest through LeadPipe, suppress (one SQL pass, response
   based; campaignintelligence positives expire 90 days after the reply;

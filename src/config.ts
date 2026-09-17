@@ -88,6 +88,9 @@ const schema = z.object({
   NAME_TO_EMAIL_TOKEN: z.string().default(""),
   /** Paid leftover company-size backfill only (D38). Empty = skip the $5 pass. */
   LEADMAGIC_API_KEY: z.string().default(""),
+  /** D39 reasoner. Empty = inventory / hold only; no LLM on the critical path. */
+  ANTHROPIC_API_KEY: z.string().default(""),
+  ANTHROPIC_MODEL: z.string().default("claude-sonnet-4-5"),
 
   /** Poll cadence and patience for the vendor jobs in steps 3, 4 and 11. */
   JOB_POLL_SECONDS: numberWithDefault(30),
@@ -158,5 +161,6 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     email_waterfall: Boolean(cfg.EMAIL_WATERFALL_MCP_URL),
     name_to_email: Boolean(cfg.NAME_TO_EMAIL_MCP_URL),
     leadmagic: Boolean(cfg.LEADMAGIC_API_KEY),
+    anthropic: Boolean(cfg.ANTHROPIC_API_KEY),
   };
 }

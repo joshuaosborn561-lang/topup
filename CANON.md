@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D38** (2026-09-16). One page of current truth. When a new
+Canon as of **D39** (2026-09-16). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -51,8 +51,8 @@ Step 5 applies campaignintelligence positives as the global list
 customer list does not halt (D37). A step's gate
 halts the run, records
 why, posts one card, and waits; silence never means yes. The receipt is the
-last gate. `trigger` is step 1 (a file recipe, or the list + receipt tags
-as the ICP — D38),
+last gate. `trigger` is step 1 (a file recipe, or the receipt + outcome as the
+recipe — D39),
 `ingest` 4, `stage` 10.
 
 Gates live today (D25, D26). **Step 2**: the band filter must bind (bands +
@@ -137,17 +137,19 @@ Maps/PermitStack are wired (physical still parks until then). Campaign
 ids must already exist in `public.campaigns`. Mixed ICPs are two lane
 rows. A lane with no receipt cannot invent a find-method. A lane that
 already has leads and receipt tags does not need a handwritten recipe
-(D38). Missing `company_size` is backfilled before size/pull: other
-sized leads and the domain cache first, then getleads counts
-(unlimited, $0), then Wikidata / Clearbit suggest / OpenCorporates
-(free), then one LeadMagic company-search leftover pass whose spend
-for the **whole backfill** is $5.
+(D39). Titles on the list and receipt tags still feed the picture
+(D38: infer from the list + receipt tags). The receipt plus its outcome is the recipe. Missing
+`company_size` is still backfilled (D38): cache and sibling leads,
+getleads counts, Wikidata / Clearbit / OpenCorporates, then one
+LeadMagic leftover pass whose spend for the **whole backfill** is $5.
+The only handwritten ICP that survives
+as data is `topup.lane_exclusions`.
 
 ## What this build runs (D26, D27, D28)
 
 The **watch** is the normal start. Every six hours (and once on boot) it
-reads the Smartlead mirror for every file recipe and every inferred
-getleads lane whose campaigns a file recipe does not already cover (D38).
+reads the Smartlead mirror for every file recipe and every receipt
+lane whose campaigns a file recipe does not already cover (D38, D39).
 A campaign that is ACTIVE and
 empty or under the runway floor, and still **working** (one interested reply
 per 2,000 sends, or any variant with 1,000 sends clearing that rate; D11,
@@ -158,18 +160,22 @@ Leave it. Leave it stays quiet until the rate recovers or Josh flips
 
 A run is locked in Postgres so there is only ever one per lane (D12). It
 walks steps **1 → 13** in the skill's order, every time, whether the watch
-or `/topup` started it (D28). Step 1 uses a file recipe when one exists;
-otherwise it infers titles from the list and the find-method from receipt
-tags (D38) and does not ask Josh for a handwritten JSON. Size, pull, ingest,
+or `/topup` started it (D28). Step 1 uses a file recipe when one exists; otherwise it loads the
+lane picture from Supabase (receipts, `v_receipt_outcome`, runway,
+exclusions) and proposes (D39). `bounce_rate` is display only; avoid
+is 2000+ sends with zero interested. Inventory in our own tables is the
+first card and skips the LLM. Josh taps every segment before a paid
+step. Size, pull, ingest,
 suppress, verify, normalize, QA, route, stage, import and pre-launch run on
 the new rows. Step 13 posts the flip reminder and never sets ACTIVE.
 
 The stages:
 
-1. **trigger** — a file recipe is the signed-off ICP. With none, infer from
-   the list + receipt tags (D38). Every cell still needs a campaign of this
-   client; missing cells or foreign campaigns halt. Blank `company_size`
-   on existing leads is backfilled here. No card when the ICP is complete.
+1. **trigger** — a file recipe is still an override. With none, load the
+   lane picture and propose from receipts + outcomes (D39). Inventory in
+   our own tables short-circuits to a free card. Josh taps every segment
+   before a paid step. Missing cells or foreign campaigns halt. Blank
+   `company_size` on existing leads is backfilled here (D38).
 2. **size** — classify each **campaign's** ICP (`routing[].icp.kind` +
    `persona`, D30). LinkedIn-native: getleads `count_contacts` plus the
    partition check; AI Ark People Preview is the tam-sizing default primary
@@ -325,13 +331,13 @@ changes:
 | Thing | Place |
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
-| Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/SKILLS_INDEX.md` says what is stale (D25) |
+| Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is prose the reasoner reads (D39); `skills/SKILLS_INDEX.md` says what is stale (D25) |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
 | Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |
 | Lane ledger | `src/ledger/` (`lane.ts` state, `health.ts` campaign lines, `render.ts` `/where` + digest text) |
 | Servers | `docs/servers.md` — every vendor server from its code (D22) |
-| Recipes | `recipes/<client>/<lane>.json` (override) or inferred `client.lane.v0` from the list + receipt tags (D38), mirrored to `topup.lane_recipes` |
+| Recipes | `recipes/<client>/<lane>.json` (override). Otherwise the receipt + `topup.v_receipt_outcome` is the recipe (D39), mirrored to `topup.lane_recipes` as a skeleton. Exclusions in `topup.lane_exclusions`. |
 | First-pull receipts | `topup.pull_receipts` — lane + build rows (D32); named sources only, no `other` (D33); Claude and step 11.5 insert, never update; `skills/first-pull-receipt` |
 | Rails | `src/spend/` |
 | Runbook | `src/stages/verify/runbook.ts` (pure) |

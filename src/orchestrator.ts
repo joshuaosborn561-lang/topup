@@ -5,6 +5,7 @@ import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
 import { recipeResolveDeps, resolveOrInfer } from "./recipes/infer.js";
+import { skeletonRecipe } from "./reason/skeleton.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
 import { gateCard } from "./slack/cards.js";
 import type { SlackConsole } from "./slack/console.js";
@@ -109,8 +110,26 @@ export class Orchestrator {
       lane: input.lane,
       campaignIds: input.campaignIds,
     });
-    if (!resolved.ok) return { ok: false, message: resolved.message };
-    const recipe = resolved.recipe;
+    let recipe = resolved.ok ? resolved.recipe : null;
+    if (!recipe) {
+      const receipts = await this.d.repo.listPullReceipts(input.clientTag, input.lane);
+      const clientId = receipts.find((r) => r.smartlead_client_id)?.smartlead_client_id
+        ?? (await this.d.repo.smartleadClientIdFor(receipts.flatMap((r) => r.campaign_ids)));
+      if (!clientId) return { ok: false, message: resolved.ok ? "no recipe" : resolved.message };
+      try {
+        recipe = skeletonRecipe({ clientTag: input.clientTag, lane: input.lane, smartleadClientId: clientId, receipts });
+        await this.d.repo.upsertRecipe({
+          recipe_id: recipe.recipe_id,
+          client_tag: recipe.client_tag,
+          lane: recipe.lane,
+          version: 0,
+          body: recipe,
+          owner_approved_at: null,
+        });
+      } catch (err) {
+        return { ok: false, message: resolved.ok ? (err as Error).message : resolved.message };
+      }
+    }
     const targets = resolveTargetCampaignIds(recipe, input.campaignIds);
     if (!targets.ok) return { ok: false, message: targets.message };
     const opened = await this.d.repo.openRun({
@@ -428,6 +447,28 @@ export class Orchestrator {
       case "decline_spend":
         // The verify stage returns the rows to needs_verify and closes the run as declined.
         if (runId) void this.drive(runId);
+        return;
+      case "approve_segment":
+      case "widen_0":
+      case "widen_1":
+      case "widen_2":
+      case "widen_3":
+        if (runId) void this.drive(runId);
+        return;
+      case "decline_segment":
+        if (runId) void this.drive(runId);
+        return;
+      case "confirm_receipt": {
+        const full = await this.d.repo.getCard(card.card_id);
+        const receiptId = typeof full?.payload.receipt_id === "string" ? full.payload.receipt_id : null;
+        if (receiptId) await this.d.repo.confirmReceipt(receiptId);
+        return;
+      }
+      case "edit_receipt":
+        if (runId) {
+          const run = await this.d.repo.getRun(runId);
+          if (run) await this.d.console.postInThread(run, `Edit the receipt in this thread. The service will write a \`josh_correction\` row. <@${card.by}>`);
+        }
         return;
       default:
         log.info("card resolved with no side effect in this build", { card_id: card.card_id, kind: card.kind, choice: card.choice });

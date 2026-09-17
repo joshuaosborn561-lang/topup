@@ -27,7 +27,7 @@ describe("D35 — merged list", () => {
     assert.equal("email_status" in raw.source.params, false);
   });
 
-  it("regulated_gift_hold names insurance and stays a hold", async () => {
+  it("regulated_gift_hold names insurance (D39 flags by default; hold only if an exclusion says so)", async () => {
     const sql = [
       await readFile(new URL("supabase/migrations/0003_seed_reference_and_qa.sql", root), "utf8"),
       await readFile(new URL("supabase/migrations/0013_d35_insurance_hold.sql", root), "utf8"),

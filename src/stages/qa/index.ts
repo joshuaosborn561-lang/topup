@@ -95,6 +95,18 @@ export class QaStage {
         const scopeClause = scope.sql.replace("$P", "$4");
         const params = [run.run_id, rule.pattern, rule.rule_id, ...scope.params];
         const where = `run_id = $1 and lead_status = 'normalized' and coalesce(${col}::text, '') ~* $2 and ${scopeClause}`;
+        // D39: regulated industries load by default. Flag the count. Hold only if a lane_exclusions row says so (enforced in the reasoner).
+        if (rule.rule_id === "regulated_gift_hold") {
+          const flagged = await this.d.repo.withRun(run.run_id, async (tx) => {
+            const { rows } = await tx.query<{ v: string }>(
+              `select ${col}::text as v from ${table} where ${where} limit 20`,
+              params,
+            );
+            return rows.map((r) => r.v);
+          });
+          if (flagged.length) applied.push({ ruleId: rule.rule_id, action: "flag", count: flagged.length, samples: distinct(flagged, 10) });
+          continue;
+        }
         const [status, flag] = rule.action === "purge" ? ["qa_purged", "purge_rule"] : ["qa_hold", "hold_rule"];
         const matched = await this.d.repo.withRun(run.run_id, async (tx) => {
           const { rows } = await tx.query<{ v: string }>(

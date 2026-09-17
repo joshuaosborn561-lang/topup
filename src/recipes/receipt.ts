@@ -71,6 +71,7 @@ export const segmentSchema = z
 
 export const pullReceiptSchema = z
   .object({
+    receipt_id: z.string().uuid().optional(),
     written_by: z.string().min(1).default("claude"),
     supabase_project: z.literal("azpapwtnrbzywlnxxecz").default("azpapwtnrbzywlnxxecz"),
     client_tag: snake,
@@ -97,6 +98,8 @@ export const pullReceiptSchema = z
     build_label: z.string().nullable().default(null),
     granularity: z.enum(["build", "lane"]).default("build"),
     owner_confirmed_at: z.string().datetime().nullable().default(null),
+    josh_confirmed: z.boolean().default(false),
+    basis_receipt_ids: z.array(z.string().uuid()).default([]),
   })
   .strict()
   .superRefine((r, ctx) => {
@@ -206,6 +209,7 @@ function isoOrNull(value: unknown): string | null {
 /** Map a `topup.pull_receipts` row onto the validator. Extra columns are dropped. */
 export function receiptFromRow(row: Record<string, unknown>): PullReceipt {
   return parsePullReceipt({
+    receipt_id: typeof row.receipt_id === "string" ? row.receipt_id : undefined,
     written_by: row.written_by ?? "claude",
     supabase_project: row.supabase_project ?? "azpapwtnrbzywlnxxecz",
     client_tag: row.client_tag,
@@ -232,6 +236,10 @@ export function receiptFromRow(row: Record<string, unknown>): PullReceipt {
     build_label: row.build_label ?? null,
     granularity: row.granularity ?? "build",
     owner_confirmed_at: isoOrNull(row.owner_confirmed_at),
+    josh_confirmed: Boolean(row.josh_confirmed),
+    basis_receipt_ids: Array.isArray(row.basis_receipt_ids)
+      ? row.basis_receipt_ids.filter((x): x is string => typeof x === "string")
+      : [],
   });
 }
 

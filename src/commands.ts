@@ -22,7 +22,11 @@ export function buildCommands(d: { repo: Repo; orchestrator: Orchestrator; ledge
       const lanes = lane ? [{ client_tag: clientTag, lane }] : await d.ledger.lanes(clientTag);
       if (lanes.length === 0) return `Nothing is registered for ${clientTag}: no recipe, no run, no queue table. Register one from a Claude session with register_queue_table, or add a recipe to the repo.`;
       const parts: string[] = [];
-      for (const l of lanes) parts.push(renderWhere(await d.ledger.state(l.client_tag, l.lane, { recount: Boolean(lane) })));
+      for (const l of lanes) {
+        parts.push(renderWhere(await d.ledger.state(l.client_tag, l.lane, { recount: Boolean(lane) })));
+        const reasoning = await d.repo.latestReasoning(l.client_tag, l.lane);
+        if (reasoning) parts.push(`Reasoning: ${reasoning.looked}\nProposed: ${reasoning.proposed}\nHappened: ${reasoning.happened}`);
+      }
       return parts.join("\n\n");
     },
 

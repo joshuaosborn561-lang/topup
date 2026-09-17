@@ -135,7 +135,7 @@ export class SuppressStage {
       const line =
         `Suppress done: raw ${raw} · removed ${suppressed}${reasons ? ` (${reasons})` : ""} · ${removed.deduped} duplicates within the pull · ${removed.needs_email} with no address · *net new ${removed.net_new}* — the number from here on.` +
         ` · prior contact is a send by this client in the last ${days} days` +
-        (recipe.suppression.exclude_other_live_campaigns ? ` (plus anyone already in a live campaign)` : "") +
+        ` (plus anyone already in a live campaign)` +
         `; positives expire ${days} days after the reply; DNC and wrong person stay forever.` +
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);
@@ -157,7 +157,7 @@ export class SuppressStage {
       whens.push(`when ${bounce} then 'bounced'`);
     }
     if (recipe.suppression.client_prior_contacts && t.leads && t.sends) {
-      whens.push(`when ${clientPriorContactSql("$10", recipe.suppression.exclude_other_live_campaigns && t.staging && t.campaigns)} then 'client_prior_contact'`);
+      whens.push(`when ${clientPriorContactSql("$10", Boolean(t.staging && t.campaigns))} then 'client_prior_contact'`);
     }
     if (recipe.suppression.same_offer_any_client && haveOffer && t.leads && t.campaigns) {
       whens.push(

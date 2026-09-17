@@ -57,7 +57,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
 | D36 | Live |
 | D37 | Live |
-| D38 | Live |
+| D38 | Live; auto-run inferred `*.v0` without a segment card superseded by D39 |
+| D39 | Live |
 
 ---
 
@@ -1128,4 +1129,41 @@ merge field. Need `LEADMAGIC_API_KEY` for the paid leftover pass.
 
 **Guard.** `src/guards/d38_infer_from_list.test.ts`.
 `src/recipes/infer.test.ts`. `src/recipes/backfillSize.test.ts`.
+Ask Josh.
+
+## D39 — Infer the segment from Supabase; stop encoding the ICP as rules
+
+**Decision.** Josh (2026-09-16): the receipt plus its outcome is the
+recipe. D35's 78 English rules restated columns already on
+`topup.pull_receipts`. A service that starts every run by reading the
+current rows cannot drift. Load a lane picture (receipts, outcome view,
+runway, exclusions, prose). Inventory in our own tables is the first
+card and skips the LLM. Otherwise a reasoner (Anthropic, read-only
+tools) returns a structured proposal. Code validates exclusions, band
+labels, banned vendors, recomputed cost, and a recorded count call,
+then Josh taps the segment card. Executors stay. The only handwritten
+ICP that survives as data is `topup.lane_exclusions`.
+
+D28's "never invent an ICP" stays for a lane with no receipt. D38's
+"infer titles from the list and run `*.v0` without asking" is
+superseded: Josh still taps every segment before a paid step. File
+recipes remain an override. `exclude_other_live_campaigns` is always
+on. Regulated industries load by default and post a flag line; hold
+only when an exclusion row says so.
+
+**Why.** Two sources of truth drift the first time Randy changes his
+mind on a call. The thing Josh actually does is look at what was
+pulled, whether it worked, and whether to pull more of the same or
+move one cell over. That is a judgement about data, not a rule.
+
+**Tradeoff.** The LLM is off the critical path for inventory and a
+clean `repeat`. It is on the path for `widen` / `new_segment` / reading
+`notes`. Backfill reconstructions stay medium confidence until
+`josh_confirmed`. Physical adapters stay unwired; inventory covers
+Peterson C1 today. `bounce_rate` stays on `v_receipt_outcome` for
+display. Josh (2026-09-17): ignore it for verdict. Avoid is only
+2000+ sends with zero interested.
+
+**Guard.** `src/guards/d39_infer_from_supabase.test.ts`.
+`src/reason/validate.test.ts`. `src/reason/replay.test.ts`.
 Ask Josh.
