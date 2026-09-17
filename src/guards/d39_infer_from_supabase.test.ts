@@ -28,6 +28,15 @@ describe("D39 — infer the segment from Supabase", () => {
     assert.match(sql, /topup\.run_reasoning/);
     assert.match(sql, /topup\.unloaded_inventory/);
     assert.match(sql, /Dave rejected C suite/);
+    assert.doesNotMatch(sql, /v_bounce > 0\.08/);
+    assert.match(sql, /bounce_rate is display-only/);
+  });
+
+  it("0017 keeps bounce_rate off the verdict", async () => {
+    const sql = await readFile(new URL("supabase/migrations/0017_d39_ignore_bounce_rate.sql", root), "utf8");
+    assert.doesNotMatch(sql, /v_bounce > 0\.08/);
+    assert.match(sql, /bounce_rate is display-only/);
+    assert.match(sql, /v_sends >= 2000 and v_interested = 0/);
   });
 
   it("segment and receipt-confirm cards are Josh's tap", () => {

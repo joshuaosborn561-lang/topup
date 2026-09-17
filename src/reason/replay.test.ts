@@ -197,7 +197,7 @@ describe("D39 dry-mode replays", () => {
     assert.equal(result.proposal.cost.worst_case_usd, 0);
   });
 
-  it("Insight it_dm_by_offer: avoid on bounce → hold, not a repeat of the receipt as written", async () => {
+  it("Insight it_dm_by_offer: bounce_rate is display-only; 2500 sends at 1.6/2k repeats", async () => {
     const calls: CountCall[] = [];
     const tools = reasonTools({ sql: async () => ({ rows: 0, note: "0" }), getleads: async () => ({ total_matching: 50 }), calls });
     const pic = picture({
@@ -212,7 +212,7 @@ describe("D39 dry-mode replays", () => {
           bounce_rate: 0.24,
           interested_per_2000: 1.6,
           variant_repeat: false,
-          verdict: "avoid",
+          verdict: "repeat",
           josh_confirmed: false,
         },
       ],
@@ -222,6 +222,60 @@ describe("D39 dry-mode replays", () => {
           client_tag: "insight",
           lane: "it_dm_by_offer",
           notes: "Gateway catch alls bounced 23%.",
+        },
+      ],
+    });
+    assert.equal(pic.outcomes[0]!.bounce_rate, 0.24);
+    assert.equal(pic.outcomes[0]!.verdict, "repeat");
+    const result = await proposeLane(pic, {
+      target: 200,
+      tools,
+      calls,
+      reasoner: async () => ({
+        lane: "insight/it_dm_by_offer",
+        basis_receipt_ids: ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+        basis_verdicts: { "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": "repeat" },
+        action: "repeat",
+        segment: {
+          icp_kind: "linkedin_native",
+          company_source: "getleads",
+          company_filters: { job_titles: ["IT Director"], company_size: ["201 to 500"] },
+          domain_source: "already",
+          person_source: "getleads",
+          email_source: "getleads",
+        },
+        counts: { pool: 50, already_in_client: 0, suppressed: 0, projected_net_new: 50, projected_verified: 40, expected_interested_per_2000: 1.6 },
+        cost: { worst_case_usd: 0, by_step: {} },
+        flags: ["notes: Gateway catch alls bounced 23%."],
+        pilot_required: false,
+        confidence: "medium",
+        reasons: ["repeat: 2500 sends, 1.6 interested per 2000; bounce_rate is not a verdict"],
+        count_call_id: "getleads_count:1",
+      }),
+    });
+    assert.equal(result.kind, "proposal");
+    if (result.kind !== "proposal") return;
+    assert.equal(result.proposal.action, "repeat");
+    assert.equal(result.proposal.basis_verdicts["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"], "repeat");
+  });
+
+  it("avoid is 2000+ sends with zero interested, even when bounce_rate is low", async () => {
+    const calls: CountCall[] = [];
+    const tools = reasonTools({ sql: async () => ({ rows: 0, note: "0" }), getleads: async () => ({ total_matching: 10 }), calls });
+    const pic = picture({
+      client_tag: "insight",
+      lane: "it_dm_by_offer",
+      outcomes: [
+        {
+          receipt_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          sends: 2200,
+          interested: 0,
+          bounces: 10,
+          bounce_rate: 0.004,
+          interested_per_2000: 0,
+          variant_repeat: false,
+          verdict: "avoid",
+          josh_confirmed: false,
         },
       ],
     });
@@ -246,16 +300,15 @@ describe("D39 dry-mode replays", () => {
         cost: { worst_case_usd: 0, by_step: {} },
         pilot_required: false,
         confidence: "high",
-        reasons: ["SEG bounce_rate 0.24 on receipt aaaaaaaa — do not repeat gateway catch-alls"],
-        flags: ["avoid on bounce"],
+        reasons: ["every basis is avoid: 2200 sends, 0 interested"],
+        flags: ["avoid on zero interested"],
         count_call_id: null,
       }),
     });
     assert.equal(result.kind, "proposal");
     if (result.kind !== "proposal") return;
     assert.equal(result.proposal.action, "hold");
-    assert.match(result.proposal.reasons.join(" "), /bounce/i);
-    assert.notEqual(result.proposal.action, "repeat");
+    assert.match(result.proposal.reasons.join(" "), /0 interested|zero interested/i);
   });
 
   it("inventoryCovers is the SQL path that keeps the LLM off the critical path", () => {

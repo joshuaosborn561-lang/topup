@@ -12,7 +12,7 @@ export const HYGIENE = `Receipt hygiene:
 - tam_count is null on every backfill row. rows_found on build rows is ingest size, not the pool. Recount before proposing. Never project net new from rows_found.
 - Build rows with empty campaign_ids were pulled and never loaded. They are inventory. Surface them as a free first option before any new pull.
 - notes saying "Josh to confirm" are exactly that.
-- Some receipts describe pulls later judged wrong (wrong band, mixed Maps categories, gateway catch-alls). Outcome verdict avoid catches some; the rest is in notes. Repeat cautionary notes in flags.
+- Some receipts describe pulls later judged wrong (wrong band, mixed Maps categories, gateway catch-alls). Outcome verdict avoid is 2000+ sends with zero interested. bounce_rate is on the picture for display and is not a verdict. Repeat cautionary notes in flags.
 - getleads-sourced people produce retiree replies. Flag any Goliath proposal whose person_source is getleads, with the count. Nothing more.`;
 
 export const WIDENING = `When the repeat cell is dry, never invent a segment if a neighbour exists. Order:

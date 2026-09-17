@@ -1160,7 +1160,9 @@ move one cell over. That is a judgement about data, not a rule.
 clean `repeat`. It is on the path for `widen` / `new_segment` / reading
 `notes`. Backfill reconstructions stay medium confidence until
 `josh_confirmed`. Physical adapters stay unwired; inventory covers
-Peterson C1 today.
+Peterson C1 today. `bounce_rate` stays on `v_receipt_outcome` for
+display. Josh (2026-09-17): ignore it for verdict. Avoid is only
+2000+ sends with zero interested.
 
 **Guard.** `src/guards/d39_infer_from_supabase.test.ts`.
 `src/reason/validate.test.ts`. `src/reason/replay.test.ts`.

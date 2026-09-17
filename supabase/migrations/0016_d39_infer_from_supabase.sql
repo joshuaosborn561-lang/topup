@@ -160,9 +160,8 @@ begin
   v_rate := case when v_sends = 0 then 0 else (v_interested::numeric / v_sends) * 2000 end;
   v_bounce := case when v_sends = 0 then 0 else v_bounces::numeric / v_sends end;
 
-  if v_bounce > 0.08 then
-    v_verdict := 'avoid';
-  elsif v_sends >= 2000 and v_interested = 0 then
+  -- bounce_rate is display-only. Josh: ignore bounce rate for verdict.
+  if v_sends >= 2000 and v_interested = 0 then
     v_verdict := 'avoid';
   elsif (v_sends >= 2000 and v_rate >= 1) or coalesce(v_variant, false) then
     v_verdict := 'repeat';
@@ -197,7 +196,7 @@ select o.receipt_id,
   cross join lateral topup.compute_receipt_outcome(r.receipt_id) o;
 
 comment on view topup.v_receipt_outcome is
-  'D39: sends / interested / bounce / verdict per receipt. Lane rows use all leads in the named campaigns. Avoid wins on bounce_rate > 8%.';
+  'D39: sends / interested / bounce / verdict per receipt. Lane rows use all leads in the named campaigns. bounce_rate is display only. Avoid is sends >= 2000 with 0 interested.';
 
 -- ---------------------------------------------------------------------------
 -- Runway per campaign named on a receipt

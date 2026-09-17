@@ -162,7 +162,8 @@ A run is locked in Postgres so there is only ever one per lane (D12). It
 walks steps **1 → 13** in the skill's order, every time, whether the watch
 or `/topup` started it (D28). Step 1 uses a file recipe when one exists; otherwise it loads the
 lane picture from Supabase (receipts, `v_receipt_outcome`, runway,
-exclusions) and proposes (D39). Inventory in our own tables is the
+exclusions) and proposes (D39). `bounce_rate` is display only; avoid
+is 2000+ sends with zero interested. Inventory in our own tables is the
 first card and skips the LLM. Josh taps every segment before a paid
 step. Size, pull, ingest,
 suppress, verify, normalize, QA, route, stage, import and pre-launch run on
