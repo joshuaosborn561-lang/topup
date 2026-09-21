@@ -46,7 +46,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D24 | Live |
 | D25 | Live |
 | D26 | Live; pipeline order and find_emails-before-ingest superseded by D29 |
-| D27 | Live |
+| D27 | Live; per-campaign needy as the start signal superseded by D38 |
 | D28 | Live; pipeline list superseded by D29 |
 | D29 | Live; recipe-level ICP superseded by D30; empty-list-proceeds superseded by D34; 90-day send window restored by D35 |
 | D30 | Live |
@@ -57,6 +57,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
 | D36 | Live |
 | D37 | Live |
+| D38 | Live |
 
 ---
 
@@ -1088,3 +1089,50 @@ positive send inside the window.
 
 **Guard.** `src/guards/d37_positive_expiry.test.ts`.
 `src/stages/pure.test.ts` — dated `positiveReplySql`. Ask Josh.
+
+## D38 — Client-wide runway and DM pulls, not camp-by-camp SEG fills
+
+**Decision.** Josh, 2026-09-21 (voice). Lead Top Up optimizes **client-wide
+email days left**, not individual campaign dry alerts (SEG vs non-SEG,
+Watchdog nearly-done on one camp). Josh named this D37; D37 on main is
+already the 90-day positives list. This is the next number on main.
+
+1. **Unit of runway.** Board and top-up triggers use client capacity: rem
+   across ACTIVE campaigns ÷ (unique inboxes × MESSAGE_PER_DAY). LI stays
+   rem ÷ 40.
+2. **Unit of pull.** When topping up, pull the **same kinds of decision
+   makers** the client has been sending to (ICP / persona from receipts and
+   live sends). After the pull, **segment by title** (and mail class / gift)
+   into the client's existing campaigns. Do not treat "this one SEG camp is
+   empty" as the primary job while sibling camps for the same DMs still
+   hold rem.
+3. **Watchdog nearly-done.** Secondary signal. ACK Deliverability CLEAR
+   when needed, but do not auto-open a one-camp SEG refill card if
+   client-wide days are healthy.
+4. **Mock / proposal threshold.** When a non-SalesGlider client is under
+   **2 email days**, mock a client-holistic DM pull (filters, net-new, $,
+   how it will title-segment). SalesGlider is excluded from under-2 auto
+   mocks unless Josh asks.
+5. **Floor for watch cards.** Client under-7 still appears on the daily
+   board Status. Paid spend still needs Josh yes.
+
+**Why.** Josh: alerts that a specific campaign is out miss the point; he
+wants "holistically for this client, how long do they have to send," then
+another pull of the same DMs, then title segmentation like he already
+runs.
+
+**Tradeoff.** A thin SEG camp can finish while the client still has weeks
+of capacity on sibling lanes; that is allowed. Overrides the habit of
+carding every Watchdog nearly-done SEG.
+
+**Open.** Unique inboxes and MESSAGE_PER_DAY are not in this service (no
+mailbox mirror, no invented column). Until Josh names the source, email
+days are null and the watch uses client rem: siblings still holding rem
+is healthy; rem exhausted across ACTIVE is needy. Under-2 mock logs the
+intent; it does not invent filters, net-new, or a dollar figure. LI rem ÷
+40 is specified; this watch still only reads Smartlead.
+
+**Guard.** `src/guards/d38_client_runway.test.ts`.
+`src/ledger/client_runway.test.ts`. `src/watch/decide.test.ts` — one-camp
+SEG empty skips while sibling rem remains; go targets every recipe
+campaign. Ask Josh.

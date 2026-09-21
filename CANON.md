@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D37** (2026-09-16). One page of current truth. When a new
+Canon as of **D38** (2026-09-21). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -95,8 +95,13 @@ whose health crossed a line. Claude sessions hand work to the service with
 `register_queue_table` and `lane_note` over MCP (owner token).
 
 Health, from the hourly Smartlead mirror: **silent** (ACTIVE, untouched
-leads, no sends in 7 days), **empty**, **low** (runway under the recipe
-floor), **bouncing** (over 5%).
+leads, no sends in 7 days), **empty**, **low** (that campaign's runway
+under the recipe floor), **bouncing** (over 5%). Those flags stay on the
+board. The **start signal** is client-wide (D38): rem across ACTIVE
+campaigns ÷ (unique inboxes × MESSAGE_PER_DAY). LI is rem ÷ 40. Until
+inbox × MESSAGE_PER_DAY is a Josh-named source, days are null and a
+client with sibling rem is not needy. Client under-7 still shows on the
+daily digest. One empty SEG camp is not a refill while siblings hold rem.
 
 ## Build order (D23)
 
@@ -136,16 +141,22 @@ Maps/PermitStack are wired (physical still parks until then). Campaign
 ids must already exist in `public.campaigns`. Mixed ICPs are two lane
 rows. A lane with no receipt and no recipe cannot be invented.
 
-## What this build runs (D26, D27, D28)
+## What this build runs (D26, D27, D28, D38)
 
 The **watch** is the normal start. Every six hours (and once on boot) it
-reads the Smartlead mirror for every recipe. A campaign that is ACTIVE and
-empty or under the runway floor, and still **working** (one interested reply
-per 2,000 sends, or any variant with 1,000 sends clearing that rate; D11,
-D35 item 12), opens a run by itself — no `/topup`, no card. A
-campaign that is low and **not** working posts one card: Top up anyway, or
+reads the Smartlead mirror for every recipe. The needy signal is
+**client-wide** rem / capacity (D38), keyed to `runway.floor_days` — not
+one campaign empty or Watchdog nearly-done. A client under the floor, and
+still **working** (one interested reply per 2,000 sends, or any variant
+with 1,000 sends clearing that rate; D11, D35 item 12), opens a run by
+itself — no `/topup`, no card. The run targets the recipe's campaigns so
+the pull can take the client's DM persona and title-segment after. A
+client that is low and **not** working posts one card: Top up anyway, or
 Leave it. Leave it stays quiet until the rate recovers or Josh flips
-`/working on`. `/topup` and MCP `start_topup` are the override.
+`/working on`. `/topup` and MCP `start_topup` are the override. A
+non-SalesGlider client under **2 email days** flags a client-holistic DM
+mock (filters, net-new, $, title-segment); SalesGlider is excluded unless
+Josh asks. Paid spend still waits on Josh.
 
 A run is locked in Postgres so there is only ever one per lane (D12). It
 walks steps **1 → 13** in the skill's order, every time, whether the watch
@@ -170,12 +181,15 @@ The stages:
    item 2) and anyone already in a live campaign of this client (D36).
    Recycle window is `recycle_after_days` (default 90).
 3. **pull** — routed by the target campaigns' ICP and source
-   (`leadgen-mcp-routing` step zero). getleads on a LinkedIn-native
+   (`leadgen-mcp-routing` step zero). The watch starts a **client-holistic
+   DM pull** (same persona the client has been sending to), then route
+   segments by title / mail class / gift into existing campaigns (D38,
+   D30 persona stays per campaign at route time). getleads on a LinkedIn-native
    campaign runs `GetleadsPull` with that campaign's bands/titles (or the
    union when the run's targets share a persona). getleads on a physical
    campaign parks (do not fall back). maps / permits / AI Ark park until
-   those adapters are wired. The watch passes the needy campaign ids; a
-   `/topup` with no ids sizes the whole lane.
+   those adapters are wired. The watch passes the recipe's campaign ids,
+   not only the empty SEG one; a `/topup` with no ids sizes the whole lane.
 4. **ingest** — LeadPipe `ingest_csv` under a run-scoped `source_label`; rows
    claimed for the run; `company_size` / `vertical` filled; title audit
    against the union of the target campaigns' titles.
@@ -225,8 +239,8 @@ The stages:
 13. **flip** — posts the step 13 line: Josh sets ACTIVE by hand and watches
     day one. The service never starts, pauses, or stops a campaign. Then the
     run closes as `done` with the **receipt** (the funnel plus one line per
-    campaign). The watch starts the next fill when a campaign is low and
-    still working.
+    campaign). The watch starts the next fill when the **client** is under
+    the runway floor and still working (D38).
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
 open cards, open runs and which integrations are configured. It is

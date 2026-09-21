@@ -137,7 +137,7 @@ export class Orchestrator {
       input.hold === "not_working"
         ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch stopped: a campaign is low and not working. This needs Josh.`
         : input.trigger === "runway"
-          ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch started it: a campaign is low and still working.`
+          ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch started it: client-wide runway is low and still working.`
           : `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · started by <@${input.by}> (${input.trigger})`;
     const run = await this.d.console.openRunThread(opened.run, headline);
     await this.ledger((l) =>
@@ -150,7 +150,7 @@ export class Orchestrator {
           input.hold === "not_working"
             ? `Run ${run.run_id.slice(0, 8)} opened by the watch and waiting on Josh: not working.`
             : input.trigger === "runway"
-              ? `Run ${run.run_id.slice(0, 8)} opened by the watch (runway low, still working).`
+              ? `Run ${run.run_id.slice(0, 8)} opened by the watch (client-wide runway low, still working).`
               : `Run ${run.run_id.slice(0, 8)} opened (${input.trigger}).`,
         next_intent: input.hold === "not_working" ? "Waiting for Top up anyway or Leave it." : `Run ${PIPELINE_STEPS.join(", ")}; then the receipt.`,
         actor: input.by,
