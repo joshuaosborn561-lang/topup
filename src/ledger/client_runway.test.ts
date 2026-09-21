@@ -69,7 +69,7 @@ describe("D38 client runway math", () => {
     assert.equal(low.email_days, 2);
     assert.equal(low.email_capacity_per_day, 200);
     assert.equal(low.under_floor, true);
-    assert.equal(low.propose_holistic_mock, true);
+    assert.equal(low.propose_holistic_mock, false, "exactly 2 days is not under the under-2 mock line");
 
     const healthy = assessClientRunway({
       clientTag: "parlay",

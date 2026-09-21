@@ -72,11 +72,12 @@ export function assessClientRunway(input: {
   const emailRem = active.reduce((n, c) => n + c.untouched, 0);
   const uniqueInboxes = input.uniqueInboxes ?? null;
   const messagePerDay = input.messagePerDay ?? null;
-  const cap =
-    uniqueInboxes !== null && messagePerDay !== null && uniqueInboxes > 0 && messagePerDay > 0
-      ? uniqueInboxes * messagePerDay
-      : null;
-  const emailDays = cap !== null ? emailDaysLeft(emailRem, uniqueInboxes, messagePerDay) : null;
+  let cap: number | null = null;
+  let emailDays: number | null = null;
+  if (uniqueInboxes !== null && messagePerDay !== null && uniqueInboxes > 0 && messagePerDay > 0) {
+    cap = uniqueInboxes * messagePerDay;
+    emailDays = emailDaysLeft(emailRem, uniqueInboxes, messagePerDay);
+  }
   const liRem = input.liRem ?? 0;
   const liDays = input.liRem === undefined ? null : linkedinDaysLeft(liRem);
   const floorDays = input.floorDays ?? CLIENT_FLOOR_DAYS;
