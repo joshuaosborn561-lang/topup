@@ -521,6 +521,18 @@ export class Repo {
     return rows[0] ?? null;
   }
 
+  async listLaneRecipeBodies(clientTag: string): Promise<unknown[]> {
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('topup.lane_recipes') is not null as ok`);
+    if (!t[0]?.ok) return [];
+    const { rows } = await this.db.query<{ body: unknown }>(
+      `select distinct on (lane) body from topup.lane_recipes
+        where client_tag = $1
+        order by lane, version desc`,
+      [clientTag],
+    );
+    return rows.map((r) => r.body);
+  }
+
   async findRecipe(clientTag: string, lane: string): Promise<{ recipe_id: string; body: unknown } | null> {
     const { rows } = await this.db.query<{ recipe_id: string; body: unknown }>(
       `select recipe_id, body from topup.lane_recipes where client_tag = $1 and lane = $2

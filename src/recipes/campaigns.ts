@@ -153,3 +153,65 @@ export function icpSummary(groups: CampaignGroup[]): string {
   if (groups.length === 0) return "no campaigns";
   return [...new Set(groups.map((g) => `${g.persona} / ${g.kind}`))].join("; ");
 }
+
+/** Industries / maps categories that distinguish two pulls that share a persona. */
+export function pullExtraKey(source: Source): string {
+  if (source.kind === "getleads") {
+    return [...(source.params.industries ?? []), ...(source.params.companyIndustry ?? []), ...(source.params.states ?? [])]
+      .map((s) => s.toLowerCase())
+      .sort()
+      .join("+");
+  }
+  if (source.kind === "maps") {
+    return source.params.categories.map((s) => s.toLowerCase()).sort().join("+");
+  }
+  return source.kind;
+}
+
+/** One GetLeads (or Maps) pull. Gift / offer / mail class do not split this. */
+export function pullIdentity(recipe: Pick<Recipe, "client_tag">, group: CampaignGroup): string {
+  return `${recipe.client_tag}|${group.kind}|${group.persona}|${group.source.kind}|${pullExtraKey(group.source)}`;
+}
+
+export function recipePullKeys(recipe: Recipe): string[] {
+  return [...new Set(campaignGroups(recipe).map((g) => pullIdentity(recipe, g)))];
+}
+
+export function samePull(a: Recipe, b: Recipe): boolean {
+  if (a.client_tag !== b.client_tag) return false;
+  const keys = new Set(recipePullKeys(a));
+  return recipePullKeys(b).some((k) => keys.has(k));
+}
+
+/** Union sibling routing so one pull can segment into tickets + AirPods (D40). */
+export function mergeSiblingRecipes(primary: Recipe, siblings: Recipe[]): Recipe {
+  const routing = [...primary.routing];
+  const seen = new Set(routing.map((r) => `${r.campaign_id}|${JSON.stringify(r.when)}`));
+  const segments: Record<string, string[]> = Object.fromEntries(
+    Object.entries(primary.segments).map(([k, vals]) => [k, [...vals]]),
+  );
+  const addSeg = (dim: string, value: string) => {
+    const cur = segments[dim] ?? [];
+    if (!cur.includes(value)) segments[dim] = [...cur, value];
+  };
+  for (const sib of siblings) {
+    if (sib.client_tag !== primary.client_tag || !samePull(primary, sib)) continue;
+    for (const [dim, vals] of Object.entries(sib.segments)) {
+      for (const v of vals) addSeg(dim, v);
+    }
+    for (const rule of sib.routing) {
+      const key = `${rule.campaign_id}|${JSON.stringify(rule.when)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      routing.push(rule);
+      for (const [dim, value] of Object.entries(rule.when)) addSeg(dim, value);
+    }
+  }
+  return { ...primary, routing, segments };
+}
+
+/** Drop campaigns that are not working so leftovers do not land on a dead list. */
+export function keepCampaigns(recipe: Recipe, campaignIds: number[]): Recipe {
+  const want = new Set(campaignIds);
+  return { ...recipe, routing: recipe.routing.filter((r) => want.has(r.campaign_id)) };
+}

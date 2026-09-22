@@ -11,7 +11,7 @@ describe("D39 — infer the segment from Supabase", () => {
   it("CANON and the decision ledger name D39", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D39\*\*/);
+    assert.match(canon, /Canon as of \*\*D40\*\*|Canon as of \*\*D39\*\*/);
     assert.match(canon, /receipt plus its outcome is the recipe|lane_exclusions|v_receipt_outcome/);
     assert.match(ledger, /## D39 — /);
     assert.match(ledger, /^\| D39 \|/m);

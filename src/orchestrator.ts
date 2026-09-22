@@ -3,7 +3,7 @@ import type { Repo } from "./db/repo.js";
 import { orderCounts, type Role, type RunRow, type Step } from "./domain/runs.js";
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
-import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
+import { keepCampaigns, mergeSiblingRecipes, resolveTargetCampaignIds, samePull, targetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
 import { recipeResolveDeps, resolveOrInfer } from "./recipes/infer.js";
 import { skeletonRecipe } from "./reason/skeleton.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
@@ -130,6 +130,8 @@ export class Orchestrator {
         return { ok: false, message: resolved.ok ? (err as Error).message : resolved.message };
       }
     }
+    recipe = await this.mergeClientPull(recipe);
+    if (input.campaignIds?.length) recipe = keepCampaigns(recipe, input.campaignIds);
     const targets = resolveTargetCampaignIds(recipe, input.campaignIds);
     if (!targets.ok) return { ok: false, message: targets.message };
     const opened = await this.d.repo.openRun({
@@ -177,6 +179,21 @@ export class Orchestrator {
     return { ok: true, run };
   }
 
+  /** Sibling lanes that share a pull (tickets + AirPods) ride on this recipe (D40). */
+  private async mergeClientPull(recipe: Recipe): Promise<Recipe> {
+    const bodies = await this.d.repo.listLaneRecipeBodies(recipe.client_tag);
+    const siblings: Recipe[] = [];
+    for (const body of bodies) {
+      try {
+        const other = parseRecipe(body);
+        if (other.lane !== recipe.lane && samePull(recipe, other)) siblings.push(other);
+      } catch {
+        /* skip a body that does not parse */
+      }
+    }
+    return siblings.length ? mergeSiblingRecipes(recipe, siblings) : recipe;
+  }
+
   /** Ledger writes never break a run: a failed write is logged and the run goes on. */
   private async ledger(fn: (l: LaneLedger) => Promise<unknown>): Promise<void> {
     if (!this.d.ledger) return;
@@ -222,7 +239,9 @@ export class Orchestrator {
   private async pipeline(initial: RunRow): Promise<void> {
     const rec = await this.d.repo.getRecipe(initial.recipe_id);
     if (!rec) throw new Error(`recipe ${initial.recipe_id} is not in topup.lane_recipes`);
-    const recipe = parseRecipe(rec.body);
+    const merged = await this.mergeClientPull(parseRecipe(rec.body));
+    const targetIds = targetCampaignIds(merged, initial);
+    const recipe = targetIds.length ? keepCampaigns(merged, targetIds) : merged;
 
     for (const [i, step] of PIPELINE_STEPS.entries()) {
       const after = PIPELINE_STEPS[i + 1];

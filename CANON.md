@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D39** (2026-09-16). One page of current truth. When a new
+Canon as of **D40** (2026-09-22). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -148,14 +148,17 @@ as data is `topup.lane_exclusions`.
 ## What this build runs (D26, D27, D28)
 
 The **watch** is the normal start. Every six hours (and once on boot) it
-reads the Smartlead mirror for every file recipe and every receipt
-lane whose campaigns a file recipe does not already cover (D38, D39).
-A campaign that is ACTIVE and
-empty or under the runway floor, and still **working** (one interested reply
-per 2,000 sends, or any variant with 1,000 sends clearing that rate; D11,
-D35 item 12), opens a run by itself — no `/topup`, no card. A
-campaign that is low and **not** working posts one card: Top up anyway, or
-Leave it. Leave it stays quiet until the rate recovers or Josh flips
+reads the Smartlead mirror **client-wide** (D40): every file recipe and
+every receipt lane whose campaigns a file recipe does not already cover
+(D38, D39). It finds campaigns that are ACTIVE, empty or under the
+runway floor, and still **working** (one interested reply per 2,000
+sends, or any variant with 1,000 sends clearing that rate; D11, D35
+item 12). Those winners get one pull per shared ICP (same kind,
+persona, source, and industry/geo). Gift / offer / mail class do not
+split the pull — tickets and AirPods are one export, then routed.
+A campaign that is not working does not get leads. A campaign that is
+low and **not** working posts one card: Top up anyway, or Leave it.
+Leave it stays quiet until the rate recovers or Josh flips
 `/working on`. `/topup` and MCP `start_topup` are the override.
 
 A run is locked in Postgres so there is only ever one per lane (D12). It
@@ -172,7 +175,8 @@ the new rows. Step 13 posts the flip reminder and never sets ACTIVE.
 The stages:
 
 1. **trigger** — a file recipe is still an override. With none, load the
-   lane picture and propose from receipts + outcomes (D39). Inventory in
+   client pull picture (this lane plus sibling receipts that share the
+   ICP) and propose from receipts + outcomes (D39, D40). Inventory in
    our own tables short-circuits to a free card. Josh taps every segment
    before a paid step. Missing cells or foreign campaigns halt. Blank
    `company_size` on existing leads is backfilled here (D38).
@@ -191,8 +195,9 @@ The stages:
    campaign runs `GetleadsPull` with that campaign's bands/titles (or the
    union when the run's targets share a persona). getleads on a physical
    campaign parks (do not fall back). maps / permits / AI Ark park until
-   those adapters are wired. The watch passes the needy campaign ids; a
-   `/topup` with no ids sizes the whole lane.
+   those adapters are wired. The watch passes the **working** campaign
+   ids in the pull (D40); route segments the rows into those campaigns.
+   A `/topup` with no ids sizes the whole pull group.
 4. **ingest** — LeadPipe `ingest_csv` under a run-scoped `source_label`; rows
    claimed for the run; `company_size` / `vertical` filled; title audit
    against the union of the target campaigns' titles.

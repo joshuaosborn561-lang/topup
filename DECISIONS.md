@@ -59,6 +59,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D37 | Live |
 | D38 | Live; auto-run inferred `*.v0` without a segment card superseded by D39 |
 | D39 | Live |
+| D40 | Live |
 
 ---
 
@@ -1167,3 +1168,26 @@ display. Josh (2026-09-17): ignore it for verdict. Avoid is only
 **Guard.** `src/guards/d39_infer_from_supabase.test.ts`.
 `src/reason/validate.test.ts`. `src/reason/replay.test.ts`.
 Ask Josh.
+
+## D40 — Client-wide: top up winners, one pull, then segment
+
+**Decision.** Josh (2026-09-22): look at the client first, not one
+campaign and not one lane in isolation. Across that client's campaigns,
+top up the ones that are still working (D11). Pull once for the shared
+ICP behind those winners (kind + persona + source + industry/geo). Then
+route the leads into the right campaigns — band, gift, offer, team.
+Tickets and AirPods are one pull. Goliath education and finserv are
+two pulls (different industries). A campaign that is not working does
+not receive the new rows.
+
+**Why.** Isolated per-campaign or per-lane pulls duplicate the same
+GetLeads export and miss that AirPods is leftover from tickets. Josh
+wants the client picture, then the good lists, then one pull segmented
+into those lists.
+
+**Tradeoff.** Mixed personas on one client (BCP IT DM vs PE vs C-suite)
+stay separate pulls. The lock is still one open run per lane (D12);
+sibling lanes in the same pull skip while that run is open.
+
+**Guard.** `src/guards/d40_client_wide.test.ts`.
+`src/watch/clientWide.test.ts`. Ask Josh.

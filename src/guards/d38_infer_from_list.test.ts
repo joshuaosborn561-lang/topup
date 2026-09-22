@@ -18,11 +18,11 @@ describe("D38 — infer from the list; backfill missing bands", () => {
 
   it("CANON and the spine skill name infer-from-list and the $5 backfill ceiling", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D39\*\*|Canon as of \*\*D38\*\*/);
+    assert.match(canon, /Canon as of \*\*D40\*\*|Canon as of \*\*D39\*\*|Canon as of \*\*D38\*\*/);
     assert.match(canon, /inferred from the list|infer from the list|list \+ receipt tags/);
     assert.match(canon, /whole backfill.*\$5|\$5.*whole backfill|whole backfill is \$5/s);
     const skill = await readFile(new URL("skills/lead-list-build/SKILL.md", root), "utf8");
-    assert.match(skill, /Default \(D39\)|Default \(D38\)/);
+    assert.match(skill, /Default \(D40\)|Default \(D39\)|Default \(D38\)/);
     assert.match(skill, /whole backfill is \$5/);
     assert.match(skill, /Josh signs off on the segment before anything is pulled/);
   });
