@@ -2,7 +2,7 @@
 
 These are the skills Josh has built for SalesGlider Growth. Each folder holds a `SKILL.md` and sometimes a `scripts/` folder. They are the institutional knowledge of the business, written from measured results. Read the skill for a stage before writing code for that stage. Where a skill and the brief disagree, the brief wins and you flag it in the PR.
 
-No skills are marked stale as of D39. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is prose the reasoner reads (D39); the six pending taps are yes. Positives expire 90 days after the reply and replace the customer-list upload (D37). Default top-up reads the receipt + outcome and asks Josh on a segment card (D39). Company size backfill stays (D38).
+No skills are marked stale as of D40. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is prose the reasoner reads (D39); the six pending taps are yes. Positives expire 90 days after the reply and replace the customer-list upload (D37). Default top-up reads the client, tops up working campaigns, pulls once, and segments (D40). Company size backfill stays (D38).
 
 ## Rulebook
 

@@ -5,6 +5,7 @@ import type { RunRow } from "../domain/runs.js";
 import type { Recipe } from "../recipes/schema.js";
 import { anthropicReasoner, type ReasonerFn } from "./call.js";
 import { loadInventory } from "./inventory.js";
+import { idsFromTargetCounts, recipeCampaignIds } from "../recipes/campaigns.js";
 import { loadLanePicture } from "./picture.js";
 import { proposeLane, type ProposeResult } from "./propose.js";
 import { reasonTools } from "./tools.js";
@@ -49,11 +50,12 @@ export function makeProposer(opts: {
       const { rows } = await opts.repo.raw().query<T>(sql, params);
       return rows;
     };
+    const siblingIds = [...new Set([...recipeCampaignIds(recipe), ...idsFromTargetCounts(run.counts_by_status)])];
     const inventory = await loadInventory(query, recipe.client_tag, recipe.lane);
     const receipts = await opts.repo.listPullReceipts(recipe.client_tag, recipe.lane);
     const source = receipts.find((r) => r.granularity === "lane")?.company_source ?? "getleads";
     const prose = await loadProse(opts.root, recipe.client_tag, source);
-    const picture = await loadLanePicture(query, recipe.client_tag, recipe.lane, prose, inventory);
+    const picture = await loadLanePicture(query, recipe.client_tag, recipe.lane, prose, inventory, siblingIds);
     const calls: CountCall[] = [];
     const tools = reasonTools({
       sql: async (sql) => {

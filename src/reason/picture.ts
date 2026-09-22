@@ -104,6 +104,7 @@ export async function loadLanePicture(
   lane: string,
   prose: LanePicture["prose"],
   inventory: InventoryRow[],
+  siblingCampaignIds: number[] = [],
 ): Promise<LanePicture> {
   const receipts = await query<Record<string, unknown>>(
     `select receipt_id::text, written_at::text, written_by, client_tag, smartlead_client_id, lane,
@@ -112,22 +113,26 @@ export async function loadLanePicture(
             how_i_did_it, notes, segment, yield_by_step, spend_cents, suppression_scope,
             build_label, granularity, owner_confirmed_at, josh_confirmed, basis_receipt_ids
        from topup.pull_receipts
-      where client_tag = $1 and lane = $2
+      where client_tag = $1
+        and (lane = $2 or (cardinality($3::bigint[]) > 0 and campaign_ids && $3::bigint[]))
       order by (granularity = 'lane') desc, written_at desc`,
-    [clientTag, lane],
+    [clientTag, lane, siblingCampaignIds],
   );
   const outcomes = await query<Record<string, unknown>>(
     `select o.receipt_id::text, o.sends, o.interested, o.bounces, o.bounce_rate,
             o.interested_per_2000, o.variant_repeat, o.verdict, o.josh_confirmed
        from topup.v_receipt_outcome o
        join topup.pull_receipts r on r.receipt_id = o.receipt_id
-      where r.client_tag = $1 and r.lane = $2`,
-    [clientTag, lane],
+      where r.client_tag = $1
+        and (r.lane = $2 or (cardinality($3::bigint[]) > 0 and r.campaign_ids && $3::bigint[]))`,
+    [clientTag, lane, siblingCampaignIds],
   );
   const runway = await query<Record<string, unknown>>(
     `select campaign_id, name, status, leads_total, untouched, sends_7d, daily_send_rate, days_remaining
-       from topup.v_lane_runway where client_tag = $1 and lane = $2`,
-    [clientTag, lane],
+       from topup.v_lane_runway
+      where client_tag = $1
+        and (lane = $2 or (cardinality($3::bigint[]) > 0 and campaign_id = any($3::bigint[])))`,
+    [clientTag, lane, siblingCampaignIds],
   );
   const exclusions = await query<Record<string, unknown>>(
     `select id::text, client_tag, lane, kind, value, reason, decided_on::text, decided_by, active
