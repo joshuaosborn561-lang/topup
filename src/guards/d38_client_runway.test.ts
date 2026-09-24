@@ -14,7 +14,6 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const watch = await readFile(new URL("src/watch/decide.ts", root), "utf8");
     const tick = await readFile(new URL("src/watch/index.ts", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D38\*\*/);
     assert.match(canon, /client-wide/);
     assert.match(canon, /unique inboxes/);
     assert.match(canon, /MESSAGE_PER_DAY/);

@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D38** (2026-09-21). One page of current truth. When a new
+Canon as of **D39** (2026-09-24). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -277,7 +277,20 @@ open cards, open runs and which integrations are configured. It is
   the owner.
 - Counts and ids only. Ten sample values on a card at most, never emails.
 
-## Never (D1–D6, D8, D13, D14)
+## Grok bot (D39)
+
+Grok bot is the **babysitter**. It starts a run, reads `/where` and the
+ledger, posts a card, and drops a link. It does not see lead rows.
+
+- Pulls, enrich, verify, and import run in the Railway service and the
+  MCP servers. Rows move **MCP → Supabase** (`source_table` + writeback),
+  edge functions, and LeadPipe. They do not enter Grok bot context.
+- "Here's what it found" is a count, a job id, and a signed URL the bot
+  does not open. Ten masked samples on a card stay the ceiling (D2).
+- Scheduled pulses are Railway crons. Grok bot does not set a self-routine
+  that re-reads lists.
+
+## Never (D1–D6, D8, D13, D14, D39)
 
 - Never write to a Supabase project other than `azpapwtnrbzywlnxxecz`.
 - Never hardcode a secret. Never call a vendor in a test.
@@ -291,6 +304,9 @@ open cards, open runs and which integrations are configured. It is
   and say so in the PR.
 - Never trust "processed" or a zero-verdict resume as a verification.
 - Never run more than one replica.
+- Never pull lead rows into Grok bot context. No export payloads, no
+  CSV paste, no child-agent GetLeads fire into chat. Counts, ids, and a
+  link only (D39).
 
 ## The merged list (D35)
 

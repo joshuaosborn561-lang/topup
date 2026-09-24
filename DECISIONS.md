@@ -21,7 +21,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | Decision | Status |
 |---|---|
 | D1 | Live |
-| D2 | Live |
+| D2 | Live; Grok-bot context window tightened by D39 |
 | D3 | Live |
 | D4 | Live |
 | D5 | Live |
@@ -58,6 +58,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D36 | Live |
 | D37 | Live |
 | D38 | Live |
+| D39 | Live |
 
 ---
 
@@ -1136,3 +1137,45 @@ intent; it does not invent filters, net-new, or a dollar figure. LI rem ÷
 `src/ledger/client_runway.test.ts`. `src/watch/decide.test.ts` — one-camp
 SEG empty skips while sibling rem remains; go targets every recipe
 campaign. Ask Josh.
+
+## D39 — Grok bot is the babysitter; rows never enter its context
+
+**Decision.** Josh, 2026-09-24 (voice + Slack). The Lead Top Up **Grok bot**
+(Cursor Grok on this repo, Slack Cursor in `#lead-topup`) is the
+orchestrator only. It does not pull, enrich, verify, or inspect lead
+rows. Nothing that returns a list may land in its context window.
+
+1. **Job.** Start a run, read counts and ids, post a Slack card, drop a
+   signed URL or a `/where` line. "Here's what it found" is a count, a
+   job id, and a link — not the list.
+2. **Where the work lives.** MCP servers write into Supabase with
+   `source_table` + writeback. Edge functions and LeadPipe (Context
+   Saver) move CSVs server to server. The Railway service walks the
+   thirteen steps. Grok bot does not call export/search tools that
+   return contact payloads into chat.
+3. **What it may see.** Counts, campaign ids, run ids, spend, gate
+   names, ten masked samples on a card (D2). A signed export URL it
+   does not open.
+4. **What it must not do.** Paste CSVs. `SELECT` emails or names into
+   chat. Fan out child agents that fire GetLeads batches or apply
+   leftover exports into context. Set a self-routine that re-reads
+   lists (Josh, 2026-09-22, `#campaign-watchdog`: scheduled pulses are
+   Railway crons, not a Grok routine).
+
+**Why.** Josh to Cayden, 2026-09-24 08:52 CDT: "I nuked our grok bot
+usage again trying to do lead top up." Same warning two days earlier:
+don't set a Grok routine or it burns the allotment. Repo evidence: the
+desktop Grok agent "Lead top-up service"
+(`bc-de1baca6-0ee5-4854-b3a1-c7f7ca95c5c3`, created 2026-09-11, last
+active 2026-09-21) spawned dozens of child runs on 2026-09-16/17 named
+"Fire GetLeads n=…", "Apply leftover … CSVs", "Drain remaining leftover"
+— the opposite of babysitting. D2 already banned rows in Slack and
+logs; this names the **context window** as the thing that ran up the
+bill.
+
+**Tradeoff.** Grok bot cannot debug a bad row by looking at it. It
+posts a link or ten samples and stops. A thin camp can wait on the
+service. That is allowed.
+
+**Guard.** `src/guards/d39_grok_bot_context.test.ts`. D2
+`lead_rows.test.ts` still holds. Ask Josh.
