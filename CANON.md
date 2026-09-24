@@ -300,12 +300,17 @@ It does not reconstruct the thirteen steps in chat.
   / linkedin_url, inline `enrich_waterfall` rows, child-agent GetLeads
   fires, CSV paste, opening a signed URL, a self-routine that re-reads
   lists. Ban list is the same file.
-- **How it knows what to start.** Tags on `topup.pull_receipts`
-  (`icp_kind`, `persona`, `company_source`, `company_filters`,
-  `campaign_ids`) and the file recipe when one exists. Not a chat walk of
-  `skills/lead-list-build`. Inferring a recipe from `public.leads` is
-  PRs #6 and #7 — not a Grok session, and not this branch's Railway code
-  (this service still walks the file recipe).
+- **How it knows what to start.** The four source legs on
+  campaignintelligence — `company_source`, `domain_source`,
+  `person_source`, `email_source` (+ `email_max_tier` / `email_tier`) —
+  plus `icp_kind`, `persona`, `company_filters`, `campaign_ids`. They
+  live on `topup.pull_receipts`, `topup.campaign_method`,
+  `topup.campaign_recipe` (jsonb `*_sources`), `topup.feed_map`, and
+  `topup.lead_provenance` (COUNT tags only; never SELECT email). Not
+  `public.leads` alone, and not a chat walk of `skills/lead-list-build`.
+  Inferring a new file recipe from those stamps is PRs #6 and #7 — not
+  a Grok session, and not this branch's Railway code (this service
+  still walks the file recipe).
 - "Here's what it found" is a count, a job id, and a signed URL the bot
   does not open. Ten masked samples on a card stay the ceiling (D2).
 - Scheduled pulses are Railway crons. Grok bot does not set a self-routine

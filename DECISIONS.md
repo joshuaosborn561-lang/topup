@@ -1169,11 +1169,15 @@ the thirteen steps in chat.
    phone / linkedin_url, inline waterfall `rows`, child-agent GetLeads
    fires, CSV paste. Ten masked samples stay the ceiling (D2).
 5. **Do not reconstruct the thirteen steps in Grok context.** Infer
-   *what to start* from campaignintelligence tags on
-   `topup.pull_receipts` (`icp_kind`, `persona`, `company_source`,
-   `company_filters`, `campaign_ids`) plus `lane_state` / the file
-   recipe. Then `start_topup`. The service walks 1–13. Grok does not
-   replay `skills/lead-list-build` or a `*-lead-pulls` skill in chat.
+   *what to start* from the four source legs on campaignintelligence —
+   `company_source`, `domain_source`, `person_source`, `email_source`
+   (+ `email_max_tier` / `email_tier`) — plus `icp_kind`, `persona`,
+   `company_filters`, `campaign_ids`. Those columns are on
+   `topup.pull_receipts`, `topup.campaign_method`,
+   `topup.campaign_recipe`, `topup.feed_map`, and
+   `topup.lead_provenance` (COUNT only; never SELECT email). Then
+   `start_topup`. The service walks 1–13. Grok does not replay
+   `skills/lead-list-build` or a `*-lead-pulls` skill in chat.
 6. **This branch is honest about inference.** Railway code here still
    walks the file recipe (`recipes/parlay/it_dm.json`) through
    `PIPELINE_STEPS` (D24, D28). Inferring ICP from `public.leads` +

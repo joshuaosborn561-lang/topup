@@ -23,21 +23,39 @@ down. Copy that, do not invent a chat pipeline.
 Infer the job from **campaignintelligence** (`azpapwtnrbzywlnxxecz`) tags.
 Do not reconstruct `skills/lead-list-build` steps 1–13 in this chat.
 
-Read, counts and method names only:
+Read, counts and method names only. The source tags are **four legs**,
+not three ICP fields:
 
-- `topup.pull_receipts` — `icp_kind`, `persona`, `company_source`,
-  `company_filters`, `campaign_ids`, `tam_count`, `rows_found`,
-  `rows_imported`. Never the people.
+| Leg | Column | Means |
+|---|---|---|
+| Company | `company_source` | Where the company set came from (`getleads`, `maps`, `permits`, `ai_ark`, named signals, …) |
+| Domain | `domain_source` | Where the domain came from (`already`, `maps`, `domain_waterfall`, `theirstack`, …) |
+| Person | `person_source` | Where the DM came from (`getleads`, `ai_ark`, `people_waterfall`, `serp`, `hard_to_find`, …) |
+| Email | `email_source` + `email_max_tier` / `email_tier` | Where the address came from (`getleads`, `email_waterfall`, `name_to_email`, …) and how deep the waterfall went |
+
+They live on more than `public.leads` and more than three receipt fields:
+
+- `topup.pull_receipts` — the four legs plus `icp_kind`, `persona`,
+  `company_filters`, `campaign_ids`, `segment`, `tam_count`,
+  `rows_found`, `rows_imported`. Never the people.
+- `topup.campaign_method` — one row per campaign: the four legs +
+  `email_tier`.
+- `topup.campaign_recipe` — per campaign jsonb `company_sources`,
+  `domain_sources`, `person_sources`, `email_sources` (counts of each
+  tag, not rows).
+- `topup.feed_map` — feed pattern → the four legs.
+- `topup.lead_provenance` — per-lead stamps of the same four legs.
+  **COUNT by tag. Never SELECT `email`.**
 - `topup.lane_recipes` / `recipe_get` — the signed-off file recipe when
   one exists (`recipes/parlay/it_dm.json` is the override).
-- `lane_state` / `/where` — which step the **service** is on.
+- `topup.lane_state` / `/where` — which step the **service** is on.
 - `campaign_registry` — campaign ids, band, working flag.
 
 Then **start the Railway service** with `start_topup`. The service walks
 the thirteen steps (D24, D28). You do not. If there is no recipe yet,
 say so and ask Josh — do not walk the skill to invent one. Inferring a
-recipe from `public.leads` + receipt tags is PRs #6 and #7, not a Grok
-session.
+new file recipe from `public.leads` + these stamps is PRs #6 and #7,
+not a Grok session.
 
 ## Allow list (you may call these)
 

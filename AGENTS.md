@@ -15,7 +15,9 @@ For humans and coding agents alike.
    it redacts.
 5. **Grok bot is the babysitter (D39).** Read `skills/grok-bot-babysitter`
    first. It starts `start_topup` or a LeadPipe / csv-endpoint job, reads
-   campaignintelligence tags (receipts, recipes, `lane_state`), posts a
+   campaignintelligence tags — `company_source`, `domain_source`,
+   `person_source`, `email_source` on receipts / `campaign_method` /
+   `campaign_recipe` / `lead_provenance` (counts only) — posts a
    card, and drops a link. It does not reconstruct the thirteen steps in
    chat. Lead rows move MCP → Supabase (`source_table` + writeback), edge
    functions, and LeadPipe (`lp_run ingest_csv`, `lp_export` signed URL,

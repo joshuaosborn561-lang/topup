@@ -66,3 +66,45 @@ export const GROK_MUST_NOT_SELECT = [
   "phone",
   "linkedin_url",
 ] as const;
+
+/**
+ * The four source legs on campaignintelligence. Not just company_source.
+ * Live on pull_receipts, campaign_method, campaign_recipe, feed_map,
+ * lead_provenance. Ask Josh.
+ */
+export const GROK_SOURCE_TAGS = [
+  "company_source",
+  "domain_source",
+  "person_source",
+  "email_source",
+  "email_max_tier",
+  "email_tier",
+] as const;
+
+/** Receipt / method columns Grok may read (counts and method names). */
+export const GROK_RECEIPT_TAGS = [
+  "icp_kind",
+  "persona",
+  "company_source",
+  "company_filters",
+  "domain_source",
+  "person_source",
+  "email_source",
+  "email_max_tier",
+  "campaign_ids",
+  "segment",
+] as const;
+
+/**
+ * Tables Grok may read tags from. Counts and method names only.
+ * `lead_provenance` is the per-lead stamp — COUNT the source legs, never
+ * SELECT email.
+ */
+export const GROK_TAG_TABLES = [
+  "topup.pull_receipts",
+  "topup.campaign_method",
+  "topup.campaign_recipe",
+  "topup.feed_map",
+  "topup.lead_provenance",
+  "topup.lane_state",
+] as const;

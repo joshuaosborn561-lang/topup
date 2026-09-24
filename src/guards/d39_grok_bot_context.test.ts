@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { SAMPLE_ROWS_MAX } from "../mcp/server.js";
-import { GROK_MAY, GROK_MUST_NOT, GROK_MUST_NOT_SELECT, GROK_SAMPLE_MAX } from "../grok/allowlist.js";
+import {
+  GROK_MAY,
+  GROK_MUST_NOT,
+  GROK_MUST_NOT_SELECT,
+  GROK_RECEIPT_TAGS,
+  GROK_SAMPLE_MAX,
+  GROK_SOURCE_TAGS,
+  GROK_TAG_TABLES,
+} from "../grok/allowlist.js";
 
 /** D39 — Grok bot is the babysitter; rows never enter its context. Ask Josh. */
 
@@ -71,6 +79,9 @@ describe("D39 — Grok bot is the babysitter", () => {
     const leadpipe = await readFile(new URL("skills/leadpipe/SKILL.md", root), "utf8");
     const babysitter = await readFile(new URL("skills/grok-bot-babysitter/SKILL.md", root), "utf8");
     const index = await readFile(new URL("skills/SKILLS_INDEX.md", root), "utf8");
+    const canon = await readFile(new URL("CANON.md", root), "utf8");
+    const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
+    const agents = await readFile(new URL("AGENTS.md", root), "utf8");
     assert.match(leadpipe, /store and job runner/i);
     assert.match(leadpipe, /ingest_csv/);
     assert.match(leadpipe, /lp_sample/);
@@ -96,6 +107,23 @@ describe("D39 — Grok bot is the babysitter", () => {
     for (const col of GROK_MUST_NOT_SELECT) {
       assert.match(babysitter, new RegExp(col), `D39: grok-bot-babysitter must ban SELECT of ${col}. Ask Josh.`);
     }
+    for (const tag of GROK_SOURCE_TAGS) {
+      assert.match(babysitter, new RegExp(`\`${tag}\``), `D39: grok-bot-babysitter must name source tag \`${tag}\`. Ask Josh.`);
+      assert.match(canon, new RegExp(tag), `D39: CANON must name source tag ${tag}. Ask Josh.`);
+    }
+    for (const table of GROK_TAG_TABLES) {
+      assert.match(babysitter, new RegExp(table.replace(".", "\\.")), `D39: grok-bot-babysitter must name ${table}. Ask Josh.`);
+    }
+    for (const tag of GROK_RECEIPT_TAGS) {
+      assert.match(babysitter, new RegExp(`\`${tag}\``), `D39: grok-bot-babysitter must name receipt tag \`${tag}\`. Ask Josh.`);
+    }
+    assert.match(ledger, /domain_source/);
+    assert.match(ledger, /person_source/);
+    assert.match(ledger, /email_source/);
+    assert.match(ledger, /lead_provenance/);
+    assert.match(agents, /domain_source/);
+    assert.match(agents, /person_source/);
+    assert.match(agents, /email_source/);
   });
 
   it("pull skills tell Grok bot not to walk them in chat — Ask Josh", async () => {
