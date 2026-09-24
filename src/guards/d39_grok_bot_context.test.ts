@@ -34,6 +34,7 @@ describe("D39 — Grok bot is the babysitter", () => {
     assert.match(canon, /skills\/leadpipe/);
     assert.match(canon, /supabase-csv-endpoint/);
     assert.match(canon, /does not reconstruct the thirteen steps/);
+    // Line wraps in the ledger are allowed; \s+ is the phrase.
     assert.match(canon, /lp_run ingest_csv/);
     assert.match(canon, /find_dms_by_title/);
     assert.match(canon, /get-dataset-items/);
@@ -121,7 +122,7 @@ describe("D39 — Grok bot is the babysitter", () => {
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const orchestrator = await readFile(new URL("src/orchestrator.ts", root), "utf8");
     assert.match(canon, /still walks the file recipe/);
-    assert.match(ledger, /still walks the file recipe/);
+    assert.match(ledger, /still\s+walks the file recipe/);
     assert.match(orchestrator, /PIPELINE_STEPS/);
     const recipes = await readdir(new URL("recipes/parlay", root));
     assert.ok(recipes.includes("it_dm.json"), "D39: Parlay file recipe is still the override on this branch. Ask Josh.");
