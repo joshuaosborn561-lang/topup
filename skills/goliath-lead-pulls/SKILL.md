@@ -1,9 +1,11 @@
 ---
 name: goliath-lead-pulls
-description: Pull net-new leads for Goliath (Goliath360 / Goliath Solutions Group, Dave Ackley, cybersecurity MSSP) using getleads plus the LeadPipe pipeline. Use this skill whenever Josh asks for Goliath leads, Goliath lanes, or includes Goliath in a multi-client pull. Encodes the Aug 2026 correction that every Goliath lane targets the IT decision maker, not the C suite, and the pending Mfg/Defense lookalike rule.
+description: Pull net-new leads for Goliath (Goliath360 / Goliath Solutions Group, Dave Ackley, cybersecurity MSSP) using getleads plus the LeadPipe pipeline. Grok bot (D39) must not execute this pull in chat — start start_topup or hand a CSV URL to LeadPipe ingest_csv. Use this skill whenever Josh asks for Goliath leads, Goliath lanes, or includes Goliath in a multi-client pull. Encodes the Aug 2026 correction that every Goliath lane targets the IT decision maker, not the C suite, and the pending Mfg/Defense lookalike rule.
 ---
 
 # Goliath lead pulls
+
+**Grok bot (D39):** do not execute this pull in chat. `start_topup` or LeadPipe `ingest_csv`.
 
 Client: Dave Ackley, Goliath360 / Goliath Solutions Group (goliathsec.com), cybersecurity for SMB/SME: endpoint protection, MDR/XDR, pen testing, advisory, compliance, tiered $12 to $65 per endpoint. Smartlead client_id 548611. LeadPipe client_tag `goliath`.
 

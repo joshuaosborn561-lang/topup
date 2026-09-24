@@ -1,9 +1,11 @@
 ---
 name: earthworks-lead-pulls
-description: Pull Earthworks (Peterson earthworks) leads. Own tag, own tables. Use whenever Josh asks for Earthworks, vacant land, Dallas nonprofits, or improved commercial owners around Dallas. getleads is wrong for this persona.
+description: Pull Earthworks (Peterson earthworks) leads. Own tag, own tables. Grok bot (D39) must not execute this pull in chat — start start_topup or hand a CSV URL to LeadPipe ingest_csv. Use whenever Josh asks for Earthworks, vacant land, Dallas nonprofits, or improved commercial owners around Dallas. getleads is wrong for this persona.
 ---
 
 # Earthworks lead pulls
+
+**Grok bot (D39):** do not execute this pull in chat. `start_topup` or LeadPipe `ingest_csv`.
 
 Own tag, own tables (item 50). LeadPipe client_tag `peterson_earthworks`. Never write into Peterson roofing tables.
 

@@ -1,9 +1,11 @@
 ---
 name: techevo-lead-pulls
-description: Pull net-new New England and Florida leads for TechEvo using getleads plus the LeadPipe ingest and global-suppression pipeline. Use this skill whenever Josh asks for TechEvo leads, New England IT leads, Florida IT leads, South Florida owners, or includes TechEvo in a multi-client pull. Encodes the geography rules (NE includes NY/NJ; Florida IT DM is statewide; SFL owners stay metro), the IT decision maker bias, and the small company COO fallback.
+description: Pull net-new New England and Florida leads for TechEvo using getleads plus the LeadPipe ingest and global-suppression pipeline. Grok bot (D39) must not execute this pull in chat — start start_topup or hand a CSV URL to LeadPipe ingest_csv. Use this skill whenever Josh asks for TechEvo leads, New England IT leads, Florida IT leads, South Florida owners, or includes TechEvo in a multi-client pull. Encodes the geography rules (NE includes NY/NJ; Florida IT DM is statewide; SFL owners stay metro), the IT decision maker bias, and the small company COO fallback.
 ---
 
 # TechEvo lead pulls
+
+**Grok bot (D39):** do not execute this pull in chat. `start_topup` or LeadPipe `ingest_csv`.
 
 Client: TechEvo. Smartlead client_id 521881 (campaign "TechEvo New England Red Sox"). LeadPipe client_tag `techevo`.
 

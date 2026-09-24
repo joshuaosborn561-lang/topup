@@ -58,7 +58,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D36 | Live |
 | D37 | Live |
 | D38 | Live |
-| D39 | Live |
+| D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context |
 
 ---
 
@@ -1140,27 +1140,48 @@ campaign. Ask Josh.
 
 ## D39 — Grok bot is the babysitter; rows never enter its context
 
-**Decision.** Josh, 2026-09-24 (voice + Slack). The Lead Top Up **Grok bot**
-(Cursor Grok on this repo, Slack Cursor in `#lead-topup`) is the
-orchestrator only. It does not pull, enrich, verify, or inspect lead
-rows. Nothing that returns a list may land in its context window.
+**Decision.** Josh, 2026-09-24 (voice + Slack, then "be more thorough").
+The Lead Top Up **Grok bot** (Cursor Grok on this repo, Slack Cursor in
+`#lead-topup`) is the orchestrator only. It does not pull, enrich,
+verify, or inspect lead rows. Nothing that returns a list may land in
+its context window. Tightened the same day: allow list, ban list,
+LeadPipe + csv-endpoint as the only row movers, and a ban on walking
+the thirteen steps in chat.
 
 1. **Job.** Start a run, read counts and ids, post a Slack card, drop a
    signed URL or a `/where` line. "Here's what it found" is a count, a
    job id, and a link — not the list.
 2. **Where the work lives.** MCP servers write into Supabase with
-   `source_table` + writeback. Edge functions and LeadPipe (Context
-   Saver) move CSVs server to server. The Railway service walks the
-   thirteen steps. Grok bot does not call export/search tools that
-   return contact payloads into chat.
-3. **What it may see.** Counts, campaign ids, run ids, spend, gate
-   names, ten masked samples on a card (D2). A signed export URL it
+   `source_table` + writeback. Edge functions (`skills/supabase-csv-endpoint`)
+   and LeadPipe / Context Saver (`skills/leadpipe`) move CSVs server to
+   server. The Railway service walks the thirteen steps. Grok bot does
+   not call export/search tools that return contact payloads into chat.
+3. **What it may call.** The allow list in `src/grok/allowlist.ts` and
+   `skills/grok-bot-babysitter`: service MCP (`start_topup`, `lane_state`,
+   `run_status`, …), LeadPipe (`lp_plan`, `lp_run`, `lp_status`,
+   `lp_export`, `lp_sample` ≤10, `lp_inventory`, `lp_ensure_client`,
+   `lp_list_clients`), csv-endpoint / edge functions. A signed URL it
    does not open.
-4. **What it must not do.** Paste CSVs. `SELECT` emails or names into
-   chat. Fan out child agents that fire GetLeads batches or apply
-   leftover exports into context. Set a self-routine that re-reads
-   lists (Josh, 2026-09-22, `#campaign-watchdog`: scheduled pulses are
-   Railway crons, not a Grok routine).
+4. **What it must not call.** Ban list in the same files:
+   `export_contacts`, `search_contacts`, GetLeads enrich / batch-result
+   tools, Apify `get-dataset-items`, `find_dms_by_title` (~$0.10 per
+   company; Josh's number), `SELECT` of email / first_name / last_name /
+   phone / linkedin_url, inline waterfall `rows`, child-agent GetLeads
+   fires, CSV paste. Ten masked samples stay the ceiling (D2).
+5. **Do not reconstruct the thirteen steps in Grok context.** Infer
+   *what to start* from campaignintelligence tags on
+   `topup.pull_receipts` (`icp_kind`, `persona`, `company_source`,
+   `company_filters`, `campaign_ids`) plus `lane_state` / the file
+   recipe. Then `start_topup`. The service walks 1–13. Grok does not
+   replay `skills/lead-list-build` or a `*-lead-pulls` skill in chat.
+6. **This branch is honest about inference.** Railway code here still
+   walks the file recipe (`recipes/parlay/it_dm.json`) through
+   `PIPELINE_STEPS` (D24, D28). Inferring ICP from `public.leads` +
+   receipt tags is PRs #6 and #7, not this merge. Grok must not fill
+   that gap by walking the skill.
+7. **No self-routine.** Scheduled pulses are Railway crons (Josh,
+   2026-09-22, `#campaign-watchdog`), not a Grok routine that re-reads
+   lists.
 
 **Why.** Josh to Cayden, 2026-09-24 08:52 CDT: "I nuked our grok bot
 usage again trying to do lead top up." Same warning two days earlier:
@@ -1171,11 +1192,12 @@ active 2026-09-21) spawned dozens of child runs on 2026-09-16/17 named
 "Fire GetLeads n=…", "Apply leftover … CSVs", "Drain remaining leftover"
 — the opposite of babysitting. D2 already banned rows in Slack and
 logs; this names the **context window** as the thing that ran up the
-bill.
+bill. Claude already kept tokens down with LeadPipe + csv-endpoint;
+Grok must use those, not reconstruct a pull.
 
 **Tradeoff.** Grok bot cannot debug a bad row by looking at it. It
 posts a link or ten samples and stops. A thin camp can wait on the
 service. That is allowed.
 
-**Guard.** `src/guards/d39_grok_bot_context.test.ts`. D2
-`lead_rows.test.ts` still holds. Ask Josh.
+**Guard.** `src/guards/d39_grok_bot_context.test.ts`. Allow/ban in
+`src/grok/allowlist.ts`. D2 `lead_rows.test.ts` still holds. Ask Josh.

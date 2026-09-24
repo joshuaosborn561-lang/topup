@@ -1,9 +1,11 @@
 import { McpHttpClient } from "./mcpHttp.js";
 
 /**
- * LeadPipe (existing ingestion service). Called, never forked. We use it to
- * turn a filtered slice of lp.<tag>_ingested_leads into a signed CSV URL
- * (server to server) and, in later stages, to ingest and import.
+ * LeadPipe (existing ingestion service / Context Saver). Called, never forked.
+ * We use it to turn a filtered slice of lp.<tag>_ingested_leads into a signed
+ * CSV URL (server to server) and, in later stages, to ingest and import.
+ * Every method returns job_id / signed_url / counts — never contact rows
+ * (D39: Grok bot may start these; it must not open the URL).
  */
 export interface ExportResult {
   signed_url: string;

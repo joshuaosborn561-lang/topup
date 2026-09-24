@@ -279,12 +279,33 @@ open cards, open runs and which integrations are configured. It is
 
 ## Grok bot (D39)
 
-Grok bot is the **babysitter**. It starts a run, reads `/where` and the
-ledger, posts a card, and drops a link. It does not see lead rows.
+Grok bot is the **babysitter**. Skill: `skills/grok-bot-babysitter`. It
+starts a run, reads **campaignintelligence tags** (receipts, recipes,
+`lane_state`), posts a card, and drops a link. It does not see lead rows.
+It does not reconstruct the thirteen steps in chat.
 
-- Pulls, enrich, verify, and import run in the Railway service and the
-  MCP servers. Rows move **MCP → Supabase** (`source_table` + writeback),
-  edge functions, and LeadPipe. They do not enter Grok bot context.
+- **Where the work lives.** The Railway service walks steps 1–13 (D24,
+  D28) after `start_topup`. Rows move **MCP → Supabase** (`source_table`
+  + writeback), edge functions (`skills/supabase-csv-endpoint`), and
+  LeadPipe (`skills/leadpipe` — `lp_run ingest_csv` from a URL, `lp_export`
+  signed_url + count, `lp_sample` ≤10). They do not enter Grok bot context.
+- **What it may call.** Service MCP (`start_topup`, `lane_state`,
+  `run_status`, `list_runs`, `list_holds`, `recipe_get`, …). LeadPipe
+  (`lp_plan`, `lp_run`, `lp_status`, `lp_export`, `lp_sample`,
+  `lp_inventory`, `lp_ensure_client`, `lp_list_clients`). Slack cards.
+  Allow list is `src/grok/allowlist.ts`.
+- **What it must not call.** `export_contacts`, `search_contacts`,
+  GetLeads enrich/batch-result tools, Apify `get-dataset-items`,
+  `find_dms_by_title` (~$0.10/company), `SELECT` of email / name / phone
+  / linkedin_url, inline `enrich_waterfall` rows, child-agent GetLeads
+  fires, CSV paste, opening a signed URL, a self-routine that re-reads
+  lists. Ban list is the same file.
+- **How it knows what to start.** Tags on `topup.pull_receipts`
+  (`icp_kind`, `persona`, `company_source`, `company_filters`,
+  `campaign_ids`) and the file recipe when one exists. Not a chat walk of
+  `skills/lead-list-build`. Inferring a recipe from `public.leads` is
+  PRs #6 and #7 — not a Grok session, and not this branch's Railway code
+  (this service still walks the file recipe).
 - "Here's what it found" is a count, a job id, and a signed URL the bot
   does not open. Ten masked samples on a card stay the ceiling (D2).
 - Scheduled pulses are Railway crons. Grok bot does not set a self-routine
@@ -305,8 +326,9 @@ ledger, posts a card, and drops a link. It does not see lead rows.
 - Never trust "processed" or a zero-verdict resume as a verification.
 - Never run more than one replica.
 - Never pull lead rows into Grok bot context. No export payloads, no
-  CSV paste, no child-agent GetLeads fire into chat. Counts, ids, and a
-  link only (D39).
+  CSV paste, no child-agent GetLeads fire into chat, no walk of the
+  thirteen-step skill in that context. Counts, ids, and a link only
+  (D39). Use LeadPipe and csv-endpoint; do not open the signed URL.
 
 ## The merged list (D35)
 
@@ -344,7 +366,7 @@ changes:
 | Thing | Place |
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
-| Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/SKILLS_INDEX.md` says what is stale (D25) |
+| Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/leadpipe` and `skills/supabase-csv-endpoint` move rows without chat; `skills/grok-bot-babysitter` is D39; `skills/SKILLS_INDEX.md` says what is stale (D25) |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
 | Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |

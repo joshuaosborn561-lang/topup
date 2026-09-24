@@ -13,10 +13,16 @@ For humans and coding agents alike.
 4. **Counts and ids, never rows.** No lead data in logs, Slack, PR
    descriptions or test fixtures beyond the ten-sample rule. Use the logger;
    it redacts.
-5. **Grok bot is the babysitter (D39).** It starts runs, reads counts and
-   ids, posts a card, and drops a link. Lead rows move MCP → Supabase
-   (`source_table` + writeback), edge functions, and LeadPipe. They do not
-   enter Grok bot context. Do not set a Grok routine that re-reads lists.
+5. **Grok bot is the babysitter (D39).** Read `skills/grok-bot-babysitter`
+   first. It starts `start_topup` or a LeadPipe / csv-endpoint job, reads
+   campaignintelligence tags (receipts, recipes, `lane_state`), posts a
+   card, and drops a link. It does not reconstruct the thirteen steps in
+   chat. Lead rows move MCP → Supabase (`source_table` + writeback), edge
+   functions, and LeadPipe (`lp_run ingest_csv`, `lp_export` signed URL,
+   `lp_sample` ≤10). They do not enter Grok bot context. No
+   `export_contacts`, no `get-dataset-items`, no `find_dms_by_title`, no
+   SELECT of emails or names, no child-agent GetLeads fire. Do not set a
+   Grok routine that re-reads lists.
 6. **No vendor calls in tests.** Fake the client and assert on the ledger.
 7. **No secrets in the repo.** Railway variables only; `.env.example` lists names.
 8. **Spend goes through `SpendRails.gate`.** A paid call outside the gate is a

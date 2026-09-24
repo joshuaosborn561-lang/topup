@@ -1,9 +1,11 @@
 ---
 name: culture-fits-lead-pulls
-description: Pull net-new leads for TJ at Culture Fits (MSP owner and C suite ICP) using getleads plus the LeadPipe ingest and master dedupe pipeline. Use this skill whenever Josh asks for Culture Fits leads, TJ leads, MSP leads for TJ, or includes Culture Fits in a multi-client pull. Replaces the retired getleads-msp-pipeline skill. Encodes the pool exhaustion reality and the corrected getleads parameters.
+description: Pull net-new leads for TJ at Culture Fits (MSP owner and C suite ICP) using getleads plus the LeadPipe ingest and master dedupe pipeline. Grok bot (D39) must not execute this pull in chat — start start_topup or hand a CSV URL to LeadPipe ingest_csv. Use this skill whenever Josh asks for Culture Fits leads, TJ leads, MSP leads for TJ, or includes Culture Fits in a multi-client pull. Replaces the retired getleads-msp-pipeline skill. Encodes the pool exhaustion reality and the corrected getleads parameters.
 ---
 
 # Culture Fits (TJ) lead pulls
+
+**Grok bot (D39):** do not execute this pull in chat. `start_topup` or LeadPipe `ingest_csv`.
 
 Client: TJ / Culture Fits. Smartlead client_id 418275. LeadPipe client_tag `culture_fits` (run `lp_ensure_client` on first use).
 

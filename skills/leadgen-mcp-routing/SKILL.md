@@ -233,6 +233,9 @@ without pulling rows into chat, and ingest the results CSVs back server-side the
 
 ## LeadPipe
 
+Full skill: `skills/leadpipe/SKILL.md`. Grok bot uses that file (D39), never
+this routing page as a pull. Short form follows.
+
 LeadPipe is the **store and job runner**, not a discovery method. It holds companies and contacts
 per client and keeps row data out of chat. Response discipline is counts only, never row
 payloads; inspect via `lp_sample` (max 10 rows).

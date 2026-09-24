@@ -1,9 +1,11 @@
 ---
 name: parlay-lead-pulls
-description: Pull net-new leads for Randy at Parlay Tech. The live lane receipt is the filter book; the service recipe is what a top-up run executes. Use this skill whenever Josh asks for more Parlay leads, Parlay contacts, leads for Randy, or a Parlay list refresh, even if he only says "top off Parlay" or includes Parlay in a multi-client pull.
+description: Pull net-new leads for Randy at Parlay Tech. The live lane receipt is the filter book; the service recipe is what a top-up run executes. Grok bot (D39) must not execute this pull in chat — start start_topup or hand a CSV URL to LeadPipe ingest_csv. Use this skill whenever Josh asks for more Parlay leads, Parlay contacts, leads for Randy, or a Parlay list refresh, even if he only says "top off Parlay" or includes Parlay in a multi-client pull.
 ---
 
 # Parlay Tech lead pulls
+
+**Grok bot (D39):** do not execute this pull in chat. `start_topup` or LeadPipe `ingest_csv`.
 
 Client: Randy / Parlay Tech. Smartlead client_id 418274. LeadPipe client_tag `parlay`. Service lane `it_dm`. Receipt lane `it_dm_tickets`.
 

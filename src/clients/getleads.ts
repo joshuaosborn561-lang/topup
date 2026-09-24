@@ -6,6 +6,7 @@ import { McpHttpClient } from "./mcpHttp.js";
  * is $0 and still gets a ledger row. Only three tools are ever called:
  * `count_contacts` (step 2), `export_contacts` and `check_contact_export`
  * (step 3). Nothing here returns a contact; an export is a URL and a count.
+ * Grok bot must not call these (D39) — the Railway service does, server-side.
  *
  * The brief's getleads rules are enforced by the recipe schema before a
  * filter reaches this file: headcount is band labels, industries carry no

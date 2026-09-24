@@ -1,9 +1,15 @@
 ---
 name: lead-list-build
-description: The SalesGlider Growth soup to nuts procedure for building or topping up a lead list for any client and any source, in thirteen steps from ICP to a live campaign. Use whenever Josh asks to build a list, top up a campaign, refill a lane, pull leads for a client, or asks where a list build stands, regardless of whether the leads come from getleads, Google Maps, PermitStack, parcels, public records, or a hand filled queue table. This is the spine that every other lead skill hangs off of; it names which skill governs each step, which tool runs it, what gate must pass before the next step, and who owns the decision (code, Cayden, or Josh). Always follow this order. Skipping or reordering steps is how bad lists have shipped.
+description: The SalesGlider Growth soup to nuts procedure for building or topping up a lead list for any client and any source, in thirteen steps from ICP to a live campaign. The Railway leadtopup service walks these steps after start_topup. Grok bot (D39) must not execute this skill in chat — start start_topup or hand a CSV URL to LeadPipe ingest_csv, then babysit counts. Claude may follow this skill for a first pull, moving rows through LeadPipe and supabase-csv-endpoint, never through chat. Use whenever Josh asks to build a list, top up a campaign, refill a lane, pull leads for a client, or asks where a list build stands. This is the spine; skipping or reordering steps is how bad lists have shipped.
 ---
 
 # Lead list build, soup to nuts
+
+**Grok bot (D39):** do not walk these thirteen steps in chat. Infer the
+job from campaignintelligence tags (`topup.pull_receipts`, `lane_state`,
+the file recipe) and call `start_topup`. The Railway service is these
+steps. Skill: `grok-bot-babysitter`. Row movers: `leadpipe`,
+`supabase-csv-endpoint`.
 
 Thirteen steps plus the receipt at 11.5. Steps 3 through 12 are mechanical and belong to the top up service (or to Claude when the service does not exist yet for that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a step until its gate passes. Report every count as net useful output, never rows processed.
 
