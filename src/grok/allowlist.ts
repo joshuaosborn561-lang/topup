@@ -106,5 +106,4 @@ export const GROK_TAG_TABLES = [
   "topup.campaign_recipe",
   "topup.feed_map",
   "topup.lead_provenance",
-  "topup.lane_state",
 ] as const;
