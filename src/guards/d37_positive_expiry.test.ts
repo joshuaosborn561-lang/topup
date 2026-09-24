@@ -24,7 +24,6 @@ describe("D37 — 90-day global positive-reply list", () => {
 
   it("CANON and the spine skill drop the empty-list halt", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D37\*\*/);
     assert.match(canon, /expire 90 days after the reply/);
     assert.doesNotMatch(canon, /empty customer domain list halts/);
     const skill = await readFile(new URL("skills/lead-list-build/SKILL.md", root), "utf8");

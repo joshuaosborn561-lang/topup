@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D37** (2026-09-16). One page of current truth. When a new
+Canon as of **D39** (2026-09-24). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -95,8 +95,13 @@ whose health crossed a line. Claude sessions hand work to the service with
 `register_queue_table` and `lane_note` over MCP (owner token).
 
 Health, from the hourly Smartlead mirror: **silent** (ACTIVE, untouched
-leads, no sends in 7 days), **empty**, **low** (runway under the recipe
-floor), **bouncing** (over 5%).
+leads, no sends in 7 days), **empty**, **low** (that campaign's runway
+under the recipe floor), **bouncing** (over 5%). Those flags stay on the
+board. The **start signal** is client-wide (D38): rem across ACTIVE
+campaigns ÷ (unique inboxes × MESSAGE_PER_DAY). LI is rem ÷ 40. Until
+inbox × MESSAGE_PER_DAY is a Josh-named source, days are null and a
+client with sibling rem is not needy. Client under-7 still shows on the
+daily digest. One empty SEG camp is not a refill while siblings hold rem.
 
 ## Build order (D23)
 
@@ -136,16 +141,22 @@ Maps/PermitStack are wired (physical still parks until then). Campaign
 ids must already exist in `public.campaigns`. Mixed ICPs are two lane
 rows. A lane with no receipt and no recipe cannot be invented.
 
-## What this build runs (D26, D27, D28)
+## What this build runs (D26, D27, D28, D38)
 
 The **watch** is the normal start. Every six hours (and once on boot) it
-reads the Smartlead mirror for every recipe. A campaign that is ACTIVE and
-empty or under the runway floor, and still **working** (one interested reply
-per 2,000 sends, or any variant with 1,000 sends clearing that rate; D11,
-D35 item 12), opens a run by itself — no `/topup`, no card. A
-campaign that is low and **not** working posts one card: Top up anyway, or
+reads the Smartlead mirror for every recipe. The needy signal is
+**client-wide** rem / capacity (D38), keyed to `runway.floor_days` — not
+one campaign empty or Watchdog nearly-done. A client under the floor, and
+still **working** (one interested reply per 2,000 sends, or any variant
+with 1,000 sends clearing that rate; D11, D35 item 12), opens a run by
+itself — no `/topup`, no card. The run targets the recipe's campaigns so
+the pull can take the client's DM persona and title-segment after. A
+client that is low and **not** working posts one card: Top up anyway, or
 Leave it. Leave it stays quiet until the rate recovers or Josh flips
-`/working on`. `/topup` and MCP `start_topup` are the override.
+`/working on`. `/topup` and MCP `start_topup` are the override. A
+non-SalesGlider client under **2 email days** flags a client-holistic DM
+mock (filters, net-new, $, title-segment); SalesGlider is excluded unless
+Josh asks. Paid spend still waits on Josh.
 
 A run is locked in Postgres so there is only ever one per lane (D12). It
 walks steps **1 → 13** in the skill's order, every time, whether the watch
@@ -170,12 +181,15 @@ The stages:
    item 2) and anyone already in a live campaign of this client (D36).
    Recycle window is `recycle_after_days` (default 90).
 3. **pull** — routed by the target campaigns' ICP and source
-   (`leadgen-mcp-routing` step zero). getleads on a LinkedIn-native
+   (`leadgen-mcp-routing` step zero). The watch starts a **client-holistic
+   DM pull** (same persona the client has been sending to), then route
+   segments by title / mail class / gift into existing campaigns (D38,
+   D30 persona stays per campaign at route time). getleads on a LinkedIn-native
    campaign runs `GetleadsPull` with that campaign's bands/titles (or the
    union when the run's targets share a persona). getleads on a physical
    campaign parks (do not fall back). maps / permits / AI Ark park until
-   those adapters are wired. The watch passes the needy campaign ids; a
-   `/topup` with no ids sizes the whole lane.
+   those adapters are wired. The watch passes the recipe's campaign ids,
+   not only the empty SEG one; a `/topup` with no ids sizes the whole lane.
 4. **ingest** — LeadPipe `ingest_csv` under a run-scoped `source_label`; rows
    claimed for the run; `company_size` / `vertical` filled; title audit
    against the union of the target campaigns' titles.
@@ -225,8 +239,8 @@ The stages:
 13. **flip** — posts the step 13 line: Josh sets ACTIVE by hand and watches
     day one. The service never starts, pauses, or stops a campaign. Then the
     run closes as `done` with the **receipt** (the funnel plus one line per
-    campaign). The watch starts the next fill when a campaign is low and
-    still working.
+    campaign). The watch starts the next fill when the **client** is under
+    the runway floor and still working (D38).
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
 open cards, open runs and which integrations are configured. It is
@@ -263,7 +277,51 @@ open cards, open runs and which integrations are configured. It is
   the owner.
 - Counts and ids only. Ten sample values on a card at most, never emails.
 
-## Never (D1–D6, D8, D13, D14)
+## Grok bot (D39)
+
+Grok bot is the **babysitter**. Skill: `skills/grok-bot-babysitter`. It
+starts a run, reads **campaignintelligence tags** (receipts, recipes,
+`lane_state`), posts a card, and drops a link. It does not see lead rows.
+It does not reconstruct the thirteen steps in chat.
+
+- **Where the work lives.** The Railway service walks steps 1–13 (D24,
+  D28) after `start_topup`. Rows move **MCP → Supabase** (`source_table`
+  + writeback), edge functions (`skills/supabase-csv-endpoint`), and
+  LeadPipe (`skills/leadpipe` — `lp_run ingest_csv` from a URL, `lp_export`
+  signed_url + count, `lp_sample` ≤10). They do not enter Grok bot context.
+- **What it may call.** Service MCP (`start_topup`, `lane_state`,
+  `run_status`, `list_runs`, `list_holds`, `recipe_get`, …). LeadPipe
+  (`lp_plan`, `lp_run`, `lp_status`, `lp_export`, `lp_sample`,
+  `lp_inventory`, `lp_ensure_client`, `lp_list_clients`). Slack cards.
+  Allow list is `src/grok/allowlist.ts`.
+- **What it must not call.** `export_contacts`, `search_contacts`,
+  GetLeads enrich/batch-result tools, Apify `get-dataset-items`,
+  `find_dms_by_title` (~$0.10/company), `SELECT` of email / name / phone
+  / linkedin_url, inline `enrich_waterfall` rows, child-agent GetLeads
+  fires, CSV paste, opening a signed URL, a self-routine that re-reads
+  lists. Ban list is the same file.
+- **How it knows what to start.** Every campaignintelligence tag, not
+  four legs. Source legs (`company_source`, `domain_source`,
+  `person_source`, `email_source`, `email_max_tier`, `email_tier`)
+  **and** `company_detail`,
+  `evidence`, `confidence`, `build_label`, `feed_pattern`, `icp_kind`,
+  `persona`, `company_filters`, `segment`, `how_i_did_it`. Physical
+  (`icp_kind = physical`) must also read `company_filters` keys
+  `maps`, `maps_runs`, `permits`, `geo`, `source_tool`,
+  `titles_wanted`. Tables: `topup.pull_receipts`,
+  `topup.campaign_method`, `topup.campaign_recipe`, `topup.feed_map`,
+  `topup.lead_provenance`, `topup.provenance_sources`,
+  `topup.provenance_gaps`. COUNT tags; never SELECT email. Not
+  `public.leads` alone, and not a chat walk of `skills/lead-list-build`.
+  Inferring a new file recipe from those stamps is PRs #6 and #7 — not
+  a Grok session, and not this branch's Railway code (this service
+  still walks the file recipe).
+- "Here's what it found" is a count, a job id, and a signed URL the bot
+  does not open. Ten masked samples on a card stay the ceiling (D2).
+- Scheduled pulses are Railway crons. Grok bot does not set a self-routine
+  that re-reads lists.
+
+## Never (D1–D6, D8, D13, D14, D39)
 
 - Never write to a Supabase project other than `azpapwtnrbzywlnxxecz`.
 - Never hardcode a secret. Never call a vendor in a test.
@@ -277,6 +335,10 @@ open cards, open runs and which integrations are configured. It is
   and say so in the PR.
 - Never trust "processed" or a zero-verdict resume as a verification.
 - Never run more than one replica.
+- Never pull lead rows into Grok bot context. No export payloads, no
+  CSV paste, no child-agent GetLeads fire into chat, no walk of the
+  thirteen-step skill in that context. Counts, ids, and a link only
+  (D39). Use LeadPipe and csv-endpoint; do not open the signed URL.
 
 ## The merged list (D35)
 
@@ -314,7 +376,7 @@ changes:
 | Thing | Place |
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
-| Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/SKILLS_INDEX.md` says what is stale (D25) |
+| Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/leadpipe` and `skills/supabase-csv-endpoint` move rows without chat; `skills/grok-bot-babysitter` is D39; `skills/SKILLS_INDEX.md` says what is stale (D25) |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
 | Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |

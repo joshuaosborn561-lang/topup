@@ -71,6 +71,7 @@ function state(over: Partial<LaneState> = {}): LaneState {
     queues: { ingested_by_status: { needs_verify: 4000 }, registry: [{ queue_name: "have_domain_no_person", source_table: "public.peterson_roof_people_queue", missing: "person", next_method: "people_waterfall", last_count: 200, last_counted_at: "2026-09-11T01:00:00Z", note: null }] },
     spend: { this_run_cents_by_vendor: {}, this_month_cents_by_vendor: { millionverifier: 1234 } },
     campaigns: [assessCampaign(snap())],
+    client_runway: null,
     campaigns_error: null,
     events: [{ at: "2026-09-10T00:00:00Z", event: "note", line: "Queue registered from Claude.", next_intent: null, actor: "mcp:owner" }],
     registered: true,
@@ -97,6 +98,30 @@ describe("/where rendering", () => {
     const text = renderWhere(state());
     assert.doesNotMatch(text, /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
   });
+
+  it("names client-wide rem on /where when the rollup is present (D38)", () => {
+    const text = renderWhere(
+      state({
+        client_runway: {
+          client_tag: "peterson",
+          email_rem: 1200,
+          li_rem: 0,
+          active_campaigns: 3,
+          unique_inboxes: null,
+          message_per_day: null,
+          email_capacity_per_day: null,
+          email_days: null,
+          li_days: null,
+          floor_days: 7,
+          under_floor: false,
+          sibling_rem: true,
+          propose_holistic_mock: false,
+          days_note: null,
+        },
+      }),
+    );
+    assert.match(text, /Client runway: rem 1200 across 3 ACTIVE/);
+  });
 });
 
 describe("daily digest", () => {
@@ -105,6 +130,32 @@ describe("daily digest", () => {
     const d = buildDigest([s], { "peterson/roof_owners": fingerprint(s) });
     assert.equal(d.text, null);
     assert.equal(Object.keys(d.fingerprints).length, 1);
+  });
+
+  it("names client under-7 on the daily board when the rollup is under the floor (D38)", () => {
+    const quiet = state();
+    const loud = state({
+      client_runway: {
+        client_tag: "peterson",
+        email_rem: 0,
+        li_rem: 0,
+        active_campaigns: 2,
+        unique_inboxes: null,
+        message_per_day: null,
+        email_capacity_per_day: null,
+        email_days: 0,
+        li_days: null,
+        floor_days: 7,
+        under_floor: true,
+        sibling_rem: false,
+        propose_holistic_mock: false,
+        days_note: null,
+      },
+    });
+    const d = buildDigest([loud], { "peterson/roof_owners": fingerprint(quiet) });
+    assert.ok(d.text);
+    assert.match(d.text!, /client under-7/);
+    assert.match(d.text!, /Client runway: rem 0/);
   });
 
   it("names a lane whose health crossed a line, and only that lane", () => {

@@ -1,9 +1,11 @@
 ---
 name: salesglider-lead-pulls
-description: Pull net-new leads for SalesGlider Growth's own outbound lanes (trades, staffing, deal origination / private equity) using getleads plus the LeadPipe pipeline. Use this skill whenever Josh asks for SalesGlider leads, SG leads, "my own lanes", trades leads, staffing leads, PE leads, or deal origination leads, even if he only names one lane. Encodes the hard 11 plus employee minimum on all SG lanes, the 5 plus exception for the PE lane, the staffing decision maker segmentation, and the dead lanes.
+description: Pull net-new leads for SalesGlider Growth's own outbound lanes (trades, staffing, deal origination / private equity) using getleads plus the LeadPipe pipeline. Grok bot (D39) must not execute this pull in chat — start start_topup or hand a CSV URL to LeadPipe ingest_csv. Use this skill whenever Josh asks for SalesGlider leads, SG leads, "my own lanes", trades leads, staffing leads, PE leads, or deal origination leads, even if he only names one lane. Encodes the hard 11 plus employee minimum on all SG lanes, the 5 plus exception for the PE lane, the staffing decision maker segmentation, and the dead lanes.
 ---
 
 # SalesGlider Growth internal lead pulls
+
+**Grok bot (D39):** do not execute this pull in chat. `start_topup` or LeadPipe `ingest_csv`.
 
 Josh's own agency outbound. Smartlead client_id 345263. LeadPipe client_tag `salesglider`.
 

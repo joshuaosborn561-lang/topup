@@ -1,9 +1,11 @@
 ---
 name: insight-lead-pulls
-description: Pull Insight leads — director and above at mid-size US companies with small IT departments. Use whenever Josh asks for Insight, Embark-style, Awardco-style, or OEM rep lists. Gateway catch-alls are dropped, not segmented.
+description: Pull Insight leads — director and above at mid-size US companies with small IT departments. Grok bot (D39) must not execute this pull in chat — start start_topup or hand a CSV URL to LeadPipe ingest_csv. Use whenever Josh asks for Insight, Embark-style, Awardco-style, or OEM rep lists. Gateway catch-alls are dropped, not segmented.
 ---
 
 # Insight lead pulls
+
+**Grok bot (D39):** do not execute this pull in chat. `start_topup` or LeadPipe `ingest_csv`.
 
 LeadPipe client_tag `insight`.
 

@@ -21,7 +21,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | Decision | Status |
 |---|---|
 | D1 | Live |
-| D2 | Live |
+| D2 | Live; Grok-bot context window tightened by D39 |
 | D3 | Live |
 | D4 | Live |
 | D5 | Live |
@@ -46,7 +46,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D24 | Live |
 | D25 | Live |
 | D26 | Live; pipeline order and find_emails-before-ingest superseded by D29 |
-| D27 | Live |
+| D27 | Live; per-campaign needy as the start signal superseded by D38 |
 | D28 | Live; pipeline list superseded by D29 |
 | D29 | Live; recipe-level ICP superseded by D30; empty-list-proceeds superseded by D34; 90-day send window restored by D35 |
 | D30 | Live |
@@ -57,6 +57,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
 | D36 | Live |
 | D37 | Live |
+| D38 | Live |
+| D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context |
 
 ---
 
@@ -1088,3 +1090,123 @@ positive send inside the window.
 
 **Guard.** `src/guards/d37_positive_expiry.test.ts`.
 `src/stages/pure.test.ts` — dated `positiveReplySql`. Ask Josh.
+
+## D38 — Client-wide runway and DM pulls, not camp-by-camp SEG fills
+
+**Decision.** Josh, 2026-09-21 (voice). Lead Top Up optimizes **client-wide
+email days left**, not individual campaign dry alerts (SEG vs non-SEG,
+Watchdog nearly-done on one camp). Josh named this D37; D37 on main is
+already the 90-day positives list. This is the next number on main.
+
+1. **Unit of runway.** Board and top-up triggers use client capacity: rem
+   across ACTIVE campaigns ÷ (unique inboxes × MESSAGE_PER_DAY). LI stays
+   rem ÷ 40.
+2. **Unit of pull.** When topping up, pull the **same kinds of decision
+   makers** the client has been sending to (ICP / persona from receipts and
+   live sends). After the pull, **segment by title** (and mail class / gift)
+   into the client's existing campaigns. Do not treat "this one SEG camp is
+   empty" as the primary job while sibling camps for the same DMs still
+   hold rem.
+3. **Watchdog nearly-done.** Secondary signal. ACK Deliverability CLEAR
+   when needed, but do not auto-open a one-camp SEG refill card if
+   client-wide days are healthy.
+4. **Mock / proposal threshold.** When a non-SalesGlider client is under
+   **2 email days**, mock a client-holistic DM pull (filters, net-new, $,
+   how it will title-segment). SalesGlider is excluded from under-2 auto
+   mocks unless Josh asks.
+5. **Floor for watch cards.** Client under-7 still appears on the daily
+   board Status. Paid spend still needs Josh yes.
+
+**Why.** Josh: alerts that a specific campaign is out miss the point; he
+wants "holistically for this client, how long do they have to send," then
+another pull of the same DMs, then title segmentation like he already
+runs.
+
+**Tradeoff.** A thin SEG camp can finish while the client still has weeks
+of capacity on sibling lanes; that is allowed. Overrides the habit of
+carding every Watchdog nearly-done SEG.
+
+**Open.** Unique inboxes and MESSAGE_PER_DAY are not in this service (no
+mailbox mirror, no invented column). Until Josh names the source, email
+days are null and the watch uses client rem: siblings still holding rem
+is healthy; rem exhausted across ACTIVE is needy. Under-2 mock logs the
+intent; it does not invent filters, net-new, or a dollar figure. LI rem ÷
+40 is specified; this watch still only reads Smartlead.
+
+**Guard.** `src/guards/d38_client_runway.test.ts`.
+`src/ledger/client_runway.test.ts`. `src/watch/decide.test.ts` — one-camp
+SEG empty skips while sibling rem remains; go targets every recipe
+campaign. Ask Josh.
+
+## D39 — Grok bot is the babysitter; rows never enter its context
+
+**Decision.** Josh, 2026-09-24 (voice + Slack, then "be more thorough").
+The Lead Top Up **Grok bot** (Cursor Grok on this repo, Slack Cursor in
+`#lead-topup`) is the orchestrator only. It does not pull, enrich,
+verify, or inspect lead rows. Nothing that returns a list may land in
+its context window. Tightened the same day: allow list, ban list,
+LeadPipe + csv-endpoint as the only row movers, and a ban on walking
+the thirteen steps in chat.
+
+1. **Job.** Start a run, read counts and ids, post a Slack card, drop a
+   signed URL or a `/where` line. "Here's what it found" is a count, a
+   job id, and a link — not the list.
+2. **Where the work lives.** MCP servers write into Supabase with
+   `source_table` + writeback. Edge functions (`skills/supabase-csv-endpoint`)
+   and LeadPipe / Context Saver (`skills/leadpipe`) move CSVs server to
+   server. The Railway service walks the thirteen steps. Grok bot does
+   not call export/search tools that return contact payloads into chat.
+3. **What it may call.** The allow list in `src/grok/allowlist.ts` and
+   `skills/grok-bot-babysitter`: service MCP (`start_topup`, `lane_state`,
+   `run_status`, …), LeadPipe (`lp_plan`, `lp_run`, `lp_status`,
+   `lp_export`, `lp_sample` ≤10, `lp_inventory`, `lp_ensure_client`,
+   `lp_list_clients`), csv-endpoint / edge functions. A signed URL it
+   does not open.
+4. **What it must not call.** Ban list in the same files:
+   `export_contacts`, `search_contacts`, GetLeads enrich / batch-result
+   tools, Apify `get-dataset-items`, `find_dms_by_title` (~$0.10 per
+   company; Josh's number), `SELECT` of email / first_name / last_name /
+   phone / linkedin_url, inline waterfall `rows`, child-agent GetLeads
+   fires, CSV paste. Ten masked samples stay the ceiling (D2).
+5. **Do not reconstruct the thirteen steps in Grok context.** Infer
+   *what to start* from **every** campaignintelligence tag, not four
+   legs. Source legs (`company_source`, `domain_source`,
+   `person_source`, `email_source`, `email_max_tier`, `email_tier`)
+   **and** `company_detail`,
+   `evidence`, `confidence`, `build_label`, `feed_pattern`, `icp_kind`,
+   `persona`, `company_filters`, `segment`, `how_i_did_it`. Physical
+   lanes must also read `company_filters` keys `maps`, `maps_runs`,
+   `permits`, `geo`, `source_tool`, `titles_wanted`. Tables:
+   `topup.pull_receipts`, `topup.campaign_method`,
+   `topup.campaign_recipe`, `topup.feed_map`, `topup.lead_provenance`,
+   `topup.provenance_sources`, `topup.provenance_gaps`. COUNT only;
+   never SELECT email. Then `start_topup`. The service walks 1–13.
+   Grok does not replay `skills/lead-list-build` or a `*-lead-pulls`
+   skill in chat.
+6. **This branch is honest about inference.** Railway code here still
+   walks the file recipe (`recipes/parlay/it_dm.json`) through
+   `PIPELINE_STEPS` (D24, D28). Inferring ICP from `public.leads` +
+   receipt tags is PRs #6 and #7, not this merge. Grok must not fill
+   that gap by walking the skill.
+7. **No self-routine.** Scheduled pulses are Railway crons (Josh,
+   2026-09-22, `#campaign-watchdog`), not a Grok routine that re-reads
+   lists.
+
+**Why.** Josh to Cayden, 2026-09-24 08:52 CDT: "I nuked our grok bot
+usage again trying to do lead top up." Same warning two days earlier:
+don't set a Grok routine or it burns the allotment. Repo evidence: the
+desktop Grok agent "Lead top-up service"
+(`bc-de1baca6-0ee5-4854-b3a1-c7f7ca95c5c3`, created 2026-09-11, last
+active 2026-09-21) spawned dozens of child runs on 2026-09-16/17 named
+"Fire GetLeads n=…", "Apply leftover … CSVs", "Drain remaining leftover"
+— the opposite of babysitting. D2 already banned rows in Slack and
+logs; this names the **context window** as the thing that ran up the
+bill. Claude already kept tokens down with LeadPipe + csv-endpoint;
+Grok must use those, not reconstruct a pull.
+
+**Tradeoff.** Grok bot cannot debug a bad row by looking at it. It
+posts a link or ten samples and stops. A thin camp can wait on the
+service. That is allowed.
+
+**Guard.** `src/guards/d39_grok_bot_context.test.ts`. Allow/ban in
+`src/grok/allowlist.ts`. D2 `lead_rows.test.ts` still holds. Ask Josh.

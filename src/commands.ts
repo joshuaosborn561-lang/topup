@@ -32,7 +32,7 @@ export function buildCommands(d: { repo: Repo; orchestrator: Orchestrator; ledge
       if (!SNAKE.test(clientTag) || !SNAKE.test(lane)) return "client_tag and lane are snake_case.";
       const res = await d.orchestrator.startTopup({ clientTag, lane, by: ctx.userId, trigger: "manual" });
       if (!res.ok) return res.message;
-      return `Run \`${res.run.run_id.slice(0, 8)}\` opened for ${clientTag}/${lane} (manual override). The watch starts this on its own when a campaign is low and still working; you do not need this command for the normal path. Follow it in <#${res.run.slack_channel}>.`;
+      return `Run \`${res.run.run_id.slice(0, 8)}\` opened for ${clientTag}/${lane} (manual override). The watch starts this on its own when the client's runway is low and still working; you do not need this command for the normal path. Follow it in <#${res.run.slack_channel}>.`;
     },
 
     "/holds": async (ctx) => {

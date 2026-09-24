@@ -2,7 +2,18 @@
 
 These are the skills Josh has built for SalesGlider Growth. Each folder holds a `SKILL.md` and sometimes a `scripts/` folder. They are the institutional knowledge of the business, written from measured results. Read the skill for a stage before writing code for that stage. Where a skill and the brief disagree, the brief wins and you flag it in the PR.
 
-No skills are marked stale as of D37. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; the six pending taps are yes. Positives expire 90 days after the reply and replace the customer-list upload (D37).
+No skills are marked stale as of D39. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; the six pending taps are yes. Positives expire 90 days after the reply and replace the customer-list upload (D37).
+
+**Grok bot (D39):** read `grok-bot-babysitter` before any pull skill. Do not
+execute `lead-list-build` or a `*-lead-pulls` skill in Grok chat. Start
+`start_topup` or hand a CSV URL to LeadPipe. Rows move through `leadpipe`
+and `supabase-csv-endpoint`.
+
+## Grok bot and row movement (D39)
+
+* `grok-bot-babysitter` ... Standing orders for Cursor Grok / Slack Cursor on this repo. Allow list / ban list. Infer the job from every campaignintelligence tag (source legs plus `company_detail`, `evidence`, `confidence`, `build_label`, `company_filters`; physical also `maps` / `maps_runs` / `permits` / `geo`). Do not reconstruct the thirteen steps in chat.
+* `leadpipe` ... Store and job runner (Context Saver). `ingest_csv` from a URL, `lp_export` signed URL + count, `lp_sample` ≤10. Counts only. `find_dms_by_title` is ~$0.10/company and is Josh-only.
+* `supabase-csv-endpoint` ... Table → public CSV URL and result CSV back in, via edge function. Rows never pass through chat.
 
 ## Rulebook
 
@@ -36,7 +47,7 @@ No skills are marked stale as of D37. The Sept 10 notes on `parlay-lead-pulls` a
 ## Suppression and verification
 
 * `global-suppression` ... the suppression scope (response based, corrected Aug 25), per session rebuild, and the Smartlead block list rule (API added entries are customer requests, never delete).
-* `supabase-csv-endpoint` ... serve a table as a public CSV URL for tools that need a file URL (verifier, staging), and read result CSVs back server side. The service should generate signed URLs itself instead of building an RPC per run, but the read back pattern here is the one to keep.
+* `supabase-csv-endpoint` ... (also listed above) serve a table as a public CSV URL for tools that need a file URL (verifier, staging), and read result CSVs back server side. The service should generate signed URLs itself instead of building an RPC per run, but the read back pattern here is the one to keep.
 
 ## Normalization (port these into the service, scripts included)
 

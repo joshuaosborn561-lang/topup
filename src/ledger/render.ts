@@ -1,4 +1,5 @@
 import { usd } from "../spend/prices.js";
+import { clientRunwayLine } from "./client_runway.js";
 import type { CampaignHealth } from "./health.js";
 import { audienceName, type LaneState } from "./lane.js";
 
@@ -64,6 +65,7 @@ export function renderWhere(s: LaneState, now = Date.now()): string {
   }
 
   lines.push(`Spend: this run ${spend(s.spend.this_run_cents_by_vendor)}; this month ${spend(s.spend.this_month_cents_by_vendor)}`);
+  if (s.client_runway) lines.push(clientRunwayLine(s.client_runway));
 
   if (s.campaigns_error) {
     lines.push(`Campaigns: could not read the Smartlead mirror (${s.campaigns_error.slice(0, 120)}).`);
@@ -90,7 +92,10 @@ export function fingerprint(s: LaneState): string {
   const flags = s.campaigns.map((c) => `${c.smartlead_campaign_id}:${[...c.flags].sort().join("+")}`).sort();
   const blocked = s.blocked.map((b) => `${b.on}:${b.card_id ?? b.what}`).sort();
   const queues = Object.entries(s.queues.ingested_by_status).sort().map(([k, v]) => `${k}=${v}`);
-  return JSON.stringify({ step: s.step, gate: s.gate_unmet, run: s.run?.status ?? null, blocked, flags, queues });
+  const client = s.client_runway
+    ? { under: s.client_runway.under_floor, rem: s.client_runway.email_rem, days: s.client_runway.email_days }
+    : null;
+  return JSON.stringify({ step: s.step, gate: s.gate_unmet, run: s.run?.status ?? null, blocked, flags, queues, client });
 }
 
 /** One digest line per lane whose fingerprint moved. Empty when nothing did. */
@@ -107,7 +112,9 @@ export function buildDigest(states: LaneState[], previous: Record<string, string
     const crossed = s.campaigns.filter((c) => c.flags.length);
     const blockedOn = s.blocked.length ? ` · waiting on ${[...new Set(s.blocked.map((b) => audienceName(b.on)))].join(", ")}` : "";
     const gate = s.gate_unmet ? ` · gate unmet: ${s.gate_unmet}` : "";
-    out.push(`*${key}* — ${stepLine(s)} for ${ago(s.step_since, now)}${gate}${blockedOn}${s.next_intent ? ` · next: ${s.next_intent}` : ""}`);
+    const client = s.client_runway?.under_floor ? " · client under-7" : "";
+    out.push(`*${key}* — ${stepLine(s)} for ${ago(s.step_since, now)}${gate}${blockedOn}${client}${s.next_intent ? ` · next: ${s.next_intent}` : ""}`);
+    if (s.client_runway) out.push(`    ${clientRunwayLine(s.client_runway)}`);
     for (const c of crossed) out.push(`    ${campaignLine(c)}`);
   }
   return { text: changed ? `Daily digest — ${changed} lane${changed === 1 ? "" : "s"} changed or crossed a line:\n${out.join("\n")}` : null, fingerprints: fps };

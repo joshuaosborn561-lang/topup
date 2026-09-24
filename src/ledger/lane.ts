@@ -5,6 +5,7 @@ import type { Role, RunRow, Step } from "../domain/runs.js";
 import { logger } from "../lib/log.js";
 import { parseRecipe } from "../recipes/schema.js";
 import { spineStep, stepForStage, stepLabel } from "../spine/steps.js";
+import { assessClientRunway, type ClientRunway } from "./client_runway.js";
 import { assessCampaign, campaignIdsForClient, campaignSnapshots, type CampaignHealth } from "./health.js";
 
 const log = logger("ledger");
@@ -86,6 +87,8 @@ export interface LaneState {
   };
   spend: { this_run_cents_by_vendor: Record<string, number>; this_month_cents_by_vendor: Record<string, number> };
   campaigns: CampaignHealth[];
+  /** Client-wide rem / days (D38). Days are null until unique inboxes × MESSAGE_PER_DAY are named. */
+  client_runway: ClientRunway | null;
   /** Set when the campaign mirror could not be read; the rest of the state still answers. */
   campaigns_error: string | null;
   events: Array<Pick<LaneEventRow, "at" | "event" | "line" | "next_intent" | "actor">>;
@@ -340,7 +343,7 @@ export class LaneLedger {
       this.openRun(clientTag, lane),
       this.recipe(clientTag, lane),
     ]);
-    const [ingested, cards, month, campaignsRead] = await Promise.all([
+    const [ingested, cards, month, campaignsRead, clientRunway] = await Promise.all([
       this.ingestedCounts(clientTag),
       this.openCards(clientTag, lane),
       this.monthSpend(clientTag),
@@ -348,6 +351,7 @@ export class LaneLedger {
         (c) => ({ campaigns: c, error: null as string | null }),
         (err: Error) => ({ campaigns: [] as CampaignHealth[], error: err.message }),
       ),
+      this.clientRunway(clientTag, recipe).catch(() => null),
     ]);
 
     const blocked: Blocker[] = cards.map((c) => ({
@@ -376,6 +380,7 @@ export class LaneLedger {
       },
       spend: { this_run_cents_by_vendor: run?.spend_cents_by_vendor ?? {}, this_month_cents_by_vendor: month },
       campaigns: campaignsRead.campaigns,
+      client_runway: clientRunway,
       campaigns_error: campaignsRead.error,
       events: events.map((e) => ({ at: iso(e.at), event: e.event, line: e.line, next_intent: e.next_intent, actor: e.actor })),
       registered: Boolean(row) || Boolean(recipe) || queues.length > 0,
@@ -459,6 +464,20 @@ export class LaneLedger {
     const floor = recipe?.runway.floor_days;
     const snaps = await campaignSnapshots(this.db, [...ids]);
     return snaps.map((s) => assessCampaign(s, floor));
+  }
+
+  /** D38 client rem across every ACTIVE campaign. Inbox × MESSAGE_PER_DAY stay unset until Josh names them. */
+  private async clientRunway(clientTag: string, recipe: ReturnType<typeof parseRecipe> | null): Promise<ClientRunway | null> {
+    if (!recipe) return null;
+    const ids = await campaignIdsForClient(this.db, recipe.smartlead_client_id);
+    const snaps = await campaignSnapshots(this.db, ids);
+    return assessClientRunway({
+      clientTag,
+      campaigns: snaps.map((s) => assessCampaign(s, recipe.runway.floor_days)),
+      uniqueInboxes: null,
+      messagePerDay: null,
+      floorDays: recipe.runway.floor_days,
+    });
   }
 }
 
