@@ -68,9 +68,8 @@ export const GROK_MUST_NOT_SELECT = [
 ] as const;
 
 /**
- * The four source legs on campaignintelligence. Not just company_source.
- * Live on pull_receipts, campaign_method, campaign_recipe, feed_map,
- * lead_provenance. Ask Josh.
+ * Source legs on campaignintelligence. Necessary, not sufficient —
+ * physical lanes also need the detail / evidence / filter keys below.
  */
 export const GROK_SOURCE_TAGS = [
   "company_source",
@@ -81,11 +80,21 @@ export const GROK_SOURCE_TAGS = [
   "email_tier",
 ] as const;
 
-/** Receipt / method columns Grok may read (counts and method names). */
+/** Extra stamp columns. Especially required when icp_kind is physical. */
+export const GROK_STAMP_TAGS = [
+  "company_detail",
+  "evidence",
+  "confidence",
+  "build_label",
+  "feed_pattern",
+] as const;
+
+/** Receipt columns Grok must read (counts, keys, method names). */
 export const GROK_RECEIPT_TAGS = [
   "icp_kind",
   "persona",
   "company_source",
+  "company_detail",
   "company_filters",
   "domain_source",
   "person_source",
@@ -93,12 +102,32 @@ export const GROK_RECEIPT_TAGS = [
   "email_max_tier",
   "campaign_ids",
   "segment",
+  "yield_by_step",
+  "how_i_did_it",
+  "build_label",
+  "granularity",
+  "evidence",
+  "confidence",
 ] as const;
 
+/** company_filters keys that a physical receipt actually carries. */
+export const GROK_PHYSICAL_FILTER_KEYS = [
+  "maps",
+  "maps_runs",
+  "permits",
+  "geo",
+  "geo_note",
+  "source_tool",
+  "titles_wanted",
+  "job_title_terms",
+] as const;
+
+/** segment jsonb keys on pull_receipts. */
+export const GROK_SEGMENT_KEYS = ["band", "mail_class", "gift", "offer_key", "campaign_family"] as const;
+
 /**
- * Tables Grok may read tags from. Counts and method names only.
- * `lead_provenance` is the per-lead stamp — COUNT the source legs, never
- * SELECT email.
+ * Tables Grok may read tags from. Counts, keys, and method names only.
+ * `lead_provenance` is the per-lead stamp — COUNT tags, never SELECT email.
  */
 export const GROK_TAG_TABLES = [
   "topup.pull_receipts",
@@ -106,4 +135,6 @@ export const GROK_TAG_TABLES = [
   "topup.campaign_recipe",
   "topup.feed_map",
   "topup.lead_provenance",
+  "topup.provenance_sources",
+  "topup.provenance_gaps",
 ] as const;

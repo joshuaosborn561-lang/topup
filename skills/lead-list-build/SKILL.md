@@ -6,11 +6,12 @@ description: The SalesGlider Growth soup to nuts procedure for building or toppi
 # Lead list build, soup to nuts
 
 **Grok bot (D39):** do not walk these thirteen steps in chat. Infer the
-job from the four source legs on campaignintelligence (`company_source`,
-`domain_source`, `person_source`, `email_source` on `topup.pull_receipts`,
-`campaign_method`, `campaign_recipe`, `lead_provenance`) and call
-`start_topup`. The Railway service is these steps. Skill:
-`grok-bot-babysitter`. Row movers: `leadpipe`, `supabase-csv-endpoint`.
+job from every campaignintelligence tag (source legs plus
+`company_detail`, `evidence`, `confidence`, `build_label`,
+`company_filters`; physical also `maps` / `maps_runs` / `permits` /
+`geo`) and call `start_topup`. The Railway service is these steps.
+Skill: `grok-bot-babysitter`. Row movers: `leadpipe`,
+`supabase-csv-endpoint`.
 
 Thirteen steps plus the receipt at 11.5. Steps 3 through 12 are mechanical and belong to the top up service (or to Claude when the service does not exist yet for that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a step until its gate passes. Report every count as net useful output, never rows processed.
 

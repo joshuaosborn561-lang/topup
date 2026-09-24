@@ -23,32 +23,52 @@ down. Copy that, do not invent a chat pipeline.
 Infer the job from **campaignintelligence** (`azpapwtnrbzywlnxxecz`) tags.
 Do not reconstruct `skills/lead-list-build` steps 1–13 in this chat.
 
-Read, counts and method names only. The source tags are **four legs**,
-not three ICP fields:
+Read **every tag**, counts and method names only. Four source legs are
+necessary and not sufficient — especially when `icp_kind = physical`.
 
-| Leg | Column | Means |
-|---|---|---|
-| Company | `company_source` | Where the company set came from (`getleads`, `maps`, `permits`, `ai_ark`, named signals, …) |
-| Domain | `domain_source` | Where the domain came from (`already`, `maps`, `domain_waterfall`, `theirstack`, …) |
-| Person | `person_source` | Where the DM came from (`getleads`, `ai_ark`, `people_waterfall`, `serp`, `hard_to_find`, …) |
-| Email | `email_source` + `email_max_tier` / `email_tier` | Where the address came from (`getleads`, `email_waterfall`, `name_to_email`, …) and how deep the waterfall went |
+| Tag | Means |
+|---|---|
+| `company_source` | Where the company set came from |
+| `company_detail` | Which Maps / PermitStack / parcel / label build |
+| `company_filters` | Rerun parameters (see physical keys below) |
+| `domain_source` | Where the domain came from |
+| `person_source` | Where the DM came from |
+| `email_source` | Where the address came from |
+| `email_max_tier` / `email_tier` | How deep the waterfall went |
+| `evidence` | Which provenance source stamped the row |
+| `confidence` | `traced` / `label_inferred` / `from_receipt` / `unknown` |
+| `build_label` | The named build / source_label |
+| `feed_pattern` | Which staging feed mapped to this method |
+| `icp_kind` | `linkedin_native` or `physical` |
+| `persona` | Buyer, snake_case |
+| `segment` | `band`, `mail_class`, `gift`, `offer_key`, `campaign_family` |
+| `how_i_did_it` | Method write-up, no rows |
+| `yield_by_step` | Count funnel on the receipt |
+| `granularity` | `lane` or `build` |
+| `campaign_ids` | Existing campaigns only |
 
-They live on more than `public.leads` and more than three receipt fields:
+Physical `company_filters` keys you must read (do not stop at
+`company_source = maps`): `maps`, `maps_runs`, `permits`, `geo`,
+`geo_note`, `source_tool`, `titles_wanted`, `job_title_terms`.
 
-- `topup.pull_receipts` — the four legs plus `icp_kind`, `persona`,
-  `company_filters`, `campaign_ids`, `segment`, `tam_count`,
-  `rows_found`, `rows_imported`. Never the people.
-- `topup.campaign_method` — one row per campaign: the four legs +
-  `email_tier`.
-- `topup.campaign_recipe` — per campaign jsonb `company_sources`,
-  `domain_sources`, `person_sources`, `email_sources` (counts of each
-  tag, not rows).
-- `topup.feed_map` — feed pattern → the four legs.
-- `topup.lead_provenance` — per-lead stamps of the same four legs.
+LinkedIn-native `company_filters` keys: `job_titles`, `company_size`,
+`countries`, `industries`, `max_per_company`.
+
+Tables (counts / keys only):
+
+- `topup.pull_receipts` — every column above. Never the people.
+- `topup.campaign_method` — legs + `company_detail` + `evidence`.
+- `topup.campaign_recipe` — jsonb `company_sources`, `domain_sources`,
+  `person_sources`, `email_sources`, `builds`.
+- `topup.feed_map` — `feed_pattern` → legs + `company_detail` +
+  `evidence`.
+- `topup.lead_provenance` — per-lead stamps of the same tags.
   **COUNT by tag. Never SELECT `email`.**
-- `topup.lane_recipes` / `recipe_get` — the signed-off file recipe when
-  one exists (`recipes/parlay/it_dm.json` is the override).
-- `topup.lane_state` / `/where` — which step the **service** is on.
+- `topup.provenance_sources` — the named evidence registry.
+- `topup.provenance_gaps` — campaigns still missing a stamp (counts).
+- `topup.lane_recipes` / `recipe_get` — file recipe override
+  (`recipes/parlay/it_dm.json`).
+- `lane_state` / `/where` — which step the **service** is on.
 - `campaign_registry` — campaign ids, band, working flag.
 
 Then **start the Railway service** with `start_topup`. The service walks

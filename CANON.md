@@ -300,13 +300,18 @@ It does not reconstruct the thirteen steps in chat.
   / linkedin_url, inline `enrich_waterfall` rows, child-agent GetLeads
   fires, CSV paste, opening a signed URL, a self-routine that re-reads
   lists. Ban list is the same file.
-- **How it knows what to start.** The four source legs on
-  campaignintelligence — `company_source`, `domain_source`,
-  `person_source`, `email_source` (+ `email_max_tier` / `email_tier`) —
-  plus `icp_kind`, `persona`, `company_filters`, `campaign_ids`. They
-  live on `topup.pull_receipts`, `topup.campaign_method`,
-  `topup.campaign_recipe` (jsonb `*_sources`), `topup.feed_map`, and
-  `topup.lead_provenance` (COUNT tags only; never SELECT email). Not
+- **How it knows what to start.** Every campaignintelligence tag, not
+  four legs. Source legs (`company_source`, `domain_source`,
+  `person_source`, `email_source`, `email_max_tier`, `email_tier`)
+  **and** `company_detail`,
+  `evidence`, `confidence`, `build_label`, `feed_pattern`, `icp_kind`,
+  `persona`, `company_filters`, `segment`, `how_i_did_it`. Physical
+  (`icp_kind = physical`) must also read `company_filters` keys
+  `maps`, `maps_runs`, `permits`, `geo`, `source_tool`,
+  `titles_wanted`. Tables: `topup.pull_receipts`,
+  `topup.campaign_method`, `topup.campaign_recipe`, `topup.feed_map`,
+  `topup.lead_provenance`, `topup.provenance_sources`,
+  `topup.provenance_gaps`. COUNT tags; never SELECT email. Not
   `public.leads` alone, and not a chat walk of `skills/lead-list-build`.
   Inferring a new file recipe from those stamps is PRs #6 and #7 — not
   a Grok session, and not this branch's Railway code (this service

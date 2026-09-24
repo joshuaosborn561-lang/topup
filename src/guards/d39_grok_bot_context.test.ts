@@ -6,9 +6,12 @@ import {
   GROK_MAY,
   GROK_MUST_NOT,
   GROK_MUST_NOT_SELECT,
+  GROK_PHYSICAL_FILTER_KEYS,
   GROK_RECEIPT_TAGS,
   GROK_SAMPLE_MAX,
+  GROK_SEGMENT_KEYS,
   GROK_SOURCE_TAGS,
+  GROK_STAMP_TAGS,
   GROK_TAG_TABLES,
 } from "../grok/allowlist.js";
 
@@ -117,13 +120,29 @@ describe("D39 — Grok bot is the babysitter", () => {
     for (const tag of GROK_RECEIPT_TAGS) {
       assert.match(babysitter, new RegExp(`\`${tag}\``), `D39: grok-bot-babysitter must name receipt tag \`${tag}\`. Ask Josh.`);
     }
+    for (const tag of GROK_STAMP_TAGS) {
+      assert.match(babysitter, new RegExp(`\`${tag}\``), `D39: grok-bot-babysitter must name stamp \`${tag}\`. Ask Josh.`);
+    }
+    for (const key of GROK_PHYSICAL_FILTER_KEYS) {
+      assert.match(babysitter, new RegExp(`\`${key}\``), `D39: grok-bot-babysitter must name physical filter \`${key}\`. Ask Josh.`);
+    }
+    for (const key of GROK_SEGMENT_KEYS) {
+      assert.match(babysitter, new RegExp(`\`${key}\``), `D39: grok-bot-babysitter must name segment key \`${key}\`. Ask Josh.`);
+    }
+    assert.match(canon, /maps_runs/);
+    assert.match(canon, /company_detail/);
+    assert.match(canon, /physical/);
     assert.match(ledger, /domain_source/);
     assert.match(ledger, /person_source/);
     assert.match(ledger, /email_source/);
+    assert.match(ledger, /company_detail/);
+    assert.match(ledger, /maps_runs/);
     assert.match(ledger, /lead_provenance/);
     assert.match(agents, /domain_source/);
     assert.match(agents, /person_source/);
     assert.match(agents, /email_source/);
+    assert.match(agents, /company_detail/);
+    assert.match(agents, /maps_runs/);
   });
 
   it("pull skills tell Grok bot not to walk them in chat — Ask Josh", async () => {

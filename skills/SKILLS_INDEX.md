@@ -11,7 +11,7 @@ and `supabase-csv-endpoint`.
 
 ## Grok bot and row movement (D39)
 
-* `grok-bot-babysitter` ... Standing orders for Cursor Grok / Slack Cursor on this repo. Allow list / ban list. Infer the job from the four source legs (`company_source`, `domain_source`, `person_source`, `email_source`) on receipts / campaign_method / campaign_recipe / lead_provenance; do not reconstruct the thirteen steps in chat.
+* `grok-bot-babysitter` ... Standing orders for Cursor Grok / Slack Cursor on this repo. Allow list / ban list. Infer the job from every campaignintelligence tag (source legs plus `company_detail`, `evidence`, `confidence`, `build_label`, `company_filters`; physical also `maps` / `maps_runs` / `permits` / `geo`). Do not reconstruct the thirteen steps in chat.
 * `leadpipe` ... Store and job runner (Context Saver). `ingest_csv` from a URL, `lp_export` signed URL + count, `lp_sample` ≤10. Counts only. `find_dms_by_title` is ~$0.10/company and is Josh-only.
 * `supabase-csv-endpoint` ... Table → public CSV URL and result CSV back in, via edge function. Rows never pass through chat.
 
