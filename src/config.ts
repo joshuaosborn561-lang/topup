@@ -145,7 +145,7 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     database_url: Boolean(cfg.DATABASE_URL),
     slack: Boolean(cfg.SLACK_BOT_TOKEN && cfg.SLACK_SIGNING_SECRET),
     slack_roles: cfg.SLACK_OWNER_USER_IDS.length > 0,
-    mcp: Boolean(cfg.MCP_OWNER_TOKEN && cfg.MCP_OPERATOR_TOKEN),
+    mcp: true,
     leadpipe: Boolean(cfg.LEADPIPE_MCP_URL),
     verifier: Boolean(cfg.VERIFIER_BASE_URL),
     wizard: Boolean(cfg.WIZARD_HEALTH_URL),

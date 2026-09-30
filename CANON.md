@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D40** (2026-09-30). One page of current truth. When a new
+Canon as of **D41** (2026-09-30). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -274,17 +274,17 @@ open cards, open runs and which integrations are configured. It is
 - Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains the 90-day global positive list).
 - `/mcp` is Streamable HTTP over HTTPS at
-  `https://leadtopup-production.up.railway.app/mcp` (D40). Owner and
-  operator bearer tokens expose `lane_state, run_status, list_runs,
-  list_holds, resolve_hold, start_topup, add_client_domains` (domains
-  only, never rows), `topup_recipe, topup_campaign_builds,
-  topup_provenance_gaps` (live pull record; one SQL call; jsonb
-  verbatim; never lead rows) to both and `register_queue_table,
+  `https://leadtopup-production.up.railway.app/mcp` (D40, D41). **No
+  login.** Anyone who can reach the URL gets the operator set:
+  `lane_state, run_status, list_runs, list_holds, resolve_hold,
+  start_topup, add_client_domains` (domains only, never rows),
+  `topup_recipe, topup_campaign_builds, topup_provenance_gaps` (live
+  pull record; one SQL call; jsonb verbatim; never lead rows). An
+  optional owner bearer token still unlocks `register_queue_table,
   lane_note, sample_rows` (ten max, emails masked), `variant_stats,
-  campaign_registry, recipe_get, missing_piece_groups` to the owner.
-  `recipe_get` is the file recipe the pipeline still walks; `topup_recipe`
-  is how the last list was actually pulled. These three live tools are
-  not on LeadPipe.
+  campaign_registry, recipe_get, missing_piece_groups`. `recipe_get` is
+  the file recipe the pipeline still walks; `topup_recipe` is how the
+  last list was actually pulled. These three live tools are not on LeadPipe.
 - Counts and ids only. Ten sample values on a card at most, never emails.
 
 ## Grok bot (D39)

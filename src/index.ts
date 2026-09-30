@@ -166,11 +166,17 @@ async function main(): Promise<void> {
     log.warn("SLACK_SIGNING_SECRET is not set; /slack is not mounted");
   }
 
-  if (cfg.MCP_OWNER_TOKEN && cfg.MCP_OPERATOR_TOKEN) {
-    app.use("/mcp", mcpRouter({ repo, orchestrator, console: console_, ledger, ownerToken: cfg.MCP_OWNER_TOKEN, operatorToken: cfg.MCP_OPERATOR_TOKEN }));
-  } else {
-    log.warn("MCP tokens are not both set; /mcp is not mounted");
-  }
+  app.use(
+    "/mcp",
+    mcpRouter({
+      repo,
+      orchestrator,
+      console: console_,
+      ledger,
+      ownerToken: cfg.MCP_OWNER_TOKEN,
+      operatorToken: cfg.MCP_OPERATOR_TOKEN,
+    }),
+  );
 
   // Cards that nobody answered expire; the waiting stage sees that and parks.
   const expired = await repo.expireCards();

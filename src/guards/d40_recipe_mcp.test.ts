@@ -26,7 +26,7 @@ describe("D40 — live pull recipe lives on this service", () => {
     const servers = await readFile(new URL("skills/MCP_SERVERS.md", root), "utf8");
     const agents = await readFile(new URL("AGENTS.md", root), "utf8");
     const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8")) as { version: string };
-    assert.match(canon, /Canon as of \*\*D40\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /topup_recipe/);
     assert.match(canon, /topup_campaign_builds/);
     assert.match(canon, /topup_provenance_gaps/);

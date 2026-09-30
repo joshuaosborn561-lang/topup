@@ -52,9 +52,9 @@ describe("roles", () => {
     const d = { ownerToken: "owner-tok-1", operatorToken: "operator-tok-2" };
     assert.equal(roleForToken(`Bearer ${d.ownerToken}`, d), "owner");
     assert.equal(roleForToken(`Bearer ${d.operatorToken}`, d), "operator");
-    assert.equal(roleForToken("Bearer nope", d), null);
-    assert.equal(roleForToken(undefined, d), null);
-    assert.equal(roleForToken("Bearer ", { ownerToken: "", operatorToken: "" }), null, "an empty configured token never matches");
+    assert.equal(roleForToken("Bearer nope", d), "operator", "D41: unknown token is still operator, no login");
+    assert.equal(roleForToken(undefined, d), "operator", "D41: no Authorization header is operator");
+    assert.equal(roleForToken("Bearer ", { ownerToken: "", operatorToken: "" }), "operator", "D41: empty tokens still serve the operator set");
   });
 });
 
