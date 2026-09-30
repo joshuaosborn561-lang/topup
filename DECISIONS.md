@@ -1244,7 +1244,7 @@ copies will drift. Josh: Cayden's campaign-topup skill and the watchdog
 read the recipe from one place.
 
 **Tradeoff.** Slack gets counts and labels, not the written method. A
-missing campaign returns the string `campaign not found in
-public.campaigns`. A SQL failure still posts the watch card and says so.
+missing campaign returns the string `campaign not found in public.campaigns`.
+A SQL failure still posts the watch card and says so.
 
 **Guard.** `src/guards/d40_recipe_mcp.test.ts`. Ask Josh.

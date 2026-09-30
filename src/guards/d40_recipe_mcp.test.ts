@@ -33,7 +33,7 @@ describe("D40 — live pull recipe lives on this service", () => {
     assert.match(canon, /not on LeadPipe/);
     assert.match(canon, /any_reconstructed/);
     assert.match(canon, /leads_without_method/);
-    assert.match(canon, MCP_HTTPS_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    assert.match(canon, new RegExp(MCP_HTTPS_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(ledger, /## D40 — Live pull recipe lives on this service/);
     assert.match(ledger, /not on LeadPipe/);
     assert.match(ledger, /campaign not found in public\.campaigns/);
@@ -41,7 +41,7 @@ describe("D40 — live pull recipe lives on this service", () => {
     assert.match(readme, /`topup_campaign_builds`/);
     assert.match(readme, /`topup_provenance_gaps`/);
     assert.match(readme, /select topup\.recipe\(\$1, \$2\)/);
-    assert.match(readme, MCP_HTTPS_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    assert.match(readme, new RegExp(MCP_HTTPS_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(servers, /leadtopup/);
     assert.match(servers, /topup_recipe/);
     assert.match(servers, /Not LeadPipe/);
