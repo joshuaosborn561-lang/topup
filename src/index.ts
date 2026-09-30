@@ -74,7 +74,7 @@ async function main(): Promise<void> {
     }
   });
   app.get("/", (_req, res) => {
-    res.type("text/plain").send("leadtopup: see /health");
+    res.type("text/plain").send("leadtopup: see /health · MCP POST /mcp (HTTPS Streamable HTTP)");
   });
 
   const server = app.listen(cfg.PORT, () => log.info("listening", { port: cfg.PORT }));

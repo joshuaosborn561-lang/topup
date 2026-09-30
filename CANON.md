@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D39** (2026-09-24). One page of current truth. When a new
+Canon as of **D40** (2026-09-30). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -21,7 +21,7 @@ lane recipe says (D9, D15).
 > judgement, the service brings it to me in Slack with everything I need to
 > decide.
 
-- **Mechanical (service):** runway/health watch, counting, approved pulls,
+- **Mechanical (service):** runway/health watch (Slack includes the last-pull recipe counts — D40), counting, approved pulls,
   ingest, suppression, cascade steps within budget, verification and the
   stall runbook, normalization, QA rules, routing, staging, importing with
   the count assert, merge field checks, receipts, ledger, digest, free
@@ -153,7 +153,11 @@ itself — no `/topup`, no card. The run targets the recipe's campaigns so
 the pull can take the client's DM persona and title-segment after. A
 client that is low and **not** working posts one card: Top up anyway, or
 Leave it. Leave it stays quiet until the rate recovers or Josh flips
-`/working on`. `/topup` and MCP `start_topup` are the override. A
+`/working on`. `/topup` and MCP `start_topup` are the override. When the
+watch flags a campaign as needing leads (go or ask), Slack includes the
+`topup_recipe` count summary — builds, interested per build,
+`any_reconstructed`, `leads_without_method` — so the human starts from
+the last pull, not from tags (D40). A
 non-SalesGlider client under **2 email days** flags a client-holistic DM
 mock (filters, net-new, $, title-segment); SalesGlider is excluded unless
 Josh asks. Paid spend still waits on Josh.
@@ -269,12 +273,18 @@ open cards, open runs and which integrations are configured. It is
   heading stays `(code)`.
 - Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains the 90-day global positive list).
-- `/mcp` with owner and operator bearer tokens exposes `lane_state,
-  run_status, list_runs, list_holds, resolve_hold, start_topup,
-  add_client_domains` (domains only, never rows) to both and
-  `register_queue_table, lane_note, sample_rows` (ten max, emails masked),
-  `variant_stats, campaign_registry, recipe_get, missing_piece_groups` to
-  the owner.
+- `/mcp` is Streamable HTTP over HTTPS at
+  `https://leadtopup-production.up.railway.app/mcp` (D40). Owner and
+  operator bearer tokens expose `lane_state, run_status, list_runs,
+  list_holds, resolve_hold, start_topup, add_client_domains` (domains
+  only, never rows), `topup_recipe, topup_campaign_builds,
+  topup_provenance_gaps` (live pull record; one SQL call; jsonb
+  verbatim; never lead rows) to both and `register_queue_table,
+  lane_note, sample_rows` (ten max, emails masked), `variant_stats,
+  campaign_registry, recipe_get, missing_piece_groups` to the owner.
+  `recipe_get` is the file recipe the pipeline still walks; `topup_recipe`
+  is how the last list was actually pulled. These three live tools are
+  not on LeadPipe.
 - Counts and ids only. Ten sample values on a card at most, never emails.
 
 ## Grok bot (D39)
@@ -290,10 +300,12 @@ It does not reconstruct the thirteen steps in chat.
   LeadPipe (`skills/leadpipe` — `lp_run ingest_csv` from a URL, `lp_export`
   signed_url + count, `lp_sample` ≤10). They do not enter Grok bot context.
 - **What it may call.** Service MCP (`start_topup`, `lane_state`,
-  `run_status`, `list_runs`, `list_holds`, `recipe_get`, …). LeadPipe
-  (`lp_plan`, `lp_run`, `lp_status`, `lp_export`, `lp_sample`,
-  `lp_inventory`, `lp_ensure_client`, `lp_list_clients`). Slack cards.
-  Allow list is `src/grok/allowlist.ts`.
+  `run_status`, `list_runs`, `list_holds`, `recipe_get`, `topup_recipe`,
+  `topup_campaign_builds`, `topup_provenance_gaps`, …). Read
+  `topup_recipe` before any top-up (D40). LeadPipe (`lp_plan`, `lp_run`,
+  `lp_status`, `lp_export`, `lp_sample`, `lp_inventory`,
+  `lp_ensure_client`, `lp_list_clients`). Slack cards. Allow list is
+  `src/grok/allowlist.ts`.
 - **What it must not call.** `export_contacts`, `search_contacts`,
   GetLeads enrich/batch-result tools, Apify `get-dataset-items`,
   `find_dms_by_title` (~$0.10/company), `SELECT` of email / name / phone
@@ -377,6 +389,7 @@ changes:
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
 | Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/leadpipe` and `skills/supabase-csv-endpoint` move rows without chat; `skills/grok-bot-babysitter` is D39; `skills/SKILLS_INDEX.md` says what is stale (D25) |
+| Live pull recipe | `topup.recipe()`, `topup.campaign_builds`, `topup.provenance_gaps` via MCP `topup_recipe` / `topup_campaign_builds` / `topup_provenance_gaps` on `https://leadtopup-production.up.railway.app/mcp` (D40). Not LeadPipe. |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
 | Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |

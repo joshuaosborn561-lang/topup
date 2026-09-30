@@ -110,6 +110,8 @@ export interface NotWorkingCard {
   sends: number;
   interested: number;
   variants: Array<{ label: string; sends: number; interested: number }>;
+  /** D40: last-pull recipe counts. Builds, interested per build, any_reconstructed, leads_without_method. */
+  recipeSummary: string;
 }
 
 export function notWorkingCard(c: NotWorkingCard): Block[] {
@@ -122,6 +124,7 @@ export function notWorkingCard(c: NotWorkingCard): Block[] {
         `${c.interested} interested in ${c.sends} sends (bar is 1 per 2,000).`,
     ),
     ...(table ? [section(`Variants:\n${table}`)] : []),
+    section(c.recipeSummary),
     actions(c.cardId, [
       { choice: "topup_anyway", label: "Top up anyway" },
       { choice: "leave_it", label: "Leave it", style: "primary" },

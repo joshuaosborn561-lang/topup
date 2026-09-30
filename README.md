@@ -23,7 +23,9 @@ Read `CANON.md` first. It is one page and it is the current truth.
   table, ledger row per call, Slack card for anything over the cap.
 - Slack: one thread per run, cards with buttons, slash commands, owner and
   operator roles.
-- `/mcp` with owner and operator tokens.
+- `/mcp` — Streamable HTTP over HTTPS at
+  `https://leadtopup-production.up.railway.app/mcp` with owner and
+  operator bearer tokens (D40).
 - Josh's **skills** at `skills/` — the specification. `lead-list-build` is
   the spine; `SKILLS_INDEX.md` names the stale parts (the index wins).
 - The **spine**: the thirteen steps of `skills/lead-list-build/SKILL.md` as
@@ -113,6 +115,50 @@ docs/servers.md       the vendor servers, from their code
 skills/               Josh's skills; lead-list-build is the spine, SKILLS_INDEX.md marks stale parts
 scripts/seed-cities.ts  load topup.ref_cities once (npm run seed:cities)
 ```
+
+## MCP (HTTPS on Railway)
+
+Streamable HTTP at **`https://leadtopup-production.up.railway.app/mcp`**.
+POST JSON-RPC with `Authorization: Bearer <owner|operator token>`.
+CORS is open so Cursor can add the URL. GET is 405 (stateless). Both
+tokens must be set or `/mcp` is not mounted.
+
+Cursor / Claude:
+
+```json
+{
+  "mcpServers": {
+    "leadtopup": {
+      "url": "https://leadtopup-production.up.railway.app/mcp",
+      "headers": { "Authorization": "Bearer ${MCP_OPERATOR_TOKEN}" }
+    }
+  }
+}
+```
+
+| Tool | Who | What |
+|---|---|---|
+| `lane_state` | both | Where a lane is. Counts only. |
+| `run_status` | both | Counts, spend and step for one run. |
+| `list_runs` | both | Recent runs. |
+| `list_holds` | both | Open cards. |
+| `resolve_hold` | both | Tap a card (same role rules as Slack). |
+| `start_topup` | both | Open a run. Spend still asks. |
+| `add_client_domains` | both | Customer domains only, never rows. |
+| `topup_recipe` | both | **Read before any top up.** How this campaign's leads were pulled last time (`select topup.recipe($1, $2)`). jsonb verbatim. If `campaign` is null: `campaign not found in public.campaigns`. Counts only, never lead rows. |
+| `topup_campaign_builds` | both | Builds that fed a campaign, largest first. |
+| `topup_provenance_gaps` | both | Campaigns for a client still missing a pull stamp. |
+| `register_queue_table` | owner | Hand a queue table to the service. Never rows. |
+| `lane_note` | owner | One line on the lane event log. |
+| `sample_rows` | owner | Up to ten masked rows. |
+| `variant_stats` | owner | Sends and interested by variant. |
+| `campaign_registry` | owner | Campaigns the service knows. |
+| `recipe_get` | owner | File recipe from the repo. Not the live pull record. |
+| `missing_piece_groups` | owner | Rows grouped by what they still lack. |
+
+These three live recipe tools are not on LeadPipe. The function and
+views already exist on campaignintelligence; this service does not
+change schema.
 
 ## Slack
 

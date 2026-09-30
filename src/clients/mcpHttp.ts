@@ -1,3 +1,5 @@
+import { SERVICE_VERSION } from "../version.js";
+
 /**
  * Minimal MCP Streamable-HTTP client: initialize once, then tools/call.
  * The vendor servers on Railway all speak this; we only need tool calls and we
@@ -59,7 +61,7 @@ export class McpHttpClient {
     await this.rpc("initialize", {
       protocolVersion: "2025-03-26",
       capabilities: {},
-      clientInfo: { name: "leadtopup", version: "0.1.0" },
+      clientInfo: { name: "leadtopup", version: SERVICE_VERSION },
     });
     await this.fetchImpl(this.url, {
       method: "POST",

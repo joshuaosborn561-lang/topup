@@ -13,6 +13,7 @@ The routing rule for which server owns which job is in `leadgen-mcp-routing/SKIL
 
 | Server | URL | Owns |
 |---|---|---|
+| leadtopup | `https://leadtopup-production.up.railway.app/mcp` | Live pull recipe (`topup_recipe`, `topup_campaign_builds`, `topup_provenance_gaps`), lane state, start a top-up. Counts only. Not LeadPipe. Bearer owner/operator token. |
 | LeadPipe (named "Context Saver" in Claude) | `https://leadpipe-production-0df5.up.railway.app/mcp` | Client schemas, `ingest_csv`, `lp_export` signed URLs, `import_smartlead`, `sync_smartlead`, `build_suppression`, job status |
 | Google Maps Scraper | `https://google-maps-mcp-production-88a3.up.railway.app/mcp` | Local business discovery by category and geography, outcome mode v1.8, `estimate_only=true` first |
 | PermitStack | `https://permitstack-mcp-production.up.railway.app/mcp` | Building permits by type, date, geography, contractor; trade plays |

@@ -35,7 +35,7 @@ describe("D39 — Grok bot is the babysitter", () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
     const agents = await readFile(new URL("AGENTS.md", root), "utf8");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D39\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /Grok bot is the \*\*babysitter\*\*/);
     assert.match(canon, /MCP → Supabase/);
     assert.match(canon, /source_table/);

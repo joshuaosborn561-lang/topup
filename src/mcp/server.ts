@@ -12,6 +12,15 @@ import { logger } from "../lib/log.js";
 import type { Orchestrator } from "../orchestrator.js";
 import type { SlackConsole } from "../slack/console.js";
 import { NEEDS_JOSH } from "../slack/roles.js";
+import { MCP_HTTPS_URL, SERVICE_VERSION } from "../version.js";
+import {
+  CAMPAIGN_NOT_FOUND,
+  RECIPE_CLIENT_TAGS,
+  readCampaignBuilds,
+  readProvenanceGaps,
+  readTopupRecipe,
+  TOPUP_RECIPE_DESCRIPTION,
+} from "./recipe.js";
 
 const log = logger("mcp");
 
@@ -34,6 +43,9 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   campaign_registry: "owner",
   recipe_get: "owner",
   missing_piece_groups: "owner",
+  topup_recipe: "operator",
+  topup_campaign_builds: "operator",
+  topup_provenance_gaps: "operator",
 };
 
 export interface McpDeps {
@@ -71,10 +83,12 @@ export function maskEmail(email: string | null | undefined): string | null {
 
 /** Build a server whose tool set is fixed by the caller's role. One per request (stateless). */
 export function buildMcpServer(role: Role, d: McpDeps): McpServer {
-  const server = new McpServer({ name: "leadtopup", version: "0.1.0" });
+  const server = new McpServer({ name: "leadtopup", version: SERVICE_VERSION });
   const allowed = (tool: string) => role === "owner" || MCP_TOOL_ROLE[tool] === "operator";
   const refused = () => text({ error: NEEDS_JOSH, role });
   const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
+  const recipeClient = z.enum(RECIPE_CLIENT_TAGS);
+  const smartleadCampaignId = z.number().int().describe("Smartlead campaign id");
 
   server.registerTool(
     "lane_state",
@@ -274,12 +288,60 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     },
   );
 
+  server.registerTool(
+    "topup_recipe",
+    {
+      description: TOPUP_RECIPE_DESCRIPTION,
+      inputSchema: { client_tag: recipeClient, campaign_id: smartleadCampaignId },
+    },
+    async ({ client_tag, campaign_id }) => {
+      const recipe = await readTopupRecipe(d.repo.raw(), client_tag, campaign_id);
+      if (recipe === CAMPAIGN_NOT_FOUND) return text(CAMPAIGN_NOT_FOUND);
+      return text(recipe);
+    },
+  );
+
+  server.registerTool(
+    "topup_campaign_builds",
+    {
+      description:
+        "Builds that fed a campaign, largest first. Counts, source tags and method labels from topup.campaign_builds. Never lead rows.",
+      inputSchema: { client_tag: recipeClient, campaign_id: smartleadCampaignId },
+    },
+    async ({ client_tag, campaign_id }) => text(await readCampaignBuilds(d.repo.raw(), client_tag, campaign_id)),
+  );
+
+  server.registerTool(
+    "topup_provenance_gaps",
+    {
+      description: "Campaigns for a client still missing a pull stamp. Counts from topup.provenance_gaps. Never lead rows.",
+      inputSchema: { client_tag: recipeClient },
+    },
+    async ({ client_tag }) => text(await readProvenanceGaps(d.repo.raw(), client_tag)),
+  );
+
   return server;
+}
+
+/** CORS so Cursor and other HTTPS MCP clients can POST to Railway. */
+export function applyMcpCors(res: Response): void {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, MCP-Session-Id, Last-Event-ID");
+  res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id, MCP-Session-Id");
 }
 
 /** Express router for /mcp. Bearer token picks the role; no token, no answer. */
 export function mcpRouter(d: McpDeps): Router {
   const router = express.Router();
+  router.use((req, res, next) => {
+    applyMcpCors(res);
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
   router.use(express.json({ limit: "1mb" }));
 
   const handle = async (req: Request, res: Response) => {
@@ -305,7 +367,12 @@ export function mcpRouter(d: McpDeps): Router {
 
   router.post("/", handle);
   router.get("/", (_req, res) => {
-    res.status(405).json({ error: "stateless server: POST JSON-RPC to /mcp" });
+    res.status(405).json({
+      error: "stateless server: POST JSON-RPC to /mcp",
+      transport: "streamable-http",
+      url: MCP_HTTPS_URL,
+      version: SERVICE_VERSION,
+    });
   });
   router.delete("/", (_req, res) => {
     res.status(405).end();

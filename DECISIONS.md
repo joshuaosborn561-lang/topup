@@ -59,6 +59,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D37 | Live |
 | D38 | Live |
 | D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context |
+| D40 | Live; live pull recipe MCP on this service, not LeadPipe; watch Slack includes the count summary |
 
 ---
 
@@ -1210,3 +1211,40 @@ service. That is allowed.
 
 **Guard.** `src/guards/d39_grok_bot_context.test.ts`. Allow/ban in
 `src/grok/allowlist.ts`. D2 `lead_rows.test.ts` still holds. Ask Josh.
+
+## D40 — Live pull recipe lives on this service
+
+**Decision.** How a campaign's leads were pulled last time lives here, on
+the `topup` schema, not on LeadPipe and not reconstructed from tags in
+chat. Three read-only MCP tools — `topup_recipe`,
+`topup_campaign_builds`, `topup_provenance_gaps` — read
+`topup.recipe()`, `topup.campaign_builds`, and `topup.provenance_gaps`
+on campaignintelligence through the existing service-role connection.
+Each is one SQL call; the jsonb comes back verbatim. No paging, no
+cache, no mutation, no lead rows. Operator (Cayden) may call all three.
+Cayden's campaign-topup skill and the Grok babysitter read them here.
+
+When the watch flags a campaign as needing leads (go or ask), the Slack
+message includes a recipe **summary**: builds, interested per build,
+`any_reconstructed`, `leads_without_method`. The human starts from the
+recipe, not from tags. The method paragraph stays on the tool, not on
+the card.
+
+The MCP is Streamable HTTP over HTTPS at
+`https://leadtopup-production.up.railway.app/mcp` (Bearer owner or
+operator token). CORS is open so Cursor can POST. GET stays 405
+(stateless). These tools are not added to LeadPipe.
+
+The file recipe (`recipe_get` / `recipes/*.json`) is still what the
+pipeline walks (PRs #6 and #7). `topup_recipe` is the live pull record.
+
+**Why.** LeadPipe only executes pulls. The watchdog only flags. The
+record of how a list was built is `topup.*`. Three places reading three
+copies will drift. Josh: Cayden's campaign-topup skill and the watchdog
+read the recipe from one place.
+
+**Tradeoff.** Slack gets counts and labels, not the written method. A
+missing campaign returns the string `campaign not found in
+public.campaigns`. A SQL failure still posts the watch card and says so.
+
+**Guard.** `src/guards/d40_recipe_mcp.test.ts`. Ask Josh.
