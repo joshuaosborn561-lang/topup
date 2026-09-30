@@ -2,6 +2,7 @@ import { ALLOWED_SUPABASE_PROJECT_REF, configReadiness, type Config } from "./co
 import type { Repo } from "./db/repo.js";
 import type { SpendRails } from "./spend/rails.js";
 import { usd } from "./spend/prices.js";
+import { MCP_HTTPS_URL, SERVICE_VERSION } from "./version.js";
 
 const startedAt = Date.now();
 
@@ -29,7 +30,8 @@ export const REQUIRED_TOPUP_TABLES = [
 export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: SpendRails | null; recipes: string[] }): Promise<Record<string, unknown>> {
   const base: Record<string, unknown> = {
     service: "leadtopup",
-    version: process.env.npm_package_version ?? "0.1.0",
+    version: process.env.npm_package_version ?? SERVICE_VERSION,
+    mcp: { transport: "streamable-http", path: "/mcp", url: MCP_HTTPS_URL },
     phase: "1 (verify + normalize; nothing is staged or imported)",
     uptime_s: Math.round((Date.now() - startedAt) / 1000),
     replicas: 1,

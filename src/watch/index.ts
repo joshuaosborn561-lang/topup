@@ -8,7 +8,8 @@ import { logger } from "../lib/log.js";
 import type { Orchestrator } from "../orchestrator.js";
 import { recipeCampaignIds } from "../recipes/campaigns.js";
 import type { Recipe } from "../recipes/schema.js";
-import { notWorkingCard } from "../slack/cards.js";
+import { recipeSummariesForWatch } from "../mcp/recipe.js";
+import { notWorkingCard, section } from "../slack/cards.js";
 import type { SlackConsole } from "../slack/console.js";
 import { isNeedy, watchDecision, type NeedyCampaign } from "./decide.js";
 
@@ -147,6 +148,10 @@ export class RunwayWatch {
         log.info("go refused", { client_tag: recipe.client_tag, lane: recipe.lane, message: started.message });
         return "skip";
       }
+      const recipeSummary = await recipeSummariesForWatch(this.d.db, recipe.client_tag, decision.campaigns);
+      await this.d.console
+        .postInThread(started.run, "Last pull recipe (counts)", [section(recipeSummary)])
+        .catch((err) => log.warn("recipe summary failed", { error: (err as Error).message }));
       return "go";
     }
 
@@ -171,6 +176,7 @@ export class RunwayWatch {
     const run = started.run;
     await this.d.repo.setRunStatus(run.run_id, "awaiting_josh", "trigger", decision.why);
     const stats = await variantStats(this.d.db, poster.health.smartlead_campaign_id);
+    const recipeSummary = await recipeSummariesForWatch(this.d.db, recipe.client_tag, [poster.health.smartlead_campaign_id]);
     await this.d.console.ask({
       run,
       kind: "not_working",
@@ -188,6 +194,7 @@ export class RunwayWatch {
           sends: stats.sends,
           interested: stats.interested,
           variants: stats.variants.map((v) => ({ label: v.label, sends: v.sends, interested: v.interested })),
+          recipeSummary,
         }),
     });
     await this.d.ledger?.block(recipe.client_tag, recipe.lane, "owner", `runway is low and #${poster.health.smartlead_campaign_id} is not working: ${poster.working.reason}`, run.run_id);

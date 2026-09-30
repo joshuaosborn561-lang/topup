@@ -5,9 +5,9 @@ These are the skills Josh has built for SalesGlider Growth. Each folder holds a 
 No skills are marked stale as of D39. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; the six pending taps are yes. Positives expire 90 days after the reply and replace the customer-list upload (D37).
 
 **Grok bot (D39):** read `grok-bot-babysitter` before any pull skill. Do not
-execute `lead-list-build` or a `*-lead-pulls` skill in Grok chat. Start
-`start_topup` or hand a CSV URL to LeadPipe. Rows move through `leadpipe`
-and `supabase-csv-endpoint`.
+execute `lead-list-build` or a `*-lead-pulls` skill in Grok chat. Read
+`topup_recipe` first (D40), then start `start_topup` or hand a CSV URL
+to LeadPipe. Rows move through `leadpipe` and `supabase-csv-endpoint`.
 
 ## Grok bot and row movement (D39)
 
