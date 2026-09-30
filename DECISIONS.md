@@ -60,6 +60,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D38 | Live |
 | D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context |
 | D40 | Live; live pull recipe MCP on this service, not LeadPipe; watch Slack includes the count summary |
+| D41 | Live; HTTPS MCP needs no login; unauthenticated callers get the operator set |
 
 ---
 
@@ -1248,3 +1249,29 @@ missing campaign returns the string `campaign not found in public.campaigns`.
 A SQL failure still posts the watch card and says so.
 
 **Guard.** `src/guards/d40_recipe_mcp.test.ts`. Ask Josh.
+
+## D41 — MCP needs no login
+
+**Decision.** The public HTTPS MCP at
+`https://leadtopup-production.up.railway.app/mcp` does not require a
+bearer token, OAuth, or any other login. Cursor adds the URL and
+calls tools. No `Authorization` header. `/mcp` is mounted whenever
+the database is up, even if `MCP_OWNER_TOKEN` / `MCP_OPERATOR_TOKEN`
+are empty.
+
+A request with no token, or with a token that does not match, is
+**operator**. That includes `topup_recipe`, `start_topup`, and the
+other operator tools. An optional owner token still elevates to
+owner-only tools (`sample_rows`, `recipe_get`, …). Slack stays
+signed; this decision is MCP only.
+
+**Why.** Josh: "make the mcp no log in needed." The other house
+Railway MCPs are already inbound-authless (`docs/servers.md`). A
+Cursor login prompt on this URL blocked Cayden's campaign-topup
+skill from reading the recipe we just put here (D40).
+
+**Tradeoff.** Anyone who can reach the Railway URL can start a
+top-up or read recipe counts. They cannot sample lead rows without
+the owner token. Spend still asks Josh on a Slack card.
+
+**Guard.** `src/guards/d41_mcp_no_login.test.ts`. Ask Josh.

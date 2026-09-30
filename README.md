@@ -119,9 +119,10 @@ scripts/seed-cities.ts  load topup.ref_cities once (npm run seed:cities)
 ## MCP (HTTPS on Railway)
 
 Streamable HTTP at **`https://leadtopup-production.up.railway.app/mcp`**.
-POST JSON-RPC with `Authorization: Bearer <owner|operator token>`.
-CORS is open so Cursor can add the URL. GET is 405 (stateless). Both
-tokens must be set or `/mcp` is not mounted.
+No login (D41). POST JSON-RPC; no `Authorization` header. CORS is open
+so Cursor can add the URL. GET is 405 (stateless). `/mcp` is always
+mounted once the database is up. An optional owner token still unlocks
+owner-only tools (`sample_rows`, `recipe_get`, …).
 
 Cursor / Claude:
 
@@ -129,8 +130,7 @@ Cursor / Claude:
 {
   "mcpServers": {
     "leadtopup": {
-      "url": "https://leadtopup-production.up.railway.app/mcp",
-      "headers": { "Authorization": "Bearer ${MCP_OPERATOR_TOKEN}" }
+      "url": "https://leadtopup-production.up.railway.app/mcp"
     }
   }
 }

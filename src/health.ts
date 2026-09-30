@@ -31,7 +31,7 @@ export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: Sp
   const base: Record<string, unknown> = {
     service: "leadtopup",
     version: process.env.npm_package_version ?? SERVICE_VERSION,
-    mcp: { transport: "streamable-http", path: "/mcp", url: MCP_HTTPS_URL },
+    mcp: { transport: "streamable-http", path: "/mcp", url: MCP_HTTPS_URL, auth: "none" },
     phase: "1 (verify + normalize; nothing is staged or imported)",
     uptime_s: Math.round((Date.now() - startedAt) / 1000),
     replicas: 1,

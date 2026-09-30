@@ -64,11 +64,12 @@ function tokenMatches(given: string | undefined, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function roleForToken(header: string | undefined, d: Pick<McpDeps, "ownerToken" | "operatorToken">): Role | null {
+/** D41: no login. Missing or unknown token is operator. Owner token still elevates. */
+export function roleForToken(header: string | undefined, d: Pick<McpDeps, "ownerToken" | "operatorToken">): Role {
   const token = header?.replace(/^Bearer\s+/i, "").trim();
   if (tokenMatches(token, d.ownerToken)) return "owner";
   if (tokenMatches(token, d.operatorToken)) return "operator";
-  return null;
+  return "operator";
 }
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
@@ -331,7 +332,7 @@ export function applyMcpCors(res: Response): void {
   res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id, MCP-Session-Id");
 }
 
-/** Express router for /mcp. Bearer token picks the role; no token, no answer. */
+/** Express router for /mcp. No login (D41). Optional owner token elevates. */
 export function mcpRouter(d: McpDeps): Router {
   const router = express.Router();
   router.use((req, res, next) => {
@@ -346,10 +347,6 @@ export function mcpRouter(d: McpDeps): Router {
 
   const handle = async (req: Request, res: Response) => {
     const role = roleForToken(req.header("authorization"), d);
-    if (!role) {
-      res.status(401).json({ error: "owner or operator token required" });
-      return;
-    }
     const server = buildMcpServer(role, d);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
@@ -372,6 +369,7 @@ export function mcpRouter(d: McpDeps): Router {
       transport: "streamable-http",
       url: MCP_HTTPS_URL,
       version: SERVICE_VERSION,
+      auth: "none",
     });
   });
   router.delete("/", (_req, res) => {
