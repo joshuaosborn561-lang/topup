@@ -19,6 +19,28 @@ export function isNeedy(h: CampaignHealth): boolean {
   return h.flags.includes("low") || h.flags.includes("empty");
 }
 
+/**
+ * #campaign-watchdog "nearly done (90%, N left)" — remaining new leads
+ * are 10% or less of the list. Visibility for the queue (D44), not a
+ * new Josh-named floor and not the auto-start signal.
+ */
+export const WATCHDOG_NEARLY_DONE_REMAINING_SHARE = 0.1;
+
+export type WatchdogLeadFlag = "empty" | "low" | "nearly_done";
+
+/** Same lead-refill lines the watchdog channel posts. Not senders, not silent. */
+export function watchdogLeadFlag(h: CampaignHealth): WatchdogLeadFlag | null {
+  if (h.status !== "ACTIVE") return null;
+  if (h.flags.includes("empty") || h.untouched === 0) return "empty";
+  if (h.flags.includes("low")) return "low";
+  if (h.leads_total > 0 && h.untouched / h.leads_total <= WATCHDOG_NEARLY_DONE_REMAINING_SHARE) return "nearly_done";
+  return null;
+}
+
+export function isWatchdogLeadNeed(h: CampaignHealth): boolean {
+  return watchdogLeadFlag(h) !== null;
+}
+
 export interface NeedyCampaign {
   health: CampaignHealth;
   working: WorkingVerdict;

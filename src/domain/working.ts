@@ -5,7 +5,8 @@ import type { Queryable } from "../db/pool.js";
  * 2,000 sends, counted from interested / meeting-request categories only,
  * never raw reply rate. Checked at the campaign level and per variant: if any
  * variant with at least 1,000 sends (D35 item 12) clears the bar the campaign
- * counts as working and the dead variant is named. An owner override from Slack
+ * counts as working and the dead variant is named. One interested reply in
+ * under 2,000 sends is also acceptable (D44). An owner override from Slack
  * wins. The function takes `variantMinSends` so a recipe can set the floor.
  */
 
@@ -40,6 +41,9 @@ export function ratePer2000(sends: number, interested: number): number {
   return sends === 0 ? 0 : (interested / sends) * 2000;
 }
 
+/** D44 — 1 interested reply in under 2,000 sends is acceptable for top-up. */
+export const WORKING_UNDER_2000_SENDS = 2000;
+
 export function isWorking(i: WorkingInput): WorkingVerdict {
   if (i.override !== null) {
     return { working: i.override, reason: `owner override ${i.override ? "on" : "off"}`, deadVariants: [], liveVariants: [] };
@@ -51,6 +55,14 @@ export function isWorking(i: WorkingInput): WorkingVerdict {
   const campaignRate = ratePer2000(i.sends, i.interested);
   if (campaignRate >= bar) {
     return { working: true, reason: `${i.interested} interested in ${i.sends} sends (${campaignRate.toFixed(2)} per 2,000)`, deadVariants: dead, liveVariants: live };
+  }
+  if (i.interested >= 1 && i.sends > 0 && i.sends < WORKING_UNDER_2000_SENDS) {
+    return {
+      working: true,
+      reason: `${i.interested} interested in ${i.sends} sends (under 2,000; acceptable)`,
+      deadVariants: dead,
+      liveVariants: live,
+    };
   }
   if (live.length > 0) {
     return {

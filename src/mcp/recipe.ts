@@ -8,8 +8,29 @@ import type { Queryable } from "../db/pool.js";
  */
 
 export const CLIENT_MAP_TAGS_SQL = "select client_tag from topup.client_map order by 1";
+export const CLIENT_MAP_SQL = "select client_tag, smartlead_client_id from topup.client_map order by 1";
 
 const SNAKE = /^[a-z][a-z0-9_]*$/;
+
+export interface ClientMapRow {
+  client_tag: string;
+  smartlead_client_id: number;
+}
+
+/** Tags + Smartlead client ids. Tags only in tool enums; never client_name. */
+export async function loadClientMap(db: Queryable): Promise<ClientMapRow[]> {
+  const { rows } = await db.query<{ client_tag: string; smartlead_client_id: string | number }>(CLIENT_MAP_SQL);
+  const out: ClientMapRow[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (typeof r.client_tag !== "string" || !SNAKE.test(r.client_tag) || seen.has(r.client_tag)) continue;
+    const id = Number(r.smartlead_client_id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    seen.add(r.client_tag);
+    out.push({ client_tag: r.client_tag, smartlead_client_id: id });
+  }
+  return out;
+}
 
 /** Tags only. Never client_name. */
 export async function loadClientTags(db: Queryable): Promise<string[]> {

@@ -6,7 +6,7 @@ No skills are marked stale as of D39. The Sept 10 notes on `parlay-lead-pulls` a
 
 **Grok bot (D39):** read `grok-bot-babysitter` before any pull skill. Do not
 execute `lead-list-build` or a `*-lead-pulls` skill in Grok chat. Read
-`topup_queue` first (D43), then `topup_recipe` (D40), then start `start_topup` or hand a CSV URL
+`topup_queue` first (D43, D44), then `topup_recipe` (D40), then start `start_topup` or hand a CSV URL
 to LeadPipe. Rows move through `leadpipe` and `supabase-csv-endpoint`.
 
 ## Grok bot and row movement (D39)

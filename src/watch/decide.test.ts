@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { CampaignHealth } from "../ledger/health.js";
 import { assessClientRunway } from "../ledger/client_runway.js";
 import type { WorkingVerdict } from "../domain/working.js";
-import { isNeedy, pickAsk, recipeCampaignIds, watchDecision } from "./decide.js";
+import { isNeedy, isWatchdogLeadNeed, pickAsk, recipeCampaignIds, watchdogLeadFlag, watchDecision } from "./decide.js";
 
 /** D27 / D38 — the watch goes on its own when the *client* is low and still working. */
 
@@ -45,6 +45,17 @@ describe("D27 watch decision", () => {
     assert.equal(isNeedy(health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0, runway_days: 0 })), true);
     assert.equal(isNeedy(health({ smartlead_campaign_id: 1, flags: ["silent"], runway_days: null, sending: false })), false);
     assert.equal(isNeedy(health({ smartlead_campaign_id: 1, flags: [], runway_days: 20 })), false);
+  });
+
+  it("D44 — watchdog lead flags are empty, low, or 90% consumed; not silent or STOPPED", () => {
+    assert.equal(watchdogLeadFlag(health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0 })), "empty");
+    assert.equal(watchdogLeadFlag(health({ smartlead_campaign_id: 2, flags: ["low"], runway_days: 2 })), "low");
+    assert.equal(
+      watchdogLeadFlag(health({ smartlead_campaign_id: 3, flags: [], leads_total: 600, untouched: 60, runway_days: 20 })),
+      "nearly_done",
+    );
+    assert.equal(isWatchdogLeadNeed(health({ smartlead_campaign_id: 4, flags: ["silent"], runway_days: null, sending: false, untouched: 80, leads_total: 100 })), false);
+    assert.equal(watchdogLeadFlag(health({ smartlead_campaign_id: 5, status: "STOPPED", flags: [], untouched: 0 })), null);
   });
 
   it("skips when nothing is low or a run is already open", () => {

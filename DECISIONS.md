@@ -30,7 +30,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D8 | Live; Hunter added by D35 |
 | D9 | Live |
 | D10 | Live |
-| D11 | Live; variant volume floor 300 superseded by D35 (1,000) |
+| D11 | Live; variant volume floor 300 superseded by D35 (1,000); 1-reply-under-2k confirmed by D44 |
 | D12 | Live |
 | D13 | Live; VALID-only superseded by D35 item 15 |
 | D14 | Live |
@@ -62,7 +62,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D40 | Live; live pull recipe MCP on this service, not LeadPipe; watch Slack includes the count summary |
 | D41 | Live; HTTPS MCP needs no login; unauthenticated callers get the operator set |
 | D42 | Live; recipe-tool client_tag enum is topup.client_map at boot, not a hardcoded twelve |
-| D43 | Live; topup_queue is Cayden's ranked watch list; count_contacts is count filters only |
+| D43 | Live; topup_queue visibility widened by D44; count_contacts is count filters only |
+| D44 | Live; topup_queue shows #campaign-watchdog lead flags; 1 reply under 2,000 sends is working |
 
 ---
 
@@ -1333,3 +1334,35 @@ Adding a client still does not need a service bump (D42). Watch
 Slack stays for Josh.
 
 **Guard.** `src/guards/d43_queue_and_count_filters.test.ts`. Ask Josh.
+
+## D44 — Queue sees what #campaign-watchdog posts; 1 reply under 2k is working
+
+**Decision.** `topup_queue` is the same lead-refill board `#campaign-watchdog`
+posts, not only the D38 go/ask set on file recipes. Walk every
+`topup.client_map` client and every ACTIVE campaign in the Smartlead
+mirror. Include empty, low, and nearly-done (90% consumed — the
+watchdog's "nearly done (90%, N left)" line). Rank empty first, then
+nearly-done by remaining new, then low by shortest runway. Each row
+still carries the recipe count summary. Also carry `working` /
+`working_reason`, `client_under_floor`, and `sibling_rem` so Cayden
+sees the 1-in-2000 gate and why the watch would skip. Do not hide a
+dry camp because siblings still hold rem. Do not include "too few
+senders" or silent/not-sending with rem — those are not a lead job.
+
+The working gate for top-up is one interested reply per 2,000 sends
+(D11). One interested reply in under 2,000 sends is also acceptable.
+Auto-start stays D38. The queue does not start a run.
+
+**Why.** Cayden opened `topup_queue` and it said no campaigns need
+top-up. `#campaign-watchdog` was listing BCP / Emcor / Insight /
+PowerGRYD / SalesGlider / TechEvo dry camps the same day. The queue
+only walked `parlay.it_dm.v3` and skipped because Parlay sibling rem
+is healthy. Josh: tie the watchdog channel in, and confirm 1-in-2000
+plus 1 reply under 2k.
+
+**Tradeoff.** Nearly-done uses the watchdog's 90% line, not a new
+Josh-named floor. 75% "nearly done" posts are not included unless he
+says so. `start_topup` still needs a file recipe; visibility is not a
+new recipe. Not on LeadPipe. No schema change.
+
+**Guard.** `src/guards/d44_queue_watchdog.test.ts`. Ask Josh.

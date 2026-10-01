@@ -47,6 +47,17 @@ describe("working (D11)", () => {
     assert.equal(v.working, false);
   });
 
+  it("D44 — 1 interested reply in under 2,000 sends is acceptable", () => {
+    const v = isWorking({
+      ...base,
+      sends: 1500,
+      interested: 1,
+      variants: [{ label: "A", step_number: 1, subject_line: null, sends: 1500, interested: 1 }],
+    });
+    assert.equal(v.working, true);
+    assert.match(v.reason, /1 interested in 1500/);
+  });
+
   it("an owner override wins either way", () => {
     assert.equal(isWorking({ ...base, sends: 5000, interested: 0, variants: [], override: true }).working, true);
     assert.equal(isWorking({ ...base, sends: 5000, interested: 50, variants: [], override: false }).working, false);
