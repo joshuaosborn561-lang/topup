@@ -14,7 +14,7 @@ describe("D41 — MCP needs no login", () => {
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const readme = await readFile(new URL("README.md", root), "utf8");
     const servers = await readFile(new URL("skills/MCP_SERVERS.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D41\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /\*\*No\s+login\.\*\*/);
     assert.match(ledger, /## D41 — MCP needs no login/);
     assert.match(ledger, /does not require a/);

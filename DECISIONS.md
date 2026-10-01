@@ -61,6 +61,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context |
 | D40 | Live; live pull recipe MCP on this service, not LeadPipe; watch Slack includes the count summary |
 | D41 | Live; HTTPS MCP needs no login; unauthenticated callers get the operator set |
+| D42 | Live; recipe-tool client_tag enum is topup.client_map at boot, not a hardcoded twelve |
 
 ---
 
@@ -1275,3 +1276,28 @@ top-up or read recipe counts. They cannot sample lead rows without
 the owner token. Spend still asks Josh on a Slack card.
 
 **Guard.** `src/guards/d41_mcp_no_login.test.ts`. Ask Josh.
+
+## D42 — client_tag comes from topup.client_map
+
+**Decision.** The `client_tag` input on `topup_recipe`,
+`topup_campaign_builds`, and `topup_provenance_gaps` is not a
+hardcoded twelve-name enum. The service reads
+`select client_tag from topup.client_map order by 1` at boot and
+refreshes that list on each `/mcp` request. Adding a client
+(Deep Roots, Vector Energy, or anyone else) is a row in
+`topup.client_map`. It is not a service code bump. If the table
+is empty or the read fails, the tools accept snake_case so a new
+tag is not rejected before SQL.
+
+**Why.** The D40 prompt listed twelve tags. Deep Roots and Vector
+Energy are not in that list. The day either becomes a campaign,
+a hardcoded enum would reject the tag before `topup.recipe()` ran.
+Josh: read the enum from `topup.client_map` at startup, or at
+least note that adding a client means a service bump. We read
+the table.
+
+**Tradeoff.** Cursor's cached tool schema may lag until it
+re-lists tools. The server accepts a tag as soon as it is in
+`client_map`. Tags only; never `client_name`.
+
+**Guard.** `src/guards/d42_client_map_enum.test.ts`. Ask Josh.

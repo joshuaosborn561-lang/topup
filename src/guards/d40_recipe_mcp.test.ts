@@ -5,7 +5,7 @@ import { GROK_MAY } from "../grok/allowlist.js";
 import { MCP_TOOL_ROLE } from "../mcp/server.js";
 import {
   CAMPAIGN_NOT_FOUND,
-  RECIPE_CLIENT_TAGS,
+  CLIENT_MAP_TAGS_SQL,
   TOPUP_CAMPAIGN_BUILDS_SQL,
   TOPUP_PROVENANCE_GAPS_SQL,
   TOPUP_RECIPE_DESCRIPTION,
@@ -63,8 +63,7 @@ describe("D40 — live pull recipe lives on this service", () => {
     assert.equal(TOPUP_PROVENANCE_GAPS_SQL, "select * from topup.provenance_gaps where client_tag = $1");
     assert.match(TOPUP_RECIPE_DESCRIPTION, /Read before any top up/);
     assert.equal(CAMPAIGN_NOT_FOUND, "campaign not found in public.campaigns");
-    assert.ok(RECIPE_CLIENT_TAGS.includes("parlay"));
-    assert.ok(RECIPE_CLIENT_TAGS.includes("peterson_earthworks"));
+    assert.equal(CLIENT_MAP_TAGS_SQL, "select client_tag from topup.client_map order by 1");
     const server = await readFile(new URL("src/mcp/server.ts", root), "utf8");
     assert.match(server, /applyMcpCors/);
     assert.match(server, /OPTIONS/);

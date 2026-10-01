@@ -18,6 +18,7 @@ import { buildHealth } from "./health.js";
 import { runDigest } from "./ledger/digest.js";
 import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
+import { loadClientTags } from "./mcp/recipe.js";
 import { mcpRouter } from "./mcp/server.js";
 import { Orchestrator } from "./orchestrator.js";
 import { loadRecipeFiles, syncRecipes } from "./recipes/load.js";
@@ -166,6 +167,11 @@ async function main(): Promise<void> {
     log.warn("SLACK_SIGNING_SECRET is not set; /slack is not mounted");
   }
 
+  const clientTags = await loadClientTags(db).catch((err) => {
+    log.warn("client_map tags unavailable at boot", { error: (err as Error).message });
+    return [] as string[];
+  });
+  log.info("client_map tags", { count: clientTags.length });
   app.use(
     "/mcp",
     mcpRouter({
@@ -175,6 +181,7 @@ async function main(): Promise<void> {
       ledger,
       ownerToken: cfg.MCP_OWNER_TOKEN,
       operatorToken: cfg.MCP_OPERATOR_TOKEN,
+      clientTags,
     }),
   );
 
