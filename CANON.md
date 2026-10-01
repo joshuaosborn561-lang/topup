@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D44** (2026-10-01). One page of current truth. When a new
+Canon as of **D45** (2026-10-01). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -28,7 +28,7 @@ lane recipe says (D9, D15).
   retries and resumes, splits under the spend rules, registering a cloned
   campaign, keeping missing-piece groups current.
 - **Judgement (Josh, on a card):** which segment / whether to widen; whether
-  a low campaign is worth topping up; spend above cap; whether a pilot's
+  a low campaign is worth topping up; spend of $5 or above; whether a pilot's
   yield justifies scaling; copy for a new cell; ICP changes; a client's
   expanded titles; flipping a campaign active.
 - **Routine (Cayden):** QA holds, uploading customer lists, resuming parked
@@ -97,11 +97,12 @@ whose health crossed a line. Claude sessions hand work to the service with
 Health, from the hourly Smartlead mirror: **silent** (ACTIVE, untouched
 leads, no sends in 7 days), **empty**, **low** (that campaign's runway
 under the recipe floor), **bouncing** (over 5%). Those flags stay on the
-board. The **start signal** is client-wide (D38): rem across ACTIVE
-campaigns ÷ (unique inboxes × MESSAGE_PER_DAY). LI is rem ÷ 40. Until
-inbox × MESSAGE_PER_DAY is a Josh-named source, days are null and a
-client with sibling rem is not needy. Client under-7 still shows on the
-daily digest. One empty SEG camp is not a refill while siblings hold rem.
+board. The **start signal** is client-wide (D38, D45): rem across ACTIVE
+campaigns ÷ (unique inboxes × MESSAGE_PER_DAY when named, else the 7-day
+send rate). LI is rem ÷ 40. **n/a days do not pass the floor.** A client
+with ACTIVE campaigns and no rate is needy, not healthy. Client under-7
+still shows on the daily digest. One empty SEG camp is not a refill while
+siblings hold rem **and** client days are actually ≥ the floor.
 
 ## Build order (D23)
 
@@ -139,18 +140,21 @@ done once. Peterson C1 (`c1_general_contractors`) is off that list —
 counts were measured; it is the first top-up the service can run once
 Maps/PermitStack are wired (physical still parks until then). Campaign
 ids must already exist in `public.campaigns`. Mixed ICPs are two lane
-rows. A lane with no receipt and no recipe cannot be invented.
+rows. A lane with no receipt and no file recipe cannot be invented.
+A receipt is enough — infer the pull from tags and notes (D45). A
+file recipe is the override when one exists.
 
 ## What this build runs (D26, D27, D28, D38)
 
 The **watch** is the normal start. Every six hours (and once on boot) it
 reads the Smartlead mirror for every recipe. The needy signal is
-**client-wide** rem / capacity (D38), keyed to `runway.floor_days` — not
-one campaign empty or Watchdog nearly-done. A client under the floor, and
-still **working** (one interested reply per 2,000 sends, or 1 interested
-reply in under 2,000 sends, or any variant with 1,000 sends clearing
-that rate; D11, D35 item 12, D44), opens a run by
-itself — no `/topup`, no card. The run targets the recipe's campaigns so
+**client-wide** rem / capacity (D38, D45), keyed to `runway.floor_days` — not
+one campaign empty or Watchdog nearly-done. **Working** means
+under 1 interested per 2,000 sends on every build (1 interested
+in under 2,000 sends is acceptable; a variant with 1,000 sends
+can clear that rate; D11, D35 item 12, D44). A client under the
+floor and still working
+opens a run by itself — no `/topup`, no card. The run targets the recipe's campaigns so
 the pull can take the client's DM persona and title-segment after. A
 client that is low and **not** working posts one card: Top up anyway, or
 Leave it. Leave it stays quiet until the rate recovers or Josh flips
@@ -253,7 +257,7 @@ open cards, open runs and which integrations are configured. It is
 
 ## Money (D9)
 
-- Auto cap **$5** per step; anything over asks with the worst case in
+- Auto cap **$5** per step; spend of **$5 or above** asks with the worst case in
   dollars and waits for Josh. Daily backstop **$25** across vendors.
 - Worst case comes from `src/spend/prices.ts` × batch size. Never a
   vendor's number.
@@ -279,19 +283,25 @@ open cards, open runs and which integrations are configured. It is
   login.** Anyone who can reach the URL gets the operator set:
   `lane_state, run_status, list_runs, list_holds, resolve_hold,
   start_topup, add_client_domains` (domains only, never rows),
-  `topup_recipe, topup_campaign_builds, topup_provenance_gaps, topup_queue`
-  (live pull record and the ranked watch queue; never lead rows). An
-  optional owner bearer token still unlocks `register_queue_table,
-  lane_note, sample_rows` (ten max, emails masked), `variant_stats,
-  campaign_registry, recipe_get, missing_piece_groups`. `recipe_get` is
-  the file recipe the pipeline still walks; `topup_recipe` is how the
-  last list was actually pulled. `topup_queue` is the same lead-refill
-  lines `#campaign-watchdog` posts (empty, low, nearly-done 90%),
-  ranked empty-first then shortest runway, each with the recipe count
-  summary and the 1-in-2000 working gate (1 reply under 2,000 sends is
-  acceptable). It includes camps the client-wide watch would skip
-  (D38 still governs auto-start). Cayden's flow is queue → recipe →
-  `start_topup`. No Slack, no Cursor (D43, D44). These live tools are not on LeadPipe.
+  `topup_recipe, topup_campaign_builds, topup_provenance_gaps, topup_queue`,
+  `register_queue_table, lane_note, variant_stats, campaign_registry,
+  recipe_get, missing_piece_groups`. Cayden can run the ops set. The only
+  tool hidden from the operator list is `sample_rows` (lead rows; owner
+  token). `resolve_hold` refuses operator approval of spend of $5 or
+  above. `start_topup` takes `client_tag` + `campaign_id` (optional
+  `count`) or `client_tag` + `lane`. A file recipe is the override;
+  otherwise the pull is inferred from `topup.pull_receipts` tags and
+  notes (D45). `topup_recipe` is how the last list was actually pulled
+  (`include_vocab` default false). `topup_queue` pages (`limit`,
+  `offset`, `client_tag`) and is the same lead-refill lines
+  `#campaign-watchdog` posts (empty, low, nearly-done 90%), ranked
+  empty-first then shortest runway, each with the recipe count
+  summary, `sends_last_14d`, and the working bar. It includes camps
+  the client-wide watch would skip (D38 still governs auto-start).
+  Cayden's flow is queue → recipe → `start_topup`. Check `run_status`
+  once per message, or watch the Slack thread — do not poll every two
+  minutes in chat. No Slack, no Cursor (D43, D44, D45). These live
+  tools are not on LeadPipe.
   `client_tag` on the recipe tools is the live list from
   `topup.client_map` at boot (refreshed per request). Adding a client is
   a row in that table, not a hardcoded enum and not a service bump (D42).
@@ -314,7 +324,7 @@ It does not reconstruct the thirteen steps in chat.
   `topup_recipe`,
   `topup_campaign_builds`, `topup_provenance_gaps`, …). Open
   `topup_queue` (the #campaign-watchdog lead-refill list), pick the top one, read `topup_recipe`, run
-  `start_topup` (D43, D44). Read
+  `start_topup(client_tag, campaign_id)` (D43, D44, D45). Read
   `topup_recipe` before any top-up (D40). LeadPipe (`lp_plan`, `lp_run`,
   `lp_status`, `lp_export`, `lp_sample`, `lp_inventory`,
   `lp_ensure_client`, `lp_list_clients`). Slack cards. Allow list is
@@ -338,9 +348,9 @@ It does not reconstruct the thirteen steps in chat.
   `topup.lead_provenance`, `topup.provenance_sources`,
   `topup.provenance_gaps`. COUNT tags; never SELECT email. Not
   `public.leads` alone, and not a chat walk of `skills/lead-list-build`.
-  Inferring a new file recipe from those stamps is PRs #6 and #7 — not
-  a Grok session, and not this branch's Railway code (this service
-  still walks the file recipe).
+  A file recipe is still the override when one exists. When none
+  exists, the service infers the pull from those stamps and notes
+  (D45). Grok does not invent a recipe in chat.
 - "Here's what it found" is a count, a job id, and a signed URL the bot
   does not open. Ten masked samples on a card stay the ceiling (D2).
 - Scheduled pulses are Railway crons. Grok bot does not set a self-routine

@@ -14,8 +14,8 @@ For humans and coding agents alike.
    descriptions or test fixtures beyond the ten-sample rule. Use the logger;
    it redacts.
 5. **Grok bot is the babysitter (D39).** Read `skills/grok-bot-babysitter`
-   first. It starts `start_topup` or a LeadPipe / csv-endpoint job, reads
-   `topup_queue` (D43, D44) then `topup_recipe` (D40) then **every** campaignintelligence tag
+   first. It starts `start_topup(client_tag, campaign_id)` or a LeadPipe / csv-endpoint job, reads
+   `topup_queue` (D43–D45) then `topup_recipe` (D40) then **every** campaignintelligence tag
    (`company_source`,
    `domain_source`, `person_source`, `email_source`, plus
    `company_detail`, `evidence`, `confidence`, `build_label`,

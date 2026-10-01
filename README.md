@@ -143,19 +143,19 @@ Cursor / Claude:
 | `list_runs` | both | Recent runs. |
 | `list_holds` | both | Open cards. |
 | `resolve_hold` | both | Tap a card (same role rules as Slack). |
-| `start_topup` | both | Open a run. Spend still asks. |
+| `start_topup` | both | Open a run. `client_tag` + `campaign_id` (optional `count`) or `lane`. File recipe wins; else infer from pull_receipts. Spend of $5 or above asks Josh. |
 | `add_client_domains` | both | Customer domains only, never rows. |
-| `topup_recipe` | both | **Read before any top up.** How this campaign's leads were pulled last time (`select topup.recipe($1, $2)`). `client_tag` is the live list from `topup.client_map` (D42), not a hardcoded twelve. jsonb verbatim. If `campaign` is null: `campaign not found in public.campaigns`. Counts only, never lead rows. |
+| `topup_recipe` | both | **Read before any top up.** How this campaign's leads were pulled last time (`select topup.recipe($1, $2)`). `client_tag` is the live list from `topup.client_map` (D42), not a hardcoded twelve. `include_vocab` default false. Adds `sends_last_14d`. If `campaign` is null: `campaign not found in public.campaigns`. Counts only, never lead rows. |
 | `topup_campaign_builds` | both | Builds that fed a campaign, largest first. |
 | `topup_provenance_gaps` | both | Campaigns for a client still missing a pull stamp. |
-| `topup_queue` | both | Campaigns `#campaign-watchdog` would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the recipe count summary and the 1-in-2000 working gate (1 reply under 2,000 sends is acceptable). Includes camps the client-wide watch would skip. Open the queue, pick the top one, read `topup_recipe`, run `start_topup`. No Slack, no Cursor (D43, D44). Counts only. |
-| `register_queue_table` | owner | Hand a queue table to the service. Never rows. |
-| `lane_note` | owner | One line on the lane event log. |
-| `sample_rows` | owner | Up to ten masked rows. |
-| `variant_stats` | owner | Sends and interested by variant. |
-| `campaign_registry` | owner | Campaigns the service knows. |
-| `recipe_get` | owner | File recipe from the repo. Not the live pull record. |
-| `missing_piece_groups` | owner | Rows grouped by what they still lack. |
+| `topup_queue` | both | Campaigns `#campaign-watchdog` would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the recipe count summary, `sends_last_14d`, and the 1-in-2000 working gate (1 reply under 2,000 sends is acceptable). Page with `limit` / `offset` / `client_tag`. Includes camps the client-wide watch would skip. Open the queue, pick the top one, read `topup_recipe`, run `start_topup`. No Slack, no Cursor (D43–D45). Counts only. |
+| `register_queue_table` | both | Hand a queue table to the service. Never rows. |
+| `lane_note` | both | One line on the lane event log. |
+| `sample_rows` | owner | Up to ten masked rows. Hidden from the operator list. |
+| `variant_stats` | both | Sends and interested by variant. |
+| `campaign_registry` | both | Campaigns the service knows. |
+| `recipe_get` | both | File or inferred recipe. Not the live pull record. |
+| `missing_piece_groups` | both | Rows grouped by what they still lack. Counts only. |
 
 The live recipe tools and `topup_queue` are not on LeadPipe. The
 function and views already exist on campaignintelligence; this
@@ -172,6 +172,7 @@ only — `max_per_company` is an export cap (D43).
 
 ## Adding a recipe
 
-Create `recipes/<client_tag>/<lane>.json` matching `src/recipes/schema.ts`.
-It is validated on boot (a bad recipe fails the deploy) and mirrored to
-`topup.lane_recipes`. Recipes change in git only.
+A file at `recipes/<client_tag>/<lane>.json` is the **override**. Without
+one, `start_topup` infers the pull from `topup.pull_receipts` tags and
+notes (D45). File recipes match `src/recipes/schema.ts`, are validated
+on boot, and are mirrored to `topup.lane_recipes`.

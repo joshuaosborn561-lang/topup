@@ -15,10 +15,10 @@ const log = logger("watch");
 /**
  * Step 1 after the recipe is signed off: every WATCH_CRON the service looks
  * at the Smartlead mirror. The start signal is client-wide rem / capacity
- * (D38), not one campaign going dry. Josh is asked only when the rate has
- * died. Unique inboxes × MESSAGE_PER_DAY are not in this service yet — days
- * are null until Josh names the source; sibling rem still blocks a one-camp
- * SEG refill.
+ * (D38, D45), not one campaign going dry. Josh is asked only when the rate has
+ * died. Days are rem ÷ inbox capacity when named, else rem ÷ 7-day send
+ * rate. n/a does not pass the floor. Sibling rem still blocks a one-camp
+ * SEG refill when client days are actually ≥ the floor.
  */
 export class RunwayWatch {
   constructor(

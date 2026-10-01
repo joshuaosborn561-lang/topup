@@ -19,7 +19,7 @@ describe("D44 — topup_queue has watchdog visibility and the 1-in-2000 gate", (
     const readme = await readFile(new URL("README.md", root), "utf8");
     const babysitter = await readFile(new URL("skills/grok-bot-babysitter/SKILL.md", root), "utf8");
     const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8")) as { version: string };
-    assert.match(canon, /Canon as of \*\*D44\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /#campaign-watchdog/);
     assert.match(canon, /under 2,000 sends/);
     assert.match(ledger, /## D44 — /);
@@ -28,7 +28,7 @@ describe("D44 — topup_queue has watchdog visibility and the 1-in-2000 gate", (
     assert.match(readme, /#campaign-watchdog/);
     assert.match(babysitter, /#campaign-watchdog/);
     assert.equal(pkg.version, SERVICE_VERSION, "D44: package.json version must match SERVICE_VERSION. Ask Josh.");
-    assert.equal(SERVICE_VERSION, "0.4.0");
+    assert.match(SERVICE_VERSION, /^\d+\.\d+\.\d+$/);
   });
 
   it("the queue walks client_map, not only a file recipe skip — Ask Josh", async () => {
@@ -66,6 +66,7 @@ describe("D44 — topup_queue has watchdog visibility and the 1-in-2000 gate", (
         leads_total: 100,
         untouched: 80,
         sends_window: 0,
+        sends_last_14d: 0,
         last_send_at: null,
         interested_window: 0,
         bounces_window: 0,
@@ -85,6 +86,7 @@ describe("D44 — topup_queue has watchdog visibility and the 1-in-2000 gate", (
         leads_total: 600,
         untouched: 60,
         sends_window: 70,
+        sends_last_14d: 140,
         last_send_at: null,
         interested_window: 1,
         bounces_window: 0,

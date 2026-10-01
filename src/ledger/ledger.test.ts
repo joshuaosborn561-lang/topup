@@ -15,6 +15,7 @@ function snap(over: Partial<CampaignSnapshot> = {}): CampaignSnapshot {
     leads_total: 4000,
     untouched: 3900,
     sends_window: 0,
+    sends_last_14d: 0,
     last_send_at: null,
     interested_window: 0,
     bounces_window: 0,

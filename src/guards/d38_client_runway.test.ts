@@ -30,8 +30,8 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
     const client = assessClientRunway({
       clientTag: "parlay",
       campaigns: [
-        { status: "ACTIVE", untouched: 0 },
-        { status: "ACTIVE", untouched: 5000 },
+        { status: "ACTIVE", untouched: 0, sends_window: 0 },
+        { status: "ACTIVE", untouched: 5000, sends_window: 700 },
       ],
     });
     const d = watchDecision({
@@ -46,6 +46,7 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
             leads_total: 0,
             untouched: 0,
             sends_window: 10,
+            sends_last_14d: 20,
             last_send_at: null,
             interested_window: 0,
             bounces_window: 0,
@@ -83,5 +84,6 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
       messagePerDay: null,
     });
     assert.equal(r.email_days, null, "D38: do not invent inbox count or MESSAGE_PER_DAY. Ask Josh where those live.");
+    assert.equal(r.under_floor, true, "D45: n/a does not pass the floor. Ask Josh.");
   });
 });

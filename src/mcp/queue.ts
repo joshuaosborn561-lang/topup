@@ -8,7 +8,7 @@ import { recipeCampaignIds } from "../recipes/campaigns.js";
 import type { Recipe } from "../recipes/schema.js";
 import type { WatchRepo } from "../watch/assess.js";
 import { watchdogLeadFlag, watchDecision, type NeedyCampaign, type WatchdogLeadFlag } from "../watch/decide.js";
-import { loadClientMap, readTopupRecipe, recipeSummaryCounts, type RecipeSummaryCounts } from "./recipe.js";
+import { loadClientMap, readTopupRecipe, recipeSummaryCounts, trimRecipeSummary, type RecipeSummaryCounts } from "./recipe.js";
 
 /**
  * D43 / D44 — Cayden's queue. Same lead-refill lines #campaign-watchdog
@@ -17,7 +17,7 @@ import { loadClientMap, readTopupRecipe, recipeSummaryCounts, type RecipeSummary
  */
 
 export const TOPUP_QUEUE_DESCRIPTION =
-  "Campaigns #campaign-watchdog would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the last-pull recipe count summary and the 1-in-2000 working gate (1 reply under 2,000 sends is acceptable). Includes camps the client-wide watch would skip. Open the queue, pick the top one, read topup_recipe, run start_topup. Counts only, never lead rows.";
+  "Campaigns #campaign-watchdog would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the last-pull recipe count summary and the 1-in-2000 working gate (1 reply under 2,000 sends is acceptable). Page with limit/offset/client_tag. Includes camps the client-wide watch would skip. Open the queue, pick the top one, read topup_recipe, run start_topup(client_tag, campaign_id, count). Counts only, never lead rows.";
 
 const DEFAULT_INTERESTED_PER_2000 = 1;
 const DEFAULT_VARIANT_MIN_SENDS = 1000;
@@ -33,6 +33,8 @@ export interface QueueItem {
   watchdog: WatchdogLeadFlag;
   remaining_new: number;
   runway_days: number | null;
+  sends_last_14d: number;
+  client_email_days: number | null;
   decision: "go" | "ask" | "skip";
   why: string;
   working: boolean;
@@ -87,6 +89,22 @@ function recipeForCampaign(recipes: readonly Recipe[], clientTag: string, campai
   return mine.find((r) => recipeCampaignIds(r).includes(campaignId)) ?? mine[0];
 }
 
+async function receiptLanesForCampaigns(db: Queryable): Promise<Map<number, string>> {
+  try {
+    const { rows } = await db.query<{ campaign_id: string; lane: string }>(
+      `select distinct on (cid) cid::text as campaign_id, lane
+         from topup.pull_receipts, unnest(campaign_ids) as cid
+        where lane is not null
+        order by cid, (granularity = 'lane') desc, written_at desc`,
+    );
+    const out = new Map<number, string>();
+    for (const r of rows) if (r.lane) out.set(Number(r.campaign_id), r.lane);
+    return out;
+  } catch {
+    return new Map();
+  }
+}
+
 async function lanesForCampaigns(db: Queryable): Promise<Map<number, string>> {
   try {
     const { rows } = await db.query<{ campaign_id: string; lane: string }>(
@@ -134,21 +152,36 @@ function clientDecision(
   return { kind: decision.kind, why: decision.why };
 }
 
+export interface QueueQuery {
+  client_tag?: string;
+  limit?: number;
+  offset?: number;
+}
+
+const DEFAULT_QUEUE_LIMIT = 20;
+const MAX_QUEUE_LIMIT = 50;
+
 /** Read only. Walks every client_map client (and file recipes if the map is empty). Never starts a run. */
 export async function buildTopupQueue(
   db: Queryable,
   repo: WatchRepo,
   recipes: readonly Recipe[],
-): Promise<{ items: QueueItem[]; count: number }> {
+  query: QueueQuery = {},
+): Promise<{ items: QueueItem[]; count: number; total: number; limit: number; offset: number }> {
+  const limit = Math.min(MAX_QUEUE_LIMIT, Math.max(1, query.limit ?? DEFAULT_QUEUE_LIMIT));
+  const offset = Math.max(0, query.offset ?? 0);
   const mapped = await loadClientMap(db).catch(() => []);
   const clients =
     mapped.length > 0
       ? mapped
       : recipes.map((r) => ({ client_tag: r.client_tag, smartlead_client_id: r.smartlead_client_id }));
   const registryLanes = await lanesForCampaigns(db);
+  const receiptLanes = await receiptLanesForCampaigns(db);
   const raw: UnrankedQueueItem[] = [];
 
+  const wantClient = query.client_tag ?? null;
   for (const clientRow of clients) {
+    if (wantClient && clientRow.client_tag !== wantClient) continue;
     const ids = await campaignIdsForClient(db, clientRow.smartlead_client_id).catch(() => [] as number[]);
     if (ids.length === 0) continue;
     const snaps = await campaignSnapshots(db, ids);
@@ -190,24 +223,27 @@ export async function buildTopupQueue(
       if (!watchdog) continue;
       raw.push({
         client_tag: clientRow.client_tag,
-        lane: rec?.lane ?? registryLanes.get(camp.health.smartlead_campaign_id) ?? null,
+        lane: receiptLanes.get(camp.health.smartlead_campaign_id) ?? rec?.lane ?? registryLanes.get(camp.health.smartlead_campaign_id) ?? null,
         campaign_id: camp.health.smartlead_campaign_id,
         campaign_name: camp.health.name,
         flags: [...camp.health.flags],
         watchdog,
         remaining_new: camp.health.untouched,
         runway_days: camp.health.runway_days,
+        sends_last_14d: camp.health.sends_last_14d ?? 0,
+        client_email_days: client.email_days,
         decision: decision.kind,
         why: decision.why,
         working: camp.working.working,
         working_reason: camp.working.reason,
         client_under_floor: client.under_floor,
         sibling_rem: client.sibling_rem,
-        recipe_summary: await summaryFor(db, clientRow.client_tag, camp.health.smartlead_campaign_id),
+        recipe_summary: trimRecipeSummary(await summaryFor(db, clientRow.client_tag, camp.health.smartlead_campaign_id)),
       });
     }
   }
 
-  const items = rankQueueItems(raw);
-  return { items, count: items.length };
+  const ranked = rankQueueItems(raw);
+  const items = ranked.slice(offset, offset + limit);
+  return { items, count: items.length, total: ranked.length, limit, offset };
 }

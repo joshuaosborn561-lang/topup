@@ -83,11 +83,13 @@ not reconstruct the recipe from tags when the tool answers. If it
 says `campaign not found in public.campaigns`, say so and ask Josh.
 No Slack, no Cursor — the queue is the list.
 
-Then **start the Railway service** with `start_topup`. The service walks
-the thirteen steps (D24, D28). You do not. If there is no recipe yet,
-say so and ask Josh — do not walk the skill to invent one. Inferring a
-new file recipe from `public.leads` + these stamps is PRs #6 and #7,
-not a Grok session.
+Then **start the Railway service** with `start_topup(client_tag,
+campaign_id, count)`. The service walks the thirteen steps (D24, D28).
+You do not. A file recipe is the override. Otherwise the service
+infers from `topup.pull_receipts` tags and notes (D45 — PRs #6 and #7
+landed here, not in a Grok session). Do not invent filters in chat.
+Check `run_status` once per message, or watch the Slack thread — do
+not poll every two minutes.
 
 ## Allow list (you may call these)
 

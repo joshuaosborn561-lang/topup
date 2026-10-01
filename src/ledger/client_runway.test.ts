@@ -38,17 +38,36 @@ describe("D38 client runway math", () => {
     assert.equal(shouldProposeHolisticMock("parlay", null), false);
   });
 
-  it("a thin SEG camp is not under-floor while siblings hold rem and days are unknown", () => {
-    const r = assessClientRunway({
+  it("n/a days do not pass the floor; send rate is the fallback (D45)", () => {
+    const unknown = assessClientRunway({
       clientTag: "parlay",
       campaigns: [...camps(0, 4000), { status: "PAUSED", untouched: 0 }],
     });
-    assert.equal(r.email_rem, 4000);
-    assert.equal(r.email_days, null);
-    assert.equal(r.sibling_rem, true);
-    assert.equal(r.under_floor, false);
-    assert.equal(r.propose_holistic_mock, false);
-    assert.match(r.days_note ?? "", /Ask Josh/);
+    assert.equal(unknown.email_rem, 4000);
+    assert.equal(unknown.email_days, null);
+    assert.equal(unknown.sibling_rem, true);
+    assert.equal(unknown.under_floor, true, "D45: n/a is not healthy");
+
+    const fromSends = assessClientRunway({
+      clientTag: "peterson",
+      campaigns: [
+        { status: "ACTIVE", untouched: 412, sends_window: 1200 },
+        { status: "ACTIVE", untouched: 0, sends_window: 0 },
+      ],
+    });
+    assert.equal(fromSends.email_days_from, "send_rate");
+    assert.ok(fromSends.email_days !== null && fromSends.email_days < 7);
+    assert.equal(fromSends.under_floor, true);
+
+    const healthySends = assessClientRunway({
+      clientTag: "parlay",
+      campaigns: [
+        { status: "ACTIVE", untouched: 0, sends_window: 0 },
+        { status: "ACTIVE", untouched: 8000, sends_window: 700 },
+      ],
+    });
+    assert.equal(healthySends.email_days, 80);
+    assert.equal(healthySends.under_floor, false);
   });
 
   it("client rem exhausted (all ACTIVE empty) is under-floor even without inbox capacity", () => {

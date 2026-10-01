@@ -28,7 +28,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D6 | Live |
 | D7 | Live |
 | D8 | Live; Hunter added by D35 |
-| D9 | Live |
+| D9 | Live; "$5 or above" wording by D45 |
 | D10 | Live |
 | D11 | Live; variant volume floor 300 superseded by D35 (1,000); 1-reply-under-2k confirmed by D44 |
 | D12 | Live |
@@ -57,13 +57,14 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
 | D36 | Live |
 | D37 | Live |
-| D38 | Live |
-| D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context |
+| D38 | Live; n/a-as-healthy and inbox-only days superseded by D45 |
+| D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context; receipt inference is D45 |
 | D40 | Live; live pull recipe MCP on this service, not LeadPipe; watch Slack includes the count summary |
 | D41 | Live; HTTPS MCP needs no login; unauthenticated callers get the operator set |
 | D42 | Live; recipe-tool client_tag enum is topup.client_map at boot, not a hardcoded twelve |
 | D43 | Live; topup_queue visibility widened by D44; count_contacts is count filters only |
 | D44 | Live; topup_queue shows #campaign-watchdog lead flags; 1 reply under 2,000 sends is working |
+| D45 | Live; client days from send rate; n/a fails; start_topup infers from receipts; Cayden runs ops |
 
 ---
 
@@ -1366,3 +1367,61 @@ says so. `start_topup` still needs a file recipe; visibility is not a
 new recipe. Not on LeadPipe. No schema change.
 
 **Guard.** `src/guards/d44_queue_watchdog.test.ts`. Ask Josh.
+
+## D45 — Ops findings 2026-10-01: runway math, infer from receipts, Cayden can operate
+
+**Decision.** Seventeen items from the 2026-10-01 top-up review, plus
+Josh: Cayden can do the ops work.
+
+1. **Client runway days.** rem ÷ (unique inboxes × MESSAGE_PER_DAY)
+   when both are named; else rem ÷ (sum of 7-day sends ÷ 7). **n/a does not pass
+   the floor.** An ACTIVE client with no rate is under
+   the floor, not healthy. Peterson 412 rem on one camp at 2.4d,
+   peterson_earthworks 252 rem / 3d, and powergryd camps under 1.1d
+   must trip.
+2. **No file recipe required.** `start_topup` infers from
+   `topup.pull_receipts` tags (`company_source`, `company_filters`,
+   `how_i_did_it`, notes, lane, persona) for any client. A file
+   recipe is the override. Do not invent titles or bands — incomplete
+   getleads filters become `mixed` and size parks. Lane on the queue
+   comes from the receipt, not a PowerGRYD-only name map.
+3. **`start_topup`** takes `client_tag` + `campaign_id` (optional
+   `count`) or `client_tag` + `lane`.
+4. **`topup_queue`** takes `limit`, `offset`, `client_tag`. Trim
+   `recipe_summary.builds` to interested > 0 plus `builds_total`.
+5. **`topup_recipe`** omits `vocab` and `rules` unless
+   `include_vocab=true`.
+6. The 14:18 empty queue → 14:43 74 items was the D44 deploy, not a
+   cache.
+7. Hide `sample_rows` from the operator tool list (lead rows). Cayden
+   may call the other ops tools (`register_queue_table`,
+   `add_client_domains`, `campaign_registry`, `missing_piece_groups`,
+   `recipe_get`, `lane_note`, `variant_stats`).
+8. `resolve_hold` refuses operator approval of any spend ask of $5
+   or more.
+9. `campaign_registry` is on the operator set (Cayden can read it).
+10. Spend copy is **$5 or above**, not "above $5".
+11. Bounce-by-build: pass through a `bounces` count when the build
+    jsonb has one. Do not invent a column. Ask Josh if
+    `campaign_builds` should grow one.
+12. `pulled_at` on backfill receipts is the backfill `written_at`.
+    Surface a note; do not rewrite history.
+13. Provenance gaps (`traced` 0, null `tam_count` / `rows_found`)
+    stay as stored. Do not fake them.
+14. Queue and recipe carry `sends_last_14d`.
+15–17. Docs: $5 or above; working bar = under 1 interested per 2,000
+    sends on every build; check `run_status` once per message or
+    watch Slack — Claude in chat cannot wait two minutes.
+
+**Why.** Cayden opened the queue and every row said skip because
+days were n/a and n/a passed. `start_topup(powergryd, vciso)` died
+on a missing file. The live pull record and receipts were already
+there for every client. Josh: do not require a PowerGRYD-only file
+pack; infer from tags plus notes. And let Cayden operate.
+
+**Tradeoff.** First watch tick after deploy may open inferred
+getleads lanes that are under the floor and still working. Physical
+and incomplete-filter lanes park at size. Name to Email stays
+paused. Bounce-by-build and a real pull-date column wait on Josh.
+
+**Guard.** `src/guards/d45_ops_findings.test.ts`. Ask Josh.
