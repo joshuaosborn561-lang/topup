@@ -17,6 +17,8 @@ import { INTERESTED_CATEGORY_IDS } from "../domain/working.js";
  * exact case the addendum names; it is `silent` here and the digest carries it.
  */
 export const WINDOW_DAYS = 7;
+/** Skill sizes a top-up to what the campaign sent in the last two weeks (D45). */
+export const SENDS_LOOKBACK_14 = 14;
 export const DEFAULT_FLOOR_DAYS = 7;
 export const BOUNCE_LINE = 0.05;
 
@@ -29,6 +31,8 @@ export interface CampaignSnapshot {
   leads_total: number;
   untouched: number;
   sends_window: number;
+  /** Sent count in the last 14 days (D45). Distinct from the 7-day runway window. */
+  sends_last_14d: number;
   last_send_at: string | null;
   interested_window: number;
   bounces_window: number;
@@ -69,6 +73,7 @@ export async function campaignSnapshots(db: Queryable, campaignIds: readonly num
     leads_total: string;
     untouched: string;
     sends_window: string;
+    sends_last_14d: string;
     last_send_at: string | null;
     interested_window: string;
     bounces_window: string;
@@ -87,6 +92,7 @@ export async function campaignSnapshots(db: Queryable, campaignIds: readonly num
      s as (
        select c.smartlead_campaign_id,
               count(*) filter (where s.sent and s.sent_at >= now() - ($2 || ' days')::interval) as sends_window,
+              count(*) filter (where s.sent and s.sent_at >= now() - ($4 || ' days')::interval) as sends_last_14d,
               max(s.sent_at) filter (where s.sent) as last_send_at,
               count(*) filter (where s.sent and s.sent_at >= now() - ($2 || ' days')::interval and s.lead_category_id = any($3::int[])) as interested_window,
               count(*) filter (where s.bounced and s.sent_at >= now() - ($2 || ' days')::interval) as bounces_window
@@ -95,12 +101,13 @@ export async function campaignSnapshots(db: Queryable, campaignIds: readonly num
      )
      select c.smartlead_campaign_id::text, c.name, c.status, c.synced_at::text,
             coalesce(l.leads_total,0)::text as leads_total, coalesce(l.untouched,0)::text as untouched,
-            coalesce(s.sends_window,0)::text as sends_window, s.last_send_at::text,
+            coalesce(s.sends_window,0)::text as sends_window, coalesce(s.sends_last_14d,0)::text as sends_last_14d,
+            s.last_send_at::text,
             coalesce(s.interested_window,0)::text as interested_window, coalesce(s.bounces_window,0)::text as bounces_window
      from c left join l on l.smartlead_campaign_id = c.smartlead_campaign_id
             left join s on s.smartlead_campaign_id = c.smartlead_campaign_id
      order by c.smartlead_campaign_id`,
-    [campaignIds, String(WINDOW_DAYS), INTERESTED_CATEGORY_IDS],
+    [campaignIds, String(WINDOW_DAYS), INTERESTED_CATEGORY_IDS, String(SENDS_LOOKBACK_14)],
   );
   return rows.map((r) => ({
     smartlead_campaign_id: Number(r.smartlead_campaign_id),
@@ -109,11 +116,21 @@ export async function campaignSnapshots(db: Queryable, campaignIds: readonly num
     leads_total: Number(r.leads_total),
     untouched: Number(r.untouched),
     sends_window: Number(r.sends_window),
+    sends_last_14d: Number(r.sends_last_14d),
     last_send_at: r.last_send_at,
     interested_window: Number(r.interested_window),
     bounces_window: Number(r.bounces_window),
     synced_at: r.synced_at,
   }));
+}
+
+/** Campaign name from the Smartlead mirror. Counts and ids only. */
+export async function campaignNameBySmartleadId(db: Queryable, campaignId: number): Promise<string | null> {
+  const { rows } = await db.query<{ name: string | null }>(
+    `select name from public.campaigns where smartlead_campaign_id = $1 limit 1`,
+    [campaignId],
+  );
+  return rows[0]?.name ?? null;
 }
 
 /** Campaign ids for a Smartlead client, from the mirror. Used when a lane names no campaigns yet. */

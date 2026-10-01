@@ -14,11 +14,14 @@ import type { SlackConsole } from "../slack/console.js";
 import { NEEDS_JOSH } from "../slack/roles.js";
 import type { Recipe } from "../recipes/schema.js";
 import { MCP_HTTPS_URL, SERVICE_VERSION } from "../version.js";
+import { campaignSnapshots } from "../ledger/health.js";
+import { resolveStartTarget } from "../recipes/start.js";
 import { buildTopupQueue, TOPUP_QUEUE_DESCRIPTION } from "./queue.js";
 import {
   CAMPAIGN_NOT_FOUND,
   clientTagSchema,
   loadClientTags,
+  presentTopupRecipe,
   readCampaignBuilds,
   readProvenanceGaps,
   readTopupRecipe,
@@ -38,19 +41,24 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   list_holds: "operator",
   resolve_hold: "operator",
   start_topup: "operator",
-  register_queue_table: "owner",
-  lane_note: "owner",
+  register_queue_table: "operator",
+  lane_note: "operator",
   add_client_domains: "operator",
   sample_rows: "owner",
-  variant_stats: "owner",
-  campaign_registry: "owner",
-  recipe_get: "owner",
-  missing_piece_groups: "owner",
+  variant_stats: "operator",
+  campaign_registry: "operator",
+  recipe_get: "operator",
+  missing_piece_groups: "operator",
   topup_recipe: "operator",
   topup_campaign_builds: "operator",
   topup_provenance_gaps: "operator",
   topup_queue: "operator",
 };
+
+/** Lead-row dump stays owner-only. Cayden can run every other tool (D45). */
+export const HIDDEN_FROM_OPERATOR: readonly string[] = ["sample_rows"];
+
+const SPEND_ASK_MIN_CENTS = 500;
 
 export interface McpDeps {
   repo: Repo;
@@ -93,7 +101,8 @@ export function maskEmail(email: string | null | undefined): string | null {
 /** Build a server whose tool set is fixed by the caller's role. One per request (stateless). */
 export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   const server = new McpServer({ name: "leadtopup", version: SERVICE_VERSION });
-  const allowed = (tool: string) => role === "owner" || MCP_TOOL_ROLE[tool] === "operator";
+  const visible = (tool: string) => role === "owner" || (MCP_TOOL_ROLE[tool] === "operator" && !HIDDEN_FROM_OPERATOR.includes(tool));
+  const allowed = (tool: string) => visible(tool);
   const refused = () => text({ error: NEEDS_JOSH, role });
   const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
   const recipeClient = clientTagSchema(d.clientTags);
@@ -119,7 +128,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "register_queue_table",
     {
       description:
-        "Hand a queue table to the service so the work survives the chat: which schema.table, an optional where predicate, what each row is still missing (domain, person, email or none) and the next method that fills it. The service counts it now and keeps the count current. Owner only. Never pass rows.",
+        "Hand a queue table to the service so the work survives the chat: which schema.table, an optional where predicate, what each row is still missing (domain, person, email or none) and the next method that fills it. The service counts it now and keeps the count current. Operator may call. Never pass rows.",
       inputSchema: {
         client_tag: snake,
         lane: snake,
@@ -145,7 +154,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   server.registerTool(
     "lane_note",
     {
-      description: "Write one line to a lane's event log (what was done, what is intended next). For Claude sessions handing state to the service. Owner only. No lead data.",
+      description: "Write one line to a lane's event log (what was done, what is intended next). For Claude sessions handing state to the service. Operator may call. No lead data.",
       inputSchema: { client_tag: snake, lane: snake, line: z.string().min(1).max(500), next_intent: z.string().max(300).optional() },
     },
     async ({ client_tag, lane, line, next_intent }) => {
@@ -224,6 +233,13 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
       inputSchema: { card_id: z.string(), choice: z.string() },
     },
     async ({ card_id, choice }) => {
+      if (role === "operator" && (choice === "approve_spend" || choice === "split")) {
+        const card = await d.repo.getCard(card_id);
+        const cents = Number(card?.payload?.worst_case_cents ?? 0);
+        if (cents >= SPEND_ASK_MIN_CENTS) {
+          return text({ ok: false, error: "Spend of $5 or above needs Josh." });
+        }
+      }
       const result = await d.console.resolveAs(`mcp:${role}`, role, card_id, choice);
       if (!result.ok) return text({ ok: false, reason: result.reason, message: result.message });
       await d.orchestrator.onTap({ card_id: result.card.card_id, kind: result.card.kind, run_id: result.card.run_id, choice: result.choice, by: `mcp:${role}` });
@@ -233,14 +249,32 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
 
   server.registerTool(
     "start_topup",
-    { description: "Open a top-up run for a client lane. Spend still asks before it happens.", inputSchema: { client_tag: z.string(), lane: z.string() } },
-    async ({ client_tag, lane }) => {
-      const res = await d.orchestrator.startTopup({ clientTag: client_tag, lane, by: `mcp:${role}`, trigger: "manual" });
+    {
+      description:
+        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. File recipe wins; otherwise the pull is inferred from topup.pull_receipts tags and notes. Spend of $5 or above still asks Josh.",
+      inputSchema: {
+        client_tag: z.string(),
+        lane: z.string().optional(),
+        campaign_id: z.number().int().optional(),
+        count: z.number().int().min(1).optional(),
+      },
+    },
+    async ({ client_tag, lane, campaign_id, count }) => {
+      const target = resolveStartTarget({ clientTag: client_tag, lane, campaignId: campaign_id, count });
+      if (!target.ok) return text({ ok: false, message: target.message });
+      const res = await d.orchestrator.startTopup({
+        clientTag: target.clientTag,
+        lane: target.lane,
+        campaignIds: target.campaignIds,
+        requestedCount: target.requestedCount,
+        by: `mcp:${role}`,
+        trigger: "manual",
+      });
       return text(res.ok ? { ok: true, run_id: res.run.run_id, slack_channel: res.run.slack_channel } : { ok: false, message: res.message });
     },
   );
 
-  server.registerTool(
+  if (role === "owner") server.registerTool(
     "sample_rows",
     {
       description: `Up to ${SAMPLE_ROWS_MAX} sample rows for a client and lead_status, with emails masked. Owner only.`,
@@ -262,7 +296,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
 
   server.registerTool(
     "variant_stats",
-    { description: "Sends and interested replies by variant for a Smartlead campaign (last 30 days). Owner only.", inputSchema: { smartlead_campaign_id: z.number().int() } },
+    { description: "Sends and interested replies by variant for a Smartlead campaign (last 30 days). Counts only.", inputSchema: { smartlead_campaign_id: z.number().int() } },
     async ({ smartlead_campaign_id }) => {
       if (!allowed("variant_stats")) return refused();
       return text(await variantStats(d.repo.raw(), smartlead_campaign_id));
@@ -271,7 +305,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
 
   server.registerTool(
     "campaign_registry",
-    { description: "Campaigns the service knows about, with their lane, band and working override. Owner only.", inputSchema: { client_tag: z.string().optional() } },
+    { description: "Campaigns the service knows about, with their lane, band and working override.", inputSchema: { client_tag: z.string().optional() } },
     async ({ client_tag }) => {
       if (!allowed("campaign_registry")) return refused();
       return text(await d.repo.campaignRegistry(client_tag));
@@ -280,7 +314,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
 
   server.registerTool(
     "recipe_get",
-    { description: "The recipe as loaded from the repo. Owner only. Recipes change in git, never here.", inputSchema: { recipe_id: z.string() } },
+    { description: "The file or inferred recipe the pipeline walks. Recipes change in git or from pull_receipts, never here.", inputSchema: { recipe_id: z.string() } },
     async ({ recipe_id }) => {
       if (!allowed("recipe_get")) return refused();
       const r = await d.repo.getRecipe(recipe_id);
@@ -290,7 +324,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
 
   server.registerTool(
     "missing_piece_groups",
-    { description: "Rows grouped by what they are missing (domain, person, email) and the next method that fills it. Owner only.", inputSchema: { client_tag: z.string().optional() } },
+    { description: "Rows grouped by what they are missing (domain, person, email) and the next method that fills it. Counts only.", inputSchema: { client_tag: z.string().optional() } },
     async ({ client_tag }) => {
       if (!allowed("missing_piece_groups")) return refused();
       return text(await d.repo.missingPieceGroups(client_tag));
@@ -301,12 +335,17 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "topup_recipe",
     {
       description: TOPUP_RECIPE_DESCRIPTION,
-      inputSchema: { client_tag: recipeClient, campaign_id: smartleadCampaignId },
+      inputSchema: {
+        client_tag: recipeClient,
+        campaign_id: smartleadCampaignId,
+        include_vocab: z.boolean().default(false).describe("Include the ~50-entry vocab and house rules. Default false."),
+      },
     },
-    async ({ client_tag, campaign_id }) => {
+    async ({ client_tag, campaign_id, include_vocab }) => {
       const recipe = await readTopupRecipe(d.repo.raw(), client_tag, campaign_id);
       if (recipe === CAMPAIGN_NOT_FOUND) return text(CAMPAIGN_NOT_FOUND);
-      return text(recipe);
+      const snaps = await campaignSnapshots(d.repo.raw(), [campaign_id]).catch(() => []);
+      return text(presentTopupRecipe(recipe, { includeVocab: include_vocab, sendsLast14d: snaps[0]?.sends_last_14d ?? null }));
     },
   );
 
@@ -333,9 +372,13 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "topup_queue",
     {
       description: TOPUP_QUEUE_DESCRIPTION,
-      inputSchema: {},
+      inputSchema: {
+        client_tag: z.string().optional(),
+        limit: z.number().int().min(1).max(50).default(20),
+        offset: z.number().int().min(0).default(0),
+      },
     },
-    async () => text(await buildTopupQueue(d.repo.raw(), d.repo, d.recipes)),
+    async ({ client_tag, limit, offset }) => text(await buildTopupQueue(d.repo.raw(), d.repo, d.recipes, { client_tag, limit, offset })),
   );
 
   return server;

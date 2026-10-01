@@ -4,6 +4,7 @@ import { orderCounts, type Role, type RunRow, type Step } from "./domain/runs.js
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
+import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
 import { gateCard } from "./slack/cards.js";
 import type { SlackConsole } from "./slack/console.js";
@@ -63,7 +64,8 @@ type AnyOutcome = StageOutcome | VerifyOutcome | NormalizeOutcome;
 
 export interface StartInput {
   clientTag: string;
-  lane: string;
+  /** Optional when campaignId is set — inferred from pull_receipts (D45). */
+  lane?: string;
   by: string;
   trigger: RunRow["trigger"];
   /** Default true. The watch sets false when it is about to post a not-working card. */
@@ -72,6 +74,9 @@ export interface StartInput {
   hold?: "not_working";
   /** Campaigns this run sizes/pulls. Omitted = every campaign the recipe names. */
   campaignIds?: number[];
+  /** Optional lead count the operator asked for. Recorded on the run; size still recounts. */
+  requestedCount?: number;
+  smartleadClientId?: number;
 }
 
 export type StartResult = { ok: true; run: RunRow } | { ok: false; message: string };
@@ -98,21 +103,16 @@ export class Orchestrator {
     this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
-  /** `/topup <client> <lane>` or MCP start_topup. Opens the run and drives it in the background. */
+  /** `/topup` or MCP start_topup. File recipe wins; otherwise infer from pull_receipts (D45). */
   async startTopup(input: StartInput): Promise<StartResult> {
-    const found = await this.d.repo.findRecipe(input.clientTag, input.lane);
-    if (!found) {
-      return {
-        ok: false,
-        message: `No recipe for ${input.clientTag}/${input.lane}. Recipes live in recipes/<client>/<lane>.json in the repo; the service never invents one.`,
-      };
-    }
-    let recipe: Recipe;
-    try {
-      recipe = parseRecipe(found.body);
-    } catch (err) {
-      return { ok: false, message: `Recipe ${found.recipe_id} does not validate: ${(err as Error).message}` };
-    }
+    const resolved = await resolveRecipeForStart(this.d.repo, {
+      clientTag: input.clientTag,
+      lane: input.lane,
+      campaignId: input.campaignIds?.[0] ?? null,
+      smartleadClientId: input.smartleadClientId,
+    });
+    if (!resolved.ok) return { ok: false, message: resolved.message };
+    const recipe = resolved.recipe;
     const targets = resolveTargetCampaignIds(recipe, input.campaignIds);
     if (!targets.ok) return { ok: false, message: targets.message };
     const opened = await this.d.repo.openRun({
@@ -133,6 +133,9 @@ export class Orchestrator {
       };
     }
     if (targets.ids.length) await this.d.repo.mergeRunCounts(opened.run.run_id, targetCountPatch(targets.ids));
+    if (input.requestedCount && input.requestedCount > 0) {
+      await this.d.repo.mergeRunCounts(opened.run.run_id, { requested_leads: Math.floor(input.requestedCount) });
+    }
     const headline =
       input.hold === "not_working"
         ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch stopped: a campaign is low and not working. This needs Josh.`

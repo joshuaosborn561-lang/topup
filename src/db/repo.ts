@@ -459,6 +459,131 @@ export class Repo {
     return rows[0] ?? null;
   }
 
+  /**
+   * Pull receipts for a client (optional lane / campaign). Tags, filters,
+   * notes, ids. Never emails.
+   */
+  async listPullReceipts(input: {
+    clientTag: string;
+    lane?: string | null;
+    campaignId?: number | null;
+  }): Promise<
+    Array<{
+      written_by: string;
+      written_at: string;
+      client_tag: string;
+      smartlead_client_id: number | null;
+      lane: string;
+      campaign_ids: number[];
+      icp_kind: string;
+      persona: string;
+      company_source: string;
+      company_filters: Record<string, unknown>;
+      domain_source: string | null;
+      person_source: string | null;
+      email_source: string;
+      email_max_tier: string | null;
+      how_i_did_it: string;
+      notes: string | null;
+      segment: Record<string, unknown> | null;
+      granularity: string;
+      rows_imported: number | null;
+      rows_found: number | null;
+      tam_count: number | null;
+      build_label: string | null;
+    }>
+  > {
+    const { rows } = await this.db.query<{
+      written_by: string;
+      written_at: string;
+      client_tag: string;
+      smartlead_client_id: string | null;
+      lane: string;
+      campaign_ids: Array<string | number> | null;
+      icp_kind: string;
+      persona: string;
+      company_source: string;
+      company_filters: Record<string, unknown> | null;
+      domain_source: string | null;
+      person_source: string | null;
+      email_source: string;
+      email_max_tier: string | null;
+      how_i_did_it: string;
+      notes: string | null;
+      segment: Record<string, unknown> | null;
+      granularity: string;
+      rows_imported: string | null;
+      rows_found: string | null;
+      tam_count: string | null;
+      build_label: string | null;
+    }>(
+      `select written_by, written_at::text, client_tag, smartlead_client_id::text, lane, campaign_ids,
+              icp_kind, persona, company_source, company_filters, domain_source, person_source,
+              email_source, email_max_tier, how_i_did_it, notes, segment, granularity,
+              rows_imported::text, rows_found::text, tam_count::text, build_label
+         from topup.pull_receipts
+        where client_tag = $1
+          and ($2::text is null or lane = $2)
+          and ($3::bigint is null or $3 = any(campaign_ids))
+        order by written_at desc`,
+      [input.clientTag, input.lane ?? null, input.campaignId ?? null],
+    );
+    return rows.map((r) => ({
+      written_by: r.written_by,
+      written_at: r.written_at,
+      client_tag: r.client_tag,
+      smartlead_client_id: r.smartlead_client_id == null ? null : Number(r.smartlead_client_id),
+      lane: r.lane,
+      campaign_ids: (r.campaign_ids ?? []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0),
+      icp_kind: r.icp_kind,
+      persona: r.persona,
+      company_source: r.company_source,
+      company_filters: r.company_filters ?? {},
+      domain_source: r.domain_source,
+      person_source: r.person_source,
+      email_source: r.email_source,
+      email_max_tier: r.email_max_tier,
+      how_i_did_it: r.how_i_did_it,
+      notes: r.notes,
+      segment: r.segment,
+      granularity: r.granularity,
+      rows_imported: r.rows_imported == null ? null : Number(r.rows_imported),
+      rows_found: r.rows_found == null ? null : Number(r.rows_found),
+      tam_count: r.tam_count == null ? null : Number(r.tam_count),
+      build_label: r.build_label,
+    }));
+  }
+
+  async listReceiptLanes(clientTag?: string): Promise<Array<{ client_tag: string; lane: string }>> {
+    const { rows } = await this.db.query<{ client_tag: string; lane: string }>(
+      `select distinct client_tag, lane from topup.pull_receipts
+        where ($1::text is null or client_tag = $1)
+        order by 1, 2`,
+      [clientTag ?? null],
+    );
+    return rows;
+  }
+
+  async laneForCampaign(clientTag: string, campaignId: number): Promise<string | null> {
+    const { rows } = await this.db.query<{ lane: string }>(
+      `select lane from topup.pull_receipts
+        where client_tag = $1 and $2 = any(campaign_ids)
+        order by (granularity = 'lane') desc, written_at desc
+        limit 1`,
+      [clientTag, campaignId],
+    );
+    if (rows[0]?.lane) return rows[0].lane;
+    try {
+      const method = await this.db.query<{ lane: string | null }>(
+        `select lane from topup.campaign_method where smartlead_campaign_id = $1 limit 1`,
+        [campaignId],
+      );
+      return method.rows[0]?.lane ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async campaignRegistry(clientTag?: string): Promise<Record<string, unknown>[]> {
     const { rows } = await this.db.query(
       `select * from topup.campaign_registry where ($1::text is null or client_tag = $1) order by client_tag, campaign_id`,

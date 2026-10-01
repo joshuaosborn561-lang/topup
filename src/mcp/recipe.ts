@@ -56,7 +56,7 @@ export const TOPUP_CAMPAIGN_BUILDS_SQL =
 export const TOPUP_PROVENANCE_GAPS_SQL = "select * from topup.provenance_gaps where client_tag = $1";
 
 export const TOPUP_RECIPE_DESCRIPTION =
-  "Read before any top up. Returns how a campaign's leads were pulled last time: every build that fed it with its written method paragraph, source tags, filters, counts, interested replies, 90 day contact count and the house rules. Counts only, never lead rows.";
+  "Read before any top up. Returns how a campaign's leads were pulled last time: every build that fed it with its written method paragraph, source tags, filters, counts, interested replies, 90 day contact count. vocab and rules are omitted unless include_vocab=true. Counts only, never lead rows.";
 
 export interface TopupRecipe {
   campaign: unknown;
@@ -119,11 +119,45 @@ export async function readProvenanceGaps(db: Queryable, clientTag: string): Prom
  */
 export interface RecipeSummaryCounts {
   campaign_id: number;
-  builds: Array<{ build_label: string; interested: number | null }>;
+  builds: Array<{ build_label: string; interested: number | null; bounces?: number | null }>;
+  builds_total?: number;
   any_reconstructed: boolean | null;
   leads_without_method: number | null;
   campaign_not_found: boolean;
   unavailable?: string;
+}
+
+/** Queue: only builds with interested > 0, plus how many builds existed (D45). */
+export function trimRecipeSummary(s: RecipeSummaryCounts): RecipeSummaryCounts {
+  const kept = s.builds.filter((b) => (b.interested ?? 0) > 0);
+  return { ...s, builds: kept, builds_total: s.builds.length };
+}
+
+function rewriteSpendCopy(rules: unknown): unknown {
+  if (!rules || typeof rules !== "object" || Array.isArray(rules)) return rules;
+  const out: Record<string, unknown> = { ...(rules as Record<string, unknown>) };
+  if (typeof out.spend === "string") out.spend = out.spend.replace(/above \$5/gi, "$5 or above");
+  return out;
+}
+
+/** Strip vocab/rules unless asked. Rewrite spend copy to "$5 or above". Attach sends_last_14d when given. */
+export function presentTopupRecipe(
+  recipe: TopupRecipe,
+  opts: { includeVocab?: boolean; sendsLast14d?: number | null } = {},
+): TopupRecipe {
+  const out: TopupRecipe = { ...recipe };
+  if (!opts.includeVocab) {
+    delete out.vocab;
+    delete out.rules;
+  } else if (out.rules) {
+    out.rules = rewriteSpendCopy(out.rules);
+  }
+  if (opts.sendsLast14d != null) out.sends_last_14d = opts.sendsLast14d;
+  if (typeof out.pulled_at === "string") {
+    out.pulled_at_note =
+      "pulled_at on backfill receipts is written_at of the claude_backfill row, not necessarily the day the list was loaded. Ask Josh for a real pull-date column.";
+  }
+  return out;
 }
 
 /** Counts only. Never the method paragraph. Never a lead row. */
@@ -145,8 +179,14 @@ export function recipeSummaryCounts(
     campaign_id: campaignId,
     builds: builds.map((b) => {
       const o = asObject(b);
-      return { build_label: label(o?.build_label), interested: num(o?.interested) };
+      const bounces = num(o?.bounces ?? o?.bounce_count ?? o?.bounced);
+      return {
+        build_label: label(o?.build_label),
+        interested: num(o?.interested),
+        ...(bounces != null ? { bounces } : {}),
+      };
     }),
+    builds_total: builds.length,
     any_reconstructed: bool(recipe.any_reconstructed),
     leads_without_method: num(recipe.leads_without_method),
     campaign_not_found: false,

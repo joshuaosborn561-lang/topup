@@ -14,6 +14,7 @@ function health(partial: Partial<CampaignHealth> & { smartlead_campaign_id: numb
     leads_total: 100,
     untouched: 10,
     sends_window: 70,
+    sends_last_14d: 140,
     last_send_at: null,
     interested_window: 1,
     bounces_window: 0,
@@ -119,8 +120,8 @@ describe("D38 client-wide watch start", () => {
     const client = assessClientRunway({
       clientTag: "parlay",
       campaigns: [
-        { status: "ACTIVE", untouched: 0 },
-        { status: "ACTIVE", untouched: 8000 },
+        { status: "ACTIVE", untouched: 0, sends_window: 0 },
+        { status: "ACTIVE", untouched: 8000, sends_window: 700 },
       ],
     });
     const d = watchDecision({

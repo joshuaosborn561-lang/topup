@@ -18,7 +18,9 @@ import { buildHealth } from "./health.js";
 import { runDigest } from "./ledger/digest.js";
 import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
-import { loadClientTags } from "./mcp/recipe.js";
+import { loadClientMap, loadClientTags } from "./mcp/recipe.js";
+import { mergeRecipes } from "./recipes/infer.js";
+import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { mcpRouter } from "./mcp/server.js";
 import { Orchestrator } from "./orchestrator.js";
 import { loadRecipeFiles, syncRecipes } from "./recipes/load.js";
@@ -172,6 +174,24 @@ async function main(): Promise<void> {
     return [] as string[];
   });
   log.info("client_map tags", { count: clientTags.length });
+  const clientMap = await loadClientMap(db).catch(() => []);
+  const inferred: typeof recipeFiles = [];
+  try {
+    const lanes = await repo.listReceiptLanes();
+    for (const row of lanes) {
+      const sl = clientMap.find((c) => c.client_tag === row.client_tag)?.smartlead_client_id;
+      const got = await resolveRecipeForStart(repo, {
+        clientTag: row.client_tag,
+        lane: row.lane,
+        smartleadClientId: sl ?? null,
+      });
+      if (got.ok) inferred.push(got.recipe);
+    }
+  } catch (err) {
+    log.warn("receipt inference at boot failed", { error: (err as Error).message });
+  }
+  const recipes = mergeRecipes(recipeFiles, inferred);
+  log.info("recipes ready", { files: recipeFiles.length, inferred: inferred.length, merged: recipes.length });
   app.use(
     "/mcp",
     mcpRouter({
@@ -182,7 +202,7 @@ async function main(): Promise<void> {
       ownerToken: cfg.MCP_OWNER_TOKEN,
       operatorToken: cfg.MCP_OPERATOR_TOKEN,
       clientTags,
-      recipes: recipeFiles,
+      recipes,
     }),
   );
 
@@ -197,7 +217,7 @@ async function main(): Promise<void> {
     repo,
     orchestrator,
     console: console_,
-    recipes: recipeFiles,
+    recipes,
     dryRun: cfg.DRY_RUN,
     ledger,
   });
