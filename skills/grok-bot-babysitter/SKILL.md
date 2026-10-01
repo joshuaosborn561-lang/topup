@@ -71,15 +71,17 @@ Tables (counts / keys only):
 - `lane_state` / `/where` — which step the **service** is on.
 - `campaign_registry` — campaign ids, band, working flag.
 
-Open `topup_queue` first (D43). It is the campaigns the watchdog has
-flagged, ranked, each with the recipe count summary. Pick the top
-one. Then read `topup_recipe` (and `topup_campaign_builds` /
-`topup_provenance_gaps` when you need the list or the gaps) **before
-any top-up**. That is the live pull record on this service (D40).
-Counts and method text. Never lead rows. Do not reconstruct the
-recipe from tags when the tool answers. If it says `campaign not found
-in public.campaigns`, say so and ask Josh. No Slack, no Cursor — the
-queue is the list.
+Open `topup_queue` first (D43, D44). It is the same lead-refill lines
+`#campaign-watchdog` posts (empty, low, nearly-done 90%), ranked, each
+with the recipe count summary and the 1-in-2000 working gate (1 reply
+under 2,000 sends is acceptable). It includes camps the client-wide
+watch would skip. Pick the top one. Then read `topup_recipe` (and
+`topup_campaign_builds` / `topup_provenance_gaps` when you need the
+list or the gaps) **before any top-up**. That is the live pull record
+on this service (D40). Counts and method text. Never lead rows. Do
+not reconstruct the recipe from tags when the tool answers. If it
+says `campaign not found in public.campaigns`, say so and ask Josh.
+No Slack, no Cursor — the queue is the list.
 
 Then **start the Railway service** with `start_topup`. The service walks
 the thirteen steps (D24, D28). You do not. If there is no recipe yet,
