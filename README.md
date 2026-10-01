@@ -148,6 +148,7 @@ Cursor / Claude:
 | `topup_recipe` | both | **Read before any top up.** How this campaign's leads were pulled last time (`select topup.recipe($1, $2)`). `client_tag` is the live list from `topup.client_map` (D42), not a hardcoded twelve. jsonb verbatim. If `campaign` is null: `campaign not found in public.campaigns`. Counts only, never lead rows. |
 | `topup_campaign_builds` | both | Builds that fed a campaign, largest first. |
 | `topup_provenance_gaps` | both | Campaigns for a client still missing a pull stamp. |
+| `topup_queue` | both | Campaigns the watchdog has flagged, ranked empty-first then shortest runway, each with the recipe count summary. Open the queue, pick the top one, read `topup_recipe`, run `start_topup`. No Slack, no Cursor (D43). Counts only. |
 | `register_queue_table` | owner | Hand a queue table to the service. Never rows. |
 | `lane_note` | owner | One line on the lane event log. |
 | `sample_rows` | owner | Up to ten masked rows. |
@@ -156,9 +157,10 @@ Cursor / Claude:
 | `recipe_get` | owner | File recipe from the repo. Not the live pull record. |
 | `missing_piece_groups` | owner | Rows grouped by what they still lack. |
 
-These three live recipe tools are not on LeadPipe. The function and
-views already exist on campaignintelligence; this service does not
-change schema.
+The live recipe tools and `topup_queue` are not on LeadPipe. The
+function and views already exist on campaignintelligence; this
+service does not change schema. `count_contacts` is count filters
+only — `max_per_company` is an export cap (D43).
 
 ## Slack
 

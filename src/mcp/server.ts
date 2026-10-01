@@ -12,7 +12,9 @@ import { logger } from "../lib/log.js";
 import type { Orchestrator } from "../orchestrator.js";
 import type { SlackConsole } from "../slack/console.js";
 import { NEEDS_JOSH } from "../slack/roles.js";
+import type { Recipe } from "../recipes/schema.js";
 import { MCP_HTTPS_URL, SERVICE_VERSION } from "../version.js";
+import { buildTopupQueue, TOPUP_QUEUE_DESCRIPTION } from "./queue.js";
 import {
   CAMPAIGN_NOT_FOUND,
   clientTagSchema,
@@ -47,6 +49,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   topup_recipe: "operator",
   topup_campaign_builds: "operator",
   topup_provenance_gaps: "operator",
+  topup_queue: "operator",
 };
 
 export interface McpDeps {
@@ -58,6 +61,8 @@ export interface McpDeps {
   operatorToken: string;
   /** D42: from topup.client_map at boot; refreshed per request. */
   clientTags: string[];
+  /** File recipes the watch walks. Queue is read-only over the same set. */
+  recipes: Recipe[];
 }
 
 function tokenMatches(given: string | undefined, expected: string): boolean {
@@ -322,6 +327,15 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
       inputSchema: { client_tag: recipeClient },
     },
     async ({ client_tag }) => text(await readProvenanceGaps(d.repo.raw(), client_tag)),
+  );
+
+  server.registerTool(
+    "topup_queue",
+    {
+      description: TOPUP_QUEUE_DESCRIPTION,
+      inputSchema: {},
+    },
+    async () => text(await buildTopupQueue(d.repo.raw(), d.repo, d.recipes)),
   );
 
   return server;

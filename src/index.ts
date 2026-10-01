@@ -182,6 +182,7 @@ async function main(): Promise<void> {
       ownerToken: cfg.MCP_OWNER_TOKEN,
       operatorToken: cfg.MCP_OPERATOR_TOKEN,
       clientTags,
+      recipes: recipeFiles,
     }),
   );
 

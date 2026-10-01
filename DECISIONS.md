@@ -62,6 +62,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D40 | Live; live pull recipe MCP on this service, not LeadPipe; watch Slack includes the count summary |
 | D41 | Live; HTTPS MCP needs no login; unauthenticated callers get the operator set |
 | D42 | Live; recipe-tool client_tag enum is topup.client_map at boot, not a hardcoded twelve |
+| D43 | Live; topup_queue is Cayden's ranked watch list; count_contacts is count filters only |
 
 ---
 
@@ -1301,3 +1302,34 @@ re-lists tools. The server accepts a tag as soon as it is in
 `client_map`. Tags only; never `client_name`.
 
 **Guard.** `src/guards/d42_client_map_enum.test.ts`. Ask Josh.
+
+## D43 — Cayden's queue, and count_contacts is count filters only
+
+**Decision.** One more read-only operator MCP tool, `topup_queue`. It
+lists the campaigns the watch would flag (go or ask), ranked empty
+first then shortest runway, each with the same recipe count summary
+the Slack card already carries (builds, interested per build,
+`any_reconstructed`, `leads_without_method`). No lead rows. No
+mutation. Not on LeadPipe. Cayden's flow is: open the queue, pick
+the top one, read `topup_recipe`, run `start_topup`. No Slack, no
+Cursor. The watch still posts Slack for Josh.
+
+Separately: getleads `count_contacts` is count filters only — exact
+`company_size` band labels, titles, geo. `max_per_company` is an
+export cap. The size step must not send it. The first-pull-receipt
+skill already said this: "Do not put `max_per_company` in the count filters." The service's own TAM call was sending the recipe params
+blob, and Parlay `it_dm` has been parked on size since 2026-09-17
+(`unrecognized_keys: max_per_company`). Numeric `employees_min` /
+`employees_max` / `company_size_min` / `company_size_max` stay
+refused (D34, tam-sizing).
+
+**Why.** Josh: Cayden opens the queue, picks the top one, reads the
+recipe, runs it. No Slack, no Cursor. And Parlay has been stuck two
+weeks on the same count-filter bug the skills warn about.
+
+**Tradeoff.** The queue is computed (the same watch snapshot plus
+one recipe SQL per flagged campaign), not a new SQL function.
+Adding a client still does not need a service bump (D42). Watch
+Slack stays for Josh.
+
+**Guard.** `src/guards/d43_queue_and_count_filters.test.ts`. Ask Josh.

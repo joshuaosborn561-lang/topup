@@ -34,4 +34,20 @@ describe("getleads filters — D34", () => {
     assert.equal("email_status" in out, false);
     assert.deepEqual(outboundFilters(bands()).email_status, ["VALID"]);
   });
+
+  it("D43 — count filters keep exact band labels and drop max_per_company", () => {
+    const out = outboundFilters(
+      bands({ max_per_company: 3, employees_min: 11, employees_max: 200, company_size_min: 11 }),
+    );
+    assert.deepEqual(out.company_size, ["11 to 50"]);
+    assert.equal("max_per_company" in out, false);
+    assert.equal("employees_min" in out, false);
+    assert.equal("employees_max" in out, false);
+    assert.equal("company_size_min" in out, false);
+    assert.equal("employee_count_min" in out, false);
+  });
+
+  it("D43 — refuses company_size together with company_size_min", () => {
+    assert.throws(() => assertGetleadsFilters(bands({ company_size_min: 11 })), /band overlap/);
+  });
 });

@@ -47,7 +47,7 @@ describe("D40 — live pull recipe lives on this service", () => {
     assert.match(servers, /Not LeadPipe/);
     assert.match(agents, /topup_recipe/);
     assert.equal(pkg.version, SERVICE_VERSION, "D40: package.json version must match SERVICE_VERSION. Ask Josh.");
-    assert.equal(SERVICE_VERSION, "0.2.0");
+    assert.match(SERVICE_VERSION, /^\d+\.\d+\.\d+$/);
   });
 
   it("the three tools are operator-readable, one SQL each, and not registered on LeadPipe — Ask Josh", async () => {

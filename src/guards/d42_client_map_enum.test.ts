@@ -15,7 +15,7 @@ describe("D42 — client_tag comes from topup.client_map", () => {
     const recipe = await readFile(new URL("src/mcp/recipe.ts", root), "utf8");
     const server = await readFile(new URL("src/mcp/server.ts", root), "utf8");
     const boot = await readFile(new URL("src/index.ts", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D42\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /topup\.client_map/);
     assert.match(canon, /not a service bump/);
     assert.match(ledger, /## D42 — client_tag comes from topup\.client_map/);

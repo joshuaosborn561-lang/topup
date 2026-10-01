@@ -14,14 +14,16 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const watch = await readFile(new URL("src/watch/decide.ts", root), "utf8");
     const tick = await readFile(new URL("src/watch/index.ts", root), "utf8");
+    const assess = await readFile(new URL("src/watch/assess.ts", root), "utf8");
+    const watchSrc = `${tick}\n${assess}`;
     assert.match(canon, /client-wide/);
     assert.match(canon, /unique inboxes/);
     assert.match(canon, /MESSAGE_PER_DAY/);
     assert.match(canon, /SalesGlider is excluded/);
     assert.match(ledger, /## D38 — Client-wide runway and DM pulls/);
     assert.match(watch, /client-wide/);
-    assert.match(tick, /assessClientRunway/);
-    assert.match(tick, /recipeCampaignIds: ids/);
+    assert.match(watchSrc, /assessClientRunway/);
+    assert.match(watchSrc, /recipeCampaignIds: ids/);
   });
 
   it("one empty SEG camp is not go while sibling ACTIVE rem remains — Ask Josh", () => {
@@ -70,8 +72,10 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
 
   it("TODO until Josh names unique inboxes × MESSAGE_PER_DAY — days stay null at watch time", async () => {
     const tick = await readFile(new URL("src/watch/index.ts", root), "utf8");
-    assert.match(tick, /uniqueInboxes: null/);
-    assert.match(tick, /messagePerDay: null/);
+    const assess = await readFile(new URL("src/watch/assess.ts", root), "utf8");
+    const watchSrc = `${tick}\n${assess}`;
+    assert.match(watchSrc, /uniqueInboxes: null/);
+    assert.match(watchSrc, /messagePerDay: null/);
     const r = assessClientRunway({
       clientTag: "parlay",
       campaigns: [{ status: "ACTIVE", untouched: 100 }],

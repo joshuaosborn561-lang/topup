@@ -96,23 +96,53 @@ export async function readProvenanceGaps(db: Queryable, clientTag: string): Prom
  * Slack/watch summary: builds, interested per build, any_reconstructed,
  * leads_without_method. Never the method paragraph. Never a lead row.
  */
-export function summarizeRecipeForSlack(recipe: TopupRecipe | typeof CAMPAIGN_NOT_FOUND, campaignId: number): string {
+export interface RecipeSummaryCounts {
+  campaign_id: number;
+  builds: Array<{ build_label: string; interested: number | null }>;
+  any_reconstructed: boolean | null;
+  leads_without_method: number | null;
+  campaign_not_found: boolean;
+  unavailable?: string;
+}
+
+/** Counts only. Never the method paragraph. Never a lead row. */
+export function recipeSummaryCounts(
+  recipe: TopupRecipe | typeof CAMPAIGN_NOT_FOUND,
+  campaignId: number,
+): RecipeSummaryCounts {
   if (recipe === CAMPAIGN_NOT_FOUND) {
-    return `*Last pull recipe* (#${campaignId}): ${CAMPAIGN_NOT_FOUND}`;
+    return {
+      campaign_id: campaignId,
+      builds: [],
+      any_reconstructed: null,
+      leads_without_method: null,
+      campaign_not_found: true,
+    };
   }
   const builds = Array.isArray(recipe.builds) ? recipe.builds : [];
-  const buildLines = builds.map((b) => {
-    const o = asObject(b);
-    const interested = num(o?.interested);
-    return `• \`${label(o?.build_label)}\` — ${interested ?? "?"} interested`;
-  });
-  const reconstructed = bool(recipe.any_reconstructed);
-  const missing = num(recipe.leads_without_method);
+  return {
+    campaign_id: campaignId,
+    builds: builds.map((b) => {
+      const o = asObject(b);
+      return { build_label: label(o?.build_label), interested: num(o?.interested) };
+    }),
+    any_reconstructed: bool(recipe.any_reconstructed),
+    leads_without_method: num(recipe.leads_without_method),
+    campaign_not_found: false,
+  };
+}
+
+export function summarizeRecipeForSlack(recipe: TopupRecipe | typeof CAMPAIGN_NOT_FOUND, campaignId: number): string {
+  const s = recipeSummaryCounts(recipe, campaignId);
+  if (s.campaign_not_found) {
+    return `*Last pull recipe* (#${campaignId}): ${CAMPAIGN_NOT_FOUND}`;
+  }
+  const buildLines = s.builds.map((b) => `• \`${b.build_label}\` — ${b.interested ?? "?"} interested`);
   return [
     `*Last pull recipe* (#${campaignId})`,
     ...(buildLines.length ? buildLines : ["• no builds on record"]),
-    `• any_reconstructed: ${reconstructed === null ? "?" : reconstructed ? "yes" : "no"}`,
-    `• leads_without_method: ${missing ?? "?"}`,
+    `• any_reconstructed: ${s.any_reconstructed === null ? "?" : s.any_reconstructed ? "yes" : "no"}`,
+    `• leads_without_method: ${s.leads_without_method ?? "?"}`,
   ].join("\n");
 }
 
