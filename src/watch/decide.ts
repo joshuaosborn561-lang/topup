@@ -98,7 +98,7 @@ export function pickAsk(dead: NeedyCampaign[]): NeedyCampaign {
   return [...dead].sort((a, b) => runwayKey(a.health) - runwayKey(b.health))[0];
 }
 
-export function runwayKey(h: CampaignHealth): number {
+export function runwayKey(h: { flags: readonly string[]; runway_days: number | null }): number {
   if (h.flags.includes("empty")) return 0;
   return h.runway_days ?? Number.POSITIVE_INFINITY;
 }

@@ -46,6 +46,7 @@ describe("roles", () => {
       "start_topup",
       "topup_campaign_builds",
       "topup_provenance_gaps",
+      "topup_queue",
       "topup_recipe",
     ]);
     for (const t of ["register_queue_table", "lane_note", "sample_rows", "variant_stats", "campaign_registry", "recipe_get", "missing_piece_groups"]) assert.equal(MCP_TOOL_ROLE[t], "owner");

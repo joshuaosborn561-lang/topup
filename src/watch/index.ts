@@ -1,17 +1,14 @@
 import type { Queryable } from "../db/pool.js";
 import type { Repo } from "../db/repo.js";
-import { isWorking, variantStats } from "../domain/working.js";
-import { assessClientRunway } from "../ledger/client_runway.js";
-import { assessCampaign, campaignIdsForClient, campaignSnapshots } from "../ledger/health.js";
+import { variantStats } from "../domain/working.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
 import type { Orchestrator } from "../orchestrator.js";
-import { recipeCampaignIds } from "../recipes/campaigns.js";
 import type { Recipe } from "../recipes/schema.js";
 import { recipeSummariesForWatch } from "../mcp/recipe.js";
 import { notWorkingCard, section } from "../slack/cards.js";
 import type { SlackConsole } from "../slack/console.js";
-import { isNeedy, watchDecision, type NeedyCampaign } from "./decide.js";
+import { snapshotWatchLane } from "./assess.js";
 
 const log = logger("watch");
 
@@ -55,67 +52,21 @@ export class RunwayWatch {
   }
 
   private async lane(recipe: Recipe): Promise<"go" | "ask" | "skip"> {
-    const ids = recipeCampaignIds(recipe);
-    if (ids.length === 0) {
-      log.info("skip", { client_tag: recipe.client_tag, lane: recipe.lane, why: "recipe names no campaigns" });
-      return "skip";
+    const snap = await snapshotWatchLane({ db: this.d.db, repo: this.d.repo }, recipe);
+    const { decision, camps, client, health, needy } = snap;
+    if (health.length > 0) {
+      await this.d.repo.upsertCampaignRegistry(
+        health.map((h) => ({
+          campaign_id: h.smartlead_campaign_id,
+          campaign_name: h.name,
+          client_tag: recipe.client_tag,
+          smartlead_client_id: recipe.smartlead_client_id,
+          lane: recipe.lane,
+          recipe_id: recipe.recipe_id,
+          status: h.status,
+        })),
+      );
     }
-
-    const snaps = await campaignSnapshots(this.d.db, ids);
-    const health = snaps.map((s) => assessCampaign(s, recipe.runway.floor_days));
-    await this.d.repo.upsertCampaignRegistry(
-      health.map((h) => ({
-        campaign_id: h.smartlead_campaign_id,
-        campaign_name: h.name,
-        client_tag: recipe.client_tag,
-        smartlead_client_id: recipe.smartlead_client_id,
-        lane: recipe.lane,
-        recipe_id: recipe.recipe_id,
-        status: h.status,
-      })),
-    );
-
-    // D38: client rem across every ACTIVE campaign, not just this recipe.
-    // uniqueInboxes / messagePerDay stay null until Josh names the source.
-    const clientIds = await campaignIdsForClient(this.d.db, recipe.smartlead_client_id).catch(() => ids);
-    const clientSnaps = clientIds.length === ids.length && clientIds.every((id) => ids.includes(id))
-      ? snaps
-      : await campaignSnapshots(this.d.db, clientIds.length ? clientIds : ids).catch(() => snaps);
-    const clientHealth = clientSnaps.map((s) => assessCampaign(s, recipe.runway.floor_days));
-    const client = assessClientRunway({
-      clientTag: recipe.client_tag,
-      campaigns: clientHealth,
-      uniqueInboxes: null,
-      messagePerDay: null,
-      floorDays: recipe.runway.floor_days,
-    });
-
-    const overrides = await this.d.repo.workingOverrides(ids);
-    const camps: NeedyCampaign[] = [];
-    for (const h of health.filter((c) => c.status === "ACTIVE")) {
-      const stats = await variantStats(this.d.db, h.smartlead_campaign_id);
-      const working = isWorking({
-        sends: stats.sends,
-        interested: stats.interested,
-        variants: stats.variants,
-        interestedPer2000: recipe.working.interested_per_2000_sends,
-        variantMinSends: recipe.working.variant_min_sends,
-        override: overrides.get(h.smartlead_campaign_id) ?? null,
-      });
-      camps.push({ health: h, working });
-    }
-    const needy = camps.filter((n) => isNeedy(n.health));
-
-    const open = await this.d.repo.openRunFor(recipe.client_tag, recipe.lane);
-    const last = await this.d.repo.lastRunForLane(recipe.client_tag, recipe.lane);
-    const decision = watchDecision({
-      needy,
-      camps,
-      client,
-      recipeCampaignIds: ids,
-      openRun: Boolean(open),
-      lastStatus: last?.status ?? null,
-    });
 
     if (decision.kind === "skip") {
       log.info("skip", { client_tag: recipe.client_tag, lane: recipe.lane, why: decision.why });
@@ -132,8 +83,8 @@ export class RunwayWatch {
         log.info("propose_holistic_mock", {
           client_tag: recipe.client_tag,
           lane: recipe.lane,
-          email_days: client.email_days,
-          email_rem: client.email_rem,
+          email_days: client?.email_days,
+          email_rem: client?.email_rem,
           note: "D38 under-2 mock: filters / net-new / $ are a size step, not invented here. Paid spend still needs Josh.",
         });
       }

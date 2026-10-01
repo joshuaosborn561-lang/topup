@@ -71,12 +71,15 @@ Tables (counts / keys only):
 - `lane_state` / `/where` — which step the **service** is on.
 - `campaign_registry` — campaign ids, band, working flag.
 
-Read `topup_recipe` (and `topup_campaign_builds` / `topup_provenance_gaps`
-when you need the list or the gaps) **before any top-up**. That is the
-live pull record on this service (D40). Counts and method text. Never
-lead rows. Do not reconstruct the recipe from tags when the tool
-answers. If it says `campaign not found in public.campaigns`, say so
-and ask Josh.
+Open `topup_queue` first (D43). It is the campaigns the watchdog has
+flagged, ranked, each with the recipe count summary. Pick the top
+one. Then read `topup_recipe` (and `topup_campaign_builds` /
+`topup_provenance_gaps` when you need the list or the gaps) **before
+any top-up**. That is the live pull record on this service (D40).
+Counts and method text. Never lead rows. Do not reconstruct the
+recipe from tags when the tool answers. If it says `campaign not found
+in public.campaigns`, say so and ask Josh. No Slack, no Cursor — the
+queue is the list.
 
 Then **start the Railway service** with `start_topup`. The service walks
 the thirteen steps (D24, D28). You do not. If there is no recipe yet,
@@ -87,7 +90,7 @@ not a Grok session.
 ## Allow list (you may call these)
 
 Service MCP: `start_topup`, `lane_state`, `run_status`, `list_runs`,
-`list_holds`, `resolve_hold`, `recipe_get`, `topup_recipe`,
+`list_holds`, `resolve_hold`, `recipe_get`, `topup_queue`, `topup_recipe`,
 `topup_campaign_builds`, `topup_provenance_gaps`, `campaign_registry`,
 `variant_stats`, `missing_piece_groups`, `add_client_domains` (domains
 only), `register_queue_table` (`source_table`, never rows), `lane_note`,

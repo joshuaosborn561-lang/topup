@@ -21,6 +21,7 @@ export const GROK_MAY = [
   "topup_recipe",
   "topup_campaign_builds",
   "topup_provenance_gaps",
+  "topup_queue",
   "campaign_registry",
   "variant_stats",
   "missing_piece_groups",

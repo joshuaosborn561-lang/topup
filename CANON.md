@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D42** (2026-10-01). One page of current truth. When a new
+Canon as of **D43** (2026-10-01). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -278,13 +278,16 @@ open cards, open runs and which integrations are configured. It is
   login.** Anyone who can reach the URL gets the operator set:
   `lane_state, run_status, list_runs, list_holds, resolve_hold,
   start_topup, add_client_domains` (domains only, never rows),
-  `topup_recipe, topup_campaign_builds, topup_provenance_gaps` (live
-  pull record; one SQL call; jsonb verbatim; never lead rows). An
+  `topup_recipe, topup_campaign_builds, topup_provenance_gaps, topup_queue`
+  (live pull record and the ranked watch queue; never lead rows). An
   optional owner bearer token still unlocks `register_queue_table,
   lane_note, sample_rows` (ten max, emails masked), `variant_stats,
   campaign_registry, recipe_get, missing_piece_groups`. `recipe_get` is
   the file recipe the pipeline still walks; `topup_recipe` is how the
-  last list was actually pulled. These three live tools are not on LeadPipe.
+  last list was actually pulled. `topup_queue` is the campaigns the
+  watch flagged, ranked empty-first then shortest runway, each with
+  the recipe count summary. Cayden's flow is queue → recipe →
+  `start_topup`. No Slack, no Cursor (D43). These live tools are not on LeadPipe.
   `client_tag` on the recipe tools is the live list from
   `topup.client_map` at boot (refreshed per request). Adding a client is
   a row in that table, not a hardcoded enum and not a service bump (D42).
@@ -303,8 +306,11 @@ It does not reconstruct the thirteen steps in chat.
   LeadPipe (`skills/leadpipe` — `lp_run ingest_csv` from a URL, `lp_export`
   signed_url + count, `lp_sample` ≤10). They do not enter Grok bot context.
 - **What it may call.** Service MCP (`start_topup`, `lane_state`,
-  `run_status`, `list_runs`, `list_holds`, `recipe_get`, `topup_recipe`,
-  `topup_campaign_builds`, `topup_provenance_gaps`, …). Read
+  `run_status`, `list_runs`, `list_holds`, `recipe_get`, `topup_queue`,
+  `topup_recipe`,
+  `topup_campaign_builds`, `topup_provenance_gaps`, …). Open
+  `topup_queue`, pick the top one, read `topup_recipe`, run
+  `start_topup` (D43). Read
   `topup_recipe` before any top-up (D40). LeadPipe (`lp_plan`, `lp_run`,
   `lp_status`, `lp_export`, `lp_sample`, `lp_inventory`,
   `lp_ensure_client`, `lp_list_clients`). Slack cards. Allow list is
@@ -345,7 +351,9 @@ It does not reconstruct the thirteen steps in chat.
 - Never send getleads numeric headcount bounds or comma industries. Pull
   every email status; we verify anyway (D35 item 15). The client refuses
   a filter that carries both `company_size` band labels and a numeric
-  employee bound (D34).
+  employee bound (D34). `count_contacts` is count filters only — exact
+  band labels, titles, geo. `max_per_company` is an export cap; the size
+  step must not send it (D43).
 - Never patch around a broken vendor server; bound the damage by batch size
   and say so in the PR.
 - Never trust "processed" or a zero-verdict resume as a verification.
@@ -392,7 +400,7 @@ changes:
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
 | Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/leadpipe` and `skills/supabase-csv-endpoint` move rows without chat; `skills/grok-bot-babysitter` is D39; `skills/SKILLS_INDEX.md` says what is stale (D25) |
-| Live pull recipe | `topup.recipe()`, `topup.campaign_builds`, `topup.provenance_gaps` via MCP `topup_recipe` / `topup_campaign_builds` / `topup_provenance_gaps` on `https://leadtopup-production.up.railway.app/mcp` (D40). `client_tag` from `topup.client_map` at boot (D42). Not LeadPipe. |
+| Live pull recipe | `topup.recipe()`, `topup.campaign_builds`, `topup.provenance_gaps` via MCP `topup_recipe` / `topup_campaign_builds` / `topup_provenance_gaps` on `https://leadtopup-production.up.railway.app/mcp` (D40). `topup_queue` is the ranked watch list (D43). `client_tag` from `topup.client_map` at boot (D42). Not LeadPipe. |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
 | Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |

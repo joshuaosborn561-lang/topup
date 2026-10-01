@@ -12,7 +12,8 @@ import { McpHttpClient } from "./mcpHttp.js";
  * filter reaches this file: headcount is band labels, industries carry no
  * commas, `email_status` omitted pulls every status (D35 item 15).
  * `assertGetleadsFilters` also refuses band labels plus a numeric
- * employee bound (D34).
+ * employee bound (D34). `outboundFilters` sends count keys only:
+ * exact band labels, never `max_per_company` (D43).
  */
 export type GetleadsFilters = Recipe["source"] extends infer S ? (S extends { kind: "getleads"; params: infer P } ? P : never) : never;
 
@@ -62,7 +63,11 @@ export function assertGetleadsFilters(filters: GetleadsFilters): void {
     f.employee_count_min != null ||
     f.employee_count_max != null ||
     f.employees_min != null ||
-    f.employees_max != null;
+    f.employees_max != null ||
+    f.company_size_min != null ||
+    f.company_size_max != null ||
+    f.employee_profiles_on_linkedin_min != null ||
+    f.employee_profiles_on_linkedin_max != null;
   if (bands && numeric) {
     throw new Error(
       "getleads filter cannot carry company_size band labels and a numeric employee bound together (silent band overlap)",
@@ -70,9 +75,41 @@ export function assertGetleadsFilters(filters: GetleadsFilters): void {
   }
 }
 
-/** Omit empty email_status so getleads returns every status (D35 item 15). */
+/**
+ * Keys `count_contacts` accepts from a recipe. `max_per_company` is an
+ * export cap — first-pull-receipt: do not put it in the count filters (D43).
+ * Numeric employee bounds are never sent (D34, tam-sizing).
+ */
+export const GETLEADS_COUNT_KEYS = [
+  "job_titles",
+  "company_size",
+  "countries",
+  "states",
+  "cities",
+  "industries",
+  "email_status",
+  "employee_profiles_on_linkedin_min",
+  "employee_profiles_on_linkedin_max",
+] as const;
+
+/** Omit empty email_status so getleads returns every status (D35 item 15). Strip export-only keys. */
 export function outboundFilters(filters: GetleadsFilters): Record<string, unknown> {
-  const out = { ...(filters as unknown as Record<string, unknown>) };
+  const src = filters as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of GETLEADS_COUNT_KEYS) {
+    if (src[key] !== undefined && src[key] !== null) out[key] = src[key];
+  }
+  const epl = src.employee_profiles_on_linkedin;
+  if (epl && typeof epl === "object" && !Array.isArray(epl)) {
+    const o = epl as { min?: number; max?: number };
+    if (o.min != null) out.employee_profiles_on_linkedin_min = o.min;
+    if (o.max != null) out.employee_profiles_on_linkedin_max = o.max;
+  }
+  const bands = Array.isArray(out.company_size) && (out.company_size as unknown[]).length > 0;
+  if (bands) {
+    delete out.employee_profiles_on_linkedin_min;
+    delete out.employee_profiles_on_linkedin_max;
+  }
   const statuses = out.email_status;
   if (!Array.isArray(statuses) || statuses.length === 0) delete out.email_status;
   return out;
