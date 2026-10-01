@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 import type { Queryable } from "../db/pool.js";
 import {
   CAMPAIGN_NOT_FOUND,
-  RECIPE_CLIENT_TAGS,
+  CLIENT_MAP_TAGS_SQL,
+  clientTagSchema,
+  loadClientTags,
   readCampaignBuilds,
   readProvenanceGaps,
   readTopupRecipe,
@@ -95,21 +97,21 @@ describe("D40 — live pull recipe SQL", () => {
     assert.ok(!text.includes("@"), "D40: error text is a message, not a lead row. Ask Josh.");
   });
 
-  it("client_tag enum and tool description match the brief", () => {
-    assert.deepEqual([...RECIPE_CLIENT_TAGS], [
-      "peterson",
-      "peterson_earthworks",
-      "bcp",
-      "culture_fits",
-      "parlay",
-      "goliath",
-      "techevo",
-      "insight",
-      "powergryd",
-      "emcor",
-      "vasco",
-      "salesglider",
-    ]);
+  it("client_tag enum comes from topup.client_map, not a hardcoded twelve", async () => {
+    let seen: string | null = null;
+    const db = fakeDb((sql) => {
+      seen = sql;
+      return [{ client_tag: "parlay" }, { client_tag: "deep_roots" }, { client_tag: "vector_energy" }];
+    });
+    const tags = await loadClientTags(db);
+    assert.equal(seen, CLIENT_MAP_TAGS_SQL);
+    assert.deepEqual(tags, ["parlay", "deep_roots", "vector_energy"]);
+    const schema = clientTagSchema(tags);
+    assert.equal(schema.parse("deep_roots"), "deep_roots");
+    assert.equal(schema.parse("vector_energy"), "vector_energy");
+    assert.throws(() => schema.parse("not_a_client"));
+    const open = clientTagSchema([]);
+    assert.equal(open.parse("deep_roots"), "deep_roots", "empty map falls back to snake_case so a new client is not rejected");
     assert.match(TOPUP_RECIPE_DESCRIPTION, /Read before any top up/);
     assert.match(TOPUP_RECIPE_DESCRIPTION, /Counts only, never lead rows/);
   });

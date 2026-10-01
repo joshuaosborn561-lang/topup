@@ -15,7 +15,8 @@ import { NEEDS_JOSH } from "../slack/roles.js";
 import { MCP_HTTPS_URL, SERVICE_VERSION } from "../version.js";
 import {
   CAMPAIGN_NOT_FOUND,
-  RECIPE_CLIENT_TAGS,
+  clientTagSchema,
+  loadClientTags,
   readCampaignBuilds,
   readProvenanceGaps,
   readTopupRecipe,
@@ -55,6 +56,8 @@ export interface McpDeps {
   ledger: LaneLedger;
   ownerToken: string;
   operatorToken: string;
+  /** D42: from topup.client_map at boot; refreshed per request. */
+  clientTags: string[];
 }
 
 function tokenMatches(given: string | undefined, expected: string): boolean {
@@ -88,7 +91,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   const allowed = (tool: string) => role === "owner" || MCP_TOOL_ROLE[tool] === "operator";
   const refused = () => text({ error: NEEDS_JOSH, role });
   const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
-  const recipeClient = z.enum(RECIPE_CLIENT_TAGS);
+  const recipeClient = clientTagSchema(d.clientTags);
   const smartleadCampaignId = z.number().int().describe("Smartlead campaign id");
 
   server.registerTool(
@@ -347,7 +350,8 @@ export function mcpRouter(d: McpDeps): Router {
 
   const handle = async (req: Request, res: Response) => {
     const role = roleForToken(req.header("authorization"), d);
-    const server = buildMcpServer(role, d);
+    const liveTags = await loadClientTags(d.repo.raw()).catch(() => d.clientTags);
+    const server = buildMcpServer(role, { ...d, clientTags: liveTags.length ? liveTags : d.clientTags });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       void transport.close();

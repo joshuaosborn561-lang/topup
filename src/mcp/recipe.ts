@@ -1,26 +1,31 @@
+import { z } from "zod";
 import type { Queryable } from "../db/pool.js";
 
 /**
  * D40 — live pull recipe on this service. One SQL call each. jsonb verbatim.
  * Counts and method text, never lead rows. Ask Josh.
+ * D42 — client_tag enum is topup.client_map at boot, not a hardcoded twelve.
  */
 
-export const RECIPE_CLIENT_TAGS = [
-  "peterson",
-  "peterson_earthworks",
-  "bcp",
-  "culture_fits",
-  "parlay",
-  "goliath",
-  "techevo",
-  "insight",
-  "powergryd",
-  "emcor",
-  "vasco",
-  "salesglider",
-] as const;
+export const CLIENT_MAP_TAGS_SQL = "select client_tag from topup.client_map order by 1";
 
-export type RecipeClientTag = (typeof RECIPE_CLIENT_TAGS)[number];
+const SNAKE = /^[a-z][a-z0-9_]*$/;
+
+/** Tags only. Never client_name. */
+export async function loadClientTags(db: Queryable): Promise<string[]> {
+  const { rows } = await db.query<{ client_tag: string }>(CLIENT_MAP_TAGS_SQL);
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (typeof r.client_tag === "string" && SNAKE.test(r.client_tag)) seen.add(r.client_tag);
+  }
+  return [...seen];
+}
+
+/** MCP input: live client_map tags, or snake_case if the table is empty so we never reject a new client. */
+export function clientTagSchema(tags: readonly string[]): z.ZodType<string> {
+  if (tags.length >= 1) return z.enum([tags[0]!, ...tags.slice(1)]);
+  return z.string().regex(SNAKE, "snake_case");
+}
 
 export const CAMPAIGN_NOT_FOUND = "campaign not found in public.campaigns";
 

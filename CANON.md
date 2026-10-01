@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D41** (2026-09-30). One page of current truth. When a new
+Canon as of **D42** (2026-10-01). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -285,6 +285,9 @@ open cards, open runs and which integrations are configured. It is
   campaign_registry, recipe_get, missing_piece_groups`. `recipe_get` is
   the file recipe the pipeline still walks; `topup_recipe` is how the
   last list was actually pulled. These three live tools are not on LeadPipe.
+  `client_tag` on the recipe tools is the live list from
+  `topup.client_map` at boot (refreshed per request). Adding a client is
+  a row in that table, not a hardcoded enum and not a service bump (D42).
 - Counts and ids only. Ten sample values on a card at most, never emails.
 
 ## Grok bot (D39)
@@ -389,7 +392,7 @@ changes:
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
 | Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/leadpipe` and `skills/supabase-csv-endpoint` move rows without chat; `skills/grok-bot-babysitter` is D39; `skills/SKILLS_INDEX.md` says what is stale (D25) |
-| Live pull recipe | `topup.recipe()`, `topup.campaign_builds`, `topup.provenance_gaps` via MCP `topup_recipe` / `topup_campaign_builds` / `topup_provenance_gaps` on `https://leadtopup-production.up.railway.app/mcp` (D40). Not LeadPipe. |
+| Live pull recipe | `topup.recipe()`, `topup.campaign_builds`, `topup.provenance_gaps` via MCP `topup_recipe` / `topup_campaign_builds` / `topup_provenance_gaps` on `https://leadtopup-production.up.railway.app/mcp` (D40). `client_tag` from `topup.client_map` at boot (D42). Not LeadPipe. |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
 | Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |

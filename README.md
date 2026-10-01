@@ -145,7 +145,7 @@ Cursor / Claude:
 | `resolve_hold` | both | Tap a card (same role rules as Slack). |
 | `start_topup` | both | Open a run. Spend still asks. |
 | `add_client_domains` | both | Customer domains only, never rows. |
-| `topup_recipe` | both | **Read before any top up.** How this campaign's leads were pulled last time (`select topup.recipe($1, $2)`). jsonb verbatim. If `campaign` is null: `campaign not found in public.campaigns`. Counts only, never lead rows. |
+| `topup_recipe` | both | **Read before any top up.** How this campaign's leads were pulled last time (`select topup.recipe($1, $2)`). `client_tag` is the live list from `topup.client_map` (D42), not a hardcoded twelve. jsonb verbatim. If `campaign` is null: `campaign not found in public.campaigns`. Counts only, never lead rows. |
 | `topup_campaign_builds` | both | Builds that fed a campaign, largest first. |
 | `topup_provenance_gaps` | both | Campaigns for a client still missing a pull stamp. |
 | `register_queue_table` | owner | Hand a queue table to the service. Never rows. |
