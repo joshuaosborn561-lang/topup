@@ -469,6 +469,7 @@ export class Repo {
     campaignId?: number | null;
   }): Promise<
     Array<{
+      receipt_id: string;
       written_by: string;
       written_at: string;
       client_tag: string;
@@ -494,6 +495,7 @@ export class Repo {
     }>
   > {
     const { rows } = await this.db.query<{
+      receipt_id: string;
       written_by: string;
       written_at: string;
       client_tag: string;
@@ -517,7 +519,7 @@ export class Repo {
       tam_count: string | null;
       build_label: string | null;
     }>(
-      `select written_by, written_at::text, client_tag, smartlead_client_id::text, lane, campaign_ids,
+      `select receipt_id::text, written_by, written_at::text, client_tag, smartlead_client_id::text, lane, campaign_ids,
               icp_kind, persona, company_source, company_filters, domain_source, person_source,
               email_source, email_max_tier, how_i_did_it, notes, segment, granularity,
               rows_imported::text, rows_found::text, tam_count::text, build_label
@@ -529,6 +531,7 @@ export class Repo {
       [input.clientTag, input.lane ?? null, input.campaignId ?? null],
     );
     return rows.map((r) => ({
+      receipt_id: r.receipt_id,
       written_by: r.written_by,
       written_at: r.written_at,
       client_tag: r.client_tag,

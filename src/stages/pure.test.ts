@@ -227,6 +227,29 @@ describe("D29 — pull and size routing", () => {
     if (sized.kind === "getleads") assert.deepEqual(sized.source.params.company_size, ["11 to 50", "51 to 200"]);
   });
 
+  it("D45 — an inferred mixed source parks with the receipt's own gap note, not a generic line", () => {
+    const note = "receipt c2ec2978 (powergryd_vciso_lane_20260922) on powergryd/vciso: Missing — job_titles: absent. Fix: one new insert into topup.pull_receipts — skills/first-pull-receipt/BACKFILL.md.";
+    const gap = parseRecipe({
+      ...base,
+      recipe_id: "powergryd.vciso.v0",
+      client_tag: "powergryd",
+      lane: "vciso",
+      source: { kind: "mixed", note },
+      segments: { slot: ["4005228"] },
+      routing: [{ when: { slot: "4005228" }, campaign_id: 4005228, icp: { kind: "linkedin_native", persona: "vciso" } }],
+    });
+    const sized = routeSize(gap, [4005228]);
+    assert.equal(sized.kind, "park");
+    if (sized.kind === "park") {
+      assert.ok(sized.reason.startsWith("receipt gap — receipt c2ec2978"), sized.reason);
+      assert.match(sized.reason, /BACKFILL\.md/);
+      assert.doesNotMatch(sized.reason, /size each campaign separately/);
+    }
+    const pulled = routePull(gap, [4005228]);
+    assert.equal(pulled.kind, "park");
+    if (pulled.kind === "park") assert.ok(pulled.reason.startsWith("receipt gap — "), pulled.reason);
+  });
+
   it("the tam-sizing report is five lines in order", () => {
     const text = sizeReport({
       number: 16940,

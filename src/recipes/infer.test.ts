@@ -63,7 +63,41 @@ describe("D45 infer recipe from pull receipts", () => {
       }),
     );
     assert.equal(src.kind, "mixed");
-    if (src.kind === "mixed") assert.match(src.note, /Do not invent/);
+    if (src.kind === "mixed") assert.match(src.note, /does not invent/);
+  });
+
+  it("a receipt gap names the receipt, the missing fields and the backfill prompt — not a recipe file", async () => {
+    const { missingGetleadsFields, RECEIPT_BACKFILL_DOC } = await import("./infer.js");
+    assert.deepEqual(
+      missingGetleadsFields({ job_titles: ["Owner"], company_size: ["11 to 50"] }),
+      [],
+    );
+    const missing = missingGetleadsFields({ company_size: "any (individuals)", persona_terms: ["vCISO"] });
+    assert.equal(missing.length, 2);
+    assert.match(missing[0]!, /^job_titles: absent \(persona_terms is not a title list\)/);
+    assert.match(missing[1]!, /^company_size: "any \(individuals\)" — need exact band labels from "1 to 10", "11 to 50"/);
+
+    const src = sourceFromStamp(
+      stamp({
+        receipt_id: "c2ec2978-76fc-4c37-8daf-df654af68186",
+        client_tag: "powergryd",
+        lane: "vciso",
+        build_label: "powergryd_vciso_lane_20260922",
+        written_by: "claude_backfill_build",
+        company_filters: { company_size: "any (individuals and one person shops)", persona_terms: ["vCISO"] },
+        how_i_did_it: "x".repeat(3000),
+        notes: "y".repeat(3000),
+      }),
+    );
+    assert.equal(src.kind, "mixed");
+    if (src.kind !== "mixed") return;
+    assert.match(src.note, /^receipt c2ec2978 \(powergryd_vciso_lane_20260922\) on powergryd\/vciso, written_by claude_backfill_build: /);
+    assert.match(src.note, /Missing — job_titles: absent/);
+    assert.match(src.note, /company_size: "any \(individuals and one person shops\)"/);
+    assert.match(src.note, /one new insert into topup\.pull_receipts/);
+    assert.ok(src.note.includes(RECEIPT_BACKFILL_DOC));
+    assert.ok(!src.note.includes(".json"), "the fix is a receipt row, never a recipe file");
+    assert.ok(src.note.length <= 1200, `note must fit a Slack section, got ${src.note.length}`);
   });
 
   it("file-shaped merge prefers the file recipe on the same lane", async () => {

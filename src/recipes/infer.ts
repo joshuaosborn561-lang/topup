@@ -12,6 +12,7 @@ import { latestLaneReceipt, bestYieldBuild } from "./receipt.js";
 const BANDS = new Set<string>(GETLEADS_BANDS);
 
 export interface ReceiptStamp {
+  receipt_id?: string | null;
   written_by: string;
   written_at?: string;
   client_tag: string;
@@ -76,20 +77,70 @@ export function getleadsParamsFromFilters(filters: Record<string, unknown>): {
   };
 }
 
+/** Where the fix lives. The park card points here so nobody goes looking for a recipe file. */
+export const RECEIPT_BACKFILL_DOC = "skills/first-pull-receipt/BACKFILL.md";
+
+/** Slack section text tops out at 3000 chars; the note travels inside one. */
+const NOTE_MAX = 1200;
+const HOW_MAX = 400;
+
+function clip(s: string, max: number): string {
+  const t = s.trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
+}
+
+function show(v: unknown): string {
+  if (v === undefined || v === null) return "absent";
+  return clip(JSON.stringify(v), 80);
+}
+
+/** Which getleads fields the receipt is missing, in the words the backfill prompt uses. */
+export function missingGetleadsFields(filters: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const titles = asStringArray(filters.job_titles ?? filters.titles);
+  if (titles.length === 0) {
+    const hint = filters.persona_terms !== undefined ? " (persona_terms is not a title list)" : "";
+    out.push(`job_titles: ${show(filters.job_titles ?? filters.titles)}${hint}`);
+  }
+  if (validBands(filters.company_size).length === 0) {
+    out.push(`company_size: ${show(filters.company_size)} — need exact band labels from ${GETLEADS_BANDS.map((b) => `"${b}"`).join(", ")}`);
+  }
+  return out;
+}
+
+function receiptRef(stamp: ReceiptStamp): string {
+  const id = stamp.receipt_id ? `receipt ${stamp.receipt_id.slice(0, 8)}` : "latest receipt";
+  const label = stamp.build_label ? ` (${stamp.build_label})` : "";
+  const by = stamp.written_by ? `, written_by ${stamp.written_by}` : "";
+  return `${id}${label} on ${stamp.client_tag}/${stamp.lane}${by}`;
+}
+
 function mixedNote(stamp: ReceiptStamp, why: string): string {
   const notes = stamp.notes?.trim();
-  return [why, `how_i_did_it: ${stamp.how_i_did_it}`, notes ? `notes: ${notes}` : null].filter(Boolean).join(" ");
+  const fix = `Fix: one new insert into topup.pull_receipts for this lane with the fields filled (latest row wins) — ${RECEIPT_BACKFILL_DOC}. Not a recipe file.`;
+  return clip(
+    [
+      `${receiptRef(stamp)}: ${why}`,
+      fix,
+      `how_i_did_it: ${clip(stamp.how_i_did_it, HOW_MAX)}`,
+      notes ? `notes: ${clip(notes, 200)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    NOTE_MAX,
+  );
 }
 
 export function sourceFromStamp(stamp: ReceiptStamp): Source {
   if (stamp.company_source === "getleads") {
     const params = getleadsParamsFromFilters(stamp.company_filters ?? {});
     if (params) return { kind: "getleads", params, widening_candidates: [] };
+    const missing = missingGetleadsFields(stamp.company_filters ?? {});
     return {
       kind: "mixed",
       note: mixedNote(
         stamp,
-        "Receipt company_source is getleads but company_filters are not a complete getleads param set (need job_titles and exact band labels). Do not invent them.",
+        `company_source is getleads but company_filters cannot be re-run. Missing — ${missing.join("; ")}. The service does not invent them (D45).`,
       ),
     };
   }
@@ -142,7 +193,7 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
     kind: "mixed",
     note: mixedNote(
       stamp,
-      `Receipt company_source ${stamp.company_source} is not a complete pull adapter input. Size/pull parks. Do not invent a filter.`,
+      `company_source ${stamp.company_source} with these company_filters is not a complete pull adapter input. Size/pull parks. Do not invent a filter.`,
     ),
   };
 }
@@ -181,6 +232,7 @@ export function pickStamps(receipts: ReceiptStamp[]): { book: ReceiptStamp; meth
   if (receipts.length === 0) return null;
   const asPull = receipts.map((r) => ({
     ...r,
+    receipt_id: r.receipt_id ?? null,
     written_by: r.written_by || "claude",
     granularity: r.granularity === "lane" ? ("lane" as const) : ("build" as const),
     company_source: r.company_source as never,

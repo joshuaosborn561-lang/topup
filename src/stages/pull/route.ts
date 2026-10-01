@@ -19,10 +19,10 @@ export function routePull(recipe: Recipe, campaignIds?: number[]): PullRoute {
   const src = g.source.kind;
   const icp = g.kind;
 
-  if (src === "mixed") {
+  if (g.source.kind === "mixed") {
     return {
       kind: "park",
-      reason: "mixed ICP: route each campaign separately (leadgen-mcp-routing step zero). Do not pick one stack for the client.",
+      reason: receiptGapReason(g.source.note, "route each campaign separately (leadgen-mcp-routing step zero). Do not pick one stack for the client."),
     };
   }
 
@@ -74,7 +74,7 @@ export function routeSize(recipe: Recipe, campaignIds?: number[]): SizeRoute {
   const g = groups[0];
   if (!g) return { kind: "park", reason: "no target campaigns to size" };
   if (g.source.kind === "mixed") {
-    return { kind: "park", reason: "mixed ICP: size each campaign separately. Do not report one TAM for two stacks." };
+    return { kind: "park", reason: receiptGapReason(g.source.note, "size each campaign separately. Do not report one TAM for two stacks.") };
   }
   if (g.kind === "physical") {
     return {
@@ -93,6 +93,17 @@ export function routeSize(recipe: Recipe, campaignIds?: number[]): SizeRoute {
     };
   }
   return { kind: "park", reason: `no sizing method for a ${g.source.kind} source on a ${g.kind} ICP` };
+}
+
+/**
+ * A `mixed` source is almost always an incomplete receipt, not two ICPs. The
+ * card has to say which receipt and which fields, or the operator goes
+ * looking for a recipe file (D45: the fix is a new receipt row).
+ */
+export function receiptGapReason(note: string | undefined, fallback: string): string {
+  const n = note?.trim();
+  if (n) return `receipt gap — ${n}`;
+  return `mixed ICP: ${fallback}`;
 }
 
 function mixedStackReason(groups: CampaignGroup[]): string | null {

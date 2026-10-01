@@ -6,6 +6,7 @@ export type ResolvedRecipe = { ok: true; recipe: Recipe; inferred: boolean } | {
 
 function stampsFromRepo(rows: Awaited<ReturnType<Repo["listPullReceipts"]>>): ReceiptStamp[] {
   return rows.map((r) => ({
+    receipt_id: r.receipt_id,
     written_by: r.written_by,
     written_at: r.written_at,
     client_tag: r.client_tag,

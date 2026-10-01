@@ -31,8 +31,15 @@ export function parseButtonValue(value: string | undefined): { card_id: string; 
   return null;
 }
 
+/** Slack rejects a section whose text is over 3000 chars (`invalid_blocks`). Clip instead of losing the post. */
+export const SECTION_TEXT_MAX = 2900;
+
+export function clipSectionText(text: string, max = SECTION_TEXT_MAX): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
 export function section(text: string): Block {
-  return { type: "section", text: { type: "mrkdwn", text } };
+  return { type: "section", text: { type: "mrkdwn", text: clipSectionText(text) } };
 }
 
 export function context(text: string): Block {
@@ -302,7 +309,7 @@ export interface ParkedCard {
 export function parkedCard(c: ParkedCard): Block[] {
   return [
     section(`:octagonal_sign: *Run parked — ${c.clientTag}* · run \`${c.runId.slice(0, 8)}\` · step *${c.step}* failed ${c.attempts} times`),
-    section(`\`\`\`${c.error.slice(0, 900)}\`\`\``),
+    section(`\`\`\`${c.error.slice(0, 1400)}\`\`\``),
     context("A parked run never retries on its own. Resume re-runs the step once; Abort closes the run."),
     actions(c.cardId, [
       { choice: "resume_run", label: "Resume", style: "primary" },

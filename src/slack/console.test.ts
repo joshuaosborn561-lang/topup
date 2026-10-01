@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { CardRow, Repo } from "../db/repo.js";
 import type { Role, RunRow } from "../domain/runs.js";
-import { spendApprovalCard } from "./cards.js";
+import { SECTION_TEXT_MAX, parkedCard, section, spendApprovalCard } from "./cards.js";
 import { MemoryPoster } from "./client.js";
 import { SlackConsole } from "./console.js";
 import { Roles } from "./roles.js";
@@ -84,6 +84,19 @@ function setup() {
 }
 
 describe("SlackConsole", () => {
+  it("a section never exceeds Slack's 3000-char text limit; the parked card carries the whole receipt gap", () => {
+    const long = section("x".repeat(5000));
+    const text = (long.text as { text: string }).text;
+    assert.ok(text.length <= SECTION_TEXT_MAX, `clipped to ${text.length}`);
+    assert.ok(text.endsWith("…"));
+    assert.equal((section("short").text as { text: string }).text, "short");
+
+    const gap = `receipt gap — receipt c2ec2978 on powergryd/vciso: Missing — job_titles: absent. Fix: ${"z".repeat(1100)} skills/first-pull-receipt/BACKFILL.md`;
+    const card = parkedCard({ cardId: "c", runId: "49a4db73-16c3-4230-bc0f-ca5b5773153c", clientTag: "powergryd", step: "size", attempts: 1, error: gap });
+    const body = (card[1]!.text as { text: string }).text;
+    assert.match(body, /BACKFILL\.md/, "the fix pointer must survive the card clip");
+  });
+
   it("opens one thread per run in the client channel and posts the card into it", async () => {
     const { repo, poster, console_, r } = setup();
     const card = await console_.ask({
