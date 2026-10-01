@@ -20,6 +20,8 @@ The lane row is the filter book. The build rows are the yield. When proposing a 
 
 Until Josh confirms a backfill row (`owner_confirmed_at` set, or the notes no longer say "Josh to confirm"), **propose it, do not scale**.
 
+**Backfilling an old pull, or fixing a receipt the service parked on?** Paste `BACKFILL.md` (same folder) to the Claude that did the pull. It is this skill as a checklist: this lane's campaign ids only, exact getleads titles and band labels, a fresh `tam_count`. A receipt that passes it is the whole recipe (D45); there is no file to write.
+
 If the latest receipt on the lane is `claude_backfill` or `claude_backfill_build`, **recount** (`count_contacts` or the Maps/permit company count) before proposing. Those rows have `tam_count` null and `rows_found` equal to the original export, not the pool. A blank `tam_count` is not TAM.
 
 ## Vocabulary (the table rejects anything else)
