@@ -27,7 +27,7 @@ describe("D43 — topup_queue and count_contacts filters", () => {
     assert.match(ledger, /## D43 — /);
     assert.match(ledger, /topup_queue/);
     assert.match(ledger, /max_per_company/);
-    assert.match(ledger, /Do not put `max_per_company` in the count filters/);
+    assert.match(ledger, /Do not put `max_per_company` in the count filters\./);
     assert.match(readme, /`topup_queue`/);
     assert.match(servers, /topup_queue/);
     assert.match(agents, /topup_queue/);

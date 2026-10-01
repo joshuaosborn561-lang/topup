@@ -1317,8 +1317,7 @@ Cursor. The watch still posts Slack for Josh.
 Separately: getleads `count_contacts` is count filters only — exact
 `company_size` band labels, titles, geo. `max_per_company` is an
 export cap. The size step must not send it. The first-pull-receipt
-skill already said this: "Do not put `max_per_company` in the count
-filters." The service's own TAM call was sending the recipe params
+skill already said this: "Do not put `max_per_company` in the count filters." The service's own TAM call was sending the recipe params
 blob, and Parlay `it_dm` has been parked on size since 2026-09-17
 (`unrecognized_keys: max_per_company`). Numeric `employees_min` /
 `employees_max` / `company_size_min` / `company_size_max` stay

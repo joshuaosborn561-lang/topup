@@ -77,7 +77,7 @@ export function assertGetleadsFilters(filters: GetleadsFilters): void {
 
 /**
  * Keys `count_contacts` accepts from a recipe. `max_per_company` is an
- * export cap — first-pull-receipt: do not put it in the count filters (D43).
+ * export cap — first-pull-receipt: Do not put it in the count filters (D43).
  * Numeric employee bounds are never sent (D34, tam-sizing).
  */
 export const GETLEADS_COUNT_KEYS = [
