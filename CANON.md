@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D45** (2026-10-01). One page of current truth. When a new
+Canon as of **D46** (2026-10-02). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -142,7 +142,16 @@ Maps/PermitStack are wired (physical still parks until then). Campaign
 ids must already exist in `public.campaigns`. Mixed ICPs are two lane
 rows. A lane with no receipt and no file recipe cannot be invented.
 A receipt is enough — infer the pull from tags and notes (D45). A
-file recipe is the override when one exists.
+file recipe is the override when one exists. **A campaign belongs to
+the lane whose lane row names it** (D46): the inferred recipe routes
+into the lane row's `campaign_ids`; build rows carry ids only when the
+lane has no lane row; an id another client owns in `public.campaigns`
+never enters a recipe, the registry or lane health; a lane with no lane
+row and no id of its own is a build segment, not a lane, and is refused
+by name. An incomplete getleads receipt parks as `receipt gap — receipt
+<id> … Missing — job_titles / company_size …` pointing at
+`skills/first-pull-receipt/BACKFILL.md` — the fix is a new receipt row,
+never a recipe file (D46).
 
 ## What this build runs (D26, D27, D28, D38)
 

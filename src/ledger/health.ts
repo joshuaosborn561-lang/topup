@@ -26,6 +26,8 @@ export type HealthFlag = "silent" | "low" | "empty" | "bouncing";
 
 export interface CampaignSnapshot {
   smartlead_campaign_id: number;
+  /** Smartlead client per the mirror (D46). Null when the mirror does not know. */
+  smartlead_client_id?: number | null;
   name: string | null;
   status: string | null;
   leads_total: number;
@@ -77,9 +79,10 @@ export async function campaignSnapshots(db: Queryable, campaignIds: readonly num
     last_send_at: string | null;
     interested_window: string;
     bounces_window: string;
+    smartlead_client_id: string | null;
   }>(
     `with c as (
-       select id, smartlead_campaign_id, name, status, synced_at from public.campaigns
+       select id, smartlead_campaign_id, smartlead_client_id, name, status, synced_at from public.campaigns
        where smartlead_campaign_id = any($1::bigint[])
      ),
      l as (
@@ -99,7 +102,7 @@ export async function campaignSnapshots(db: Queryable, campaignIds: readonly num
        from c join public.sends s on s.campaign_id = c.id
        group by 1
      )
-     select c.smartlead_campaign_id::text, c.name, c.status, c.synced_at::text,
+     select c.smartlead_campaign_id::text, c.smartlead_client_id::text, c.name, c.status, c.synced_at::text,
             coalesce(l.leads_total,0)::text as leads_total, coalesce(l.untouched,0)::text as untouched,
             coalesce(s.sends_window,0)::text as sends_window, coalesce(s.sends_last_14d,0)::text as sends_last_14d,
             s.last_send_at::text,
@@ -111,6 +114,7 @@ export async function campaignSnapshots(db: Queryable, campaignIds: readonly num
   );
   return rows.map((r) => ({
     smartlead_campaign_id: Number(r.smartlead_campaign_id),
+    smartlead_client_id: r.smartlead_client_id == null ? null : Number(r.smartlead_client_id),
     name: r.name,
     status: r.status,
     leads_total: Number(r.leads_total),

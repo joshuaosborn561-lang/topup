@@ -268,6 +268,55 @@ export function pickStamps(receipts: ReceiptStamp[]): { book: ReceiptStamp; meth
   return { book, method };
 }
 
+/**
+ * D46 — which campaign ids an inferred recipe may route into.
+ * - An id named by another lane's *lane row* belongs to that lane.
+ * - An id the Smartlead mirror says is another client's never enters.
+ * - Build rows do not claim campaigns; they only carry ids when the lane
+ *   has no lane row at all.
+ * Returns the cleaned stamps plus what was dropped (ids only) so the
+ * caller can log it and refuse a lane that owns nothing.
+ */
+export function scopeCampaignIds(input: {
+  stamps: ReceiptStamp[];
+  lane: string;
+  smartleadClientId: number;
+  laneRowClaims: Map<number, string>;
+  owners: Map<number, number | null>;
+}): {
+  stamps: ReceiptStamp[];
+  dropped: { claimed_by_other_lane: Array<{ id: number; lane: string }>; other_client: Array<{ id: number; client: number }> };
+  own: number[];
+  hasLaneRow: boolean;
+} {
+  const claimed = new Map<number, string>();
+  const foreign = new Map<number, number>();
+  const keep = (id: number): boolean => {
+    const owner = input.owners.get(id);
+    if (owner != null && owner !== input.smartleadClientId) {
+      foreign.set(id, owner);
+      return false;
+    }
+    const byLane = input.laneRowClaims.get(id);
+    if (byLane && byLane !== input.lane) {
+      claimed.set(id, byLane);
+      return false;
+    }
+    return true;
+  };
+  const stamps = input.stamps.map((s) => ({ ...s, campaign_ids: s.campaign_ids.filter(keep) }));
+  const own = [...new Set(stamps.flatMap((s) => s.campaign_ids))];
+  return {
+    stamps,
+    own,
+    hasLaneRow: stamps.some((s) => s.granularity === "lane"),
+    dropped: {
+      claimed_by_other_lane: [...claimed.entries()].map(([id, lane]) => ({ id, lane })),
+      other_client: [...foreign.entries()].map(([id, client]) => ({ id, client })),
+    },
+  };
+}
+
 export function recipeFromReceipts(input: {
   receipts: ReceiptStamp[];
   smartleadClientId: number;
@@ -276,9 +325,10 @@ export function recipeFromReceipts(input: {
   const picked = pickStamps(input.receipts);
   if (!picked) throw new Error("no pull receipt to infer from");
   const { book, method } = picked;
-  const ids = [...new Set([...book.campaign_ids, ...method.campaign_ids, ...(input.extraCampaignIds ?? [])])].filter(
-    (n) => Number.isInteger(n) && n > 0,
-  );
+  // D46: the lane row is the filter book and names the lane's campaigns.
+  // Build rows carry ids only when the lane has no lane row.
+  const fromReceipts = book.granularity === "lane" ? book.campaign_ids : [...book.campaign_ids, ...method.campaign_ids];
+  const ids = [...new Set([...fromReceipts, ...(input.extraCampaignIds ?? [])])].filter((n) => Number.isInteger(n) && n > 0);
   const slots = ids.map(String);
   const icp = { kind: icpKind(method), persona: persona(method) };
   const raw: unknown = {

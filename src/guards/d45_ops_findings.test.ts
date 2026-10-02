@@ -16,7 +16,7 @@ describe("D45 — queue runway, inferred recipes, Cayden can operate", () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8")) as { version: string };
-    assert.match(canon, /Canon as of \*\*D45\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /\$5 or above/);
     assert.match(canon, /send rate/);
     assert.match(canon, /pull_receipts/);
