@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D46** (2026-10-02). One page of current truth. When a new
+Canon as of **D47** (2026-10-02). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -27,12 +27,17 @@ lane recipe says (D9, D15).
   the count assert, merge field checks, receipts, ledger, digest, free
   retries and resumes, splits under the spend rules, registering a cloned
   campaign, keeping missing-piece groups current.
-- **Judgement (Josh, on a card):** which segment / whether to widen; whether
+- **Judgement (on a card):** which segment / whether to widen; whether
   a low campaign is worth topping up; spend of $5 or above; whether a pilot's
   yield justifies scaling; copy for a new cell; ICP changes; a client's
-  expanded titles; flipping a campaign active.
+  expanded titles; flipping a campaign active. **The card goes to Cayden
+  (D47).** The one thing that waits on Josh is a spend gate whose worst
+  case is above **$50**. Recipe changes, new campaigns and flipping ACTIVE
+  are still Josh's to *do* — the run does not wait for them; Cayden
+  continues without or aborts.
 - **Routine (Cayden):** QA holds, uploading customer lists, resuming parked
-  runs, acknowledging receipts.
+  runs, acknowledging receipts, and every judgement card above except
+  spend above $50.
 - Unclear → judgement column, ask. Nobody automates a decision to save a card.
 
 ## The spine (D24, D25)
@@ -267,7 +272,11 @@ open cards, open runs and which integrations are configured. It is
 ## Money (D9)
 
 - Auto cap **$5** per step; spend of **$5 or above** asks with the worst case in
-  dollars and waits for Josh. Daily backstop **$25** across vendors.
+  dollars. **At or under $50 the card is Cayden's; above $50 it waits for
+  Josh** (D47) — the only wait on Josh in the service. Verify, puzzle and
+  find-emails all ask with one `spend_approval` card; approving writes
+  `approved_cents` and the step re-enters, declining closes the run.
+  Daily backstop **$25** across vendors (a block, not a card).
 - Worst case comes from `src/spend/prices.ts` × batch size. Never a
   vendor's number.
 - One `topup.spend_ledger` row per vendor call, free or paid.
@@ -280,13 +289,17 @@ open cards, open runs and which integrations are configured. It is
 ## People (Slack, D2)
 
 - Owner = Josh, operator = Cayden, by Slack user id in Railway variables.
-- Owner-only taps: approve/decline spend, top up anyway / leave it, split,
-  continue without pending leads, anything that changes a recipe. Operator
-  taps never spend and never change a recipe; the reply is "This needs Josh."
-  Step 5 does not wait on a customer-domain-list card (D37). The
-  heading stays `(code)`.
-- Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
-  `/suppress` (explains the 90-day global positive list).
+- **The service never waits on Josh except for a spend gate above $50
+  (D47).** Every card — spend at or under $50, top up anyway / leave it,
+  split, gate resume / abort, continue without pending leads, yield and
+  pilot taps — is Cayden's; Josh may tap anything. Approving or splitting
+  spend above $50 is refused to the operator with "Spend above $50 needs
+  Josh." The required role is read off the card's `worst_case_cents`
+  (`requiredRole`), never off the choice alone. A recipe change is still
+  not something a tap can make. Step 5 does not wait on a
+  customer-domain-list card (D37). The heading stays `(code)`.
+- Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working`,
+  `/suppress` (explains the 90-day global positive list). All operator (D47).
 - `/mcp` is Streamable HTTP over HTTPS at
   `https://leadtopup-production.up.railway.app/mcp` (D40, D41). **No
   login.** Anyone who can reach the URL gets the operator set:
@@ -296,8 +309,9 @@ open cards, open runs and which integrations are configured. It is
   `register_queue_table, lane_note, variant_stats, campaign_registry,
   recipe_get, missing_piece_groups`. Cayden can run the ops set. The only
   tool hidden from the operator list is `sample_rows` (lead rows; owner
-  token). `resolve_hold` refuses operator approval of spend of $5 or
-  above. `start_topup` takes `client_tag` + `campaign_id` (optional
+  token). `resolve_hold` follows the console: the operator token can
+  approve spend at or under $50; above $50 needs the owner token (D47).
+  `start_topup` takes `client_tag` + `campaign_id` (optional
   `count`) or `client_tag` + `lane`. A file recipe is the override;
   otherwise the pull is inferred from `topup.pull_receipts` tags and
   notes (D45). `topup_recipe` is how the last list was actually pulled

@@ -66,6 +66,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D44 | Live; topup_queue shows #campaign-watchdog lead flags; 1 reply under 2,000 sends is working |
 | D45 | Live; client days from send rate; n/a fails; start_topup infers from receipts; Cayden runs ops |
 | D46 | Live; a campaign belongs to the lane whose lane row names it; other clients' ids never enter a recipe; the park card names the receipt gap |
+| D47 | Live; the service never waits on Josh except a spend gate above $50; every other card is Cayden's; supersedes the owner-only tap lists in D2/D9/D18 and the $5 line in D45 |
 
 ---
 
@@ -1483,3 +1484,63 @@ disappear from the watch. Foreign rows already in
 cleanup statement in the PR.
 
 **Guard.** `src/guards/d46_campaign_scope.test.ts`. Ask Josh.
+
+## D47 — Never wait on Josh, except a spend gate above $50
+
+**Decision.**
+
+1. **The only thing this service waits on Josh for is a spend gate whose
+   worst case is above $50** (`OWNER_SPEND_FLOOR_CENTS = 5000`,
+   `src/slack/roles.ts`). Every other card — not working (top up anyway /
+   leave it), spine gate (resume / abort), pending campaign (continue
+   without / abort), stall split at or under $50, segment proposal, yield
+   card and pilot gate, go-without on the old domain-list card — is
+   posted to Cayden with `audience: "operator"` and the run sits in
+   `awaiting_operator`. Josh may still tap anything.
+2. **A card's required role is decided per card, not per choice.**
+   `requiredRole(choice, payload)` reads `worst_case_cents` off the card
+   for `approve_spend` and `split`; above $50 → owner, at or under →
+   operator, no amount on the card → owner (never guessed down).
+   `decline_spend` never spends and is always Cayden's. `CHOICE_ROLE` is
+   the baseline (all operator); `JUDGEMENT_CHOICES` still lists what is a
+   human tap and never code (D18).
+3. **The console enforces it once.** `SlackConsole.resolveAs` fetches the
+   card and checks `requiredRole`; the refusal reads "Spend above $50
+   needs Josh. (approve_spend on a $X worst case)". MCP `resolve_hold` no
+   longer carries its own $5 check; the operator token can approve spend
+   at or under $50 from a chat.
+4. **Every spend ask is a card to the right person.** Puzzle (Domain
+   Waterfall, Find Named Person) and find-emails (Email Waterfall) used to
+   park with "over the auto cap. Ask Josh." and loop on resume. They now
+   call `spendAsk` (`src/stages/common.ts`): one `spend_approval` card,
+   audience by amount, `waiting`. The orchestrator writes
+   `run_steps.approved_cents` on `approve_spend` and re-enters the step,
+   which passes the approval into `SpendRails.gate`; `decline_spend`
+   closes the run as `declined` with a receipt. Verify keeps its
+   in-process wait but now sets the audience and status by amount.
+5. **`/working` is Cayden's too**, so a "leave it" he tapped is his to
+   undo. Owner-only on the MCP stays exactly `sample_rows` (lead rows).
+6. **Unchanged:** auto cap $5 per step, daily backstop $25 (D9), the
+   worst-case maths, banned vendors, "Smartlead is never started, paused,
+   stopped or deleted from here", flipping ACTIVE is Josh by hand (D6),
+   and a recipe change (new campaign, widening, titles) is still Josh's —
+   the run just does not wait for it; Cayden continues without or aborts.
+
+**Why.** 2026-10-02, Josh: "I don't want this to ever wait for me unless
+it's a spend gate above $50." Six Peterson runs and three PowerGRYD lanes
+sat in `awaiting_josh` or parked on "Ask Josh" for a day while Cayden
+had the context and no button. The brief's section 10 split
+(owner taps spend, operator taps routine) was written before Cayden ran
+the queue; D45 already moved the MCP ops set to him. Every "needs Josh"
+that is not money is a wait with no reason behind it.
+
+**Tradeoff.** Cayden can now approve up to $50 per step, split a stalled
+verify batch, continue a route without pending cells, scale a pilot and
+flip a lane's working flag. The daily cap still blocks at $25 "until
+Josh raises the cap" — that is a block, not a wait on a card, and the
+number was not changed here (D9; Ask Josh if $25 is now too low to
+ever reach $50). A drift kill (bill more than 10% over approval) still
+pages ops and parks; Cayden resumes it. The pull step has no paid
+adapter, so its ask path still throws; it lands with D21.
+
+**Guard.** `src/guards/d47_never_wait_on_josh.test.ts`. Ask Josh.

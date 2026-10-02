@@ -126,7 +126,7 @@ export class SizeStage {
         return gateUnmet("size", `the band filter does not bind: ${partition.bands} (bands) + ${partition.others} (other bands) ≠ ${partition.all} (no band filter), off by ${partition.diff}. The count cannot be trusted (tam-sizing).`, counts);
       }
       if (netNew < recipe.size.useful_floor) {
-        // Thin: count the widening options; Josh decides. Never widen unasked.
+        // Thin: count the widening options for the gate card. Widening is a recipe change; never widen unasked.
         const widening: string[] = [];
         for (const [i, w] of routed.source.widening_candidates.entries()) {
           const wf: GetleadsFilters = {
@@ -144,7 +144,7 @@ export class SizeStage {
         return gateUnmet(
           "size",
           `projected net new ${netNew} is under the useful floor ${recipe.size.useful_floor} (${segment.total_matching} matching, ${held.count} already sent to this ICP). ` +
-            (widening.length ? `Widening options, counted: ${widening.join("; ")}. Josh decides; nothing widens on its own.` : "The recipe lists no widening candidates; Josh decides."),
+            (widening.length ? `Widening options, counted: ${widening.join("; ")}. Widening is a recipe change; nothing widens on its own. Resume to recount or Abort.` : "The recipe lists no widening candidates. Widening is a recipe change; Resume to recount or Abort."),
           counts,
         );
       }

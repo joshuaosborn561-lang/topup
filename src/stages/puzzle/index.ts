@@ -7,9 +7,9 @@ import { domainJobState } from "../../clients/domainWaterfall.js";
 import type { PeopleWaterfall } from "../../clients/peopleWaterfall.js";
 import { peopleJobState } from "../../clients/peopleWaterfall.js";
 import { recipeAuthorises } from "../../recipes/schema.js";
-import { usd, worstCaseCents } from "../../spend/prices.js";
+import { worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
-import { attempt, columnsOf, finish, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, columnsOf, finish, park, poll, realClock, spendAsk, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql, nameSql } from "./classify.js";
 
 /**
@@ -185,13 +185,20 @@ export class PuzzleStage {
         action: "export",
         rows: Math.min(500, rows),
         recipeAuthorised: recipeAuthorises(recipe, "puzzle", "apify"),
+        approvedCents: (await this.d.repo.getStep(run.run_id, "puzzle"))?.approved_cents ?? 0,
         worstCaseCents: worst,
       });
       if (decision.kind === "blocked") throw new Error(`domain waterfall blocked: ${decision.reason}`);
       if (decision.kind === "ask") {
-        const reason = `Domain Waterfall estimate ${usd(decision.worstCaseCents)} (vendor quote ${quote.estimated_cost_usd ?? "n/a"}) is over the auto cap. Ask Josh.`;
-        await this.d.repo.failStep(run.run_id, "puzzle", reason, true);
-        return park(this.d, run, "puzzle", reason, 1);
+        return spendAsk(this.d, run, "puzzle", {
+          vendor: "apify",
+          action: "export (Domain Waterfall)",
+          rows: Math.min(500, rows),
+          worstCaseCents: decision.worstCaseCents,
+          quoteUsd: quote.estimated_cost_usd ?? null,
+          spentTodayCents: await this.d.repo.spentTodayCents(),
+          dailyCapCents: this.d.rails.cfg.dailyCapCents,
+        });
       }
     }
     const started = await this.d.domain!.start({
@@ -243,13 +250,20 @@ export class PuzzleStage {
         action: "export",
         rows,
         recipeAuthorised: recipeAuthorises(recipe, "puzzle", "aiark"),
+        approvedCents: (await this.d.repo.getStep(run.run_id, "puzzle"))?.approved_cents ?? 0,
         worstCaseCents: worst,
       });
       if (decision.kind === "blocked") throw new Error(`people waterfall blocked: ${decision.reason}`);
       if (decision.kind === "ask") {
-        const reason = `Find Named Person estimate ${usd(decision.worstCaseCents)} (vendor quote ${quote.estimated_cost_usd ?? "n/a"}) is over the auto cap. Ask Josh.`;
-        await this.d.repo.failStep(run.run_id, "puzzle", reason, true);
-        return park(this.d, run, "puzzle", reason, 1);
+        return spendAsk(this.d, run, "puzzle", {
+          vendor: "aiark",
+          action: "export (Find Named Person)",
+          rows,
+          worstCaseCents: decision.worstCaseCents,
+          quoteUsd: quote.estimated_cost_usd ?? null,
+          spentTodayCents: await this.d.repo.spentTodayCents(),
+          dailyCapCents: this.d.rails.cfg.dailyCapCents,
+        });
       }
     }
     const started = await this.d.people!.start({

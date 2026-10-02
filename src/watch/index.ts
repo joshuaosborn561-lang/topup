@@ -15,7 +15,7 @@ const log = logger("watch");
 /**
  * Step 1 after the recipe is signed off: every WATCH_CRON the service looks
  * at the Smartlead mirror. The start signal is client-wide rem / capacity
- * (D38, D45), not one campaign going dry. Josh is asked only when the rate has
+ * (D38, D45), not one campaign going dry. A card is posted only when the rate has
  * died. Days are rem ÷ inbox capacity when named, else rem ÷ 7-day send
  * rate. n/a does not pass the floor. Sibling rem still blocks a one-camp
  * SEG refill when client days are actually ≥ the floor.
@@ -85,7 +85,7 @@ export class RunwayWatch {
           lane: recipe.lane,
           email_days: client?.email_days,
           email_rem: client?.email_rem,
-          note: "D38 under-2 mock: filters / net-new / $ are a size step, not invented here. Paid spend still needs Josh.",
+          note: "D38 under-2 mock: filters / net-new / $ are a size step, not invented here. Paid spend still goes through the gate (D47: above $50 is Josh).",
         });
       }
       const started = await this.d.orchestrator.startTopup({
@@ -125,13 +125,14 @@ export class RunwayWatch {
       return "skip";
     }
     const run = started.run;
-    await this.d.repo.setRunStatus(run.run_id, "awaiting_josh", "trigger", decision.why);
+    // D47: top up anyway / leave it is Cayden's call; the service waits on Josh only for spend above $50.
+    await this.d.repo.setRunStatus(run.run_id, "awaiting_operator", "trigger", decision.why);
     const stats = await variantStats(this.d.db, poster.health.smartlead_campaign_id);
     const recipeSummary = await recipeSummariesForWatch(this.d.db, recipe.client_tag, [poster.health.smartlead_campaign_id]);
     await this.d.console.ask({
       run,
       kind: "not_working",
-      audience: "owner",
+      audience: "operator",
       payload: { step: "trigger", campaign_id: poster.health.smartlead_campaign_id, reason: poster.working.reason },
       text: `Step 1: #${poster.health.smartlead_campaign_id} is low and not working`,
       blocks: (cardId) =>
@@ -148,7 +149,7 @@ export class RunwayWatch {
           recipeSummary,
         }),
     });
-    await this.d.ledger?.block(recipe.client_tag, recipe.lane, "owner", `runway is low and #${poster.health.smartlead_campaign_id} is not working: ${poster.working.reason}`, run.run_id);
+    await this.d.ledger?.block(recipe.client_tag, recipe.lane, "operator", `runway is low and #${poster.health.smartlead_campaign_id} is not working: ${poster.working.reason}`, run.run_id);
     return "ask";
   }
 }

@@ -151,11 +151,14 @@ export interface StallCard {
   splitRows: number;
   splitWorstCaseCents: number;
   autoCapCents: number;
+  /** D47: above this the split is Josh's; at or under it Cayden may tap it. */
+  ownerFloorCents: number;
 }
 
 /** Verifier stall after the free resume did not move it. A split can bill, so it is an ask. */
 export function stallCard(c: StallCard): Block[] {
   const splitIsSpend = c.splitWorstCaseCents > c.autoCapCents;
+  const needsJosh = c.splitWorstCaseCents > c.ownerFloorCents;
   return [
     section(`:hourglass_flowing_sand: *Verification stalled — ${c.clientTag}* · run \`${c.runId.slice(0, 8)}\``),
     fields([
@@ -165,9 +168,11 @@ export function stallCard(c: StallCard): Block[] {
       ["Split remainder", `${c.splitRows} rows in two halves · worst case *${usd(c.splitWorstCaseCents)}*`],
     ]),
     context(
-      splitIsSpend
-        ? `Split resubmits rows a vendor may bill again, so it counts as new spend and needs Josh.`
-        : `Split worst case is under the auto cap; Cayden may tap it.`,
+      needsJosh
+        ? `Split resubmits rows a vendor may bill again, so it counts as new spend; above ${usd(c.ownerFloorCents)} it needs Josh.`
+        : splitIsSpend
+          ? `Split resubmits rows a vendor may bill again, so it counts as new spend; under ${usd(c.ownerFloorCents)} Cayden may approve it.`
+          : `Split worst case is under the auto cap; Cayden may tap it.`,
     ),
     actions(c.cardId, [
       { choice: "resume", label: "Resume (free)" },
@@ -229,11 +234,11 @@ export function clientDomainListCard(c: ClientDomainListCard): Block[] {
     section(`:card_index: *Customer domain list missing — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\``),
     section(
       `Step 5 suppresses the client's own customers by domain before anything loads (skill lead-list-build). \`topup.client_domain_blocklist\` has no rows for *${c.clientTag}*.\n` +
-        `Cayden: add the list with the MCP tool \`add_client_domains\` (client_tag, domains[]), then tap *List added*. *Go without* is Josh's call and is recorded on the run.`,
+        `Cayden: add the list with the MCP tool \`add_client_domains\` (client_tag, domains[]), then tap *List added*. *Go without* is recorded on the run.`,
     ),
     actions(c.cardId, [
       { choice: "list_added", label: "List added", style: "primary" },
-      { choice: "no_list", label: "Go without (Josh)", style: "danger" },
+      { choice: "no_list", label: "Go without", style: "danger" },
     ]),
   ];
 }
@@ -248,12 +253,12 @@ export interface PendingCampaignCard {
   cells: Array<{ cell: string; count: number }>;
 }
 
-/** Step 9: leads with no campaign in the recipe's routing. New campaigns are Josh's; the service never clones or creates one. */
+/** Step 9: leads with no campaign in the recipe's routing. The service never clones or creates a campaign; Cayden decides whether the routed rows go on (D47). */
 export function pendingCampaignCard(c: PendingCampaignCard): Block[] {
   const cells = c.cells.slice(0, 10).map((x) => `• \`${x.cell}\` ${x.count}`).join("\n");
   return [
     section(`:signpost: *No campaign for ${c.pending} leads — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\``),
-    section(`These cells match no routing rule in the recipe:\n${cells}\nThey wait as \`pending_campaign\` in the lane. A new campaign or a routing rule is a recipe change (Josh).`),
+    section(`These cells match no routing rule in the recipe:\n${cells}\nThey wait as \`pending_campaign\` in the lane. A new campaign or a routing rule is a recipe change; this card only decides whether the routed rows go on.`),
     context("Continue without: the routed leads go on to staging and these wait for a later run. Abort: nothing is staged."),
     actions(c.cardId, [
       { choice: "continue_without", label: `Continue without ${c.pending}`, style: "primary" },

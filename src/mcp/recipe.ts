@@ -136,11 +136,15 @@ export function trimRecipeSummary(s: RecipeSummaryCounts): RecipeSummaryCounts {
 function rewriteSpendCopy(rules: unknown): unknown {
   if (!rules || typeof rules !== "object" || Array.isArray(rules)) return rules;
   const out: Record<string, unknown> = { ...(rules as Record<string, unknown>) };
-  if (typeof out.spend === "string") out.spend = out.spend.replace(/above \$5/gi, "$5 or above");
+  if (typeof out.spend === "string") {
+    out.spend = out.spend
+      .replace(/above \$5 needs Josh/gi, "$5 or above opens a card (Cayden up to $50, Josh above $50 — D47)")
+      .replace(/above \$5/gi, "$5 or above");
+  }
   return out;
 }
 
-/** Strip vocab/rules unless asked. Rewrite spend copy to "$5 or above". Attach sends_last_14d when given. */
+/** Strip vocab/rules unless asked. Rewrite spend copy to "$5 or above" (and D47's $50 split). Attach sends_last_14d when given. */
 export function presentTopupRecipe(
   recipe: TopupRecipe,
   opts: { includeVocab?: boolean; sendsLast14d?: number | null } = {},

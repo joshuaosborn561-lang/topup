@@ -33,7 +33,7 @@ const log = logger("mcp");
 /** Hard ceiling on rows any MCP call may return (brief section 8: ten sample rows, never a list). */
 export const SAMPLE_ROWS_MAX = 10;
 
-/** Tools and the least role that may call them. Operator sees the rest as "This needs Josh." */
+/** Tools and the least role that may call them. The operator sees the one owner tool as "This needs Josh." */
 export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   lane_state: "operator",
   run_status: "operator",
@@ -57,8 +57,6 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
 
 /** Lead-row dump stays owner-only. Cayden can run every other tool (D45). */
 export const HIDDEN_FROM_OPERATOR: readonly string[] = ["sample_rows"];
-
-const SPEND_ASK_MIN_CENTS = 500;
 
 export interface McpDeps {
   repo: Repo;
@@ -229,17 +227,10 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   server.registerTool(
     "resolve_hold",
     {
-      description: "Tap a card's button from here. Same role rules as Slack: spend and recipe choices need the owner token.",
+      description: "Tap a card's button from here. Same role rules as Slack (D47): every card is the operator's except approving or splitting a spend whose worst case is above $50, which needs the owner token.",
       inputSchema: { card_id: z.string(), choice: z.string() },
     },
     async ({ card_id, choice }) => {
-      if (role === "operator" && (choice === "approve_spend" || choice === "split")) {
-        const card = await d.repo.getCard(card_id);
-        const cents = Number(card?.payload?.worst_case_cents ?? 0);
-        if (cents >= SPEND_ASK_MIN_CENTS) {
-          return text({ ok: false, error: "Spend of $5 or above needs Josh." });
-        }
-      }
       const result = await d.console.resolveAs(`mcp:${role}`, role, card_id, choice);
       if (!result.ok) return text({ ok: false, reason: result.reason, message: result.message });
       await d.orchestrator.onTap({ card_id: result.card.card_id, kind: result.card.kind, run_id: result.card.run_id, choice: result.choice, by: `mcp:${role}` });
@@ -251,7 +242,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "start_topup",
     {
       description:
-        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. File recipe wins; otherwise the pull is inferred from topup.pull_receipts tags and notes. Spend of $5 or above still asks Josh.",
+        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. File recipe wins; otherwise the pull is inferred from topup.pull_receipts tags and notes. Spend of $5 or above opens a card: Cayden approves up to $50, above $50 is Josh (D47).",
       inputSchema: {
         client_tag: z.string(),
         lane: z.string().optional(),

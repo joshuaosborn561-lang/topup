@@ -11,8 +11,8 @@ import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js
  * smartlead-campaign-settings for what a new campaign needs). Every routed
  * lead lands on a campaign the recipe names for this client. A lead whose
  * cell matches no rule waits as `pending_campaign` — a new campaign is a
- * recipe change and Josh's — and one card asks him whether the routed rows go
- * on without them. The service never creates or clones a campaign.
+ * recipe change — and one card asks Cayden whether the routed rows go on
+ * without them (D47). The service never creates or clones a campaign.
  *
  * Gate: every routed campaign belongs to this client (the mirror's
  * smartlead_client_id equals the recipe's). A campaign the mirror does not
@@ -133,16 +133,16 @@ export class RouteStage {
           await this.d.console.ask({
             run,
             kind: "pending_campaign",
-            audience: "owner",
+            audience: "operator",
             payload: { step: "route", pending: pendingTotal, cells: Object.fromEntries([...pending.entries()].map(([k, v]) => [k, v.length])) },
             text: `Step 9: ${pendingTotal} leads match no campaign in the recipe`,
             blocks: (cardId) => pendingCampaignCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane, pending: pendingTotal, cells: [...pending.entries()].map(([cell, ids]) => ({ cell, count: ids.length })) }),
           });
-          await this.d.ledger?.block(run.client_tag, run.lane, "owner", `${pendingTotal} leads have no campaign in the recipe's routing (new campaign or routing rule is Josh's)`, run.run_id);
-          return { kind: "waiting", on: "owner", why: `${pendingTotal} leads match no routing rule` };
+          await this.d.ledger?.block(run.client_tag, run.lane, "operator", `${pendingTotal} leads have no campaign in the recipe's routing (a new campaign or routing rule is a recipe change; Cayden continues without or aborts)`, run.run_id);
+          return { kind: "waiting", on: "operator", why: `${pendingTotal} leads match no routing rule` };
         }
-        if (card) return { kind: "waiting", on: "owner", why: `${pendingTotal} leads match no routing rule` };
-        await this.d.ledger?.unblock(run.client_tag, run.lane, `Josh chose to continue without the ${pendingTotal} pending leads; they wait in the lane.`, run.run_id);
+        if (card) return { kind: "waiting", on: "operator", why: `${pendingTotal} leads match no routing rule` };
+        await this.d.ledger?.unblock(run.client_tag, run.lane, `Continue without the ${pendingTotal} pending leads was tapped; they wait in the lane.`, run.run_id);
       }
 
       const line =

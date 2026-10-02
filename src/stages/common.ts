@@ -1,8 +1,10 @@
 import type { Repo } from "../db/repo.js";
 import { funnelCounts, MAX_STEP_ATTEMPTS, type Role, type RunRow, type RunStatus, type Step } from "../domain/runs.js";
 import { logger } from "../lib/log.js";
-import { parkedCard } from "../slack/cards.js";
+import { parkedCard, spendApprovalCard } from "../slack/cards.js";
 import type { SlackConsole } from "../slack/console.js";
+import { spendAudience } from "../slack/roles.js";
+import { usd } from "../spend/prices.js";
 import type { GateUnmet } from "../spine/gate.js";
 
 const log = logger("stage");
@@ -16,7 +18,7 @@ const log = logger("stage");
  *   waiting   a card is open and the run halts until a human taps it; the
  *             step is marked waiting_approval so re-entry is not an attempt
  *   parked    three failures, or a refusal; one parked card is open
- *   declined  Josh declined the spend; the run closed as declined
+ *   declined  the spend was declined on its card; the run closed as declined
  *   retry     one failure; the orchestrator waits and re-enters
  *   gate      the step's spine gate failed (D24); the orchestrator halts the run
  */
@@ -83,6 +85,54 @@ export async function park(d: StageDeps, run: RunRow, stage: Step, reason: strin
     });
   }
   return { kind: "parked", reason };
+}
+
+export interface SpendAskInput {
+  vendor: string;
+  action: string;
+  rows: number;
+  worstCaseCents: number;
+  /** The vendor's own quote in dollars, shown beside the worst case; never used for the gate. */
+  quoteUsd?: number | null;
+  spentTodayCents: number;
+  dailyCapCents: number;
+}
+
+/**
+ * D47: a spend over the auto cap opens one spend card to whoever may approve
+ * it (Cayden at or under $50, Josh above) and the stage returns `waiting`.
+ * The tap re-enters the step with `run_steps.approved_cents` set by the
+ * orchestrator; a declined card closes the run there. A card already open for
+ * this step is not posted twice.
+ */
+export async function spendAsk(d: StageDeps, run: RunRow, stage: Step, input: SpendAskInput): Promise<StageOutcome> {
+  const audience = spendAudience(input.worstCaseCents);
+  const why = `${input.vendor} ${input.action} on ${input.rows} rows, worst case ${usd(input.worstCaseCents)}${input.quoteUsd != null ? ` (vendor quote $${input.quoteUsd})` : ""}, is over the auto cap`;
+  const open = (await d.repo.openCardsForRun(run.run_id)).some((c) => c.kind === "spend_approval" && c.payload.step === stage);
+  if (!open) {
+    await d.console.ask({
+      run,
+      kind: "spend_approval",
+      audience,
+      payload: { step: stage, rows: input.rows, worst_case_cents: input.worstCaseCents, vendor: input.vendor },
+      text: `Spend ask: ${stage} ${input.rows} rows, worst case ${usd(input.worstCaseCents)}`,
+      blocks: (cardId) =>
+        spendApprovalCard({
+          cardId,
+          runId: run.run_id,
+          clientTag: run.client_tag,
+          step: stage,
+          vendor: input.vendor,
+          action: input.action,
+          rows: input.rows,
+          worstCaseCents: input.worstCaseCents,
+          projectedUseful: null,
+          spentTodayCents: input.spentTodayCents,
+          dailyCapCents: input.dailyCapCents,
+        }),
+    });
+  }
+  return { kind: "waiting", on: audience, why };
 }
 
 /** Finish a step: all counts on run_steps, the funnel numbers on the run, one counts-only line in the thread. */
