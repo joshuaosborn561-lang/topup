@@ -4,7 +4,8 @@ import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
 import { type Block, receiptBlocks, resolvedFooter } from "./cards.js";
 import { channelFor, type Poster } from "./client.js";
-import { CHOICE_ROLE, NEEDS_JOSH, Roles } from "./roles.js";
+import { usd } from "../spend/prices.js";
+import { CHOICE_ROLE, NEEDS_JOSH_SPEND, requiredRole, Roles } from "./roles.js";
 
 const log = logger("console");
 
@@ -116,15 +117,18 @@ export class SlackConsole {
    */
   async resolveAs(actor: string, role: Role | null, cardId: string, choice: string): Promise<TapResult> {
     const userId = actor;
-    const required = CHOICE_ROLE[choice];
-    if (!required) return { ok: false, reason: "bad_choice", message: `Unknown choice ${choice}.` };
-    if (!Roles.allows(role, required)) {
-      const message = role ? `${NEEDS_JOSH} (${choice} is owner-only)` : "You are not on the owner or operator list for this service.";
-      log.warn("tap forbidden", { user: userId, role, choice, card_id: cardId });
-      return { ok: false, reason: "forbidden", message };
-    }
+    if (!CHOICE_ROLE[choice]) return { ok: false, reason: "bad_choice", message: `Unknown choice ${choice}.` };
     const existing = await this.repo.getCard(cardId);
     if (!existing) return { ok: false, reason: "unknown_card", message: "That card no longer exists." };
+    // D47: the role a tap needs depends on the card (spend above $50 is Josh's; everything else is Cayden's).
+    const required = requiredRole(choice, existing.payload) ?? "owner";
+    if (!Roles.allows(role, required)) {
+      const message = role
+        ? `${NEEDS_JOSH_SPEND} (${choice} on a ${usd(Number(existing.payload.worst_case_cents ?? 0))} worst case)`
+        : "You are not on the owner or operator list for this service.";
+      log.warn("tap forbidden", { user: userId, role, choice, card_id: cardId, required });
+      return { ok: false, reason: "forbidden", message };
+    }
     if (existing.status !== "open") {
       return { ok: false, reason: "already_resolved", message: `Already ${existing.status}${existing.resolution ? `: ${existing.resolution}` : ""}.` };
     }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { CardRow, Repo } from "../db/repo.js";
 import type { Role, RunRow } from "../domain/runs.js";
-import { spendApprovalCard } from "./cards.js";
+import { SECTION_TEXT_MAX, parkedCard, section, spendApprovalCard } from "./cards.js";
 import { MemoryPoster } from "./client.js";
 import { SlackConsole } from "./console.js";
 import { Roles } from "./roles.js";
@@ -84,6 +84,19 @@ function setup() {
 }
 
 describe("SlackConsole", () => {
+  it("a section never exceeds Slack's 3000-char text limit; the parked card carries the whole receipt gap", () => {
+    const long = section("x".repeat(5000));
+    const text = (long.text as { text: string }).text;
+    assert.ok(text.length <= SECTION_TEXT_MAX, `clipped to ${text.length}`);
+    assert.ok(text.endsWith("…"));
+    assert.equal((section("short").text as { text: string }).text, "short");
+
+    const gap = `receipt gap — receipt c2ec2978 on powergryd/vciso: Missing — job_titles: absent. Fix: ${"z".repeat(1100)} skills/first-pull-receipt/BACKFILL.md`;
+    const card = parkedCard({ cardId: "c", runId: "49a4db73-16c3-4230-bc0f-ca5b5773153c", clientTag: "powergryd", step: "size", attempts: 1, error: gap });
+    const body = (card[1]!.text as { text: string }).text;
+    assert.match(body, /BACKFILL\.md/, "the fix pointer must survive the card clip");
+  });
+
   it("opens one thread per run in the client channel and posts the card into it", async () => {
     const { repo, poster, console_, r } = setup();
     const card = await console_.ask({
@@ -103,15 +116,20 @@ describe("SlackConsole", () => {
     assert.equal(poster.posts.length, 3, "a second post reuses the thread");
   });
 
-  it("an operator cannot approve spend; the reply says it needs Josh", async () => {
+  it("D47 — an operator cannot approve spend above $50; the reply says it needs Josh. At or under $50 the tap lands", async () => {
     const { console_, r } = setup();
-    const card = await console_.ask({ run: r, kind: "spend_approval", audience: "owner", payload: {}, text: "ask", blocks: () => [] });
+    const card = await console_.ask({ run: r, kind: "spend_approval", audience: "owner", payload: { worst_case_cents: 12_000 }, text: "ask", blocks: () => [] });
     const res = await console_.handleTap("U_CAYDEN", card.card_id, "approve_spend");
     assert.equal(res.ok, false);
     assert.equal(res.ok === false && res.reason, "forbidden");
-    assert.match(res.ok === false ? res.message : "", /This needs Josh/);
+    assert.match(res.ok === false ? res.message : "", /Spend above \$50 needs Josh/);
+    assert.match(res.ok === false ? res.message : "", /\$120\.00/);
     const stranger = await console_.handleTap("U_NOBODY", card.card_id, "resume");
     assert.equal(stranger.ok === false && stranger.reason, "forbidden");
+    const small = await console_.ask({ run: r, kind: "spend_approval", audience: "operator", payload: { worst_case_cents: 2_000 }, text: "ask", blocks: () => [] });
+    assert.equal((await console_.handleTap("U_CAYDEN", small.card_id, "approve_spend")).ok, true);
+    const notWorking = await console_.ask({ run: r, kind: "not_working", audience: "operator", payload: {}, text: "ask", blocks: () => [] });
+    assert.equal((await console_.handleTap("U_CAYDEN", notWorking.card_id, "topup_anyway")).ok, true, "D47: top up anyway is Cayden's");
   });
 
   it("the owner resolves a card exactly once; a second tap is refused and the message loses its buttons", async () => {
@@ -138,7 +156,7 @@ describe("SlackConsole", () => {
 
   it("resolveAs lets an MCP owner token take an owner action under the same rules", async () => {
     const { console_, r } = setup();
-    const card = await console_.ask({ run: r, kind: "spend_approval", audience: "owner", payload: {}, text: "ask", blocks: () => [] });
+    const card = await console_.ask({ run: r, kind: "spend_approval", audience: "owner", payload: { worst_case_cents: 9_000 }, text: "ask", blocks: () => [] });
     assert.equal((await console_.resolveAs("mcp:operator", "operator", card.card_id, "approve_spend")).ok, false);
     assert.equal((await console_.resolveAs("mcp:owner", "owner", card.card_id, "approve_spend")).ok, true);
   });

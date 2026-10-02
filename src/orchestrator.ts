@@ -8,6 +8,7 @@ import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
 import { gateCard } from "./slack/cards.js";
 import type { SlackConsole } from "./slack/console.js";
+import { usd } from "./spend/prices.js";
 import type { GateUnmet } from "./spine/gate.js";
 import { stepForStage, stepLabel } from "./spine/steps.js";
 import type { TapListener } from "./slack/http.js";
@@ -138,7 +139,7 @@ export class Orchestrator {
     }
     const headline =
       input.hold === "not_working"
-        ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch stopped: a campaign is low and not working. This needs Josh.`
+        ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch stopped: a campaign is low and not working. Cayden decides: top up anyway or leave it.`
         : input.trigger === "runway"
           ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch started it: client-wide runway is low and still working.`
           : `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · started by <@${input.by}> (${input.trigger})`;
@@ -151,7 +152,7 @@ export class Orchestrator {
         event: "run_opened",
         line:
           input.hold === "not_working"
-            ? `Run ${run.run_id.slice(0, 8)} opened by the watch and waiting on Josh: not working.`
+            ? `Run ${run.run_id.slice(0, 8)} opened by the watch and waiting on Cayden: not working.`
             : input.trigger === "runway"
               ? `Run ${run.run_id.slice(0, 8)} opened by the watch (client-wide runway low, still working).`
               : `Run ${run.run_id.slice(0, 8)} opened (${input.trigger}).`,
@@ -323,14 +324,15 @@ export class Orchestrator {
    * card already open posts nothing more.
    */
   private async haltAtGate(run: RunRow, stage: Step, g: GateUnmet): Promise<void> {
-    await this.d.repo.setRunStatus(run.run_id, "awaiting_josh", stage, `${g.gate}: ${g.why}`);
-    await this.ledger((l) => l.gateUnmet(run.client_tag, run.lane, g.step, g.why, { run_id: run.run_id, waiting_on: "owner", next_intent: "Waiting for Resume or Abort on the gate card." }));
+    // D47: a gate card is Cayden's (resume or abort); nothing here spends.
+    await this.d.repo.setRunStatus(run.run_id, "awaiting_operator", stage, `${g.gate}: ${g.why}`);
+    await this.ledger((l) => l.gateUnmet(run.client_tag, run.lane, g.step, g.why, { run_id: run.run_id, waiting_on: "operator", next_intent: "Waiting for Resume or Abort on the gate card." }));
     const open = (await this.d.repo.openCardsForRun(run.run_id)).some((c) => c.kind === "gate" && c.payload.step === stage);
     if (open) return;
     await this.d.console.ask({
       run,
       kind: "gate",
-      audience: "owner",
+      audience: "operator",
       payload: { step: stage, spine_step: g.step, gate: g.gate, reason: g.why, counts: g.counts },
       text: `${stepLabel(g.step)} gate unmet — ${g.gate}: ${g.why}`,
       blocks: (cardId) => gateCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane, stepLabel: stepLabel(g.step), gate: g.gate, why: g.why, counts: g.counts }),
@@ -357,21 +359,37 @@ export class Orchestrator {
       }
     }
     switch (card.choice) {
-      case "approve_spend":
+      case "approve_spend": {
+        // D47: a spend card from puzzle / find_emails is approved here and the step re-enters with
+        // approved_cents set. Verify approves its own card in-process (it is still awaiting it).
+        if (!runId) return;
+        const run = await this.d.repo.getRun(runId);
+        const full = await this.d.repo.getCard(card.card_id);
+        const step = typeof full?.payload.step === "string" ? (full.payload.step as Step) : null;
+        const cents = Number(full?.payload.worst_case_cents ?? 0);
+        if (run && step && step !== "verify" && Number.isFinite(cents) && cents > 0) {
+          await this.d.repo.approveStep(runId, step, cents);
+          await this.d.repo.setRunStatus(runId, "open", step);
+          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Spend of ${usd(cents)} on ${step} approved by ${card.by}.`, runId));
+          await this.d.console.postInThread(run, `Spend approved by <@${card.by}>: ${usd(cents)} worst case on *${step}*. The step re-enters.`);
+        }
+        void this.drive(runId);
+        return;
+      }
       case "split":
       case "resume":
       case "topup_anyway": {
         if (!runId) return;
         const run = await this.d.repo.getRun(runId);
-        if (run) {
+        if (run && card.choice === "topup_anyway") {
           await this.d.repo.setRunStatus(runId, "open", "trigger");
-          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh chose to top up anyway.`, runId));
+          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `${card.by} chose to top up anyway.`, runId));
           await this.d.console.postInThread(run, `Top up anyway by <@${card.by}>: the watch will run the lane even though the reply rate is under the bar.`);
         }
         void this.drive(runId);
         return;
       }
-      // step 5: the list was added (or Josh said go without); step 9: Josh said continue without the pending cells
+      // step 5: the list was added (or go without was tapped); step 9: continue without the pending cells
       case "list_added":
       case "no_list": {
         if (card.choice === "no_list" && runId) {
@@ -379,7 +397,7 @@ export class Orchestrator {
           if (run) await this.d.repo.confirmClientDomainListEmpty(run.client_tag, card.by);
         }
       }
-      // fall through: list added (or Josh confirmed none) and step 9 continue
+      // fall through: list added (or none confirmed) and step 9 continue
       case "continue_without":
         // The waiting stage either sees the resolution in-process or, after a
         // restart, is re-entered here.
@@ -425,15 +443,30 @@ export class Orchestrator {
         await this.d.repo.setRunStatus(runId, "not_working", undefined, `left alone by ${card.by}`);
         const run = await this.d.repo.getRun(runId);
         if (run) {
-          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh left it: not working, no top-up.`, runId));
+          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `${card.by} left it: not working, no top-up.`, runId));
           await this.closeWithReceipt(run, `Left alone by <@${card.by}>: the campaign is not working and nothing was topped up.`, "The watch will stay quiet on this lane until the rate recovers or /working is flipped on.");
         }
         return;
       }
-      case "decline_spend":
-        // The verify stage returns the rows to needs_verify and closes the run as declined.
-        if (runId) void this.drive(runId);
+      case "decline_spend": {
+        // Verify returns its rows to needs_verify and closes the run itself (it is awaiting the card).
+        // D47: a puzzle / find_emails spend card declined here closes the run as declined; nothing was bought.
+        if (!runId) return;
+        const full = await this.d.repo.getCard(card.card_id);
+        const step = typeof full?.payload.step === "string" ? (full.payload.step as Step) : null;
+        if (step && step !== "verify") {
+          const run = await this.d.repo.getRun(runId);
+          if (!run) return;
+          const cents = Number(full?.payload.worst_case_cents ?? 0);
+          await this.d.repo.failStep(runId, step, `spend declined by ${card.by}`, false);
+          await this.d.repo.setRunStatus(runId, "declined", step, `spend of ${usd(cents)} on ${step} declined by ${card.by}`);
+          const closed = (await this.d.repo.getRun(runId))!;
+          await this.closeWithReceipt(closed, `Spend declined by <@${card.by}>: ${usd(cents)} worst case on ${step}. Nothing was bought; the rows stay in the lane.`, "Nothing queued.");
+          return;
+        }
+        void this.drive(runId);
         return;
+      }
       default:
         log.info("card resolved with no side effect in this build", { card_id: card.card_id, kind: card.kind, choice: card.choice });
     }

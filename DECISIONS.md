@@ -65,6 +65,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D43 | Live; topup_queue visibility widened by D44; count_contacts is count filters only |
 | D44 | Live; topup_queue shows #campaign-watchdog lead flags; 1 reply under 2,000 sends is working |
 | D45 | Live; client days from send rate; n/a fails; start_topup infers from receipts; Cayden runs ops |
+| D46 | Live; a campaign belongs to the lane whose lane row names it; other clients' ids never enter a recipe; the park card names the receipt gap |
+| D47 | Live; the service never waits on Josh except a spend gate above $50; every other card is Cayden's; supersedes the owner-only tap lists in D2/D9/D18 and the $5 line in D45 |
 
 ---
 
@@ -1425,3 +1427,120 @@ and incomplete-filter lanes park at size. Name to Email stays
 paused. Bounce-by-build and a real pull-date column wait on Josh.
 
 **Guard.** `src/guards/d45_ops_findings.test.ts`. Ask Josh.
+
+## D46 — Receipt campaign scope: lane rows own campaigns; the park card names the gap
+
+**Decision.**
+
+1. **A campaign belongs to the lane whose *lane row* names it.** When
+   a lane has a `granularity = lane` receipt, the inferred recipe routes
+   into that row's `campaign_ids` only. Build rows are the yield; they
+   carry ids only when the lane has no lane row at all. An id named by
+   another lane's lane row is dropped from this lane's build rows.
+2. **A campaign the Smartlead mirror (`public.campaigns`) says belongs to
+   another client never enters a recipe, the registry, or the lane
+   health.** It is dropped at inference and at `LaneLedger.campaigns()`,
+   not discovered at the trigger step after the run is open.
+3. **A lane with no lane row whose receipt ids are all claimed elsewhere
+   is a build segment, not a lane.** `resolveRecipeForStart` refuses it
+   by name ("has no lane row and names no campaign of its own … write a
+   lane row") and the watch does not tick it.
+4. **An incomplete receipt parks by name.** A getleads receipt without
+   `job_titles` or an exact band label produces a note that names the
+   receipt id, `build_label`, `written_by`, the missing fields with what
+   was found, and `skills/first-pull-receipt/BACKFILL.md`. `routeSize` /
+   `routePull` park with that note (`receipt gap — …`), never the bare
+   "mixed ICP: size each campaign separately". Slack sections clip at
+   2,900 characters instead of failing `invalid_blocks`.
+5. **`skills/first-pull-receipt/BACKFILL.md`** is the paste-ready prompt
+   for writing (or fixing) a receipt after the fact. A receipt that
+   passes it is the whole recipe; there is no file to write.
+
+**Why.** 2026-10-01/02. PowerGRYD `vciso`, `name_bank`, `msp_sec_leads`
+parked at size with "mixed ICP" because the Sept 29 backfill receipts
+carried persona terms instead of titles and `"any"` instead of a band;
+the message sent Cayden and Josh looking for recipe files. Peterson
+C1/C2/C3 opened and stopped at the trigger step with "saved ICP names
+campaign(s) #… (belongs to client 345263) …" because the Sept 12
+`claude_backfill_build` rows were reconstructed from
+`dm_contacts.batch` / `stage_20260909.source` and list every campaign
+a lead ever sat in — 54 ids on one row, most of them Nieto, BCP,
+Goliath, Parlay and TJ campaigns. Inference unioned the lane row with
+the best build row, so the recipe, the registry (36 foreign rows under
+`peterson`), and the runway maths all swallowed them. The Peterson lane
+rows themselves were right: C1 = 3798227, 3798228; C2 = 3798229,
+3798230; C3 = 3798231, 3798232. The skill already said "the lane row
+is the filter book"; the code did not.
+
+**Tradeoff.** Peterson is physical. With the ids fixed, C1 and C3
+still park at size ("physical ICP … not wired in this build") and C2's
+lane row says `getleads` with permit-shaped filters, so it parks as a
+receipt gap. The service cannot top Peterson up on its own until
+Maps/PermitStack sizing lands (D21); until then the physical path runs
+in Claude/LeadPipe and writes a receipt. Build-segment "lanes"
+(`schools`, `other`, `unassigned`, `hospitality_care` on Peterson)
+disappear from the watch. Foreign rows already in
+`topup.campaign_registry` are not deleted by code; Josh runs the one
+cleanup statement in the PR.
+
+**Guard.** `src/guards/d46_campaign_scope.test.ts`. Ask Josh.
+
+## D47 — Never wait on Josh, except a spend gate above $50
+
+**Decision.**
+
+1. **The only thing this service waits on Josh for is a spend gate whose
+   worst case is above $50** (`OWNER_SPEND_FLOOR_CENTS = 5000`,
+   `src/slack/roles.ts`). Every other card — not working (top up anyway /
+   leave it), spine gate (resume / abort), pending campaign (continue
+   without / abort), stall split at or under $50, segment proposal, yield
+   card and pilot gate, go-without on the old domain-list card — is
+   posted to Cayden with `audience: "operator"` and the run sits in
+   `awaiting_operator`. Josh may still tap anything.
+2. **A card's required role is decided per card, not per choice.**
+   `requiredRole(choice, payload)` reads `worst_case_cents` off the card
+   for `approve_spend` and `split`; above $50 → owner, at or under →
+   operator, no amount on the card → owner (never guessed down).
+   `decline_spend` never spends and is always Cayden's. `CHOICE_ROLE` is
+   the baseline (all operator); `JUDGEMENT_CHOICES` still lists what is a
+   human tap and never code (D18).
+3. **The console enforces it once.** `SlackConsole.resolveAs` fetches the
+   card and checks `requiredRole`; the refusal reads "Spend above $50
+   needs Josh. (approve_spend on a $X worst case)". MCP `resolve_hold` no
+   longer carries its own $5 check; the operator token can approve spend
+   at or under $50 from a chat.
+4. **Every spend ask is a card to the right person.** Puzzle (Domain
+   Waterfall, Find Named Person) and find-emails (Email Waterfall) used to
+   park with "over the auto cap. Ask Josh." and loop on resume. They now
+   call `spendAsk` (`src/stages/common.ts`): one `spend_approval` card,
+   audience by amount, `waiting`. The orchestrator writes
+   `run_steps.approved_cents` on `approve_spend` and re-enters the step,
+   which passes the approval into `SpendRails.gate`; `decline_spend`
+   closes the run as `declined` with a receipt. Verify keeps its
+   in-process wait but now sets the audience and status by amount.
+5. **`/working` is Cayden's too**, so a "leave it" he tapped is his to
+   undo. Owner-only on the MCP stays exactly `sample_rows` (lead rows).
+6. **Unchanged:** auto cap $5 per step, daily backstop $25 (D9), the
+   worst-case maths, banned vendors, "Smartlead is never started, paused,
+   stopped or deleted from here", flipping ACTIVE is Josh by hand (D6),
+   and a recipe change (new campaign, widening, titles) is still Josh's —
+   the run just does not wait for it; Cayden continues without or aborts.
+
+**Why.** 2026-10-02, Josh: "I don't want this to ever wait for me unless
+it's a spend gate above $50." Six Peterson runs and three PowerGRYD lanes
+sat in `awaiting_josh` or parked on "Ask Josh" for a day while Cayden
+had the context and no button. The brief's section 10 split
+(owner taps spend, operator taps routine) was written before Cayden ran
+the queue; D45 already moved the MCP ops set to him. Every "needs Josh"
+that is not money is a wait with no reason behind it.
+
+**Tradeoff.** Cayden can now approve up to $50 per step, split a stalled
+verify batch, continue a route without pending cells, scale a pilot and
+flip a lane's working flag. The daily cap still blocks at $25 "until
+Josh raises the cap" — that is a block, not a wait on a card, and the
+number was not changed here (D9; Ask Josh if $25 is now too low to
+ever reach $50). A drift kill (bill more than 10% over approval) still
+pages ops and parks; Cayden resumes it. The pull step has no paid
+adapter, so its ask path still throws; it lands with D21.
+
+**Guard.** `src/guards/d47_never_wait_on_josh.test.ts`. Ask Josh.

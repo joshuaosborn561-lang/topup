@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { describe, it } from "node:test";
 import { MCP_TOOL_ROLE, roleForToken } from "../mcp/server.js";
-import { CHOICE_ROLE, COMMAND_ROLE, Roles } from "./roles.js";
+import { CHOICE_ROLE, COMMAND_ROLE, requiredRole, Roles } from "./roles.js";
 import { slackSignatureValid } from "./signature.js";
 
 /** D2 / D9 — owner and operator by id; operator taps never spend or change a recipe. */
@@ -25,12 +25,14 @@ describe("roles", () => {
     assert.equal(Roles.allows(null, "operator"), false);
   });
 
-  it("D9 — every choice that spends or changes a recipe is owner-only", () => {
-    for (const c of ["approve_spend", "decline_spend", "split", "topup_anyway", "leave_it", "approve_segment", "decline_segment", "clone_campaign"]) {
-      assert.equal(CHOICE_ROLE[c], "owner", `${c} must need Josh`);
-    }
-    for (const c of ["resume", "abort", "accept", "purge", "reroute", "resume_run", "list_added"]) assert.equal(CHOICE_ROLE[c], "operator", `${c} is operator-level`);
-    assert.equal(COMMAND_ROLE["/working"], "owner");
+  it("D47 — every choice is Cayden's; approving or splitting spend above $50 rises to Josh", () => {
+    for (const c of Object.keys(CHOICE_ROLE)) assert.equal(CHOICE_ROLE[c], "operator", `${c} must not wait on Josh (D47)`);
+    assert.equal(requiredRole("approve_spend", { worst_case_cents: 12_000 }), "owner");
+    assert.equal(requiredRole("split", { worst_case_cents: 12_000 }), "owner");
+    assert.equal(requiredRole("approve_spend", { worst_case_cents: 1_200 }), "operator");
+    assert.equal(requiredRole("topup_anyway", {}), "operator");
+    assert.equal(requiredRole("nonsense", {}), undefined);
+    assert.equal(COMMAND_ROLE["/working"], "operator", "D47: Cayden can undo a leave-it with /working");
     for (const c of ["/where", "/topup", "/holds", "/runs", "/suppress"]) assert.equal(COMMAND_ROLE[c], "operator");
   });
 

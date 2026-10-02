@@ -1,11 +1,15 @@
 import type { Repo } from "../db/repo.js";
+import { logger } from "../lib/log.js";
 import { parseRecipe, type Recipe } from "./schema.js";
-import { inferredRecipeId, laneFromReceipts, recipeFromReceipts, type ReceiptStamp } from "./infer.js";
+import { inferredRecipeId, laneFromReceipts, recipeFromReceipts, scopeCampaignIds, type ReceiptStamp } from "./infer.js";
+
+const log = logger("recipes");
 
 export type ResolvedRecipe = { ok: true; recipe: Recipe; inferred: boolean } | { ok: false; message: string };
 
 function stampsFromRepo(rows: Awaited<ReturnType<Repo["listPullReceipts"]>>): ReceiptStamp[] {
   return rows.map((r) => ({
+    receipt_id: r.receipt_id,
     written_by: r.written_by,
     written_at: r.written_at,
     client_tag: r.client_tag,
@@ -91,10 +95,37 @@ export async function resolveRecipeForStart(
     };
   }
 
+  // D46: scope the receipts' campaign ids to this lane and this client
+  // before anything is routed, registered or counted.
+  const allIds = [...new Set(stamps.flatMap((s) => s.campaign_ids))];
+  const [laneRowClaims, owners] = await Promise.all([repo.laneRowCampaignLanes(input.clientTag), repo.campaignOwners(allIds)]);
+  const scoped = scopeCampaignIds({ stamps, lane, smartleadClientId: clientId, laneRowClaims, owners });
+  if (scoped.dropped.claimed_by_other_lane.length || scoped.dropped.other_client.length) {
+    log.info("receipt campaign ids scoped", {
+      client_tag: input.clientTag,
+      lane,
+      kept: scoped.own.length,
+      claimed_by_other_lane: scoped.dropped.claimed_by_other_lane.length,
+      other_client: scoped.dropped.other_client.length,
+    });
+  }
+  if (!scoped.hasLaneRow && scoped.own.length === 0 && !input.campaignId) {
+    const lanes = [...new Set(scoped.dropped.claimed_by_other_lane.map((d) => d.lane))];
+    const foreign = scoped.dropped.other_client.length;
+    return {
+      ok: false,
+      message:
+        `${input.clientTag}/${lane} has no lane row and names no campaign of its own` +
+        (lanes.length ? `; its build rows point at campaigns that belong to lane row(s) ${lanes.join(", ")}` : "") +
+        (foreign ? `; ${foreign} id(s) belong to other Smartlead clients` : "") +
+        ". It is a build segment, not a lane — no run. If it is a lane, write a lane row for it (skills/first-pull-receipt/BACKFILL.md).",
+    };
+  }
+
   let recipe: Recipe;
   try {
     recipe = recipeFromReceipts({
-      receipts: stamps,
+      receipts: scoped.stamps,
       smartleadClientId: clientId,
       extraCampaignIds: input.campaignId ? [input.campaignId] : [],
     });

@@ -42,7 +42,7 @@ export function buildCommands(d: { repo: Repo; orchestrator: Orchestrator; ledge
         `${holds.length} open hold${holds.length === 1 ? "" : "s"}:`,
         ...holds.map(
           (h) =>
-            `• \`${h.card_id.slice(0, 8)}\` ${h.kind} · ${h.client_tag ?? "-"}${h.run_id ? ` run \`${h.run_id.slice(0, 8)}\`` : ""} · ${h.age_minutes}m · needs ${h.audience === "owner" ? "Josh" : "Josh or Cayden"} · ${h.summary}`,
+            `• \`${h.card_id.slice(0, 8)}\` ${h.kind} · ${h.client_tag ?? "-"}${h.run_id ? ` run \`${h.run_id.slice(0, 8)}\`` : ""} · ${h.age_minutes}m · needs ${h.audience === "owner" ? "Josh (spend above $50)" : "Cayden or Josh"} · ${h.summary}`,
         ),
       ].join("\n");
     },

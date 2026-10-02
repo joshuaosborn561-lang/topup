@@ -21,7 +21,7 @@ to LeadPipe. Rows move through `leadpipe` and `supabase-csv-endpoint`.
 
 ## After a first pull (so leadtopup can repeat it)
 
-* `first-pull-receipt` ... After Claude builds the first list, write one row to `topup.pull_receipts` (campaignintelligence). Named sources only (`other` is not a value). Lane vs build. Recount before proposing when the latest writer is `claude_backfill` or `claude_backfill_build`. No lead rows. D31–D33.
+* `first-pull-receipt` ... After Claude builds the first list, write one row to `topup.pull_receipts` (campaignintelligence). Named sources only (`other` is not a value). Lane vs build. Recount before proposing when the latest writer is `claude_backfill` or `claude_backfill_build`. No lead rows. D31–D33. `BACKFILL.md` in the same folder is the paste-ready prompt for writing (or fixing) a receipt after the fact — this lane's campaign ids only, exact getleads titles and bands, fresh `tam_count`; a receipt that passes it is the recipe (D45).
 
 ## Lead pulls per client (these become recipes)
 

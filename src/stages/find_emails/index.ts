@@ -5,9 +5,9 @@ import { emailJobState } from "../../clients/emailWaterfall.js";
 import type { NameToEmail } from "../../clients/nameToEmail.js";
 import { nameToEmailSendable } from "../../clients/nameToEmail.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
-import { usd, worstCaseCents } from "../../spend/prices.js";
+import { worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
-import { attempt, columnsOf, finish, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, columnsOf, finish, park, poll, realClock, spendAsk, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql } from "../puzzle/classify.js";
 
 /**
@@ -146,13 +146,20 @@ export class FindEmailsStage {
         action: "export",
         rows,
         recipeAuthorised: recipeAuthorises(recipe, "find_emails", vendor),
+        approvedCents: (await this.d.repo.getStep(run.run_id, "find_emails"))?.approved_cents ?? 0,
         worstCaseCents: worst,
       });
       if (decision.kind === "blocked") throw new Error(`email waterfall blocked: ${decision.reason}`);
       if (decision.kind === "ask") {
-        const reason = `Email Waterfall estimate ${usd(decision.worstCaseCents)} (vendor quote ${quote.estimated_cost_usd ?? "n/a"}) is over the auto cap. Ask Josh.`;
-        await this.d.repo.failStep(run.run_id, "find_emails", reason, true);
-        return park(this.d, run, "find_emails", reason, 1);
+        return spendAsk(this.d, run, "find_emails", {
+          vendor,
+          action: "export (Email Waterfall)",
+          rows,
+          worstCaseCents: decision.worstCaseCents,
+          quoteUsd: quote.estimated_cost_usd ?? null,
+          spentTodayCents: await this.d.repo.spentTodayCents(),
+          dailyCapCents: this.d.rails.cfg.dailyCapCents,
+        });
       }
     }
     const started = await this.d.emailWaterfall!.start({

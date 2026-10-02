@@ -8,6 +8,7 @@ import { logger } from "../../lib/log.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
 import { parkedCard, spendApprovalCard, stallCard } from "../../slack/cards.js";
 import type { SlackConsole } from "../../slack/console.js";
+import { OWNER_SPEND_FLOOR_CENTS, spendAudience } from "../../slack/roles.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet, pct, rejectRate, rejectRateGate, type GateUnmet } from "../../spine/gate.js";
@@ -227,11 +228,12 @@ export class VerifyStage {
   private async askSpend(run: RunRow, b: BatchRow, worst: number): Promise<"approved" | "declined" | "timeout"> {
     const { repo, rails, console: slack } = this.d;
     const spentToday = await repo.spentTodayCents();
+    const audience = spendAudience(worst);
     const card = await slack.ask({
       run,
       kind: "spend_approval",
-      audience: "owner",
-      payload: { batch: b.batch, rows: b.rows, worst_case_cents: worst, vendor: "millionverifier+no2bounce" },
+      audience,
+      payload: { step: "verify", batch: b.batch, rows: b.rows, worst_case_cents: worst, vendor: "millionverifier+no2bounce" },
       text: `Spend ask: verify ${b.rows} rows, worst case ${usd(worst)}`,
       blocks: (cardId) =>
         spendApprovalCard({
@@ -249,7 +251,7 @@ export class VerifyStage {
         }),
       expiresAt: new Date(this.now() + this.d.cfg.cardTimeoutMs),
     });
-    await repo.setRunStatus(run.run_id, "awaiting_josh", "verify");
+    await repo.setRunStatus(run.run_id, audience === "owner" ? "awaiting_josh" : "awaiting_operator", "verify");
     await repo.setStepWaiting(run.run_id, "verify", worst);
     const resolved = await slack.awaitCard(card.card_id, { pollMs: Math.min(this.d.cfg.pollMs, 15000), timeoutMs: this.d.cfg.cardTimeoutMs, sleep: this.sleep });
     await repo.setStepRunning(run.run_id, "verify");
@@ -369,11 +371,12 @@ export class VerifyStage {
     const splitWorst = verifyWorstCaseCents(remaining);
     await repo.stallEvent({ run_id: run.run_id, vendor_run_id: b.vendor_run_id, event: "split_asked", rows: remaining, detail: { reason, worst_case_cents: splitWorst } });
 
+    const splitAudience = spendAudience(splitWorst);
     const card = await slack.ask({
       run,
       kind: "stall",
-      audience: splitWorst > rails.cfg.autoCapCents ? "owner" : "operator",
-      payload: { batch: b.batch, remaining, worst_case_cents: splitWorst },
+      audience: splitAudience,
+      payload: { step: "verify", batch: b.batch, remaining, worst_case_cents: splitWorst },
       text: `Verification stalled on batch ${b.batch}: ${remaining} rows unverified`,
       blocks: (cardId) =>
         stallCard({
@@ -388,10 +391,11 @@ export class VerifyStage {
           splitRows: remaining,
           splitWorstCaseCents: splitWorst,
           autoCapCents: rails.cfg.autoCapCents,
+          ownerFloorCents: OWNER_SPEND_FLOOR_CENTS,
         }),
       expiresAt: new Date(this.now() + this.d.cfg.cardTimeoutMs),
     });
-    await repo.setRunStatus(run.run_id, splitWorst > rails.cfg.autoCapCents ? "awaiting_josh" : "awaiting_operator", "verify");
+    await repo.setRunStatus(run.run_id, splitAudience === "owner" ? "awaiting_josh" : "awaiting_operator", "verify");
     await repo.setStepWaiting(run.run_id, "verify", splitWorst);
     const resolved = await slack.awaitCard(card.card_id, { pollMs: Math.min(this.d.cfg.pollMs, 15000), timeoutMs: this.d.cfg.cardTimeoutMs, sleep: this.sleep });
     await repo.setStepRunning(run.run_id, "verify");
@@ -543,7 +547,7 @@ export class VerifyStage {
     const mvCents = await rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "verify", vendor: "millionverifier", action: "credits_used", rows: b.rows, credits: obs.mv_credits_used, worstCaseCents: b.worst_case_cents, balanceBefore: null, balanceAfter, vendorJobId: b.vendor_run_id, approvedBy: null });
     const n2bCents = await rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "verify", vendor: "no2bounce", action: "credits_used", rows: b.rows, credits: obs.n2b_credits_used, worstCaseCents: null, balanceBefore: null, balanceAfter: null, vendorJobId: b.vendor_run_id, approvedBy: null });
     if (mvCents + n2bCents > rails.allowanceCents(approved)) {
-      await slack.postOps(`:rotating_light: Verify batch ${b.batch} on run \`${run.run_id.slice(0, 8)}\` billed ${usd(mvCents + n2bCents)} against an approval of ${usd(approved)}. Nothing else submits on this run until Josh looks.`);
+      await slack.postOps(`:rotating_light: Verify batch ${b.batch} on run \`${run.run_id.slice(0, 8)}\` billed ${usd(mvCents + n2bCents)} against an approval of ${usd(approved)}. Nothing else submits on this run until Cayden or Josh resumes it.`);
       await repo.stallEvent({ run_id: run.run_id, vendor_run_id: b.vendor_run_id, event: "abort", rows: b.rows, detail: { reason: "spend drift", billed_cents: mvCents + n2bCents, approved_cents: approved } });
     }
 

@@ -469,6 +469,7 @@ export class Repo {
     campaignId?: number | null;
   }): Promise<
     Array<{
+      receipt_id: string;
       written_by: string;
       written_at: string;
       client_tag: string;
@@ -494,6 +495,7 @@ export class Repo {
     }>
   > {
     const { rows } = await this.db.query<{
+      receipt_id: string;
       written_by: string;
       written_at: string;
       client_tag: string;
@@ -517,7 +519,7 @@ export class Repo {
       tam_count: string | null;
       build_label: string | null;
     }>(
-      `select written_by, written_at::text, client_tag, smartlead_client_id::text, lane, campaign_ids,
+      `select receipt_id::text, written_by, written_at::text, client_tag, smartlead_client_id::text, lane, campaign_ids,
               icp_kind, persona, company_source, company_filters, domain_source, person_source,
               email_source, email_max_tier, how_i_did_it, notes, segment, granularity,
               rows_imported::text, rows_found::text, tam_count::text, build_label
@@ -529,6 +531,7 @@ export class Repo {
       [input.clientTag, input.lane ?? null, input.campaignId ?? null],
     );
     return rows.map((r) => ({
+      receipt_id: r.receipt_id,
       written_by: r.written_by,
       written_at: r.written_at,
       client_tag: r.client_tag,
@@ -562,6 +565,43 @@ export class Repo {
       [clientTag ?? null],
     );
     return rows;
+  }
+
+  /**
+   * D46 — which lane's *lane row* (filter book) names each campaign. Latest
+   * lane row per lane wins. Build rows do not claim campaigns.
+   */
+  async laneRowCampaignLanes(clientTag: string): Promise<Map<number, string>> {
+    const { rows } = await this.db.query<{ lane: string; campaign_ids: Array<string | number> | null }>(
+      `select distinct on (lane) lane, campaign_ids
+         from topup.pull_receipts
+        where client_tag = $1 and granularity = 'lane'
+        order by lane, written_at desc`,
+      [clientTag],
+    );
+    const out = new Map<number, string>();
+    for (const r of rows) {
+      for (const raw of r.campaign_ids ?? []) {
+        const id = Number(raw);
+        if (Number.isInteger(id) && id > 0 && !out.has(id)) out.set(id, r.lane);
+      }
+    }
+    return out;
+  }
+
+  /** D46 — Smartlead client per campaign from the mirror; absent when the mirror is not here or the row is unknown. */
+  async campaignOwners(ids: number[]): Promise<Map<number, number | null>> {
+    const out = new Map<number, number | null>();
+    if (ids.length === 0) return out;
+    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('public.campaigns') is not null as ok`);
+    if (!t[0]?.ok) return out;
+    const { rows } = await this.db.query<{ id: string; client: string | null }>(
+      `select smartlead_campaign_id::text as id, smartlead_client_id::text as client
+         from public.campaigns where smartlead_campaign_id = any($1::bigint[])`,
+      [ids],
+    );
+    for (const r of rows) out.set(Number(r.id), r.client == null ? null : Number(r.client));
+    return out;
   }
 
   async laneForCampaign(clientTag: string, campaignId: number): Promise<string | null> {

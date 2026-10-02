@@ -463,7 +463,12 @@ export class LaneLedger {
     if (ids.size === 0 && recipe) for (const id of await campaignIdsForClient(this.db, recipe.smartlead_client_id)) ids.add(id);
     const floor = recipe?.runway.floor_days;
     const snaps = await campaignSnapshots(this.db, [...ids]);
-    return snaps.map((s) => assessCampaign(s, floor));
+    // D46: a campaign the mirror says is another client's is never this
+    // lane's, whatever a stale registry row or receipt id says.
+    const own = recipe
+      ? snaps.filter((s) => s.smartlead_client_id == null || s.smartlead_client_id === recipe.smartlead_client_id)
+      : snaps;
+    return own.map((s) => assessCampaign(s, floor));
   }
 
   /** D38 client rem across every ACTIVE campaign. Inbox × MESSAGE_PER_DAY stay unset until Josh names them. */
