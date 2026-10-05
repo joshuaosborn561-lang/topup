@@ -73,9 +73,15 @@ export class SlackConsole {
         if (!slackChannelGone(err2)) throw err2;
         log.warn("client Slack channel is gone; using ops", { run_id: run.run_id, error: (err2 as Error).message });
         const channel = this.cfg.opsChannel;
-        const { ts } = await this.poster.post(channel, headline);
-        await this.repo.setRunThread(run.run_id, channel, ts);
-        return this.poster.post(channel, text, blocks, ts);
+        try {
+          const { ts } = await this.poster.post(channel, headline);
+          await this.repo.setRunThread(run.run_id, channel, ts);
+          return await this.poster.post(channel, text, blocks, ts);
+        } catch (err3) {
+          if (!slackChannelGone(err3)) throw err3;
+          log.warn("ops Slack channel is gone; the run continues without a thread", { run_id: run.run_id, error: (err3 as Error).message });
+          return { channel, ts: "unposted" };
+        }
       }
     }
   }
