@@ -6,6 +6,7 @@ import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
+import { trimToOwningClient } from "./recipes/trim.js";
 import { gateCard } from "./slack/cards.js";
 import type { SlackConsole } from "./slack/console.js";
 import type { GateUnmet } from "./spine/gate.js";
@@ -208,7 +209,25 @@ export class Orchestrator {
   private async pipeline(initial: RunRow): Promise<void> {
     const rec = await this.d.repo.getRecipe(initial.recipe_id);
     if (!rec) throw new Error(`recipe ${initial.recipe_id} is not in topup.lane_recipes`);
-    const recipe = parseRecipe(rec.body);
+    const loaded = parseRecipe(rec.body);
+    const trimmed = await trimToOwningClient(this.d.repo, loaded);
+    const recipe = trimmed.recipe;
+    if (trimmed.dropped.length) {
+      const version = Number(recipe.recipe_id.split(".v").pop());
+      await this.d.repo.upsertRecipe({
+        recipe_id: recipe.recipe_id,
+        client_tag: recipe.client_tag,
+        lane: recipe.lane,
+        version: Number.isInteger(version) ? version : 0,
+        body: recipe,
+        owner_approved_at: rec.owner_approved_at,
+      });
+      log.info("trimmed foreign campaigns from saved ICP", {
+        recipe_id: recipe.recipe_id,
+        dropped: trimmed.dropped.length,
+        kept: recipe.routing.length,
+      });
+    }
 
     for (const [i, step] of PIPELINE_STEPS.entries()) {
       const after = PIPELINE_STEPS[i + 1];
@@ -445,14 +464,22 @@ export class Orchestrator {
    */
   private async releaseClaimedRows(run: RunRow): Promise<number> {
     const table = ingestedTable(run.client_tag);
-    return this.d.repo.withRun(run.run_id, async (tx) => {
-      const { rowCount } = await tx.query(
-        `update ${table} set lead_status = 'needs_verify', run_id = null, verify_batch = null, status_changed_at = now()
-         where run_id = $1 and lead_status = 'verifying'`,
-        [run.run_id],
-      );
-      return rowCount ?? 0;
-    });
+    try {
+      return await this.d.repo.withRun(run.run_id, async (tx) => {
+        const { rowCount } = await tx.query(
+          `update ${table} set lead_status = 'needs_verify', run_id = null, verify_batch = null, status_changed_at = now()
+           where run_id = $1 and lead_status = 'verifying'`,
+          [run.run_id],
+        );
+        return rowCount ?? 0;
+      });
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      const message = (err as Error).message ?? "";
+      // A client with no LeadPipe ingest table (Peterson) must still be able to abort.
+      if (code === "42P01" || /does not exist/.test(message)) return 0;
+      throw err;
+    }
   }
 
   private async parkedStep(cardId: string): Promise<Step | null> {

@@ -109,6 +109,23 @@ export class Repo {
     return rows;
   }
 
+  async closeRunsResolvedAbort(): Promise<Array<{ run_id: string; client_tag: string; lane: string }>> {
+    const { rows } = await this.db.query<{ run_id: string; client_tag: string; lane: string }>(
+      `update topup.runs r
+          set status = 'aborted',
+              last_error = 'aborted: the card was already resolved abort; closing the run did not finish',
+              closed_at = now()
+        where topup.run_is_open(r.status)
+          and not exists (select 1 from topup.cards c where c.run_id = r.run_id and c.status = 'open')
+          and exists (
+            select 1 from topup.cards c
+             where c.run_id = r.run_id and c.status = 'resolved' and c.resolution = 'abort'
+          )
+        returning run_id::text, client_tag, lane`,
+    );
+    return rows;
+  }
+
   async setRunStatus(runId: string, status: RunStatus, step?: Step, lastError?: string): Promise<void> {
     await this.db.query(
       `update topup.runs set status = $2,
