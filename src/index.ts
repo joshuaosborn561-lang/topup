@@ -214,6 +214,11 @@ async function main(): Promise<void> {
     return [];
   });
   if (closedAborts.length) log.info("closed runs whose abort had already resolved", { runs: closedAborts.map((r) => `${r.client_tag}/${r.lane}`) });
+  const closedRestarts = await repo.closeWatchRestartsAfterAbort().catch((err) => {
+    log.warn("close watch restarts after abort failed", { error: (err as Error).message });
+    return [];
+  });
+  if (closedRestarts.length) log.info("closed empty watch restarts after an abort", { runs: closedRestarts.map((r) => `${r.client_tag}/${r.lane}`) });
   const resumed = await orchestrator.resumeOpenRuns();
   log.info("open runs re-entered", { count: resumed });
 

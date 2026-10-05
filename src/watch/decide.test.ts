@@ -108,6 +108,15 @@ describe("D27 watch decision", () => {
     assert.equal(recovered.kind, "go");
   });
 
+  it("does not restart a lane whose last run was aborted", () => {
+    const d = watchDecision({
+      needy: [{ health: health({ smartlead_campaign_id: 1 }), working: live }],
+      openRun: false,
+      lastStatus: "aborted",
+    });
+    assert.equal(d.kind, "skip");
+  });
+
   it("pickAsk prefers empty over a short runway", () => {
     const a = { health: health({ smartlead_campaign_id: 1, runway_days: 1 }), working: dead };
     const b = { health: health({ smartlead_campaign_id: 2, flags: ["empty"], runway_days: 0, untouched: 0 }), working: dead };

@@ -3,8 +3,10 @@ import type { Recipe, RoutingRule } from "./schema.js";
 
 /**
  * Saved ICPs sometimes list another client's campaigns (the mirror says so).
- * Drop those. Keep a campaign the mirror does not know yet. Never wipe a
- * recipe down to zero routing rules: that is a mirror miss, not a trim.
+ * Drop those. A campaign the mirror has with a blank (null) client id is
+ * foreign too: only a matching client id keeps it. Keep a campaign the mirror
+ * does not know yet. Never wipe a recipe down to zero routing rules: that is a
+ * mirror miss, not a trim.
  */
 export function trimForeignCampaigns<T extends Pick<Recipe, "smartlead_client_id" | "routing" | "segments">>(
   recipe: T,
@@ -13,12 +15,9 @@ export function trimForeignCampaigns<T extends Pick<Recipe, "smartlead_client_id
   const dropped: number[] = [];
   const routing = recipe.routing.filter((rule) => {
     if (!owners.has(rule.campaign_id)) return true;
-    const client = owners.get(rule.campaign_id);
-    if (client !== null && client !== recipe.smartlead_client_id) {
-      dropped.push(rule.campaign_id);
-      return false;
-    }
-    return true;
+    if (owners.get(rule.campaign_id) === recipe.smartlead_client_id) return true;
+    dropped.push(rule.campaign_id);
+    return false;
   });
   if (dropped.length === 0 || routing.length === 0) return { recipe, dropped: [] };
   const segments = { ...recipe.segments };

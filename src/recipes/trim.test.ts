@@ -37,6 +37,20 @@ describe("trimForeignCampaigns", () => {
     );
   });
 
+  it("drops a campaign the mirror has with a blank client id", () => {
+    const owners = new Map<number, number | null>([
+      [3798227, 548610],
+      [3138854, null],
+      [3798228, 548610],
+    ]);
+    const out = trimForeignCampaigns(recipe, owners);
+    assert.deepEqual(out.dropped, [3138854]);
+    assert.deepEqual(
+      out.recipe.routing.map((rule) => rule.campaign_id),
+      [3798227, 3798228],
+    );
+  });
+
   it("does not wipe a recipe when every known campaign is foreign", () => {
     const owners = new Map<number, number | null>([
       [3798227, 345263],

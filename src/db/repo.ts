@@ -124,6 +124,34 @@ export class Repo {
     return rows;
   }
 
+  /**
+   * After an abort the watch used to see the lane still under the floor and
+   * reopen it. Close those empty restarts: an open watch run with no card and
+   * no work past the trigger step, whose previous run on the lane was aborted.
+   */
+  async closeWatchRestartsAfterAbort(): Promise<Array<{ run_id: string; client_tag: string; lane: string }>> {
+    const { rows } = await this.db.query<{ run_id: string; client_tag: string; lane: string }>(
+      `update topup.runs r
+          set status = 'aborted',
+              last_error = 'aborted: the watch reopened this lane right after an abort; closing the empty restart',
+              closed_at = now()
+        where topup.run_is_open(r.status)
+          and r.opened_by = 'watch'
+          and not exists (select 1 from topup.cards c where c.run_id = r.run_id)
+          and not exists (select 1 from topup.run_steps s where s.run_id = r.run_id and s.step <> 'trigger')
+          and (
+            select p.status
+              from topup.runs p
+             where p.client_tag = r.client_tag and p.lane = r.lane and p.run_id <> r.run_id
+               and p.opened_at < r.opened_at
+             order by p.opened_at desc
+             limit 1
+          ) = 'aborted'
+        returning run_id::text, client_tag, lane`,
+    );
+    return rows;
+  }
+
   async openRuns(): Promise<RunRow[]> {
     const { rows } = await this.db.query<RunRow>(
       `select * from topup.runs where topup.run_is_open(status) order by opened_at`,
