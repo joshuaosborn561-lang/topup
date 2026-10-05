@@ -1,6 +1,7 @@
 import type { Repo } from "../db/repo.js";
 import { parseRecipe, type Recipe } from "./schema.js";
 import { inferredRecipeId, laneFromReceipts, recipeFromReceipts, type ReceiptStamp } from "./infer.js";
+import { trimToOwningClient } from "./trim.js";
 
 export type ResolvedRecipe = { ok: true; recipe: Recipe; inferred: boolean } | { ok: false; message: string };
 
@@ -102,6 +103,8 @@ export async function resolveRecipeForStart(
     return { ok: false, message: `Could not infer a recipe from receipts for ${input.clientTag}/${lane}: ${(err as Error).message}` };
   }
 
+  const trimmed = await trimToOwningClient(repo, recipe);
+  recipe = trimmed.recipe;
   await repo.upsertRecipe({
     recipe_id: inferredRecipeId(recipe.client_tag, recipe.lane),
     client_tag: recipe.client_tag,
