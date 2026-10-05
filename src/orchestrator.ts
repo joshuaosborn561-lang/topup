@@ -419,7 +419,9 @@ export class Orchestrator {
         const step = (card.kind === "parked" || card.kind === "gate" ? (await this.parkedStep(card.card_id)) : null) ?? run.current_step;
         if (step) await this.d.repo.resetStep(runId, step);
         await this.d.repo.setRunStatus(runId, "open", step ?? undefined);
-        await this.d.console.postInThread(run, `Resumed by <@${card.by}>: step *${step ?? "?"}* gets one more go.`);
+        await this.d.console
+          .postInThread(run, `Resumed by <@${card.by}>: step *${step ?? "?"}* gets one more go.`)
+          .catch((err) => log.warn("resume note failed", { run_id: runId, error: (err as Error).message }));
         void this.drive(runId);
         return;
       }
