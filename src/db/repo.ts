@@ -102,6 +102,28 @@ export class Repo {
     return rows[0] ?? null;
   }
 
+  /**
+   * An abort tap can resolve the card and then fail before the run closes
+   * (Peterson has no lp ingest table). Finish those closes. A run with any
+   * card still open is left alone.
+   */
+  async closeRunsResolvedAbort(): Promise<Array<{ run_id: string; client_tag: string; lane: string }>> {
+    const { rows } = await this.db.query<{ run_id: string; client_tag: string; lane: string }>(
+      `update topup.runs r
+          set status = 'aborted',
+              last_error = 'aborted: the card was already resolved abort; closing the run did not finish',
+              closed_at = now()
+        where topup.run_is_open(r.status)
+          and not exists (select 1 from topup.cards c where c.run_id = r.run_id and c.status = 'open')
+          and exists (
+            select 1 from topup.cards c
+             where c.run_id = r.run_id and c.status = 'resolved' and c.resolution = 'abort'
+          )
+        returning run_id::text, client_tag, lane`,
+    );
+    return rows;
+  }
+
   async openRuns(): Promise<RunRow[]> {
     const { rows } = await this.db.query<RunRow>(
       `select * from topup.runs where topup.run_is_open(status) order by opened_at`,
