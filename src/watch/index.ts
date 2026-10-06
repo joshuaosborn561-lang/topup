@@ -15,11 +15,12 @@ const log = logger("watch");
 
 /**
  * Step 1 after the recipe is signed off: every WATCH_CRON the service looks
- * at the Smartlead mirror. The start signal is client-wide rem / capacity
- * (D38, D45), not one campaign going dry. Josh is asked only when the rate has
- * died. Days are rem ÷ inbox capacity when named, else rem ÷ 7-day send
- * rate. n/a does not pass the floor. Sibling rem still blocks a one-camp
- * SEG refill when client days are actually ≥ the floor.
+ * at each campaign on the lane. A campaign under its own floor that is
+ * still working is filled, even when a sibling still has leads, so that
+ * campaign's sends do not stop. Client-wide days stay on the board (D38,
+ * D45). Josh is asked only when the campaigns that need leads are not
+ * working. Days are rem ÷ inbox capacity when named, else rem ÷ 7-day send
+ * rate. n/a does not pass the floor.
  */
 export class RunwayWatch {
   /** Lanes of one client overlap. Lanes of other clients overlap those. */

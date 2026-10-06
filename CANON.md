@@ -97,12 +97,14 @@ whose health crossed a line. Claude sessions hand work to the service with
 Health, from the hourly Smartlead mirror: **silent** (ACTIVE, untouched
 leads, no sends in 7 days), **empty**, **low** (that campaign's runway
 under the recipe floor), **bouncing** (over 5%). Those flags stay on the
-board. The **start signal** is client-wide (D38, D45): rem across ACTIVE
-campaigns ÷ (unique inboxes × MESSAGE_PER_DAY when named, else the 7-day
-send rate). LI is rem ÷ 40. **n/a days do not pass the floor.** A client
-with ACTIVE campaigns and no rate is needy, not healthy. Client under-7
-still shows on the daily digest. One empty SEG camp is not a refill while
-siblings hold rem **and** client days are actually ≥ the floor.
+board. **Client-wide** days (D38, D45) stay on that board: rem across
+ACTIVE campaigns ÷ (unique inboxes × MESSAGE_PER_DAY when named, else the
+7-day send rate). LI is rem ÷ 40. **n/a days do not pass the floor.** A
+client with ACTIVE campaigns and no rate is needy, not healthy. Client
+under-7 still shows on the daily digest. The **start signal** is each
+campaign. An empty or low campaign that is still working is filled so
+its sends do not stop, even when a sibling still has leads. A campaign
+that still has runway is not refilled.
 
 ## Build order (D23)
 
@@ -147,16 +149,18 @@ file recipe is the override when one exists.
 ## What this build runs (D26, D27, D28, D38)
 
 The **watch** is the normal start. Every six hours (and once on boot) it
-reads the Smartlead mirror for every recipe. The needy signal is
-**client-wide** rem / capacity (D38, D45), keyed to `runway.floor_days` — not
-one campaign empty or Watchdog nearly-done. **Working** means
+reads the Smartlead mirror for every recipe, campaign by campaign. The
+needy signal is that campaign's own runway under `runway.floor_days`
+(empty or low). Client-wide rem / capacity (D38, D45) stays on the board
+and does not block a dry campaign. Watchdog nearly-done alone does not
+start a run. **Working** means
 under 1 interested per 2,000 sends on every build (1 interested
 in under 2,000 sends is acceptable; a variant with 1,000 sends
-can clear that rate; D11, D35 item 12, D44). A client under the
-floor and still working
-opens a run by itself — no `/topup`, no card. The run targets the recipe's campaigns so
-the pull can take the client's DM persona and title-segment after. A
-client that is low and **not** working posts one card: Top up anyway, or
+can clear that rate; D11, D35 item 12, D44). Each dry campaign that is
+still working
+opens a run by itself — no `/topup`, no card. The run targets those
+campaigns only, so leads go where sends would otherwise stop. A
+campaign that needs leads and is **not** working posts one card: Top up anyway, or
 Leave it. Leave it stays quiet until the rate recovers or Josh flips
 `/working on`. `/topup` and MCP `start_topup` are the override. When the
 watch flags a campaign as needing leads (go or ask), Slack includes the

@@ -26,7 +26,7 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
     assert.match(watchSrc, /recipeCampaignIds: ids/);
   });
 
-  it("one empty SEG camp is not go while sibling ACTIVE rem remains — Ask Josh", () => {
+  it("one empty working campaign is filled; the sibling with rem is not the target", () => {
     const client = assessClientRunway({
       clientTag: "parlay",
       campaigns: [
@@ -61,7 +61,8 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
       openRun: false,
       lastStatus: null,
     });
-    assert.equal(d.kind, "skip", "D38: do not auto-open a one-camp SEG refill while the client still has rem. Ask Josh.");
+    assert.equal(d.kind, "go");
+    if (d.kind === "go") assert.deepEqual(d.campaigns, [1]);
   });
 
   it("SalesGlider is excluded from under-2 auto mocks; paid spend is still Josh", async () => {

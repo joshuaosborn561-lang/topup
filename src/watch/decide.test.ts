@@ -125,7 +125,7 @@ describe("D27 watch decision", () => {
 });
 
 describe("D38 client-wide watch start", () => {
-  it("does not auto-start a one-camp SEG empty while sibling ACTIVE rem remains", () => {
+  it("fills one empty campaign that is still working and does not refill the sibling that has runway", () => {
     const client = assessClientRunway({
       clientTag: "parlay",
       campaigns: [
@@ -137,15 +137,22 @@ describe("D38 client-wide watch start", () => {
       client,
       recipeCampaignIds: [3847846, 3847839],
       needy: [{ health: health({ smartlead_campaign_id: 3847846, flags: ["empty"], untouched: 0, runway_days: 0 }), working: live }],
-      camps: [{ health: health({ smartlead_campaign_id: 3847846, flags: ["empty"], untouched: 0 }), working: live }],
+      camps: [
+        { health: health({ smartlead_campaign_id: 3847846, flags: ["empty"], untouched: 0, runway_days: 0 }), working: live },
+        { health: health({ smartlead_campaign_id: 3847839, flags: [], untouched: 8000, runway_days: 20 }), working: live },
+      ],
       openRun: false,
       lastStatus: null,
     });
-    assert.equal(d.kind, "skip");
-    if (d.kind === "skip") assert.match(d.why, /D38/);
+    assert.equal(d.kind, "go");
+    if (d.kind === "go") {
+      assert.deepEqual(d.campaigns, [3847846]);
+      assert.match(d.why, /3847846/);
+      assert.doesNotMatch(d.why, /Filling these campaigns[\s\S]*3847839/);
+    }
   });
 
-  it("goes when client rem is exhausted, and targets every recipe campaign so the pull can title-segment", () => {
+  it("goes when client rem is exhausted, and targets only the campaigns that are dry and still working", () => {
     const client = assessClientRunway({
       clientTag: "parlay",
       campaigns: [
@@ -166,8 +173,8 @@ describe("D38 client-wide watch start", () => {
     });
     assert.equal(d.kind, "go");
     if (d.kind === "go") {
-      assert.deepEqual(d.campaigns, [1, 2, 3]);
-      assert.match(d.why, /title-segment/);
+      assert.deepEqual(d.campaigns, [1]);
+      assert.match(d.why, /sends do not stop/);
     }
   });
 
@@ -207,7 +214,7 @@ describe("D38 client-wide watch start", () => {
     if (sgGo.kind === "go") assert.equal(sgGo.proposeMock, false);
   });
 
-  it("healthy client-wide days skip even when one camp is flagged empty", () => {
+  it("healthy client-wide days still fill the one empty campaign", () => {
     const client = assessClientRunway({
       clientTag: "parlay",
       campaigns: [
@@ -222,9 +229,31 @@ describe("D38 client-wide watch start", () => {
       client,
       recipeCampaignIds: [1, 2],
       needy: [{ health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0 }), working: live }],
+      camps: [
+        { health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0, runway_days: 0 }), working: live },
+        { health: health({ smartlead_campaign_id: 2, flags: [], untouched: 4000, runway_days: 20 }), working: live },
+      ],
+      openRun: false,
+      lastStatus: null,
+    });
+    assert.equal(d.kind, "go");
+    if (d.kind === "go") assert.deepEqual(d.campaigns, [1]);
+  });
+
+  it("names each campaign and skips when every one still has runway", () => {
+    const d = watchDecision({
+      needy: [],
+      camps: [
+        { health: health({ smartlead_campaign_id: 1, flags: [], untouched: 500, runway_days: 12 }), working: live },
+        { health: health({ smartlead_campaign_id: 2, flags: [], untouched: 800, runway_days: 18 }), working: live },
+      ],
       openRun: false,
       lastStatus: null,
     });
     assert.equal(d.kind, "skip");
+    if (d.kind === "skip") {
+      assert.match(d.why, /#1 covered/);
+      assert.match(d.why, /#2 covered/);
+    }
   });
 });
