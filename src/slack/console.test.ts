@@ -84,7 +84,7 @@ function setup() {
 }
 
 describe("SlackConsole", () => {
-  it("opens one thread per run in the client channel and posts the card into it", async () => {
+  it("records the card and does not post it to Slack", async () => {
     const { repo, poster, console_, r } = setup();
     const card = await console_.ask({
       run: r,
@@ -94,13 +94,13 @@ describe("SlackConsole", () => {
       text: "Spend ask",
       blocks: (id) => spendApprovalCard({ cardId: id, runId: r.run_id, clientTag: "parlay", step: "verify", vendor: "millionverifier", action: "verify", rows: 10_000, worstCaseCents: 2000, projectedUseful: null, spentTodayCents: 0, dailyCapCents: 2500 }),
     });
-    assert.equal(poster.posts.length, 2, "thread header + card");
-    assert.equal(poster.posts[0].channel, "#parlay");
-    assert.equal(poster.posts[1].threadTs, poster.posts[0].ts);
-    assert.ok(JSON.stringify(poster.posts[1].blocks).includes("$20.00"), "worst case is shown in dollars");
-    assert.equal(repo.cards.get(card.card_id)!.slack_ts, poster.posts[1].ts);
+    assert.equal(poster.posts.length, 0);
+    const saved = repo.cards.get(card.card_id)!;
+    assert.equal(saved.slack_ts, null);
+    assert.ok(JSON.stringify(saved.payload.blocks).includes("$20.00"), "worst case is stored on the card");
+    await console_.openRunThread(r, "started");
     await console_.postInThread(r, "again");
-    assert.equal(poster.posts.length, 3, "a second post reuses the thread");
+    assert.equal(poster.posts.length, 0);
   });
 
   it("an operator cannot approve spend; the reply says it needs Josh", async () => {
@@ -121,8 +121,7 @@ describe("SlackConsole", () => {
     assert.equal(first.ok, true);
     const second = await console_.handleTap("U_JOSH", card.card_id, "decline_spend");
     assert.equal(second.ok === false && second.reason, "already_resolved");
-    assert.equal(poster.updates.length, 1);
-    assert.ok(!poster.updates[0].blocks!.some((b) => b.type === "actions"), "buttons removed on resolution");
+    assert.equal(poster.updates.length, 0, "a card that was never posted is not updated in Slack");
   });
 
   it("awaitCard returns the resolved card and null on expiry", async () => {

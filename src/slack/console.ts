@@ -8,12 +8,6 @@ import { CHOICE_ROLE, NEEDS_JOSH, Roles } from "./roles.js";
 
 const log = logger("console");
 
-function slackChannelGone(err: unknown): boolean {
-  const e = err as { data?: { error?: string }; message?: string };
-  const code = e.data?.error ?? "";
-  return code === "channel_not_found" || code === "is_archived" || code === "thread_not_found" || /channel_not_found|is_archived|thread_not_found/.test(e.message ?? "");
-}
-
 export interface ConsoleConfig {
   opsChannel: string;
   clientChannels: Record<string, string>;
@@ -24,10 +18,8 @@ export type TapResult =
   | { ok: false; reason: "unknown_card" | "already_resolved" | "forbidden" | "bad_choice"; message: string };
 
 /**
- * Slack is the console (brief section 10). One channel per client plus ops;
- * every run is a thread; every card is a row in topup.cards so a tap is
- * validated against the role table and resolved exactly once, and so a
- * restart does not lose an open ask.
+ * Cards live in topup.cards. A run does not post to Slack: the card row is
+ * the record, and a tap is validated against the role table exactly once.
  */
 export class SlackConsole {
   private ledger: LaneLedger | null = null;
@@ -48,42 +40,15 @@ export class SlackConsole {
     return channelFor(clientTag, this.cfg.clientChannels, this.cfg.opsChannel);
   }
 
-  /** Open the run's thread with one header line; everything else appends to it. */
+  /** A run starts without a Slack thread. The headline stays in the log. */
   async openRunThread(run: RunRow, headline: string): Promise<RunRow> {
-    if (run.slack_thread_ts) return run;
-    const channel = this.channelForClient(run.client_tag);
-    const { ts } = await this.poster.post(channel, headline);
-    await this.repo.setRunThread(run.run_id, channel, ts);
-    return { ...run, slack_channel: channel, slack_thread_ts: ts };
+    log.info("run opened without a Slack post", { run_id: run.run_id, client_tag: run.client_tag, lane: run.lane, headline });
+    return run;
   }
 
-  async postInThread(run: RunRow, text: string, blocks?: Block[]): Promise<{ channel: string; ts: string }> {
-    const headline = `Top-up run \`${run.run_id.slice(0, 8)}\` — ${run.client_tag} / ${run.lane}`;
-    try {
-      const opened = await this.openRunThread(run, headline);
-      return await this.poster.post(opened.slack_channel!, text, blocks, opened.slack_thread_ts!);
-    } catch (err) {
-      if (!slackChannelGone(err)) throw err;
-      log.warn("stored Slack thread is gone", { run_id: run.run_id, error: (err as Error).message });
-      const fresh: RunRow = { ...run, slack_channel: null, slack_thread_ts: null };
-      try {
-        const opened = await this.openRunThread(fresh, headline);
-        return await this.poster.post(opened.slack_channel!, text, blocks, opened.slack_thread_ts!);
-      } catch (err2) {
-        if (!slackChannelGone(err2)) throw err2;
-        log.warn("client Slack channel is gone; using ops", { run_id: run.run_id, error: (err2 as Error).message });
-        const channel = this.cfg.opsChannel;
-        try {
-          const { ts } = await this.poster.post(channel, headline);
-          await this.repo.setRunThread(run.run_id, channel, ts);
-          return await this.poster.post(channel, text, blocks, ts);
-        } catch (err3) {
-          if (!slackChannelGone(err3)) throw err3;
-          log.warn("ops Slack channel is gone; the run continues without a thread", { run_id: run.run_id, error: (err3 as Error).message });
-          return { channel, ts: "unposted" };
-        }
-      }
-    }
+  async postInThread(run: RunRow, text: string, _blocks?: Block[]): Promise<{ channel: string; ts: string }> {
+    log.info("slack post skipped", { run_id: run.run_id, text: text.slice(0, 180) });
+    return { channel: run.slack_channel ?? "", ts: "unposted" };
   }
 
   async whisper(channel: string, userId: string, text: string): Promise<void> {
@@ -94,7 +59,7 @@ export class SlackConsole {
     await this.poster.post(this.cfg.opsChannel, text, blocks);
   }
 
-  /** Create a card row, then post it (in the run thread when there is a run). */
+  /** Record a card. Nothing is posted to Slack. */
   async ask(input: {
     run: RunRow | null;
     kind: string;
@@ -113,11 +78,7 @@ export class SlackConsole {
     });
     const blocks = input.blocks(card.card_id);
     await this.repo.setCardBlocks(card.card_id, blocks);
-    const posted = input.run
-      ? await this.postInThread(input.run, input.text, blocks)
-      : await this.poster.post(this.channelForClient(null), input.text, blocks);
-    await this.repo.setCardMessage(card.card_id, posted.channel, posted.ts);
-    log.info("card opened", { card_id: card.card_id, kind: input.kind, audience: input.audience, run_id: input.run?.run_id });
+    log.info("card recorded", { card_id: card.card_id, kind: input.kind, audience: input.audience, run_id: input.run?.run_id });
     if (this.ledger && input.run) {
       await this.ledger
         .event({
@@ -132,7 +93,7 @@ export class SlackConsole {
         })
         .catch((err) => log.warn("ledger write failed", { error: (err as Error).message }));
     }
-    return { ...card, slack_channel: posted.channel, slack_ts: posted.ts };
+    return card;
   }
 
   /** A button tap. Role-checked, resolved once, message updated with a footer. */
