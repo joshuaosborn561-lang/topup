@@ -8,6 +8,12 @@ import { CHOICE_ROLE, NEEDS_JOSH, Roles } from "./roles.js";
 
 const log = logger("console");
 
+function slackChannelGone(err: unknown): boolean {
+  const e = err as { data?: { error?: string }; message?: string };
+  const code = e.data?.error ?? "";
+  return code === "channel_not_found" || code === "is_archived" || code === "thread_not_found" || /channel_not_found|is_archived|thread_not_found/.test(e.message ?? "");
+}
+
 export interface ConsoleConfig {
   opsChannel: string;
   clientChannels: Record<string, string>;
@@ -52,8 +58,32 @@ export class SlackConsole {
   }
 
   async postInThread(run: RunRow, text: string, blocks?: Block[]): Promise<{ channel: string; ts: string }> {
-    const opened = await this.openRunThread(run, `Top-up run \`${run.run_id.slice(0, 8)}\` — ${run.client_tag} / ${run.lane}`);
-    return this.poster.post(opened.slack_channel!, text, blocks, opened.slack_thread_ts!);
+    const headline = `Top-up run \`${run.run_id.slice(0, 8)}\` — ${run.client_tag} / ${run.lane}`;
+    try {
+      const opened = await this.openRunThread(run, headline);
+      return await this.poster.post(opened.slack_channel!, text, blocks, opened.slack_thread_ts!);
+    } catch (err) {
+      if (!slackChannelGone(err)) throw err;
+      log.warn("stored Slack thread is gone", { run_id: run.run_id, error: (err as Error).message });
+      const fresh: RunRow = { ...run, slack_channel: null, slack_thread_ts: null };
+      try {
+        const opened = await this.openRunThread(fresh, headline);
+        return await this.poster.post(opened.slack_channel!, text, blocks, opened.slack_thread_ts!);
+      } catch (err2) {
+        if (!slackChannelGone(err2)) throw err2;
+        log.warn("client Slack channel is gone; using ops", { run_id: run.run_id, error: (err2 as Error).message });
+        const channel = this.cfg.opsChannel;
+        try {
+          const { ts } = await this.poster.post(channel, headline);
+          await this.repo.setRunThread(run.run_id, channel, ts);
+          return await this.poster.post(channel, text, blocks, ts);
+        } catch (err3) {
+          if (!slackChannelGone(err3)) throw err3;
+          log.warn("ops Slack channel is gone; the run continues without a thread", { run_id: run.run_id, error: (err3 as Error).message });
+          return { channel, ts: "unposted" };
+        }
+      }
+    }
   }
 
   async whisper(channel: string, userId: string, text: string): Promise<void> {

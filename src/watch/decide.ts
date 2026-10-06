@@ -63,6 +63,9 @@ export function watchDecision(input: {
   camps?: NeedyCampaign[];
 }): WatchDecision {
   if (input.openRun) return { kind: "skip", why: "a run is already open for this lane" };
+  if (input.lastStatus === "aborted") {
+    return { kind: "skip", why: "the last run on this lane was aborted; /topup starts it again" };
+  }
 
   const client = input.client ?? null;
   if (client && !client.under_floor) {
