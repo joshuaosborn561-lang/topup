@@ -8,6 +8,7 @@ import type { Recipe } from "../recipes/schema.js";
 import { recipeSummariesForWatch } from "../mcp/recipe.js";
 import { notWorkingCard, section } from "../slack/cards.js";
 import type { SlackConsole } from "../slack/console.js";
+import { Overlap, WATCH_ACROSS_CLIENTS, WATCH_WITHIN_CLIENT } from "../lib/concurrency.js";
 import { snapshotWatchLane } from "./assess.js";
 
 const log = logger("watch");
@@ -21,6 +22,9 @@ const log = logger("watch");
  * SEG refill when client days are actually ≥ the floor.
  */
 export class RunwayWatch {
+  /** Lanes of one client overlap. Lanes of other clients overlap those. */
+  private readonly overlap = new Overlap(WATCH_WITHIN_CLIENT, WATCH_ACROSS_CLIENTS);
+
   constructor(
     private readonly d: {
       db: Queryable;
@@ -34,18 +38,23 @@ export class RunwayWatch {
   ) {}
 
   async tick(): Promise<{ looked: number; went: number; asked: number; skipped: number }> {
-    const tally = { looked: 0, went: 0, asked: 0, skipped: 0 };
-    for (const recipe of this.d.recipes) {
-      tally.looked += 1;
-      try {
-        const action = await this.lane(recipe);
-        if (action === "go") tally.went += 1;
-        else if (action === "ask") tally.asked += 1;
-        else tally.skipped += 1;
-      } catch (err) {
-        tally.skipped += 1;
-        log.error("lane tick failed", { client_tag: recipe.client_tag, lane: recipe.lane, error: (err as Error).message });
-      }
+    const tally = { looked: this.d.recipes.length, went: 0, asked: 0, skipped: 0 };
+    const actions = await Promise.all(
+      this.d.recipes.map((recipe) =>
+        this.overlap.run(recipe.client_tag, async () => {
+          try {
+            return await this.lane(recipe);
+          } catch (err) {
+            log.error("lane tick failed", { client_tag: recipe.client_tag, lane: recipe.lane, error: (err as Error).message });
+            return "skip" as const;
+          }
+        }),
+      ),
+    );
+    for (const action of actions) {
+      if (action === "go") tally.went += 1;
+      else if (action === "ask") tally.asked += 1;
+      else tally.skipped += 1;
     }
     log.info("tick", tally);
     return tally;

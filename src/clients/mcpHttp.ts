@@ -8,6 +8,8 @@ import { SERVICE_VERSION } from "../version.js";
 export class McpHttpClient {
   private sessionId: string | null = null;
   private nextId = 1;
+  /** One initialize for every caller. Concurrent tool calls share it. */
+  private sessionReady: Promise<void> | null = null;
 
   constructor(
     private readonly url: string,
@@ -58,6 +60,16 @@ export class McpHttpClient {
 
   async ensureSession(): Promise<void> {
     if (this.sessionId) return;
+    if (!this.sessionReady) {
+      this.sessionReady = this.openSession().catch((err) => {
+        this.sessionReady = null;
+        throw err;
+      });
+    }
+    await this.sessionReady;
+  }
+
+  private async openSession(): Promise<void> {
     await this.rpc("initialize", {
       protocolVersion: "2025-03-26",
       capabilities: {},

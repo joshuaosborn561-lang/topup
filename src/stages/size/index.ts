@@ -3,6 +3,7 @@ import type { MapsStats } from "../../clients/mapsStats.js";
 import type { PermitCounts } from "../../clients/permits.js";
 import type { RunRow } from "../../domain/runs.js";
 import { campaignSnapshots } from "../../ledger/health.js";
+import { Overlap, SIZE_ACROSS_CLIENTS, SIZE_WITHIN_CLIENT } from "../../lib/concurrency.js";
 import { runTargetCampaignIds } from "../../recipes/campaigns.js";
 import { recipeAuthorises, type GetleadsSource, type MapsSource, type PermitsSource, type Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
@@ -71,6 +72,9 @@ export function rowsNeeded(snaps: Array<{ untouched: number; sends_window: numbe
 }
 
 export class SizeStage {
+  /** Lists of one client overlap. Lists of other clients overlap those. */
+  private readonly overlap = new Overlap(SIZE_WITHIN_CLIENT, SIZE_ACROSS_CLIENTS);
+
   constructor(private readonly d: SizeDeps) {}
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
@@ -188,45 +192,9 @@ export class SizeStage {
    * are subtracted once, and only from a people total.
    */
   private async combineLists(run: RunRow, recipe: Recipe, segments: SizeSegment[], campaignIds: number[], attempts: number): Promise<StageOutcome> {
-    const measures: SegmentMeasure[] = [];
-    const perList: Array<{ label: string; total: number; partition: Partition }> = [];
-    for (const seg of segments) {
-      const unit = unitFor(seg.route);
-      if (seg.route.kind === "park") {
-        measures.push({ label: seg.label, unit, counted: false, total: 0, detail: null, reason: seg.route.reason });
-        continue;
-      }
-      if (seg.route.kind === "skip") {
-        measures.push({ label: seg.label, unit, counted: true, total: 0, detail: null, reason: null });
-        perList.push({ label: seg.label, total: 0, partition: { bands: 0, others: 0, all: 0, diff: 0, ok: true } });
-        continue;
-      }
-      if (seg.route.kind === "maps") {
-        const measured = await this.measureMaps(run, recipe, seg.route.source);
-        measures.push(
-          measured.ok
-            ? { label: seg.label, unit: "businesses", counted: true, total: measured.total, detail: measured.detail, reason: null }
-            : { label: seg.label, unit: "businesses", counted: false, total: 0, detail: null, reason: measured.reason },
-        );
-        continue;
-      }
-      if (seg.route.kind === "permits") {
-        const measured = await this.measurePermits(run, recipe, seg.route.source);
-        measures.push(
-          measured.ok
-            ? { label: seg.label, unit: "permits", counted: true, total: measured.total, detail: measured.detail, reason: null }
-            : { label: seg.label, unit: "permits", counted: false, total: 0, detail: null, reason: measured.reason },
-        );
-        continue;
-      }
-      const measured = await this.measureGetleads(run, recipe, seg.route.source);
-      if (!measured.ok) {
-        measures.push({ label: seg.label, unit: "people", counted: false, total: 0, detail: null, reason: measured.reason });
-        continue;
-      }
-      measures.push({ label: seg.label, unit: "people", counted: true, total: measured.total, detail: null, reason: null });
-      perList.push({ label: seg.label, total: measured.total, partition: measured.partition });
-    }
+    const rows = await Promise.all(segments.map((seg) => this.measureSegment(run, recipe, seg)));
+    const measures = rows.map((row) => row.measure);
+    const perList = rows.flatMap((row) => (row.partition ? [{ label: row.measure.label, total: row.measure.total, partition: row.partition }] : []));
 
     const combined = combineSizeLine(measures);
     if (combined.kind === "incomplete") {
@@ -362,6 +330,48 @@ export class SizeStage {
     return finish(this.d, run, "size", hasMaps ? businesses : 0, counts, lines.join("\n"));
   }
 
+  /** One list. Vendor calls take a slot so this client's other lists, and other clients, overlap. */
+  private async measureSegment(
+    run: RunRow,
+    recipe: Recipe,
+    seg: SizeSegment,
+  ): Promise<{ measure: SegmentMeasure; partition?: Partition }> {
+    const unit = unitFor(seg.route);
+    if (seg.route.kind === "park") {
+      return { measure: { label: seg.label, unit, counted: false, total: 0, detail: null, reason: seg.route.reason } };
+    }
+    if (seg.route.kind === "skip") {
+      return { measure: { label: seg.label, unit, counted: true, total: 0, detail: null, reason: null }, partition: { bands: 0, others: 0, all: 0, diff: 0, ok: true } };
+    }
+    if (seg.route.kind === "maps") {
+      const source = seg.route.source;
+      const measured = await this.overlap.run(run.client_tag, () => this.measureMaps(run, recipe, source));
+      return {
+        measure: measured.ok
+          ? { label: seg.label, unit: "businesses", counted: true, total: measured.total, detail: measured.detail, reason: null }
+          : { label: seg.label, unit: "businesses", counted: false, total: 0, detail: null, reason: measured.reason },
+      };
+    }
+    if (seg.route.kind === "permits") {
+      const source = seg.route.source;
+      const measured = await this.overlap.run(run.client_tag, () => this.measurePermits(run, recipe, source));
+      return {
+        measure: measured.ok
+          ? { label: seg.label, unit: "permits", counted: true, total: measured.total, detail: measured.detail, reason: null }
+          : { label: seg.label, unit: "permits", counted: false, total: 0, detail: null, reason: measured.reason },
+      };
+    }
+    const source = seg.route.source;
+    const measured = await this.overlap.run(run.client_tag, () => this.measureGetleads(run, recipe, source));
+    if (!measured.ok) {
+      return { measure: { label: seg.label, unit: "people", counted: false, total: 0, detail: null, reason: measured.reason } };
+    }
+    return {
+      measure: { label: seg.label, unit: "people", counted: true, total: measured.total, detail: null, reason: null },
+      partition: measured.partition,
+    };
+  }
+
   /** One category. Several states are counted and summed. No state means the count is not limited to one. */
   private async measureMaps(
     run: RunRow,
@@ -379,13 +389,9 @@ export class SizeStage {
         await this.recordCount(run, "maps", n);
         return { ok: true, total: n, detail: "(not limited to a state)" };
       }
-      let total = 0;
-      for (const state of states) {
-        const n = await this.d.maps.scopedBusinesses({ category, state, clientTag: run.client_tag });
-        await this.recordCount(run, "maps", n);
-        total += n;
-      }
-      return { ok: true, total, detail: `in ${states.join(", ")}` };
+      const counts = await Promise.all(states.map((state) => this.d.maps!.scopedBusinesses({ category, state, clientTag: run.client_tag })));
+      for (const n of counts) await this.recordCount(run, "maps", n);
+      return { ok: true, total: counts.reduce((sum, n) => sum + n, 0), detail: `in ${states.join(", ")}` };
     } catch (err) {
       return { ok: false, reason: (err as Error).message };
     }
@@ -406,16 +412,11 @@ export class SizeStage {
     const states = stateCodes(source.params.states);
     if (states.length === 0) return { ok: false, reason: "permit count needs a state on the receipt" };
     try {
-      let total = 0;
-      let months: number | null = null;
-      for (const state of states) {
-        const counted = await this.d.permits.monthlyTotal({ category, state });
-        await this.recordCount(run, "permitstack", counted.total);
-        total += counted.total;
-        months = counted.months;
-      }
+      const counts = await Promise.all(states.map((state) => this.d.permits!.monthlyTotal({ category, state })));
+      for (const counted of counts) await this.recordCount(run, "permitstack", counted.total);
+      const months = counts.find((counted) => counted.months)?.months ?? null;
       const window = months ? ` over ${months} months` : "";
-      return { ok: true, total, detail: `in ${states.join(", ")}${window}` };
+      return { ok: true, total: counts.reduce((sum, counted) => sum + counted.total, 0), detail: `in ${states.join(", ")}${window}` };
     } catch (err) {
       return { ok: false, reason: (err as Error).message };
     }
