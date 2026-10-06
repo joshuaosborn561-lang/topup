@@ -93,7 +93,9 @@ describe("D45 infer recipe from pull receipts", () => {
       assert.equal(src.parts[1]?.source.kind, "permits");
       if (src.parts[1]?.source.kind === "permits") {
         assert.deepEqual(src.parts[1].source.params.permit_types, ["ROOFING", "NEW_CONSTRUCTION"]);
+        assert.equal(src.parts[1].source.params.states, undefined);
       }
+      if (src.parts[0]?.source.kind === "maps") assert.equal(src.parts[0].source.params.states, undefined);
     }
 
     const bare = sourceFromStamp(
@@ -105,6 +107,27 @@ describe("D45 infer recipe from pull receipts", () => {
     );
     assert.equal(bare.kind, "mixed");
     if (bare.kind === "mixed") assert.deepEqual(bare.parts, []);
+  });
+
+  it("uses TX when the receipt geo is DFW and names no state code", () => {
+    const src = sourceFromStamp(
+      stamp({
+        company_source: "maps_and_permits",
+        company_filters: {
+          maps: { categories: ["general contractor"] },
+          permits: { permit_types: ["ROOFING"] },
+        },
+        how_i_did_it: "DFW grid. No state code on the receipt.",
+      }),
+    );
+    assert.equal(src.kind, "mixed");
+    if (src.kind === "mixed") {
+      assert.match(src.note, /Counts use TX because the receipt geo is DFW/);
+      assert.equal(src.parts[0]?.source.kind, "maps");
+      assert.equal(src.parts[1]?.source.kind, "permits");
+      if (src.parts[0]?.source.kind === "maps") assert.deepEqual(src.parts[0].source.params.states, ["TX"]);
+      if (src.parts[1]?.source.kind === "permits") assert.deepEqual(src.parts[1].source.params.states, ["TX"]);
+    }
   });
 
   it("keeps a getleads segment list beside the maps lists", () => {

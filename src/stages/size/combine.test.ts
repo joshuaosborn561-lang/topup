@@ -1,25 +1,28 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { combineSegmentTotals, combineSizeLine } from "./combine.js";
+import { combineByUnit, combineSizeLine } from "./combine.js";
+
+const people = (label: string, total: number, counted = true, reason: string | null = null) => ({
+  label,
+  unit: "people" as const,
+  counted,
+  total,
+  detail: null,
+  reason,
+});
 
 describe("size each segment list, then combine", () => {
-  it("adds every counted list", () => {
-    const sums = combineSegmentTotals([
-      { label: "general contractor", counted: true, total: 1200, reason: null },
-      { label: "commercial construction", counted: true, total: 800, reason: null },
-    ]);
+  it("adds every counted list of the same unit", () => {
+    const sums = combineByUnit([people("general contractor", 1200), people("commercial construction", 800)]);
     assert.equal(sums.allCounted, true);
-    assert.equal(sums.total, 2000);
-    assert.equal(combineSizeLine([
-      { label: "general contractor", counted: true, total: 1200, reason: null },
-      { label: "commercial construction", counted: true, total: 800, reason: null },
-    ]).kind, "total");
+    assert.equal(sums.units[0]?.total, 2000);
+    assert.equal(combineSizeLine([people("general contractor", 1200), people("commercial construction", 800)]).kind, "total");
   });
 
   it("does not treat a partial sum as the TAM", () => {
     const line = combineSizeLine([
-      { label: "general contractor", counted: false, total: 0, reason: "maps counter is not wired" },
-      { label: "property managers", counted: true, total: 400, reason: null },
+      people("general contractor", 0, false, "maps counter is not wired"),
+      people("property managers", 400),
     ]);
     assert.equal(line.kind, "incomplete");
     if (line.kind === "incomplete") {
@@ -30,11 +33,23 @@ describe("size each segment list, then combine", () => {
   });
 
   it("a list that was not counted adds nothing", () => {
-    const sums = combineSegmentTotals([
-      { label: "a", counted: true, total: 10, reason: null },
-      { label: "b", counted: false, total: 99, reason: "parked" },
-    ]);
-    assert.equal(sums.total, 10);
+    const sums = combineByUnit([people("a", 10), people("b", 99, false, "parked")]);
+    assert.equal(sums.units[0]?.total, 10);
     assert.equal(sums.allCounted, false);
+  });
+
+  it("does not add businesses and permits into one total", () => {
+    const sums = combineByUnit([
+      { label: "general contractor", unit: "businesses", counted: true, total: 2178, detail: "in TX", reason: null },
+      { label: "ROOFING", unit: "permits", counted: true, total: 52317, detail: "in TX over 24 months", reason: null },
+    ]);
+    assert.equal(sums.allCounted, true);
+    assert.deepEqual(
+      sums.units.map((unit) => [unit.unit, unit.total]),
+      [
+        ["businesses", 2178],
+        ["permits", 52317],
+      ],
+    );
   });
 });

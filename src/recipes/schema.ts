@@ -318,6 +318,8 @@ export type Source = Recipe["source"];
 export type RoutingRule = Recipe["routing"][number];
 export type CampaignIcp = RoutingRule["icp"];
 export type GetleadsSource = Extract<Source, { kind: "getleads" }>;
+export type MapsSource = Extract<Source, { kind: "maps" }>;
+export type PermitsSource = Extract<Source, { kind: "permits" }>;
 
 export function parseRecipe(input: unknown): Recipe {
   const r = recipeSchema.safeParse(input);
@@ -354,7 +356,14 @@ export function recipeAuthorises(recipe: Recipe, step: string, vendor?: string):
         }
         if (src.kind === "getleads") kinds.add("getleads");
         if (src.kind === "ai_ark") kinds.add("aiark");
-        if (src.kind === "maps" || src.kind === "permits") kinds.add("apify");
+        if (src.kind === "maps") {
+          kinds.add("apify");
+          kinds.add("maps");
+        }
+        if (src.kind === "permits") {
+          kinds.add("apify");
+          kinds.add("permitstack");
+        }
       };
       add(recipe.source);
       for (const rule of recipe.routing) add(rule.source);

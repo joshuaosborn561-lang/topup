@@ -90,6 +90,49 @@ function permitTypeList(v: unknown): string[] {
   return asStringArray(v);
 }
 
+const STATE_CODE = /^[A-Z]{2}$/;
+
+function twoLetterStates(v: unknown): string[] {
+  return asStringArray(v)
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => STATE_CODE.test(s));
+}
+
+function explicitStateCodes(stamp: ReceiptStamp): string[] {
+  const filters = stamp.company_filters ?? {};
+  const maps = asObject(filters.maps);
+  const permits = asObject(filters.permits);
+  return [...new Set([...twoLetterStates(filters.states), ...twoLetterStates(maps?.states), ...twoLetterStates(permits?.states)])];
+}
+
+function geoBlob(stamp: ReceiptStamp): string {
+  const filters = stamp.company_filters ?? {};
+  const maps = asObject(filters.maps);
+  const permits = asObject(filters.permits);
+  return [
+    typeof filters.geo === "string" ? filters.geo : "",
+    typeof maps?.geo === "string" ? maps.geo : "",
+    typeof permits?.geo === "string" ? permits.geo : "",
+    stamp.how_i_did_it ?? "",
+    stamp.notes ?? "",
+  ].join("\n");
+}
+
+/**
+ * State codes the receipt already named. When it names none and the geo
+ * says DFW, Texas, or TX, the count uses TX: PermitStack requires a state
+ * code. Other metros are not guessed.
+ */
+export function receiptStateCodes(primary: ReceiptStamp, also?: ReceiptStamp | null): { states: string[]; fromDfw: boolean } {
+  const explicit = [...new Set([...explicitStateCodes(primary), ...(also ? explicitStateCodes(also) : [])])];
+  if (explicit.length) return { states: explicit, fromDfw: false };
+  const blob = `${geoBlob(primary)}\n${also ? geoBlob(also) : ""}`;
+  if (/\b(TX|Texas|DFW)\b/i.test(blob)) return { states: ["TX"], fromDfw: true };
+  return { states: [], fromDfw: false };
+}
+
+const DFW_STATE_NOTE = "Counts use TX because the receipt geo is DFW.";
+
 export type SegmentPart = Extract<Source, { kind: "mixed" }>["parts"][number];
 
 /**
@@ -103,9 +146,9 @@ export function stackParts(stamp: ReceiptStamp): SegmentPart[] {
   const categories = asStringArray(maps?.categories);
   const permits = asObject(filters.permits);
   const types = permitTypeList(permits?.permit_types ?? permits?.categories_used);
+  const states = receiptStateCodes(stamp).states;
   const parts: SegmentPart[] = [];
   if (categories.length) {
-    const states = asStringArray(maps?.states);
     const cities = asStringArray(maps?.cities);
     parts.push({
       label: "maps",
@@ -121,7 +164,6 @@ export function stackParts(stamp: ReceiptStamp): SegmentPart[] {
     });
   }
   if (types.length) {
-    const states = asStringArray(permits?.states);
     const counties = asStringArray(permits?.counties);
     parts.push({
       label: "permits",
@@ -176,28 +218,34 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
     };
   }
   if (stamp.company_source === "maps") {
-    const categories = asStringArray(
-      (stamp.company_filters.maps as { categories?: unknown } | undefined)?.categories ?? stamp.company_filters.categories,
-    );
+    const maps = asObject(stamp.company_filters.maps);
+    const categories = asStringArray(maps?.categories ?? stamp.company_filters.categories);
     if (categories.length) {
+      const geo = receiptStateCodes(stamp);
+      const cities = asStringArray(maps?.cities ?? stamp.company_filters.cities);
       return {
         kind: "maps",
         params: {
           categories,
-          ...(asStringArray(stamp.company_filters.states).length ? { states: asStringArray(stamp.company_filters.states) } : {}),
-          ...(asStringArray(stamp.company_filters.cities).length ? { cities: asStringArray(stamp.company_filters.cities) } : {}),
+          ...(geo.states.length ? { states: geo.states } : {}),
+          ...(cities.length ? { cities } : {}),
         },
       };
     }
   }
   if (stamp.company_source === "permits") {
-    const permitTypes = asStringArray(
-      (stamp.company_filters.permits as { permit_types?: unknown } | undefined)?.permit_types ?? stamp.company_filters.permit_types,
-    );
+    const permits = asObject(stamp.company_filters.permits);
+    const permitTypes = permitTypeList(permits?.permit_types ?? stamp.company_filters.permit_types);
     if (permitTypes.length) {
+      const geo = receiptStateCodes(stamp);
+      const counties = asStringArray(permits?.counties ?? stamp.company_filters.counties);
       return {
         kind: "permits",
-        params: { permit_types: permitTypes },
+        params: {
+          permit_types: permitTypes,
+          ...(geo.states.length ? { states: geo.states } : {}),
+          ...(counties.length ? { counties } : {}),
+        },
       };
     }
   }
@@ -214,11 +262,13 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
     }
   }
   if (stamp.company_source === "maps_and_permits") {
+    const geo = receiptStateCodes(stamp);
     return {
       kind: "mixed",
       note: mixedNote(
         stamp,
-        "Receipt company_source maps_and_permits. Each named list is sized on its own and the counts are combined. Do not invent a filter.",
+        "Receipt company_source maps_and_permits. Each named list is sized on its own and the counts are combined. Do not invent a filter." +
+          (geo.fromDfw ? ` ${DFW_STATE_NOTE}` : ""),
       ),
       parts: stackParts(stamp),
     };
@@ -243,10 +293,27 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
 /** Best build wins when it names a complete source. Otherwise the lane filter book does. */
 export function sourceForLane(book: ReceiptStamp, method: ReceiptStamp): Source {
   const fromMethod = sourceFromStamp(method);
-  if (fromMethod.kind !== "mixed" || fromMethod.parts.length > 0) return fromMethod;
+  if (fromMethod.kind !== "mixed" || fromMethod.parts.length > 0) return withLaneStates(fromMethod, method, book);
   const fromBook = sourceFromStamp(book);
-  if (fromBook.kind !== "mixed" || fromBook.parts.length > 0) return fromBook;
-  return fromMethod;
+  if (fromBook.kind !== "mixed" || fromBook.parts.length > 0) return withLaneStates(fromBook, method, book);
+  return withLaneStates(fromMethod, method, book);
+}
+
+/** Fill a missing state from the other receipt on the lane. Do not replace a code the receipt named. */
+function withLaneStates(source: Source, method: ReceiptStamp, book: ReceiptStamp): Source {
+  const geo = receiptStateCodes(method, book);
+  if (!geo.states.length) return source;
+  const fill = <T extends { states?: string[] }>(params: T): T => (params.states?.length ? params : { ...params, states: geo.states });
+  if (source.kind === "maps") return { ...source, params: fill(source.params) };
+  if (source.kind === "permits") return { ...source, params: fill(source.params) };
+  if (source.kind !== "mixed") return source;
+  const parts = source.parts.map((part) => {
+    if (part.source.kind === "maps") return { ...part, source: { ...part.source, params: fill(part.source.params) } };
+    if (part.source.kind === "permits") return { ...part, source: { ...part.source, params: fill(part.source.params) } };
+    return part;
+  });
+  const note = geo.fromDfw && !source.note.includes(DFW_STATE_NOTE) ? `${source.note} ${DFW_STATE_NOTE}` : source.note;
+  return { ...source, parts, note };
 }
 
 function emailFindingFromStamp(stamp: ReceiptStamp): Recipe["email_finding"] {

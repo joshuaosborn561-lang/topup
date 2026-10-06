@@ -21,6 +21,8 @@ const CLIENT_SERVER: Readonly<Record<string, string>> = {
   "peopleWaterfall.ts": "Find Named Person",
   "emailWaterfall.ts": "Email Finder Waterfall",
   "nameToEmail.ts": "Name to Email",
+  "mapsStats.ts": "Google Maps Scraper",
+  "permits.ts": "PermitStack",
 };
 
 /** The ten servers the addendum names (section 4). */

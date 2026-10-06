@@ -167,6 +167,7 @@ touch:
 | `export_csv` | filters | sync | **inline CSV, cap 5000 rows** |
 | `query_leads` | filters, page | sync | rows inline, page ≤ 50 |
 | `sample_leads` | filters, n | sync | rows inline, n ≤ 100 |
+| `pipeline_stats` | city, state, main_category, client_tag | sync | size counter. Keep `scoped_businesses` only. The global `businesses` field is not a list count. This call does not scrape. |
 
 ### Jobs
 
@@ -243,6 +244,9 @@ or table layer of any kind.
 | `sync_permits` | cursor, per page ≤ **50,000** (`openapi-ops.json:497`) | rows inline |
 | `get_permit` | schema requires `permit_id`, code also accepts `permit_number` (`src/api.ts:43-61`) | mismatch between schema and code |
 | plays, contractors, property history, webhooks, metrics tools | passthrough | rows inline |
+| `metrics_monthly` | state (2-letter) and category; `months` omitted so the API default applies | size counter. Keep `total_permits` and `filters.months`. Do not keep `series`. |
+
+Size calls `metrics_monthly` only. Search, export, and sync still return rows and stay uncalled.
 
 ### Jobs
 
@@ -251,11 +255,10 @@ to cancel, nothing survives a restart because nothing is stored.
 
 ### Rows
 
-There is **no table-source or writeback mode**. Every tool returns rows to the
-caller. For `leadtopup` this means PermitStack cannot be called directly under
-"no lead rows beyond ten sample rows": a permit feed lane needs a small
-intermediary that pages `sync_permits` into a Supabase table, and that
-intermediary does not exist yet.
+There is **no table-source or writeback mode**. Search, export, and sync return
+rows to the caller, so a permit feed lane still needs a table-writing
+intermediary before pull. Size is the exception: `metrics_monthly` is a
+nightly rollup and the service keeps `total_permits` only.
 
 ### Prices
 
@@ -867,8 +870,8 @@ is a decision for Josh (D18: unclear → judgement column).
 | Server | Allowed | Never |
 |---|---|---|
 | LeadPipe | `lp_inventory`, `lp_plan`, `lp_run`, `lp_status`, `lp_export` (signed URL), `lp_sample` (n ≤ 10), `lp_list_clients`, `lp_ensure_client` | — |
-| Google Maps Scraper | `pipeline_run`, `resolve_places`, `get_job_status`, `cancel_job`, `sync_to_supabase`, `sample_leads` (n ≤ 10) | `enrich_waterfall` (inline rows), `export_csv`, `query_leads` |
-| PermitStack | nothing until a table-writing tool exists | every tool (all return rows) |
+| Google Maps Scraper | `pipeline_stats` (size only: `scoped_businesses`; never the global `businesses` field), `pipeline_run`, `resolve_places`, `get_job_status`, `cancel_job`, `sync_to_supabase`, `sample_leads` (n ≤ 10) | `estimate_cost` (writes a plan), `plan_leads`, `run_leads`, `enrich_waterfall` (inline rows), `export_csv`, `query_leads` |
+| PermitStack | `metrics_monthly` (size only: `total_permits`; omit `months` so the API default window applies; do not keep `series`) | `search_permits`, `export_permits`, `sync_permits`, and every other tool |
 | Property Owners | `pull`, `build_operators`, `sync_to_supabase`, `score_*`, `match_*`, `estimate_credits`, `sample_*` (n ≤ 10) | `export_*_csv`, `query_*` beyond samples, `lookup_line_type` without a card |
 | Domain Waterfall | `resolve_domain` (estimate first; `approve_cost_usd` explicit; ≤ 500 rows/batch until redeploy), `get_job_status`, `get_profile`, `health` | `receipt_test` without a card |
 | Find Named Person | `resolve_people` (estimate first; explicit ceiling), `get_job_status`, `get_profile` | `resolve_people` with `approve_cost_usd < 0` |

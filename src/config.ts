@@ -77,6 +77,16 @@ const schema = z.object({
   /** Smartlead server on Railway (steps 11 and 12). It has no inbound auth today; the token slot is for when it does. */
   SMARTLEAD_MCP_URL: z.string().default(""),
   SMARTLEAD_TOKEN: z.string().default(""),
+  /**
+   * Maps size counter. `pipeline_stats` only. Unset uses the public MCP.
+   * An empty string leaves the counter off.
+   */
+  MAPS_MCP_URL: z.string().default("https://google-maps-mcp-production-88a3.up.railway.app/mcp"),
+  /**
+   * Permit size counter. `metrics_monthly` only. Unset uses the public MCP.
+   * An empty string leaves the counter off.
+   */
+  PERMITSTACK_MCP_URL: z.string().default("https://permitstack-mcp-production.up.railway.app/mcp"),
   /** Puzzle + email enrichment (skills domain-waterfall, people-waterfall, unresolved-name-routing). Empty = park when a row needs that piece. */
   DOMAIN_WATERFALL_MCP_URL: z.string().default(""),
   DOMAIN_WATERFALL_TOKEN: z.string().default(""),
@@ -151,6 +161,8 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     wizard: Boolean(cfg.WIZARD_HEALTH_URL),
     getleads: Boolean(cfg.GETLEADS_MCP_URL),
     smartlead: Boolean(cfg.SMARTLEAD_MCP_URL),
+    maps: Boolean(cfg.MAPS_MCP_URL),
+    permits: Boolean(cfg.PERMITSTACK_MCP_URL),
     domain_waterfall: Boolean(cfg.DOMAIN_WATERFALL_MCP_URL),
     people_waterfall: Boolean(cfg.PEOPLE_WATERFALL_MCP_URL),
     email_waterfall: Boolean(cfg.EMAIL_WATERFALL_MCP_URL),

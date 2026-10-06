@@ -197,6 +197,7 @@ describe("D29 — pull and size routing", () => {
     );
     assert.equal(routePull(maps).kind, "park");
     assert.match((routePull(maps) as { reason: string }).reason, /not wired/);
+    assert.equal(routeSize(maps).kind, "maps");
   });
 
   it("D30 — size counts each segment list; pull still parks a mixed run; same persona unions bands", () => {
@@ -235,36 +236,39 @@ describe("D29 — pull and size routing", () => {
   });
 
   it("a maps_and_permits source is one list per category and permit type", () => {
-    const sized = routeSize(
-      parseRecipe({
-        ...base,
-        recipe_id: "peterson.c1_general_contractors.v0",
-        client_tag: "peterson",
-        lane: "c1_general_contractors",
-        source: {
-          kind: "mixed",
-          note: "maps and permits",
-          parts: [
-            {
-              label: "maps",
-              icp_kind: "physical",
-              source: { kind: "maps", params: { categories: ["general contractor", "commercial construction"] } },
-            },
-            { label: "permits", icp_kind: "physical", source: { kind: "permits", params: { permit_types: ["ROOFING"] } } },
-          ],
-        },
-        segments: { slot: ["3798227"] },
-        routing: [{ when: { slot: "3798227" }, campaign_id: 3798227, icp: { kind: "physical", persona: "gc_owner_pm" } }],
-      }),
-    );
+    const recipe = parseRecipe({
+      ...base,
+      recipe_id: "peterson.c1_general_contractors.v0",
+      client_tag: "peterson",
+      lane: "c1_general_contractors",
+      source: {
+        kind: "mixed",
+        note: "maps and permits",
+        parts: [
+          {
+            label: "maps",
+            icp_kind: "physical",
+            source: { kind: "maps", params: { categories: ["general contractor", "commercial construction"] } },
+          },
+          { label: "permits", icp_kind: "physical", source: { kind: "permits", params: { permit_types: ["ROOFING"] } } },
+        ],
+      },
+      segments: { slot: ["3798227"] },
+      routing: [{ when: { slot: "3798227" }, campaign_id: 3798227, icp: { kind: "physical", persona: "gc_owner_pm" } }],
+    });
+    const sized = routeSize(recipe);
     assert.equal(sized.kind, "combine");
     if (sized.kind === "combine") {
       assert.deepEqual(
         sized.segments.map((s) => s.label),
         ["general contractor", "commercial construction", "ROOFING"],
       );
-      assert.ok(sized.segments.every((s) => s.route.kind === "park"));
+      assert.deepEqual(
+        sized.segments.map((s) => s.route.kind),
+        ["maps", "maps", "permits"],
+      );
     }
+    assert.equal(routePull(recipe).kind, "park");
   });
 
   it("the tam-sizing report is five lines in order", () => {

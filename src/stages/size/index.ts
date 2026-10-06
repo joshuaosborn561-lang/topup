@@ -1,14 +1,16 @@
 import { bandComplement, type Getleads, type GetleadsFilters } from "../../clients/getleads.js";
+import type { MapsStats } from "../../clients/mapsStats.js";
+import type { PermitCounts } from "../../clients/permits.js";
 import type { RunRow } from "../../domain/runs.js";
 import { campaignSnapshots } from "../../ledger/health.js";
 import { runTargetCampaignIds } from "../../recipes/campaigns.js";
-import { recipeAuthorises, type GetleadsSource, type Recipe } from "../../recipes/schema.js";
+import { recipeAuthorises, type GetleadsSource, type MapsSource, type PermitsSource, type Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, park, type StageDeps, type StageOutcome } from "../common.js";
-import { routeSize, type SizeSegment } from "../pull/route.js";
+import { routeSize, type SizeLeaf, type SizeSegment } from "../pull/route.js";
 import { recycleDays } from "../suppress/recycle.js";
-import { combineSizeLine, type SegmentMeasure } from "./combine.js";
+import { combineSizeLine, listCountLine, type CountUnit, type SegmentMeasure, type UnitTotal } from "./combine.js";
 import { sizeReport } from "./report.js";
 
 /**
@@ -16,9 +18,10 @@ import { sizeReport } from "./report.js";
  *
  * Classify each target campaign's ICP first. LinkedIn-native: getleads `count_contacts` is the
  * free second opinion; AI Ark People Preview is the default primary and is
- * not a leadtopup client yet (D22), so the run says so. Physical: a range
- * from Maps / PermitStack, never a getleads number — park until those
- * counters are wired. Partition-check the filter. Subtract emails this
+ * not a leadtopup client yet (D22), so the run says so. Physical maps
+ * lists use pipeline_stats `scoped_businesses`. Permit lists use
+ * metrics_monthly `total_permits`. Those units are not added together
+ * and are not a getleads number. Partition-check a getleads filter. Subtract emails this
  * client sent in the last recycle_after_days (default 90; D35 item 2)
  * and anyone already in a live campaign of this client (D36 item 2).
  * Report the five tam-sizing lines.
@@ -30,6 +33,8 @@ import { sizeReport } from "./report.js";
 export interface SizeDeps extends StageDeps {
   getleads: Getleads;
   rails: SpendRails;
+  maps: MapsStats | null;
+  permits: PermitCounts | null;
 }
 
 export interface Partition {
@@ -81,6 +86,10 @@ export class SizeStage {
       }
       if (routed.kind === "combine") {
         return this.combineLists(run, recipe, routed.segments, campaignIds, attempts);
+      }
+      if (routed.kind === "maps" || routed.kind === "permits") {
+        const label = routed.kind === "maps" ? (routed.source.params.categories[0] ?? "maps") : (routed.source.params.permit_types[0] ?? "permits");
+        return this.combineLists(run, recipe, [{ label, campaignIds, route: routed }], campaignIds, attempts);
       }
       const params = routed.source.params;
       const filters = params as GetleadsFilters;
@@ -173,29 +182,49 @@ export class SizeStage {
   }
 
   /**
-   * Each segment is its own list. getleads lists are counted. A list this
-   * build cannot count stays out of the total. The total is reported only
-   * when every list was counted. Held addresses are subtracted once.
+   * Each segment is its own list. getleads, maps, and permit lists are
+   * counted in their own units. A list this build cannot count stays out.
+   * Totals are reported only when every list was counted. Held addresses
+   * are subtracted once, and only from a people total.
    */
   private async combineLists(run: RunRow, recipe: Recipe, segments: SizeSegment[], campaignIds: number[], attempts: number): Promise<StageOutcome> {
     const measures: SegmentMeasure[] = [];
     const perList: Array<{ label: string; total: number; partition: Partition }> = [];
     for (const seg of segments) {
+      const unit = unitFor(seg.route);
       if (seg.route.kind === "park") {
-        measures.push({ label: seg.label, counted: false, total: 0, reason: seg.route.reason });
+        measures.push({ label: seg.label, unit, counted: false, total: 0, detail: null, reason: seg.route.reason });
         continue;
       }
       if (seg.route.kind === "skip") {
-        measures.push({ label: seg.label, counted: true, total: 0, reason: null });
+        measures.push({ label: seg.label, unit, counted: true, total: 0, detail: null, reason: null });
         perList.push({ label: seg.label, total: 0, partition: { bands: 0, others: 0, all: 0, diff: 0, ok: true } });
+        continue;
+      }
+      if (seg.route.kind === "maps") {
+        const measured = await this.measureMaps(run, recipe, seg.route.source);
+        measures.push(
+          measured.ok
+            ? { label: seg.label, unit: "businesses", counted: true, total: measured.total, detail: measured.detail, reason: null }
+            : { label: seg.label, unit: "businesses", counted: false, total: 0, detail: null, reason: measured.reason },
+        );
+        continue;
+      }
+      if (seg.route.kind === "permits") {
+        const measured = await this.measurePermits(run, recipe, seg.route.source);
+        measures.push(
+          measured.ok
+            ? { label: seg.label, unit: "permits", counted: true, total: measured.total, detail: measured.detail, reason: null }
+            : { label: seg.label, unit: "permits", counted: false, total: 0, detail: null, reason: measured.reason },
+        );
         continue;
       }
       const measured = await this.measureGetleads(run, recipe, seg.route.source);
       if (!measured.ok) {
-        measures.push({ label: seg.label, counted: false, total: 0, reason: measured.reason });
+        measures.push({ label: seg.label, unit: "people", counted: false, total: 0, detail: null, reason: measured.reason });
         continue;
       }
-      measures.push({ label: seg.label, counted: true, total: measured.total, reason: null });
+      measures.push({ label: seg.label, unit: "people", counted: true, total: measured.total, detail: null, reason: null });
       perList.push({ label: seg.label, total: measured.total, partition: measured.partition });
     }
 
@@ -205,14 +234,33 @@ export class SizeStage {
       return park(this.d, run, "size", combined.text, attempts);
     }
 
+    const people = combined.units.find((unit) => unit.unit === "people");
+    const physical = combined.units.some((unit) => unit.unit === "businesses" || unit.unit === "permits");
+    if (!physical) {
+      return this.finishPeople(run, recipe, segments, campaignIds, attempts, people?.total ?? 0, perList, measures);
+    }
+    return this.finishPhysical(run, recipe, campaignIds, measures, combined.units);
+  }
+
+  /** People lists only. Held addresses come off once. The useful floor applies. */
+  private async finishPeople(
+    run: RunRow,
+    recipe: Recipe,
+    segments: SizeSegment[],
+    campaignIds: number[],
+    _attempts: number,
+    total: number,
+    perList: Array<{ label: string; total: number; partition: Partition }>,
+    _measures: SegmentMeasure[],
+  ): Promise<StageOutcome> {
     const days = recycleDays(recipe.suppression.recycle_after_days);
     const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns);
-    const netNew = Math.max(0, combined.total - held.count);
+    const netNew = Math.max(0, total - held.count);
     const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
     const need = rowsNeeded(snaps, recipe.runway.target_days, 7);
     const planRows = Math.max(1, Math.min(recipe.runway.max_per_run, need === null ? recipe.runway.max_per_run : Math.max(need, recipe.size.useful_floor), Math.max(netNew, 1)));
     const counts: Record<string, number> = {
-      total_matching: combined.total,
+      total_matching: total,
       projected_net_new: netNew,
       already_held: held.count,
       useful_floor: recipe.size.useful_floor,
@@ -229,7 +277,7 @@ export class SizeStage {
       await this.d.repo.finishStep(run.run_id, "size", { useful_output: 0, counts });
       return gateUnmet(
         "size",
-        `combined projected net new ${netNew} is under the useful floor ${recipe.size.useful_floor} (${combined.total} matching across ${segments.length} segment lists, ${held.count} already sent). Josh decides; nothing widens on its own.`,
+        `combined projected net new ${netNew} is under the useful floor ${recipe.size.useful_floor} (${total} matching across ${segments.length} segment lists, ${held.count} already sent). Josh decides; nothing widens on its own.`,
         counts,
       );
     }
@@ -245,7 +293,7 @@ export class SizeStage {
       { bands: 0, others: 0, all: 0, diff: 0, ok: true },
     );
     const report = sizeReport({
-      number: combined.total,
+      number: total,
       filter: `${segments.length} segment lists combined: ${perList.map((l) => `${l.label} ${l.total}`).join("; ")}`,
       partition,
       secondVendor: "AI Ark People Preview is not a leadtopup client yet (D22); getleads is the free second opinion tam-sizing always wants",
@@ -261,6 +309,133 @@ export class SizeStage {
         : `campaigns need ${need} rows for ${recipe.runway.target_days} days; the pull plans ${planRows}`;
     const line = `Size done (${segments.length} segment lists combined):\n${detail}\n${report}\n${plan}.${held.note ? ` ${held.note}` : ""}`;
     return finish(this.d, run, "size", netNew, counts, line);
+  }
+
+  /**
+   * Maps businesses and permit counts stay apart. Held emails are not
+   * subtracted. The people useful-floor does not gate this result.
+   */
+  private async finishPhysical(
+    run: RunRow,
+    recipe: Recipe,
+    campaignIds: number[],
+    measures: SegmentMeasure[],
+    units: UnitTotal[],
+  ): Promise<StageOutcome> {
+    const businesses = units.find((unit) => unit.unit === "businesses")?.total ?? 0;
+    const permitTotal = units.find((unit) => unit.unit === "permits")?.total ?? 0;
+    const people = units.find((unit) => unit.unit === "people");
+    const hasMaps = units.some((unit) => unit.unit === "businesses");
+    const hasPermits = units.some((unit) => unit.unit === "permits");
+    let peopleNet = people?.total ?? 0;
+    let heldNote: string | null = null;
+    if (people) {
+      const days = recycleDays(recipe.suppression.recycle_after_days);
+      const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns);
+      peopleNet = Math.max(0, people.total - held.count);
+      heldNote = held.note;
+    }
+    const counts: Record<string, number> = {
+      businesses,
+      permit_total: permitTotal,
+      size_sources: measures.length,
+    };
+    if (people) {
+      counts.people_matching = people.total;
+      counts.projected_net_new = peopleNet;
+    }
+    measures.forEach((list, i) => {
+      if (list.counted) counts[`segment_${i + 1}_total`] = list.total;
+    });
+    const dfw = recipe.source.kind === "mixed" && recipe.source.note.includes("Counts use TX because the receipt geo is DFW.");
+    const lines = [
+      `Size done (${measures.length} lists counted by unit):`,
+      ...measures.map(listCountLine),
+      hasMaps ? `Maps businesses: ${businesses}` : null,
+      hasPermits ? `Permits: ${permitTotal}` : null,
+      people ? `People: ${people.total} matching, ${peopleNet} net new` : null,
+      "Maps businesses and permit counts stay separate.",
+      dfw ? "Counts use TX because the receipt geo is DFW." : null,
+      heldNote,
+      "Cost of sizing: $0.00",
+    ].filter((line): line is string => Boolean(line));
+    return finish(this.d, run, "size", hasMaps ? businesses : 0, counts, lines.join("\n"));
+  }
+
+  /** One category. Several states are counted and summed. No state means the count is not limited to one. */
+  private async measureMaps(
+    run: RunRow,
+    recipe: Recipe,
+    source: MapsSource,
+  ): Promise<{ ok: true; total: number; detail: string } | { ok: false; reason: string }> {
+    if (!recipeAuthorises(recipe, "size", "maps")) return { ok: false, reason: "the recipe does not authorise a maps count on this lane" };
+    if (!this.d.maps) return { ok: false, reason: "MAPS_MCP_URL is not configured" };
+    if (source.params.categories.length !== 1) return { ok: false, reason: "a maps list is one category" };
+    const category = source.params.categories[0]!;
+    const states = stateCodes(source.params.states);
+    try {
+      if (states.length === 0) {
+        const n = await this.d.maps.scopedBusinesses({ category, clientTag: run.client_tag });
+        await this.recordCount(run, "maps", n);
+        return { ok: true, total: n, detail: "(not limited to a state)" };
+      }
+      let total = 0;
+      for (const state of states) {
+        const n = await this.d.maps.scopedBusinesses({ category, state, clientTag: run.client_tag });
+        await this.recordCount(run, "maps", n);
+        total += n;
+      }
+      return { ok: true, total, detail: `in ${states.join(", ")}` };
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  /** One permit type. A missing state is not counted. `months` is left to the API default. */
+  private async measurePermits(
+    run: RunRow,
+    recipe: Recipe,
+    source: PermitsSource,
+  ): Promise<{ ok: true; total: number; detail: string } | { ok: false; reason: string }> {
+    if (!recipeAuthorises(recipe, "size", "permitstack")) {
+      return { ok: false, reason: "the recipe does not authorise a permit count on this lane" };
+    }
+    if (!this.d.permits) return { ok: false, reason: "PERMITSTACK_MCP_URL is not configured" };
+    if (source.params.permit_types.length !== 1) return { ok: false, reason: "a permit list is one permit type" };
+    const category = source.params.permit_types[0]!;
+    const states = stateCodes(source.params.states);
+    if (states.length === 0) return { ok: false, reason: "permit count needs a state on the receipt" };
+    try {
+      let total = 0;
+      let months: number | null = null;
+      for (const state of states) {
+        const counted = await this.d.permits.monthlyTotal({ category, state });
+        await this.recordCount(run, "permitstack", counted.total);
+        total += counted.total;
+        months = counted.months;
+      }
+      const window = months ? ` over ${months} months` : "";
+      return { ok: true, total, detail: `in ${states.join(", ")}${window}` };
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  private async recordCount(run: RunRow, vendor: "maps" | "permitstack", rows: number): Promise<void> {
+    await this.d.rails.record({
+      runId: run.run_id,
+      clientTag: run.client_tag,
+      step: "size",
+      vendor,
+      action: "count",
+      rows,
+      credits: 0,
+      worstCaseCents: 0,
+      balanceBefore: null,
+      balanceAfter: null,
+      vendorJobId: null,
+      approvedBy: null,
+    });
   }
 
   /** One getleads list: three counts and the partition check. Does not finish the step. */
@@ -350,6 +525,16 @@ export class SizeStage {
         : `subtracted addresses this client sent in the last ${days} days`,
     };
   }
+}
+
+function unitFor(route: SizeLeaf): CountUnit {
+  if (route.kind === "maps") return "businesses";
+  if (route.kind === "permits") return "permits";
+  return "people";
+}
+
+function stateCodes(states: string[] | undefined): string[] {
+  return [...new Set((states ?? []).map((s) => s.trim().toUpperCase()).filter((s) => /^[A-Z]{2}$/.test(s)))];
 }
 
 function describeWidening(w: { company_size?: string[]; add_titles?: string[]; states?: string[]; industries?: string[] }): string {

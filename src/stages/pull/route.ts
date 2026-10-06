@@ -1,5 +1,5 @@
 import { campaignGroups, type CampaignGroup } from "../../recipes/campaigns.js";
-import type { GetleadsSource, Recipe, Source } from "../../recipes/schema.js";
+import type { GetleadsSource, MapsSource, PermitsSource, Recipe, Source } from "../../recipes/schema.js";
 
 /**
  * Step zero of leadgen-mcp-routing: LinkedIn-native vs physical, then the
@@ -63,6 +63,8 @@ export function routePull(recipe: Recipe, campaignIds?: number[]): PullRoute {
 
 export type SizeLeaf =
   | { kind: "getleads"; source: GetleadsSource }
+  | { kind: "maps"; source: MapsSource }
+  | { kind: "permits"; source: PermitsSource }
   | { kind: "skip"; line: string }
   | { kind: "park"; reason: string };
 
@@ -82,6 +84,13 @@ export function routeSize(recipe: Recipe, campaignIds?: number[]): SizeRoute {
 function segmentLists(group: CampaignGroup): SizeSegment[] {
   if (group.source.kind === "mixed" && group.source.parts.length > 0) {
     return group.source.parts.flatMap((part) => listsForPart(group, part));
+  }
+  if (group.source.kind === "maps" || group.source.kind === "permits") {
+    return listsForPart(group, {
+      label: group.source.kind,
+      icp_kind: group.kind === "physical" ? "physical" : "linkedin_native",
+      source: group.source,
+    });
   }
   return [leaf(groupLabel(group), group)];
 }
@@ -131,10 +140,12 @@ function routeSizeGroup(g: CampaignGroup): SizeLeaf {
   if (g.source.kind === "mixed") {
     return { kind: "park", reason: "mixed ICP: size each campaign separately. Do not report one TAM for two stacks." };
   }
+  if (g.source.kind === "maps") return { kind: "maps", source: g.source };
+  if (g.source.kind === "permits") return { kind: "permits", source: g.source };
   if (g.kind === "physical") {
     return {
       kind: "park",
-      reason: "physical ICP: TAM is a range from Maps estimate_cost and/or PermitStack permit counts (tam-sizing), never a getleads number and never a single hard count. Those counters are not wired in this build. Ask Josh if the buyer appears in neither Maps nor permits.",
+      reason: "physical ICP on a getleads source: do not report a getleads number for a rooftop. Maps pipeline_stats and PermitStack metrics_monthly are the counters, and only for a maps or permits list.",
     };
   }
   if (g.source.kind === "getleads") return { kind: "getleads", source: g.source };
@@ -147,7 +158,8 @@ function routeSizeGroup(g: CampaignGroup): SizeLeaf {
       reason: "LinkedIn-native TAM default is AI Ark People Preview (1 credit, tam-sizing) plus getleads count_contacts as the free second opinion. AI Ark is not a leadtopup client yet (D22).",
     };
   }
-  return { kind: "park", reason: `no sizing method for a ${g.source.kind} source on a ${g.kind} ICP` };
+  const leftover: never = g.source;
+  return { kind: "park", reason: `no sizing method for a ${g.kind} ICP (${(leftover as { kind?: string }).kind ?? "unknown"})` };
 }
 
 function mixedStackReason(groups: CampaignGroup[]): string | null {
