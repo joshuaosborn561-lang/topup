@@ -870,7 +870,7 @@ is a decision for Josh (D18: unclear → judgement column).
 | Server | Allowed | Never |
 |---|---|---|
 | LeadPipe | `lp_inventory`, `lp_plan`, `lp_run`, `lp_status`, `lp_export` (signed URL), `lp_sample` (n ≤ 10), `lp_list_clients`, `lp_ensure_client` | — |
-| Google Maps Scraper | `pipeline_stats` (size only: `scoped_businesses`; never the global `businesses` field), `pipeline_run`, `resolve_places`, `get_job_status`, `cancel_job`, `sync_to_supabase`, `sample_leads` (n ≤ 10) | `estimate_cost` (writes a plan), `plan_leads`, `run_leads`, `enrich_waterfall` (inline rows), `export_csv`, `query_leads` |
+| Google Maps Scraper | `pipeline_stats` (size only: `scoped_businesses`; never the global `businesses` field), `estimate_cost` (price quote only; it writes a plan and does not scrape; spend still waits on a card), `pipeline_run`, `resolve_places`, `get_job_status`, `cancel_job`, `sync_to_supabase`, `sample_leads` (n ≤ 10) | `plan_leads`, `run_leads`, `enrich_waterfall` (inline rows), `export_csv`, `query_leads` |
 | PermitStack | `metrics_monthly` (size only: `total_permits`; omit `months` so the API default window applies; do not keep `series`) | `search_permits`, `export_permits`, `sync_permits`, and every other tool |
 | Property Owners | `pull`, `build_operators`, `sync_to_supabase`, `score_*`, `match_*`, `estimate_credits`, `sample_*` (n ≤ 10) | `export_*_csv`, `query_*` beyond samples, `lookup_line_type` without a card |
 | Domain Waterfall | `resolve_domain` (estimate first; `approve_cost_usd` explicit; ≤ 500 rows/batch until redeploy), `get_job_status`, `get_profile`, `health` | `receipt_test` without a card |

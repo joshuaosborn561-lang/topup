@@ -1,10 +1,11 @@
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
+import { recipeCampaignIds } from "../../recipes/campaigns.js";
 import type { Recipe } from "../../recipes/schema.js";
 import { pendingCampaignCard } from "../../slack/cards.js";
 import { gateUnmet } from "../../spine/gate.js";
-import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
 
 /**
  * Step 9 — Route to campaigns (skill lead-list-build; skill
@@ -40,6 +41,15 @@ export function mailClassSegment(mailClass: string | null): string {
   return (mailClass ?? "").toLowerCase() === "seg" ? "SEG" : "OTHER";
 }
 
+/** A pull stamps `_c{campaignId}` on the source label so that file stays on that campaign. */
+export function campaignIdFromSourceLabel(label: string | null | undefined, targets: readonly number[]): number | null {
+  if (!label) return null;
+  const matched = /_c(\d+)$/.exec(label);
+  if (!matched) return null;
+  const id = Number(matched[1]);
+  return targets.includes(id) ? id : null;
+}
+
 /** First routing rule whose every `when` matches the cell; null when none does. */
 export function matchRule(cell: Cell, routing: Recipe["routing"]): Recipe["routing"][number] | null {
   for (const rule of routing) {
@@ -61,6 +71,9 @@ export class RouteStage {
       const table = ingestedTable(run.client_tag);
       const db = this.d.repo.raw();
       const dims = Object.keys(recipe.segments);
+      const targets = recipeCampaignIds(recipe);
+      const cols = await columnsOf(this.d.repo, table);
+      const labelSql = cols.has("source_label") ? "source_label" : "null::text as source_label";
 
       // Rows from earlier closed runs of this lane that waited for a campaign get another look.
       const reclaimed = await this.d.repo.withRun(run.run_id, async (tx) => {
@@ -72,8 +85,8 @@ export class RouteStage {
         return r.rowCount ?? 0;
       });
 
-      const { rows } = await db.query<{ id: string; company_size: string | null; mail_class: string | null; gift: string | null }>(
-        `select id::text, company_size, mail_class, normalize_flags->'gift_tier'->>0 as gift from ${table}
+      const { rows } = await db.query<{ id: string; company_size: string | null; mail_class: string | null; gift: string | null; source_label: string | null }>(
+        `select id::text, company_size, mail_class, normalize_flags->'gift_tier'->>0 as gift, ${labelSql} from ${table}
          where run_id = $1 and lead_status in ('qa_passed', 'pending_campaign')`,
         [run.run_id],
       );
@@ -81,11 +94,13 @@ export class RouteStage {
       const pending = new Map<string, string[]>();
       for (const r of rows) {
         const cell: Cell = { band: bandSegment(r.company_size), mail_class: mailClassSegment(r.mail_class), gift: r.gift };
-        const rule = matchRule(cell, recipe.routing);
-        if (rule) {
-          const ids = byCampaign.get(rule.campaign_id) ?? [];
+        const stamped = campaignIdFromSourceLabel(r.source_label, targets);
+        const rule = stamped ? null : matchRule(cell, recipe.routing);
+        const campaign = stamped ?? rule?.campaign_id ?? null;
+        if (campaign) {
+          const ids = byCampaign.get(campaign) ?? [];
           ids.push(r.id);
-          byCampaign.set(rule.campaign_id, ids);
+          byCampaign.set(campaign, ids);
         } else {
           const label = cellLabel(cell, dims);
           const ids = pending.get(label) ?? [];

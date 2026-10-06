@@ -78,6 +78,8 @@ export interface SpendCard {
   projectedUseful: number | null;
   spentTodayCents: number;
   dailyCapCents: number;
+  /** Under $5 this is approve_small_spend (operator). $5 or more stays approve_spend (Josh). */
+  approveChoice?: "approve_spend" | "approve_small_spend";
 }
 
 /** Rail 2: anything over the auto cap asks first, with the worst case in dollars. */
@@ -94,7 +96,7 @@ export function spendApprovalCard(c: SpendCard): Block[] {
     ]),
     context("Worst case is computed from the service's price table and batch size, not a vendor cost field. Silence parks the run after 24h."),
     actions(c.cardId, [
-      { choice: "approve_spend", label: `Approve ${usd(c.worstCaseCents)}`, style: "primary" },
+      { choice: c.approveChoice ?? "approve_spend", label: `Approve ${usd(c.worstCaseCents)}`, style: "primary" },
       { choice: "decline_spend", label: "Decline", style: "danger" },
     ]),
   ];

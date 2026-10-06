@@ -47,7 +47,7 @@ export class PermitCountsClient implements PermitCounts {
   }
 
   async monthlyTotal(args: { category: string; state: string }): Promise<PermitMonthCount> {
-    if (!this.url) throw new Error("PERMITSTACK_MCP_URL is not configured");
+    if (!this.url) throw new Error("missing credentials for permitstack");
     const state = args.state.trim().toUpperCase();
     if (!/^[A-Z]{2}$/.test(state)) throw new Error("permit count needs a two-letter state");
     const category = args.category.trim();

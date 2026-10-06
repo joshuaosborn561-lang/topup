@@ -19,6 +19,8 @@ export const VENDORS = [
   "apify",
   "getleads",
   "smartlead",
+  "maps",
+  "permitstack",
 ] as const;
 export type Vendor = (typeof VENDORS)[number];
 
@@ -78,6 +80,13 @@ export const PRICES: Readonly<Record<Vendor, VendorPrice>> = {
   },
   getleads: { kind: "included", unitCents: 0, creditsPerRow: 1, source: "unlimited plan" },
   smartlead: { kind: "included", unitCents: 0, creditsPerRow: 1, source: "plan email finder allotment" },
+  maps: {
+    kind: "paid",
+    unitCents: 0.1,
+    creditsPerRow: 1,
+    source: "docs/servers.md place price $0.001; rounded up to 0.1 cents so a quote cannot land at $0",
+  },
+  permitstack: { kind: "included", unitCents: 0, creditsPerRow: 1, source: "plan-billed; metrics_monthly reports no per-call cost" },
 };
 
 /** Vendors that must never be wired, including through wrappers (brief section 8). */

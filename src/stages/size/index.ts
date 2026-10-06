@@ -9,7 +9,7 @@ import { recipeAuthorises, type GetleadsSource, type MapsSource, type PermitsSou
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, park, type StageDeps, type StageOutcome } from "../common.js";
-import { routeSize, type SizeLeaf, type SizeSegment } from "../pull/route.js";
+import { campaignSizeRoutes, type SizeLeaf, type SizeRoute, type SizeSegment } from "../pull/route.js";
 import { recycleDays } from "../suppress/recycle.js";
 import { combineSizeLine, listCountLine, type CountUnit, type SegmentMeasure, type UnitTotal } from "./combine.js";
 import { sizeReport } from "./report.js";
@@ -41,18 +41,37 @@ export interface SizeDeps extends StageDeps {
 export interface Partition {
   bands: number;
   others: number;
+  /** Records with a null, unknown, or unlisted band. They are in the unfiltered total and in neither bucket. */
+  unknown: number;
   all: number;
   diff: number;
   ok: boolean;
 }
 
-/** tam-sizing: count(filter) + count(inverse) == count(no filter), within the recipe's tolerance. */
+/**
+ * tam-sizing: count(bands) + count(other bands) + unknown band == count(no filter).
+ * A gap is the unknown-band bucket, not a broken filter. Overlap past the
+ * tolerance means the band filter double-counted and the count cannot be trusted.
+ */
 export function partitionCheck(bands: number, others: number, all: number, tolerance: number): Partition {
-  const diff = Math.abs(bands + others - all);
-  return { bands, others, all, diff, ok: all === 0 ? bands + others === 0 : diff <= Math.max(1, Math.ceil(all * tolerance)) };
+  const unknown = all - bands - others;
+  const overlap = Math.max(0, -unknown);
+  const diff = Math.abs(unknown);
+  const tol = all === 0 ? 0 : Math.max(1, Math.ceil(all * tolerance));
+  const ok = all === 0 ? bands + others === 0 : overlap <= tol;
+  return { bands, others, unknown, all, diff, ok };
 }
 
 /** tam-sizing: two sources agree when they are within `within` of the larger. */
+/**
+ * A positive unknown bucket is part of the total, so the count stands.
+ * Overlap parks for the operator. It does not ask Josh.
+ */
+export function bandMismatchReason(partition: Partition): string | null {
+  if (partition.ok) return null;
+  return `the band filter overlaps: ${partition.bands} (bands) + ${partition.others} (other bands) exceed ${partition.all} (no band filter) by ${partition.diff}. The count cannot be trusted (tam-sizing).`;
+}
+
 export function sourcesAgree(a: number, b: number, within = 0.25): boolean {
   const hi = Math.max(a, b);
   return hi === 0 ? true : Math.abs(a - b) / hi <= within;
@@ -80,109 +99,93 @@ export class SizeStage {
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
     return attempt(this.d, run, "size", "sizing", async (attempts) => {
       const campaignIds = await runTargetCampaignIds(this.d.repo, run, recipe);
-      const routed = routeSize(recipe, campaignIds);
-      if (routed.kind === "park") {
-        await this.d.repo.failStep(run.run_id, "size", routed.reason, true);
-        return park(this.d, run, "size", routed.reason, attempts);
+      return this.sizeEach(run, recipe, campaignIds, attempts);
+    });
+  }
+
+  /**
+   * One TAM and one requested count per target campaign. A lane with
+   * several campaigns does not collapse them. A campaign that cannot be
+   * sized fails the run and is named. An unknown headcount band is part
+   * of the total, not a Josh gate.
+   */
+  private async sizeEach(run: RunRow, recipe: Recipe, campaignIds: number[], attempts: number): Promise<StageOutcome> {
+    if (campaignIds.length === 0) {
+      const reason = "no target campaigns to size";
+      await this.d.repo.failStep(run.run_id, "size", reason, true);
+      return park(this.d, run, "size", reason, attempts);
+    }
+    const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
+    const counts: Record<string, number> = { size_sources: 0 };
+    const lines: string[] = [];
+    const failures: string[] = [];
+    let peopleNet = 0;
+    let peopleCampaigns = 0;
+    for (const id of campaignIds) {
+      const routed = campaignSizeRoutes(recipe, [id])[0]?.route;
+      if (!routed || routed.kind === "park") {
+        failures.push(`#${id}: ${routed && routed.kind === "park" ? routed.reason : "no size route"}`);
+        continue;
       }
       if (routed.kind === "skip") {
-        return finish(this.d, run, "size", 0, { size_sources: 0 }, routed.line);
+        counts[`tam_${id}`] = 0;
+        counts[`plan_rows_${id}`] = 0;
+        lines.push(`#${id}: nothing to count`);
+        continue;
       }
-      if (routed.kind === "combine") {
-        return this.combineLists(run, recipe, routed.segments, campaignIds, attempts);
+      const segments = segmentsFor(routed, id);
+      const rows = await Promise.all(segments.map((seg) => this.measureSegment(run, recipe, seg)));
+      const bad = rows.filter((row) => !row.measure.counted);
+      if (bad.length) {
+        failures.push(`#${id}: ${bad.map((row) => row.measure.reason ?? "could not be counted").join("; ")}`);
+        continue;
       }
-      if (routed.kind === "maps" || routed.kind === "permits") {
-        const label = routed.kind === "maps" ? (routed.source.params.categories[0] ?? "maps") : (routed.source.params.permit_types[0] ?? "permits");
-        return this.combineLists(run, recipe, [{ label, campaignIds, route: routed }], campaignIds, attempts);
+      const people = rows.filter((row) => row.measure.unit === "people").reduce((sum, row) => sum + row.measure.total, 0);
+      const businesses = rows.filter((row) => row.measure.unit === "businesses").reduce((sum, row) => sum + row.measure.total, 0);
+      const permits = rows.filter((row) => row.measure.unit === "permits").reduce((sum, row) => sum + row.measure.total, 0);
+      const hasPeople = rows.some((row) => row.measure.unit === "people");
+      let net = people;
+      if (hasPeople) {
+        const days = recycleDays(recipe.suppression.recycle_after_days);
+        const held = await this.alreadyHeld(recipe.smartlead_client_id, [id], days, recipe.suppression.exclude_other_live_campaigns);
+        net = Math.max(0, people - held.count);
+        peopleNet += net;
+        peopleCampaigns += 1;
+        counts[`already_held_${id}`] = held.count;
       }
-      const params = routed.source.params;
-      const filters = params as GetleadsFilters;
-      const count = async (f: GetleadsFilters, label: string) => {
-        const r = await this.d.getleads.count(f);
-        await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "size", vendor: "getleads", action: "count", rows: r.total_matching, credits: 0, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: null, approvedBy: null });
-        return { label, ...r };
-      };
-      if (!recipeAuthorises(recipe, "size", "getleads")) throw new Error("the recipe does not authorise a getleads count on this lane");
-
-      // Partition check: the band filter must bind.
-      const { company_size: _omit, ...withoutBand } = filters;
-      const [segment, others, all] = await Promise.all([
-        count(filters, "segment"),
-        count({ ...filters, company_size: bandComplement(params.company_size) as GetleadsFilters["company_size"] }, "other bands"),
-        count(withoutBand as GetleadsFilters, "no band filter"),
-      ]);
-      const partition = partitionCheck(segment.total_matching, others.total_matching, all.total_matching, recipe.size.partition_tolerance);
-
-      const days = recycleDays(recipe.suppression.recycle_after_days);
-      const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns);
-      const netNew = Math.max(0, segment.total_matching - held.count);
-
-      const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
-      const need = rowsNeeded(snaps, recipe.runway.target_days, 7);
-      const planRows = Math.max(1, Math.min(recipe.runway.max_per_run, need === null ? recipe.runway.max_per_run : Math.max(need, recipe.size.useful_floor), Math.max(netNew, 1)));
-
-      const counts: Record<string, number> = {
-        total_matching: segment.total_matching,
-        exportable_rows: segment.exportable_rows ?? 0,
-        partition_bands: partition.bands,
-        partition_other_bands: partition.others,
-        partition_all: partition.all,
-        partition_diff: partition.diff,
-        partition_ok: partition.ok ? 1 : 0,
-        already_held: held.count,
-        projected_net_new: netNew,
-        useful_floor: recipe.size.useful_floor,
-        rows_needed: need ?? 0,
-        plan_rows: planRows,
-        size_sources: 1,
-        recycle_after_days: days,
-      };
-
-      if (!partition.ok) {
-        await this.d.repo.finishStep(run.run_id, "size", { useful_output: 0, counts });
-        return gateUnmet("size", `the band filter does not bind: ${partition.bands} (bands) + ${partition.others} (other bands) ≠ ${partition.all} (no band filter), off by ${partition.diff}. The count cannot be trusted (tam-sizing).`, counts);
-      }
-      if (netNew < recipe.size.useful_floor) {
-        // Thin: count the widening options; Josh decides. Never widen unasked.
-        const widening: string[] = [];
-        for (const [i, w] of routed.source.widening_candidates.entries()) {
-          const wf: GetleadsFilters = {
-            ...filters,
-            ...(w.company_size ? { company_size: [...new Set([...params.company_size, ...w.company_size])] as GetleadsFilters["company_size"] } : {}),
-            ...(w.add_titles ? { job_titles: [...new Set([...params.job_titles, ...w.add_titles])] } : {}),
-            ...(w.states ? { states: w.states } : {}),
-            ...(w.industries ? { industries: w.industries } : {}),
-          };
-          const r = await count(wf, `widening ${i + 1}`);
-          counts[`widening_${i + 1}_total`] = r.total_matching;
-          widening.push(`${describeWidening(w)}: ${r.total_matching} matching (about ${Math.max(0, r.total_matching - held.count)} net new)`);
-        }
+      const snap = snaps.filter((s) => s.smartlead_campaign_id === id);
+      const need = rowsNeeded(snap, recipe.runway.target_days, 7);
+      const cap = hasPeople ? net : Math.max(businesses, permits, people);
+      const planRows = cap <= 0 ? 0 : Math.max(1, Math.min(recipe.runway.max_per_run, need === null ? recipe.runway.max_per_run : Math.max(need, 0), cap));
+      const tam = hasPeople ? people : businesses > 0 ? businesses : permits;
+      counts[`tam_${id}`] = tam;
+      counts[`plan_rows_${id}`] = planRows;
+      if (hasPeople) counts[`net_new_${id}`] = net;
+      if (businesses) counts[`businesses_${id}`] = businesses;
+      if (permits) counts[`permits_${id}`] = permits;
+      counts.size_sources += segments.length;
+      lines.push(`#${id}: TAM ${tam}, request ${planRows}`);
+    }
+    if (failures.length) {
+      const reason = failures.join("; ");
+      await this.d.repo.failStep(run.run_id, "size", reason, true);
+      return park(this.d, run, "size", reason, attempts);
+    }
+    const planRows = campaignIds.reduce((sum, id) => sum + (counts[`plan_rows_${id}`] ?? 0), 0);
+    counts.plan_rows = planRows;
+    if (peopleCampaigns > 0 && peopleNet < recipe.size.useful_floor && lines.every((line) => !line.includes("businesses") && !line.includes("permits"))) {
+      const physical = Object.keys(counts).some((key) => key.startsWith("businesses_") || key.startsWith("permits_"));
+      if (!physical) {
         await this.d.repo.finishStep(run.run_id, "size", { useful_output: 0, counts });
         return gateUnmet(
           "size",
-          `projected net new ${netNew} is under the useful floor ${recipe.size.useful_floor} (${segment.total_matching} matching, ${held.count} already sent to this ICP). ` +
-            (widening.length ? `Widening options, counted: ${widening.join("; ")}. Josh decides; nothing widens on its own.` : "The recipe lists no widening candidates; Josh decides."),
+          `projected net new ${peopleNet} is under the useful floor ${recipe.size.useful_floor} across ${peopleCampaigns} campaign(s). Josh decides; nothing widens on its own.`,
           counts,
         );
       }
-      const filter = `getleads count_contacts; bands ${params.company_size.join(", ")}; titles ${params.job_titles.length}`;
-      const report = sizeReport({
-        number: segment.total_matching,
-        filter,
-        partition,
-        secondVendor: "AI Ark People Preview is not a leadtopup client yet (D22); getleads is the free second opinion tam-sizing always wants",
-        agree: null,
-        netNew,
-        held: held.count,
-        costUsd: "$0.00",
-      });
-      const plan =
-        need === null
-          ? `campaign mirror has no sends in the window, so the pull plans the recipe's max_per_run (${planRows})`
-          : `campaigns need ${need} rows for ${recipe.runway.target_days} days; the pull plans ${planRows}`;
-      const line = `Size done (linkedin_native, ${campaignIds.length} campaign(s)):\n${report}\n${plan}.${held.note ? ` ${held.note}` : ""}`;
-      return finish(this.d, run, "size", netNew, counts, line);
-    });
+    }
+    const line = [`Size done (${campaignIds.length} campaign(s)):`, ...lines, "Each campaign keeps its own TAM and requested count."].join("\n");
+    return finish(this.d, run, "size", peopleCampaigns > 0 ? peopleNet : (counts.plan_rows ?? 0), counts, line);
   }
 
   /**
@@ -254,11 +257,12 @@ export class SizeStage {
       (acc, list) => ({
         bands: acc.bands + list.partition.bands,
         others: acc.others + list.partition.others,
+        unknown: acc.unknown + list.partition.unknown,
         all: acc.all + list.partition.all,
         diff: acc.diff + list.partition.diff,
         ok: acc.ok && list.partition.ok,
       }),
-      { bands: 0, others: 0, all: 0, diff: 0, ok: true },
+      { bands: 0, others: 0, unknown: 0, all: 0, diff: 0, ok: true },
     );
     const report = sizeReport({
       number: total,
@@ -341,7 +345,7 @@ export class SizeStage {
       return { measure: { label: seg.label, unit, counted: false, total: 0, detail: null, reason: seg.route.reason } };
     }
     if (seg.route.kind === "skip") {
-      return { measure: { label: seg.label, unit, counted: true, total: 0, detail: null, reason: null }, partition: { bands: 0, others: 0, all: 0, diff: 0, ok: true } };
+      return { measure: { label: seg.label, unit, counted: true, total: 0, detail: null, reason: null }, partition: { bands: 0, others: 0, unknown: 0, all: 0, diff: 0, ok: true } };
     }
     if (seg.route.kind === "maps") {
       const source = seg.route.source;
@@ -379,7 +383,7 @@ export class SizeStage {
     source: MapsSource,
   ): Promise<{ ok: true; total: number; detail: string } | { ok: false; reason: string }> {
     if (!recipeAuthorises(recipe, "size", "maps")) return { ok: false, reason: "the recipe does not authorise a maps count on this lane" };
-    if (!this.d.maps) return { ok: false, reason: "MAPS_MCP_URL is not configured" };
+    if (!this.d.maps) return { ok: false, reason: "missing credentials for maps" };
     if (source.params.categories.length !== 1) return { ok: false, reason: "a maps list is one category" };
     const category = source.params.categories[0]!;
     const states = stateCodes(source.params.states);
@@ -406,7 +410,7 @@ export class SizeStage {
     if (!recipeAuthorises(recipe, "size", "permitstack")) {
       return { ok: false, reason: "the recipe does not authorise a permit count on this lane" };
     }
-    if (!this.d.permits) return { ok: false, reason: "PERMITSTACK_MCP_URL is not configured" };
+    if (!this.d.permits) return { ok: false, reason: "missing credentials for permitstack" };
     if (source.params.permit_types.length !== 1) return { ok: false, reason: "a permit list is one permit type" };
     const category = source.params.permit_types[0]!;
     const states = stateCodes(source.params.states);
@@ -475,12 +479,8 @@ export class SizeStage {
       count(withoutBand as GetleadsFilters),
     ]);
     const partition = partitionCheck(segment.total_matching, others.total_matching, all.total_matching, recipe.size.partition_tolerance);
-    if (!partition.ok) {
-      return {
-        ok: false,
-        reason: `the band filter does not bind: ${partition.bands} (bands) + ${partition.others} (other bands) ≠ ${partition.all} (no band filter), off by ${partition.diff}`,
-      };
-    }
+    const mismatch = bandMismatchReason(partition);
+    if (mismatch) return { ok: false, reason: mismatch };
     return { ok: true, total: segment.total_matching, partition };
   }
 
@@ -526,6 +526,18 @@ export class SizeStage {
         : `subtracted addresses this client sent in the last ${days} days`,
     };
   }
+}
+
+function segmentsFor(route: SizeRoute, campaignId: number): SizeSegment[] {
+  if (route.kind === "combine") return route.segments.map((seg) => ({ ...seg, campaignIds: [campaignId] }));
+  if (route.kind === "park" || route.kind === "skip") return [];
+  const label =
+    route.kind === "maps"
+      ? (route.source.params.categories[0] ?? "maps")
+      : route.kind === "permits"
+        ? (route.source.params.permit_types[0] ?? "permits")
+        : "people";
+  return [{ label, campaignIds: [campaignId], route }];
 }
 
 function unitFor(route: SizeLeaf): CountUnit {

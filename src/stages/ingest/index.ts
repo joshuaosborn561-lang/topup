@@ -32,8 +32,9 @@ export interface IngestDeps extends StageDeps {
   clock?: Clock;
 }
 
-export function sourceLabel(run: RunRow): string {
-  return `topup_${run.client_tag}_${run.lane}_${run.run_id.slice(0, 8)}`;
+export function sourceLabel(run: RunRow, campaignId?: number): string {
+  const base = `topup_${run.client_tag}_${run.lane}_${run.run_id.slice(0, 8)}`;
+  return campaignId ? `${base}_c${campaignId}` : base;
 }
 
 /** Case-insensitive regex that matches a title containing any of the recipe's titles as a phrase. */
@@ -52,28 +53,51 @@ export class IngestStage {
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
     return attempt(this.d, run, "ingest", "ingesting", async () => {
       const table = ingestedTable(run.client_tag);
-      const label = sourceLabel(run);
       const pulled = await this.d.pull.resolve(run, recipe);
+      const files = pulled.files.length > 0 ? pulled.files : [];
+      const csvs = files.filter((file) => file.export_url);
+      if (csvs.length === 0) {
+        const counts: Record<string, number> = { rows_exported: pulled.rows_exported, rows_claimed: 0, count_only: 1 };
+        for (const file of files) counts[`rows_${file.campaignId}`] = (counts[`rows_${file.campaignId}`] ?? 0) + file.rows_exported;
+        return finish(
+          this.d,
+          run,
+          "ingest",
+          0,
+          counts,
+          `Ingest: ${files.length} segment(s) are counts, not a lead file. Nothing was loaded into ${table}.`,
+        );
+      }
 
       const own = await this.d.repo.getStep(run.run_id, "ingest");
-      let jobId = own?.vendor_job_id ?? null;
-      if (!jobId) {
-        const started = await this.d.leadpipe.ingestCsv(run.client_tag, { urls: [pulled.export_url], source_label: label, dedupe_key: "email" });
-        jobId = started.job_id;
-        await this.d.repo.setStepVendorJob(run.run_id, "ingest", jobId);
-        await this.d.console.postInThread(run, `Ingest: LeadPipe ingest_csv started (job \`${jobId}\`, source_label \`${label}\`) for ${pulled.rows_exported} exported rows.`);
+      const jobs = parseIngestJobs(own?.vendor_job_id ?? null);
+      const labels = csvs.map((file) => sourceLabel(run, file.campaignId));
+      let readTotal = 0;
+      let readKnown = true;
+      for (const file of csvs) {
+        const label = sourceLabel(run, file.campaignId);
+        let jobId = jobs[label] ?? null;
+        if (!jobId) {
+          const started = await this.d.leadpipe.ingestCsv(run.client_tag, { urls: [file.export_url], source_label: label, dedupe_key: "email" });
+          jobId = started.job_id;
+          jobs[label] = jobId;
+          await this.d.repo.setStepVendorJob(run.run_id, "ingest", JSON.stringify(jobs));
+          await this.d.console.postInThread(run, `Ingest: LeadPipe ingest_csv started (job \`${jobId}\`, source_label \`${label}\`) for ${file.rows_exported} exported rows on #${file.campaignId}.`);
+        }
+        const status = await poll<JobStatus>(
+          async () => {
+            const s = await this.d.leadpipe.jobStatus(jobId!);
+            if (JOB_FAILED.includes(s.status)) return { state: "failed", error: s.error ?? s.status };
+            if (JOB_DONE.includes(s.status)) return { state: "done", value: s };
+            return { state: "running" };
+          },
+          { pollMs: this.d.cfg.pollMs, deadMs: this.d.cfg.deadMs, clock: this.clock, what: `LeadPipe ingest ${jobId}` },
+        );
+        await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "leadpipe", action: "ingest_csv", rows: status.rows_read ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: jobId, approvedBy: null });
+        if (status.rows_read === null) readKnown = false;
+        else readTotal += status.rows_read;
       }
-      const status = await poll<JobStatus>(
-        async () => {
-          const s = await this.d.leadpipe.jobStatus(jobId!);
-          if (JOB_FAILED.includes(s.status)) return { state: "failed", error: s.error ?? s.status };
-          if (JOB_DONE.includes(s.status)) return { state: "done", value: s };
-          return { state: "running" };
-        },
-        { pollMs: this.d.cfg.pollMs, deadMs: this.d.cfg.deadMs, clock: this.clock, what: `LeadPipe ingest ${jobId}` },
-      );
-      // LeadPipe spends nothing (docs/servers.md §1); the ledger row is the record that the job ran.
-      await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "leadpipe", action: "ingest_csv", rows: status.rows_read ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: jobId, approvedBy: null });
+      const csvExported = csvs.reduce((sum, file) => sum + file.rows_exported, 0);
 
       const cols = await columnsOf(this.d.repo, table);
       if (!cols.has("source_label")) throw new Error(`${table} has no source_label column; cannot claim the ingested rows for this run`);
@@ -83,8 +107,8 @@ export class IngestStage {
       const claimed = await this.d.repo.withRun(run.run_id, async (tx) => {
         const { rowCount } = await tx.query(
           `update ${table} set run_id = $1, lead_status = 'ingested', status_changed_at = now()${fills.length ? ", " + fills.join(", ") : ""}
-           where source_label = $2 and run_id is null`,
-          [run.run_id, label],
+           where source_label = any($2::text[]) and run_id is null`,
+          [run.run_id, labels],
         );
         return rowCount ?? 0;
       });
@@ -92,26 +116,27 @@ export class IngestStage {
       const titles = jobTitlesFor(recipe, await runTargetCampaignIds(this.d.repo, run, recipe));
       const offTitle = titles.length ? await this.auditTitles(table, run, titles, cols) : 0;
 
-      const rowsRead = status.rows_read;
+      const rowsRead = readKnown ? readTotal : null;
       const counts: Record<string, number> = {
-        rows_exported: pulled.rows_exported,
+        rows_exported: csvExported,
         rows_read: rowsRead ?? -1,
         rows_claimed: claimed,
         dedupe_dropped: rowsRead === null ? -1 : Math.max(0, rowsRead - claimed),
         ...landed,
         off_title: offTitle,
       };
-      if (rowsRead !== null && rowsRead !== pulled.rows_exported) {
+      for (const file of files) counts[`rows_${file.campaignId}`] = (counts[`rows_${file.campaignId}`] ?? 0) + file.rows_exported;
+      if (rowsRead !== null && rowsRead !== csvExported) {
         await this.d.repo.finishStep(run.run_id, "ingest", { useful_output: claimed, counts });
-        return gateUnmet("ingest", `LeadPipe read ${rowsRead} rows but the export had ${pulled.rows_exported}. ${claimed} rows landed for this run.`, counts);
+        return gateUnmet("ingest", `LeadPipe read ${rowsRead} rows but the export had ${csvExported}. ${claimed} rows landed for this run.`, counts);
       }
-      if (rowsRead === null && claimed < pulled.rows_exported) {
+      if (rowsRead === null && claimed < csvExported) {
         await this.d.repo.finishStep(run.run_id, "ingest", { useful_output: claimed, counts });
-        return gateUnmet("ingest", `LeadPipe reported no read count (lp_status keys: ${status.raw_keys.join(", ") || "none"}) and ${claimed} of ${pulled.rows_exported} exported rows landed; the rest are dedupe drops or missing and the service cannot tell which.`, counts);
+        return gateUnmet("ingest", `LeadPipe reported no read count and ${claimed} of ${csvExported} exported rows landed; the rest are dedupe drops or missing and the service cannot tell which.`, counts);
       }
       const nulls = Object.entries(landed).filter(([, n]) => n > 0).map(([k, n]) => `${k.replace("null_", "")} ${n}`);
       const line =
-        `Ingest done: ${pulled.rows_exported} exported, ${rowsRead === null ? "read count not reported (all landed)" : `${rowsRead} read`}, ${claimed} claimed for this run` +
+        `Ingest done: ${csvExported} exported, ${rowsRead === null ? "read count not reported (all landed)" : `${rowsRead} read`}, ${claimed} claimed for this run` +
         (rowsRead !== null && rowsRead > claimed ? ` (${rowsRead - claimed} dropped as already in the table)` : "") +
         (nulls.length ? ` · empty after ingest: ${nulls.join(", ")} (LeadPipe column drop; see the parlay skill)` : " · city, state, industry, employee_range all landed") +
         ` · titles audited: ${offTitle} off-title flagged for step 8.`;
@@ -140,4 +165,21 @@ export class IngestStage {
       return rowCount ?? 0;
     });
   }
+}
+
+function parseIngestJobs(raw: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === "string") out[key] = value;
+      }
+      return out;
+    }
+  } catch {
+    /* a single job id from an older run is not reused across several labels */
+  }
+  return {};
 }

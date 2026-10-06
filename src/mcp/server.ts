@@ -233,7 +233,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
       inputSchema: { card_id: z.string(), choice: z.string() },
     },
     async ({ card_id, choice }) => {
-      if (role === "operator" && (choice === "approve_spend" || choice === "split")) {
+      if (role === "operator" && (choice === "approve_spend" || choice === "approve_small_spend" || choice === "split")) {
         const card = await d.repo.getCard(card_id);
         const cents = Number(card?.payload?.worst_case_cents ?? 0);
         if (cents >= SPEND_ASK_MIN_CENTS) {

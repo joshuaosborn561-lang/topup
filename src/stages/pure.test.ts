@@ -8,7 +8,7 @@ import { sourceLabel, titlePattern } from "./ingest/index.js";
 import { QA_FIELD_COLUMN, scopeSql } from "./qa/index.js";
 import { bandSegment, cellLabel, mailClassSegment, matchRule } from "./route/index.js";
 import { classifyPuzzle } from "./puzzle/classify.js";
-import { routePull, routeSize } from "./pull/route.js";
+import { pullPlans, routePull, routeSize } from "./pull/route.js";
 import { partitionCheck, rowsNeeded, sourcesAgree } from "./size/index.js";
 import { sizeReport } from "./size/report.js";
 import { clientPriorContactSql, positiveReplySql, recycleDays } from "./suppress/recycle.js";
@@ -31,8 +31,9 @@ function campaignRecipe(
 describe("step 2 — size (skill tam-sizing)", () => {
   it("partition check: bands + other bands == no band filter, within tolerance", () => {
     assert.equal(partitionCheck(400, 600, 1000, 0.01).ok, true);
-    assert.equal(partitionCheck(400, 600, 1012, 0.01).ok, false, "12 off on 1000 is over 1%");
-    assert.equal(partitionCheck(400, 600, 1009, 0.01).ok, true, "9 off on 1000 is within ceil(1%)");
+    assert.equal(partitionCheck(400, 600, 1012, 0.01).unknown, 12);
+    assert.equal(partitionCheck(400, 600, 1012, 0.01).ok, true, "12 records with no band are the unknown bucket");
+    assert.equal(partitionCheck(400, 600, 1009, 0.01).ok, true, "9 off on 1000 is the unknown bucket");
     assert.equal(partitionCheck(0, 0, 0, 0.01).ok, true);
     assert.equal(partitionCheck(5, 0, 0, 0.01).ok, false);
   });
@@ -176,7 +177,7 @@ describe("D29 — pull and size routing", () => {
     spend: { auto_cap_usd: 5 },
   };
 
-  it("LinkedIn-native + getleads runs; physical + getleads parks; maps/permits park until wired", () => {
+  it("LinkedIn-native + getleads runs; physical + getleads parks; maps and permits pull", () => {
     const linkedin = campaignRecipe(base, { kind: "linkedin_native", persona: "it_dm" }, { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50"], email_status: ["VALID"] } });
     assert.equal(routePull(linkedin).kind, "run");
     assert.equal(routeSize(linkedin).kind, "getleads");
@@ -195,12 +196,11 @@ describe("D29 — pull and size routing", () => {
       { kind: "physical", persona: "owner" },
       { kind: "maps", params: { categories: ["roofing contractor"] } },
     );
-    assert.equal(routePull(maps).kind, "park");
-    assert.match((routePull(maps) as { reason: string }).reason, /not wired/);
+    assert.equal(routePull(maps).kind, "run");
     assert.equal(routeSize(maps).kind, "maps");
   });
 
-  it("D30 — size counts each segment list; pull still parks a mixed run; same persona unions bands", () => {
+  it("D30 — size counts each segment list; a physical campaign is named; each campaign keeps its own bands", () => {
     const mixed = parseRecipe({
       ...base,
       source: { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50", "1 to 10"], email_status: ["VALID"] } },
@@ -217,8 +217,10 @@ describe("D29 — pull and size routing", () => {
       assert.equal(sized.segments[0]?.route.kind, "getleads");
       assert.equal(sized.segments[1]?.route.kind, "park");
     }
-    assert.equal(routePull(mixed).kind, "park");
-    assert.match((routePull(mixed) as { reason: string }).reason, /mixed campaign ICPs/);
+    const mixedPull = routePull(mixed);
+    assert.equal(mixedPull.kind, "park");
+    assert.match((mixedPull as { reason: string }).reason, /#2/);
+    assert.doesNotMatch((mixedPull as { reason: string }).reason, /route each campaign separately/);
     assert.equal(routePull(mixed, [1]).kind, "run", "one campaign of the pair still pulls");
 
     const same = parseRecipe({
@@ -230,9 +232,12 @@ describe("D29 — pull and size routing", () => {
         { when: { band: "51_200" }, campaign_id: 2, icp: { kind: "linkedin_native", persona: "it_dm" } },
       ],
     });
-    const unioned = routeSize(same);
-    assert.equal(unioned.kind, "getleads");
-    if (unioned.kind === "getleads") assert.deepEqual(unioned.source.params.company_size, ["11 to 50", "51 to 200"]);
+    const separate = routeSize(same);
+    assert.equal(separate.kind, "combine");
+    if (separate.kind === "combine") {
+      assert.equal(separate.segments.length, 2);
+      assert.deepEqual(separate.segments.map((seg) => seg.campaignIds), [[1], [2]]);
+    }
   });
 
   it("a maps_and_permits source is one list per category and permit type", () => {
@@ -268,7 +273,15 @@ describe("D29 — pull and size routing", () => {
         ["maps", "maps", "permits"],
       );
     }
-    assert.equal(routePull(recipe).kind, "park");
+    const pulled = pullPlans(recipe);
+    assert.equal(pulled.kind, "run");
+    if (pulled.kind === "run") {
+      assert.deepEqual(
+        pulled.plans.map((plan) => plan.source),
+        ["maps", "maps", "permits"],
+      );
+      assert.ok(pulled.plans.every((plan) => plan.campaignId === 3798227));
+    }
   });
 
   it("the tam-sizing report is five lines in order", () => {

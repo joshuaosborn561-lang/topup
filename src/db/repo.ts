@@ -1,3 +1,4 @@
+import { petersonLaneCaseSql } from "../recipes/registry.js";
 import type { Db, Queryable } from "./pool.js";
 import type { Role, RunRow, RunStepRow, RunStatus, Step } from "../domain/runs.js";
 import { MAX_STEP_ATTEMPTS } from "../domain/runs.js";
@@ -661,7 +662,52 @@ export class Repo {
     return out;
   }
 
-  /** Keep the registry in step with the recipe so `/working` has a row to flip. Never overwrites the override. */
+  /**
+   * Retag registry rows from public.campaigns and topup.client_map, then
+   * set the lane from the latest lane receipt for that client. Peterson
+   * 3798227–3798231 leave "schools" for their own lanes last, so a receipt
+   * that still says schools does not win.
+   */
+  async repairCampaignRegistry(): Promise<void> {
+    await this.db.query(
+      `update topup.campaign_registry cr
+          set client_tag = cm.client_tag,
+              smartlead_client_id = c.smartlead_client_id,
+              updated_at = now()
+         from public.campaigns c
+         join topup.client_map cm on cm.smartlead_client_id = c.smartlead_client_id
+        where cr.campaign_id = c.smartlead_campaign_id
+          and (cr.client_tag is distinct from cm.client_tag
+               or cr.smartlead_client_id is distinct from c.smartlead_client_id)`,
+    );
+    await this.db.query(
+      `update topup.campaign_registry cr
+          set lane = sub.lane,
+              updated_at = now()
+         from (
+           select distinct on (cr2.campaign_id) cr2.campaign_id, r.lane
+             from topup.campaign_registry cr2
+             join topup.pull_receipts r
+               on r.client_tag = cr2.client_tag
+              and cr2.campaign_id = any(r.campaign_ids)
+              and r.granularity = 'lane'
+              and r.lane is not null
+            order by cr2.campaign_id, r.written_at desc
+         ) sub
+        where cr.campaign_id = sub.campaign_id
+          and cr.lane is distinct from sub.lane`,
+    );
+    const { caseSql, idsSql } = petersonLaneCaseSql();
+    await this.db.query(
+      `update topup.campaign_registry
+          set lane = case campaign_id ${caseSql} end,
+              updated_at = now()
+        where campaign_id in (${idsSql})
+          and lane is distinct from case campaign_id ${caseSql} end`,
+    );
+  }
+
+  /** Keep the registry in step with the recipe so `/working` has a row to flip. Never overwrites the override, the client, or the lane. */
   async upsertCampaignRegistry(rows: Array<{
     campaign_id: number;
     campaign_name: string | null;
@@ -677,9 +723,6 @@ export class Repo {
          values ($1,$2,$3,$4,$5,$6,$7, now())
          on conflict (campaign_id) do update set
            campaign_name = excluded.campaign_name,
-           client_tag = excluded.client_tag,
-           smartlead_client_id = excluded.smartlead_client_id,
-           lane = excluded.lane,
            recipe_id = excluded.recipe_id,
            status = excluded.status,
            updated_at = now()`,

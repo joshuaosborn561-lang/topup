@@ -39,6 +39,7 @@ export class RunwayWatch {
   ) {}
 
   async tick(): Promise<{ looked: number; went: number; asked: number; skipped: number }> {
+    await this.d.repo.repairCampaignRegistry().catch((err) => log.warn("registry repair before tick failed", { error: (err as Error).message }));
     const tally = { looked: this.d.recipes.length, went: 0, asked: 0, skipped: 0 };
     const actions = await Promise.all(
       this.d.recipes.map((recipe) =>
@@ -57,6 +58,7 @@ export class RunwayWatch {
       else if (action === "ask") tally.asked += 1;
       else tally.skipped += 1;
     }
+    await this.d.repo.repairCampaignRegistry().catch((err) => log.warn("registry repair after tick failed", { error: (err as Error).message }));
     log.info("tick", tally);
     return tally;
   }

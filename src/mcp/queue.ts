@@ -118,38 +118,39 @@ async function lanesForCampaigns(db: Queryable): Promise<Map<number, string>> {
   }
 }
 
-async function clientOpenRun(db: Queryable, clientTag: string): Promise<boolean> {
-  const { rows } = await db.query(
-    `select 1 from topup.runs where client_tag = $1 and topup.run_is_open(status) limit 1`,
-    [clientTag],
-  );
-  return rows.length > 0;
+/** An open run blocks a lane only when it is the same client and the same lane. A sibling lane, or another client's run that lists this campaign, does not. */
+export function openRunBlocksLane(
+  openRuns: readonly { client_tag: string; lane: string }[],
+  clientTag: string,
+  lane: string | null,
+): boolean {
+  if (!lane) return false;
+  return openRuns.some((run) => run.client_tag === clientTag && run.lane === lane);
 }
 
-async function clientLastStatus(db: Queryable, clientTag: string): Promise<RunStatus | null> {
-  const { rows } = await db.query<{ status: RunStatus }>(
-    `select status from topup.runs where client_tag = $1 order by opened_at desc limit 1`,
-    [clientTag],
-  );
-  return rows[0]?.status ?? null;
+export function lastStatusForLane(
+  runs: readonly { client_tag: string; lane: string; status: RunStatus }[],
+  clientTag: string,
+  lane: string | null,
+): RunStatus | null {
+  if (!lane) return null;
+  return runs.find((run) => run.client_tag === clientTag && run.lane === lane)?.status ?? null;
 }
 
-function clientDecision(
-  client: ClientRunway,
-  flagged: NeedyCampaign[],
-  recipe: Recipe | undefined,
-  openRun: boolean,
-  lastStatus: RunStatus | null,
-): { kind: "go" | "ask" | "skip"; why: string } {
-  const decision = watchDecision({
-    needy: flagged,
-    camps: flagged,
-    client,
-    recipeCampaignIds: recipe ? recipeCampaignIds(recipe) : flagged.map((c) => c.health.smartlead_campaign_id),
-    openRun,
-    lastStatus,
-  });
-  return { kind: decision.kind, why: decision.why };
+async function openRuns(db: Queryable): Promise<Array<{ client_tag: string; lane: string }>> {
+  const { rows } = await db.query<{ client_tag: string; lane: string }>(
+    `select client_tag, lane from topup.runs where topup.run_is_open(status)`,
+  );
+  return rows;
+}
+
+async function latestStatusByLane(db: Queryable): Promise<Array<{ client_tag: string; lane: string; status: RunStatus }>> {
+  const { rows } = await db.query<{ client_tag: string; lane: string; status: RunStatus }>(
+    `select distinct on (client_tag, lane) client_tag, lane, status
+       from topup.runs
+      order by client_tag, lane, opened_at desc`,
+  );
+  return rows;
 }
 
 export interface QueueQuery {
@@ -177,6 +178,8 @@ export async function buildTopupQueue(
       : recipes.map((r) => ({ client_tag: r.client_tag, smartlead_client_id: r.smartlead_client_id }));
   const registryLanes = await lanesForCampaigns(db);
   const receiptLanes = await receiptLanesForCampaigns(db);
+  const open = await openRuns(db).catch(() => [] as Array<{ client_tag: string; lane: string }>);
+  const latest = await latestStatusByLane(db).catch(() => [] as Array<{ client_tag: string; lane: string; status: RunStatus }>);
   const raw: UnrankedQueueItem[] = [];
 
   const wantClient = query.client_tag ?? null;
@@ -212,18 +215,34 @@ export async function buildTopupQueue(
       flagged.push({ health: h, working });
     }
 
-    const openRun = await clientOpenRun(db, clientRow.client_tag).catch(() => false);
-    const lastStatus = await clientLastStatus(db, clientRow.client_tag).catch(() => null);
-    const fileRecipe = recipes.find((r) => r.client_tag === clientRow.client_tag);
-    const decision = clientDecision(client, flagged, fileRecipe, openRun, lastStatus);
-
     for (const camp of flagged) {
       const rec = recipeForCampaign(recipes, clientRow.client_tag, camp.health.smartlead_campaign_id);
       const watchdog = watchdogLeadFlag(camp.health);
       if (!watchdog) continue;
+      const lane =
+        registryLanes.get(camp.health.smartlead_campaign_id) ??
+        receiptLanes.get(camp.health.smartlead_campaign_id) ??
+        rec?.lane ??
+        null;
+      const laneCamps = flagged.filter((other) => {
+        const otherLane =
+          registryLanes.get(other.health.smartlead_campaign_id) ??
+          receiptLanes.get(other.health.smartlead_campaign_id) ??
+          recipeForCampaign(recipes, clientRow.client_tag, other.health.smartlead_campaign_id)?.lane ??
+          null;
+        return otherLane === lane;
+      });
+      const decision = watchDecision({
+        needy: laneCamps,
+        camps: laneCamps,
+        client,
+        recipeCampaignIds: laneCamps.map((other) => other.health.smartlead_campaign_id),
+        openRun: openRunBlocksLane(open, clientRow.client_tag, lane),
+        lastStatus: lastStatusForLane(latest, clientRow.client_tag, lane),
+      });
       raw.push({
         client_tag: clientRow.client_tag,
-        lane: receiptLanes.get(camp.health.smartlead_campaign_id) ?? rec?.lane ?? registryLanes.get(camp.health.smartlead_campaign_id) ?? null,
+        lane,
         campaign_id: camp.health.smartlead_campaign_id,
         campaign_name: camp.health.name,
         flags: [...camp.health.flags],

@@ -5,7 +5,9 @@ import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
+import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
 import { trimToOwningClient } from "./recipes/trim.js";
+import { resumeEffect } from "./runs/resume.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
 import { gateCard } from "./slack/cards.js";
 import type { SlackConsole } from "./slack/console.js";
@@ -209,8 +211,29 @@ export class Orchestrator {
   private async pipeline(initial: RunRow): Promise<void> {
     const rec = await this.d.repo.getRecipe(initial.recipe_id);
     if (!rec) throw new Error(`recipe ${initial.recipe_id} is not in topup.lane_recipes`);
-    const loaded = parseRecipe(rec.body);
-    const trimmed = await trimToOwningClient(this.d.repo, loaded);
+    await this.d.repo.repairCampaignRegistry().catch((err) => log.warn("registry repair failed", { error: (err as Error).message }));
+    let loaded = parseRecipe(rec.body);
+    if (loaded.recipe_id.endsWith(".v0")) {
+      const again = await resolveRecipeForStart(this.d.repo, {
+        clientTag: loaded.client_tag,
+        lane: loaded.lane,
+        smartleadClientId: loaded.smartlead_client_id,
+      }).catch(() => null);
+      if (again && again.ok) loaded = again.recipe;
+    }
+    const registry = await this.d.repo.campaignRegistry(loaded.client_tag).catch(() => [] as Record<string, unknown>[]);
+    const rebuilt = routingFromRegistry(loaded, registryRows(registry));
+    if (rebuilt.routing.length !== loaded.routing.length || rebuilt.routing.some((rule, i) => rule.campaign_id !== loaded.routing[i]?.campaign_id)) {
+      await this.d.repo.upsertRecipe({
+        recipe_id: rebuilt.recipe_id,
+        client_tag: rebuilt.client_tag,
+        lane: rebuilt.lane,
+        version: Number(/\.v(\d+)$/.exec(rebuilt.recipe_id)?.[1] ?? 0),
+        body: rebuilt,
+        owner_approved_at: rec.owner_approved_at,
+      });
+    }
+    const trimmed = await trimToOwningClient(this.d.repo, rebuilt);
     const recipe = trimmed.recipe;
     if (trimmed.dropped.length) {
       log.info("trimmed foreign campaigns from saved recipe", { recipe_id: rec.recipe_id, dropped: trimmed.dropped });
@@ -370,21 +393,46 @@ export class Orchestrator {
         );
       }
     }
-    switch (card.choice) {
-      case "approve_spend":
-      case "split":
-      case "resume":
-      case "topup_anyway": {
-        if (!runId) return;
-        const run = await this.d.repo.getRun(runId);
-        if (run) {
-          await this.d.repo.setRunStatus(runId, "open", "trigger");
-          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh chose to top up anyway.`, runId));
-          await this.d.console.postInThread(run, `Top up anyway by <@${card.by}>: the watch will run the lane even though the reply rate is under the bar.`);
-        }
-        void this.drive(runId);
-        return;
+    const effect = resumeEffect(card.choice, card.kind);
+    if (effect === "reset_parked") {
+      if (!runId) return;
+      const run = await this.d.repo.getRun(runId);
+      if (!run) return;
+      const step = (card.kind === "parked" || card.kind === "gate" ? await this.parkedStep(card.card_id) : null) ?? run.current_step;
+      if (step) await this.d.repo.resetStep(runId, step);
+      await this.d.repo.setRunStatus(runId, "open", step ?? undefined);
+      void this.drive(runId);
+      return;
+    }
+    if (effect === "topup_anyway") {
+      if (!runId) return;
+      const run = await this.d.repo.getRun(runId);
+      if (run) {
+        await this.d.repo.setRunStatus(runId, "open", "trigger");
+        await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh chose to top up anyway.`, runId));
+        await this.d.console.postInThread(run, `Top up anyway by <@${card.by}>: the watch will run the lane even though the reply rate is under the bar.`);
       }
+      void this.drive(runId);
+      return;
+    }
+    if (effect === "continue" && (card.choice === "approve_spend" || card.choice === "approve_small_spend")) {
+      if (!runId) return;
+      const run = await this.d.repo.getRun(runId);
+      const full = await this.d.repo.getCard(card.card_id);
+      const step = (typeof full?.payload.step === "string" ? (full.payload.step as Step) : null) ?? run?.current_step ?? null;
+      const cents = Number(full?.payload.worst_case_cents ?? 0);
+      if (run && step) {
+        await this.d.repo.approveStep(runId, step, cents);
+        await this.d.repo.setRunStatus(runId, "open", step);
+      }
+      void this.drive(runId);
+      return;
+    }
+    if (effect === "continue") {
+      if (runId) void this.drive(runId);
+      return;
+    }
+    switch (card.choice) {
       // step 5: the list was added (or Josh said go without); step 9: Josh said continue without the pending cells
       case "list_added":
       case "no_list": {
@@ -409,19 +457,6 @@ export class Orchestrator {
         if (!run || !full || full.kind !== "qa_hold") return;
         const n = await this.d.stages.qa.applyTap(run, full.payload, card.choice, card.by);
         await this.d.console.postInThread(run, `QA ${card.choice} on \`${String(full.payload.rule_id)}\` by <@${card.by}>: ${n} leads.`);
-        void this.drive(runId);
-        return;
-      }
-      case "resume_run": {
-        if (!runId) return;
-        const run = await this.d.repo.getRun(runId);
-        if (!run) return;
-        const step = (card.kind === "parked" || card.kind === "gate" ? (await this.parkedStep(card.card_id)) : null) ?? run.current_step;
-        if (step) await this.d.repo.resetStep(runId, step);
-        await this.d.repo.setRunStatus(runId, "open", step ?? undefined);
-        await this.d.console
-          .postInThread(run, `Resumed by <@${card.by}>: step *${step ?? "?"}* gets one more go.`)
-          .catch((err) => log.warn("resume note failed", { run_id: runId, error: (err as Error).message }));
         void this.drive(runId);
         return;
       }
@@ -502,6 +537,22 @@ export class Orchestrator {
     }
     return out;
   }
+}
+
+function registryRows(rows: readonly Record<string, unknown>[]): RegistryCampaign[] {
+  const out: RegistryCampaign[] = [];
+  for (const row of rows) {
+    const id = Number(row.campaign_id);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    const client = row.smartlead_client_id == null ? null : Number(row.smartlead_client_id);
+    out.push({
+      campaign_id: id,
+      client_tag: String(row.client_tag ?? ""),
+      smartlead_client_id: client != null && Number.isFinite(client) ? client : null,
+      lane: row.lane == null ? null : String(row.lane),
+    });
+  }
+  return out;
 }
 
 function summarize(kind: string, payload: Record<string, unknown>): string {

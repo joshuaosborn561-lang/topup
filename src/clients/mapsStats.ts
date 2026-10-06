@@ -43,7 +43,34 @@ export function mapsScopedCount(payload: unknown): number {
   return n;
 }
 
-export class MapsStatsClient implements MapsStats {
+/** Read a sync_to_supabase count. Zero is a count. A missing count is zero rows written, not the global businesses total. */
+export function mapsSyncRows(payload: unknown): number {
+  let rec = asRecord(payload);
+  if (rec && typeof rec.result === "string") {
+    try {
+      rec = asRecord(JSON.parse(rec.result)) ?? rec;
+    } catch {
+      /* keep the outer object */
+    }
+  }
+  const nested = rec && asRecord(rec.counts);
+  const look = nested ?? rec;
+  if (!look) return 0;
+  for (const key of ["rows_synced", "synced", "rows", "inserted", "upserted", "count"]) {
+    const n = look[key];
+    if (typeof n === "number" && Number.isInteger(n) && n >= 0) return n;
+  }
+  return 0;
+}
+
+export interface MapsQuote {
+  /** Price a scrape. Writes a plan on the maps server and does not run it. */
+  estimateCost(args: { categories: string[]; states: string[]; clientTag: string }): Promise<void>;
+  /** Copy an already-scraped category into the client table. Returns a count, never rows. */
+  syncExisting(args: { category: string; state?: string; clientTag: string }): Promise<number>;
+}
+
+export class MapsStatsClient implements MapsStats, MapsQuote {
   private readonly mcp: McpHttpClient;
 
   constructor(
@@ -55,7 +82,7 @@ export class MapsStatsClient implements MapsStats {
   }
 
   async scopedBusinesses(args: { category: string; state?: string; clientTag?: string }): Promise<number> {
-    if (!this.url) throw new Error("MAPS_MCP_URL is not configured");
+    if (!this.url) throw new Error("missing credentials for maps");
     const category = args.category.trim();
     if (!category) throw new Error("maps count needs a category");
     const call: Record<string, unknown> = { main_category: category };
@@ -63,5 +90,27 @@ export class MapsStatsClient implements MapsStats {
     if (args.clientTag) call.client_tag = args.clientTag;
     const res = await this.mcp.call<unknown>("pipeline_stats", call);
     return mapsScopedCount(res);
+  }
+
+  async estimateCost(args: { categories: string[]; states: string[]; clientTag: string }): Promise<void> {
+    if (!this.url) throw new Error("missing credentials for maps");
+    const categories = args.categories.map((c) => c.trim()).filter(Boolean);
+    if (categories.length === 0) throw new Error("maps quote needs a category");
+    await this.mcp.call<unknown>("estimate_cost", {
+      categories,
+      states: args.states,
+      client_tag: args.clientTag,
+      brief: `topup price quote ${args.clientTag}`,
+    });
+  }
+
+  async syncExisting(args: { category: string; state?: string; clientTag: string }): Promise<number> {
+    if (!this.url) throw new Error("missing credentials for maps");
+    const category = args.category.trim();
+    if (!category) throw new Error("maps sync needs a category");
+    const call: Record<string, unknown> = { client_tag: args.clientTag, main_category: category };
+    if (args.state) call.state = args.state;
+    const res = await this.mcp.call<unknown>("sync_to_supabase", call);
+    return mapsSyncRows(res);
   }
 }

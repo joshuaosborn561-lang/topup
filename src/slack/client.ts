@@ -27,24 +27,37 @@ export class SlackPoster implements Poster {
       log.warn("slack disabled; message dropped", { channel, text, thread_ts: threadTs });
       return { channel, ts: `dropped-${Date.now()}` };
     }
-    const res = await this.web.chat.postMessage({
-      channel,
-      text,
-      blocks: blocks as never,
-      thread_ts: threadTs,
-      unfurl_links: false,
-    });
-    return { channel: (res.channel as string) ?? channel, ts: res.ts as string };
+    try {
+      const res = await this.web.chat.postMessage({
+        channel,
+        text,
+        blocks: blocks as never,
+        thread_ts: threadTs,
+        unfurl_links: false,
+      });
+      return { channel: (res.channel as string) ?? channel, ts: res.ts as string };
+    } catch (err) {
+      log.warn("slack post failed", { channel, error: (err as Error).message });
+      return { channel, ts: "unposted" };
+    }
   }
 
   async update(channel: string, ts: string, text: string, blocks?: Block[]): Promise<void> {
     if (!this.web) return;
-    await this.web.chat.update({ channel, ts, text, blocks: blocks as never });
+    try {
+      await this.web.chat.update({ channel, ts, text, blocks: blocks as never });
+    } catch (err) {
+      log.warn("slack update failed", { channel, error: (err as Error).message });
+    }
   }
 
   async ephemeral(channel: string, user: string, text: string): Promise<void> {
     if (!this.web) return;
-    await this.web.chat.postEphemeral({ channel, user, text });
+    try {
+      await this.web.chat.postEphemeral({ channel, user, text });
+    } catch (err) {
+      log.warn("slack ephemeral failed", { channel, error: (err as Error).message });
+    }
   }
 }
 

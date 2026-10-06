@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { GETLEADS_BANDS } from "./schema.js";
 import { getleadsParamsFromFilters, recipeFromReceipts, sourceFromStamp, type ReceiptStamp } from "./infer.js";
 
 function stamp(over: Partial<ReceiptStamp> = {}): ReceiptStamp {
@@ -38,6 +39,11 @@ describe("D45 infer recipe from pull receipts", () => {
     assert.deepEqual(params?.job_titles, ["Owner"]);
     assert.deepEqual(params?.company_size, ["11 to 50"]);
     assert.equal(getleadsParamsFromFilters({ job_titles: ["Owner"], company_size: ["any"] }), null);
+    assert.deepEqual(
+      getleadsParamsFromFilters({ job_titles: ["Facilities Manager"], states: ["California"] })?.company_size,
+      [...GETLEADS_BANDS],
+      "titles with no headcount field are the full band range",
+    );
     assert.equal(getleadsParamsFromFilters({ company_size: ["11 to 50"] }), null);
   });
 

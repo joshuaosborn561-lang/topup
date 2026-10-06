@@ -1,64 +1,64 @@
-import { campaignGroups, type CampaignGroup } from "../../recipes/campaigns.js";
+import { campaignGroups, recipeCampaignIds, type CampaignGroup } from "../../recipes/campaigns.js";
 import type { GetleadsSource, MapsSource, PermitsSource, Recipe, Source } from "../../recipes/schema.js";
 
 /**
  * Step zero of leadgen-mcp-routing: LinkedIn-native vs physical, then the
- * source the *campaigns* named (D30). getleads is the free first pass on
- * desk ICPs and structurally zero on rooftops — never a fallback. Pull
- * still parks when one run would walk two stacks. Size counts each
- * segment list on its own and combines the totals.
+ * source the *campaign* named (D30). getleads is the free first pass on
+ * desk ICPs and structurally zero on rooftops — never a fallback. A lane
+ * with several campaigns is sized and pulled once per campaign. A recipe
+ * with several segments pulls each segment on its own stack.
  */
-export type PullRoute = { kind: "run"; source: "getleads"; filters: GetleadsSource } | { kind: "park"; reason: string };
+export type PullJob = {
+  campaignId: number;
+  segment: string;
+  source: "getleads" | "maps" | "permits";
+  filters: GetleadsSource | MapsSource | PermitsSource;
+};
+
+export type PullRoute =
+  | { kind: "run"; source: "getleads"; filters: GetleadsSource; plans: PullJob[] }
+  | { kind: "run"; source: "maps" | "permits"; plans: PullJob[] }
+  | { kind: "park"; reason: string };
 
 export function routePull(recipe: Recipe, campaignIds?: number[]): PullRoute {
-  const groups = campaignGroups(recipe, campaignIds);
-  const mixed = mixedStackReason(groups);
-  if (mixed) return { kind: "park", reason: mixed };
+  const planned = pullPlans(recipe, campaignIds);
+  if (planned.kind === "park") return planned;
+  const first = planned.plans[0];
+  if (!first) return { kind: "park", reason: "no target campaigns to pull" };
+  if (first.source === "getleads") return { kind: "run", source: "getleads", filters: first.filters as GetleadsSource, plans: planned.plans };
+  return { kind: "run", source: first.source, plans: planned.plans };
+}
 
-  const g = groups[0];
-  if (!g) return { kind: "park", reason: "no target campaigns to pull" };
-  const src = g.source.kind;
-  const icp = g.kind;
-
-  if (src === "mixed") {
-    return {
-      kind: "park",
-      reason: "mixed ICP: route each campaign separately (leadgen-mcp-routing step zero). Do not pick one stack for the client.",
-    };
-  }
-
-  if (icp === "physical") {
-    if (src === "getleads" || src === "ai_ark") {
-      return {
-        kind: "park",
-        reason: "do not fall back to the LinkedIn-native stack on a physical ICP (rooftops, trades, permits). Route Maps and/or PermitStack, then ask Josh if the buyer appears in neither.",
-      };
+/** One pull per campaign segment. A segment that cannot be pulled names that campaign. */
+export function pullPlans(recipe: Recipe, campaignIds?: number[]): { kind: "run"; plans: PullJob[] } | { kind: "park"; reason: string } {
+  const routes = campaignSizeRoutes(recipe, campaignIds);
+  if (routes.length === 0) return { kind: "park", reason: "no target campaigns to pull" };
+  const failed: string[] = [];
+  const plans: PullJob[] = [];
+  for (const { campaignId, route } of routes) {
+    if (route.kind === "park") {
+      failed.push(`#${campaignId}: ${route.reason}`);
+      continue;
     }
-    if (src === "maps" || src === "permits") {
-      return {
-        kind: "park",
-        reason: `${src} pull is documented in docs/servers.md but the adapter is not wired in this build. Physical cascade lands with the yield card and the ~100 pilot (D21). Ask Josh before improvising a third route.`,
-      };
+    if (route.kind === "skip") continue;
+    const segments = segmentsOf(route, campaignId);
+    let added = 0;
+    for (const seg of segments) {
+      if (seg.route.kind === "park") {
+        failed.push(`#${campaignId} ${seg.label}: ${seg.route.reason}`);
+        continue;
+      }
+      if (seg.route.kind === "skip") continue;
+      if (seg.route.kind === "getleads" || seg.route.kind === "maps" || seg.route.kind === "permits") {
+        plans.push({ campaignId, segment: seg.label, source: seg.route.kind, filters: seg.route.source });
+        added += 1;
+      }
     }
-    if (src === "supabase_table") {
-      return { kind: "park", reason: "table-source pull has no adapter in this build; the rows must already be in a LeadPipe ingest or wait for that adapter." };
-    }
+    if (added === 0) failed.push(`#${campaignId}: no segment to pull`);
   }
-
-  if (src === "getleads" && g.source.kind === "getleads") return { kind: "run", source: "getleads", filters: g.source };
-  if (src === "ai_ark") {
-    return {
-      kind: "park",
-      reason: "AI Ark people pull is not a leadtopup client yet (D22: document it from its code in docs/servers.md first). On a LinkedIn-native ICP getleads is the free first pass.",
-    };
-  }
-  if (src === "maps" || src === "permits") {
-    return {
-      kind: "park",
-      reason: `ICP is ${icp} but the source is ${src}. Maps/PermitStack are the physical path. Check the campaign.`,
-    };
-  }
-  return { kind: "park", reason: `no step 3 adapter for a ${src} source in this build` };
+  if (failed.length) return { kind: "park", reason: failed.join("; ") };
+  if (plans.length === 0) return { kind: "park", reason: "no target campaigns to pull" };
+  return { kind: "run", plans };
 }
 
 export type SizeLeaf =
@@ -72,13 +72,39 @@ export type SizeSegment = { label: string; campaignIds: number[]; route: SizeLea
 
 export type SizeRoute = SizeLeaf | { kind: "combine"; segments: SizeSegment[] };
 
-/** tam-sizing: one list per segment. Several lists are counted separately and combined by the size step. */
+/** One size route per target campaign. A shared persona does not collapse them into one TAM. */
+export function campaignSizeRoutes(recipe: Recipe, campaignIds?: number[]): Array<{ campaignId: number; route: SizeRoute }> {
+  const ids = campaignIds?.length ? [...new Set(campaignIds)] : recipeCampaignIds(recipe);
+  return ids.map((campaignId) => ({ campaignId, route: routeSize(recipe, [campaignId]) }));
+}
+
+/** tam-sizing: one list per segment of one campaign. Several campaigns stay separate. */
 export function routeSize(recipe: Recipe, campaignIds?: number[]): SizeRoute {
-  const groups = campaignGroups(recipe, campaignIds);
+  const ids = campaignIds?.length ? [...new Set(campaignIds)] : recipeCampaignIds(recipe);
+  if (ids.length > 1) {
+    const segments = ids.flatMap((id) => segmentsOf(routeSize(recipe, [id]), id));
+    if (segments.length === 0) return { kind: "park", reason: "no target campaigns to size" };
+    if (segments.length === 1) return segments[0]!.route;
+    return { kind: "combine", segments };
+  }
+  const groups = campaignGroups(recipe, ids);
   if (groups.length === 0) return { kind: "park", reason: "no target campaigns to size" };
   const segments = groups.flatMap((g) => segmentLists(g));
   if (segments.length === 1) return segments[0]!.route;
   return { kind: "combine", segments };
+}
+
+function segmentsOf(route: SizeRoute, campaignId: number): SizeSegment[] {
+  if (route.kind === "combine") return route.segments.map((seg) => ({ ...seg, campaignIds: [campaignId] }));
+  if (route.kind === "park") return [{ label: `#${campaignId}`, campaignIds: [campaignId], route: { kind: "park", reason: `#${campaignId}: ${route.reason}` } }];
+  if (route.kind === "skip") return [];
+  const label =
+    route.kind === "maps"
+      ? (route.source.params.categories[0] ?? "maps")
+      : route.kind === "permits"
+        ? (route.source.params.permit_types[0] ?? "permits")
+        : route.kind;
+  return [{ label, campaignIds: [campaignId], route }];
 }
 
 function segmentLists(group: CampaignGroup): SizeSegment[] {
@@ -138,14 +164,17 @@ function groupLabel(group: CampaignGroup): string {
 
 function routeSizeGroup(g: CampaignGroup): SizeLeaf {
   if (g.source.kind === "mixed") {
-    return { kind: "park", reason: "mixed ICP: size each campaign separately. Do not report one TAM for two stacks." };
+    return {
+      kind: "park",
+      reason: "mixed ICP: size each campaign separately. Do not report one TAM for two stacks. This campaign's receipt did not name its lists.",
+    };
   }
   if (g.source.kind === "maps") return { kind: "maps", source: g.source };
   if (g.source.kind === "permits") return { kind: "permits", source: g.source };
   if (g.kind === "physical") {
     return {
       kind: "park",
-      reason: "physical ICP on a getleads source: do not report a getleads number for a rooftop. Maps pipeline_stats and PermitStack metrics_monthly are the counters, and only for a maps or permits list.",
+      reason: "physical ICP on a getleads source: do not fall back to getleads for a rooftop. Maps pipeline_stats and PermitStack metrics_monthly are the counters, and only for a maps or permits list.",
     };
   }
   if (g.source.kind === "getleads") return { kind: "getleads", source: g.source };
@@ -162,10 +191,3 @@ function routeSizeGroup(g: CampaignGroup): SizeLeaf {
   return { kind: "park", reason: `no sizing method for a ${g.kind} ICP (${(leftover as { kind?: string }).kind ?? "unknown"})` };
 }
 
-function mixedStackReason(groups: CampaignGroup[]): string | null {
-  if (groups.length <= 1) return null;
-  return (
-    `mixed campaign ICPs in one run (${groups.map((g) => g.key).join("; ")}). ` +
-    "Split them — do not pick one stack for two personas or kinds."
-  );
-}

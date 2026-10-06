@@ -21,6 +21,7 @@ import { runDigest } from "./ledger/digest.js";
 import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { loadClientMap, loadClientTags } from "./mcp/recipe.js";
+import { dedupeAliasLanes } from "./recipes/dedupe.js";
 import { mergeRecipes } from "./recipes/infer.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { mcpRouter } from "./mcp/server.js";
@@ -41,6 +42,8 @@ import { IngestStage } from "./stages/ingest/index.js";
 import { NormalizeStage } from "./stages/normalize/index.js";
 import { PostImportStage } from "./stages/post_import/index.js";
 import { GetleadsPull } from "./stages/pull/getleads.js";
+import { MapsPull } from "./stages/pull/maps.js";
+import { PermitsPull } from "./stages/pull/permits.js";
 import { PullStage } from "./stages/pull/index.js";
 import { QaStage } from "./stages/qa/index.js";
 import { RouteStage } from "./stages/route/index.js";
@@ -129,7 +132,14 @@ async function main(): Promise<void> {
   const ledger = new LaneLedger(db);
   console_.attachLedger(ledger);
   const base = { repo, console: console_ };
-  const pull = new PullStage({ ...base, rails, adapters: [new GetleadsPull(getleads)], cfg: jobs });
+  const pull = new PullStage({
+    ...base,
+    rails,
+    adapters: [new GetleadsPull(getleads), new MapsPull(maps), new PermitsPull(permitCounts)],
+    maps,
+    permits: permitCounts,
+    cfg: jobs,
+  });
   const domain = cfg.DOMAIN_WATERFALL_MCP_URL ? new DomainWaterfallClient(cfg.DOMAIN_WATERFALL_MCP_URL, cfg.DOMAIN_WATERFALL_TOKEN) : null;
   const people = cfg.PEOPLE_WATERFALL_MCP_URL ? new PeopleWaterfallClient(cfg.PEOPLE_WATERFALL_MCP_URL, cfg.PEOPLE_WATERFALL_TOKEN) : null;
   const emailWaterfall = cfg.EMAIL_WATERFALL_MCP_URL ? new EmailWaterfallClient(cfg.EMAIL_WATERFALL_MCP_URL, cfg.EMAIL_WATERFALL_TOKEN) : null;
@@ -178,6 +188,7 @@ async function main(): Promise<void> {
     return [] as string[];
   });
   log.info("client_map tags", { count: clientTags.length });
+  await repo.repairCampaignRegistry().catch((err) => log.warn("registry repair at boot failed", { error: (err as Error).message }));
   const clientMap = await loadClientMap(db).catch(() => []);
   const inferred: typeof recipeFiles = [];
   try {
@@ -194,7 +205,7 @@ async function main(): Promise<void> {
   } catch (err) {
     log.warn("receipt inference at boot failed", { error: (err as Error).message });
   }
-  const recipes = mergeRecipes(recipeFiles, inferred);
+  const recipes = dedupeAliasLanes(mergeRecipes(recipeFiles, inferred));
   log.info("recipes ready", { files: recipeFiles.length, inferred: inferred.length, merged: recipes.length });
   app.use(
     "/mcp",

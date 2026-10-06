@@ -23,7 +23,7 @@ const log = logger("stage");
 export type StageOutcome =
   | { kind: "done"; counts: Record<string, number> }
   | { kind: "nothing" }
-  | { kind: "waiting"; on: Role; why: string }
+  | { kind: "waiting"; on: Role; why: string; worstCaseCents?: number }
   | { kind: "parked"; reason: string }
   | { kind: "declined" }
   | { kind: "retry"; error: string }
@@ -54,7 +54,7 @@ export async function attempt(d: StageDeps, run: RunRow, stage: Step, status: Ru
   try {
     const out = await body(step.attempts);
     if (out.kind === "waiting") {
-      await d.repo.setStepWaiting(run.run_id, stage, 0);
+      await d.repo.setStepWaiting(run.run_id, stage, out.worstCaseCents ?? 0);
       await d.repo.setRunStatus(run.run_id, out.on === "owner" ? "awaiting_josh" : "awaiting_operator", stage);
     }
     return out;

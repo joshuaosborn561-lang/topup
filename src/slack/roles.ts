@@ -30,6 +30,8 @@ export const CHOICE_ROLE: Readonly<Record<string, Role>> = {
   // spend_approval
   approve_spend: "owner",
   decline_spend: "owner",
+  // Maps / PermitStack under $5. $5 or more stays approve_spend (Josh). Not a judgement choice.
+  approve_small_spend: "operator",
   // not_working
   topup_anyway: "owner",
   leave_it: "owner",

@@ -60,14 +60,20 @@ export function getleadsParamsFromFilters(filters: Record<string, unknown>): {
   max_per_company?: number;
 } | null {
   const titles = asStringArray(filters.job_titles ?? filters.titles);
-  const bands = validBands(filters.company_size);
-  if (titles.length === 0 || bands.length === 0) return null;
+  if (titles.length === 0) return null;
+  const namedBands = filters.company_size;
+  const hasBandField = namedBands !== undefined && namedBands !== null && !(Array.isArray(namedBands) && namedBands.length === 0);
+  const bands = validBands(namedBands);
+  // A receipt that names a headcount and none of it is a real band is incomplete.
+  // A receipt that names titles and no headcount is the full band range, not a guess.
+  if (hasBandField && bands.length === 0) return null;
+  const companySize = bands.length > 0 ? bands : [...GETLEADS_BANDS];
   const industries = asStringArray(filters.industries ?? filters.companyIndustry).filter((s) => !s.includes(","));
   const exportCaps = filters.export_caps && typeof filters.export_caps === "object" ? (filters.export_caps as Record<string, unknown>) : {};
   const maxPer = Number(filters.max_per_company ?? exportCaps.max_per_company);
   return {
     job_titles: titles,
-    company_size: bands,
+    company_size: companySize,
     ...(asStringArray(filters.countries).length ? { countries: asStringArray(filters.countries) } : {}),
     ...(asStringArray(filters.states).length ? { states: asStringArray(filters.states) } : {}),
     ...(asStringArray(filters.cities).length ? { cities: asStringArray(filters.cities) } : {}),
