@@ -2,12 +2,13 @@ import { bandComplement, type Getleads, type GetleadsFilters } from "../../clien
 import type { RunRow } from "../../domain/runs.js";
 import { campaignSnapshots } from "../../ledger/health.js";
 import { runTargetCampaignIds } from "../../recipes/campaigns.js";
-import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
+import { recipeAuthorises, type GetleadsSource, type Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, park, type StageDeps, type StageOutcome } from "../common.js";
-import { routeSize } from "../pull/route.js";
+import { routeSize, type SizeSegment } from "../pull/route.js";
 import { recycleDays } from "../suppress/recycle.js";
+import { combineSizeLine, type SegmentMeasure } from "./combine.js";
 import { sizeReport } from "./report.js";
 
 /**
@@ -77,6 +78,9 @@ export class SizeStage {
       }
       if (routed.kind === "skip") {
         return finish(this.d, run, "size", 0, { size_sources: 0 }, routed.line);
+      }
+      if (routed.kind === "combine") {
+        return this.combineLists(run, recipe, routed.segments, campaignIds, attempts);
       }
       const params = routed.source.params;
       const filters = params as GetleadsFilters;
@@ -166,6 +170,142 @@ export class SizeStage {
       const line = `Size done (linkedin_native, ${campaignIds.length} campaign(s)):\n${report}\n${plan}.${held.note ? ` ${held.note}` : ""}`;
       return finish(this.d, run, "size", netNew, counts, line);
     });
+  }
+
+  /**
+   * Each segment is its own list. getleads lists are counted. A list this
+   * build cannot count stays out of the total. The total is reported only
+   * when every list was counted. Held addresses are subtracted once.
+   */
+  private async combineLists(run: RunRow, recipe: Recipe, segments: SizeSegment[], campaignIds: number[], attempts: number): Promise<StageOutcome> {
+    const measures: SegmentMeasure[] = [];
+    const perList: Array<{ label: string; total: number; partition: Partition }> = [];
+    for (const seg of segments) {
+      if (seg.route.kind === "park") {
+        measures.push({ label: seg.label, counted: false, total: 0, reason: seg.route.reason });
+        continue;
+      }
+      if (seg.route.kind === "skip") {
+        measures.push({ label: seg.label, counted: true, total: 0, reason: null });
+        perList.push({ label: seg.label, total: 0, partition: { bands: 0, others: 0, all: 0, diff: 0, ok: true } });
+        continue;
+      }
+      const measured = await this.measureGetleads(run, recipe, seg.route.source);
+      if (!measured.ok) {
+        measures.push({ label: seg.label, counted: false, total: 0, reason: measured.reason });
+        continue;
+      }
+      measures.push({ label: seg.label, counted: true, total: measured.total, reason: null });
+      perList.push({ label: seg.label, total: measured.total, partition: measured.partition });
+    }
+
+    const combined = combineSizeLine(measures);
+    if (combined.kind === "incomplete") {
+      await this.d.repo.failStep(run.run_id, "size", combined.text, true);
+      return park(this.d, run, "size", combined.text, attempts);
+    }
+
+    const days = recycleDays(recipe.suppression.recycle_after_days);
+    const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns);
+    const netNew = Math.max(0, combined.total - held.count);
+    const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
+    const need = rowsNeeded(snaps, recipe.runway.target_days, 7);
+    const planRows = Math.max(1, Math.min(recipe.runway.max_per_run, need === null ? recipe.runway.max_per_run : Math.max(need, recipe.size.useful_floor), Math.max(netNew, 1)));
+    const counts: Record<string, number> = {
+      total_matching: combined.total,
+      projected_net_new: netNew,
+      already_held: held.count,
+      useful_floor: recipe.size.useful_floor,
+      rows_needed: need ?? 0,
+      plan_rows: planRows,
+      size_sources: segments.length,
+      recycle_after_days: days,
+    };
+    perList.forEach((list, i) => {
+      counts[`segment_${i + 1}_total`] = list.total;
+    });
+
+    if (netNew < recipe.size.useful_floor) {
+      await this.d.repo.finishStep(run.run_id, "size", { useful_output: 0, counts });
+      return gateUnmet(
+        "size",
+        `combined projected net new ${netNew} is under the useful floor ${recipe.size.useful_floor} (${combined.total} matching across ${segments.length} segment lists, ${held.count} already sent). Josh decides; nothing widens on its own.`,
+        counts,
+      );
+    }
+
+    const partition = perList.reduce(
+      (acc, list) => ({
+        bands: acc.bands + list.partition.bands,
+        others: acc.others + list.partition.others,
+        all: acc.all + list.partition.all,
+        diff: acc.diff + list.partition.diff,
+        ok: acc.ok && list.partition.ok,
+      }),
+      { bands: 0, others: 0, all: 0, diff: 0, ok: true },
+    );
+    const report = sizeReport({
+      number: combined.total,
+      filter: `${segments.length} segment lists combined: ${perList.map((l) => `${l.label} ${l.total}`).join("; ")}`,
+      partition,
+      secondVendor: "AI Ark People Preview is not a leadtopup client yet (D22); getleads is the free second opinion tam-sizing always wants",
+      agree: null,
+      netNew,
+      held: held.count,
+      costUsd: "$0.00",
+    });
+    const detail = perList.map((l) => `${l.label}: ${l.total} matching`).join("\n");
+    const plan =
+      need === null
+        ? `campaign mirror has no sends in the window, so the pull plans the recipe's max_per_run (${planRows})`
+        : `campaigns need ${need} rows for ${recipe.runway.target_days} days; the pull plans ${planRows}`;
+    const line = `Size done (${segments.length} segment lists combined):\n${detail}\n${report}\n${plan}.${held.note ? ` ${held.note}` : ""}`;
+    return finish(this.d, run, "size", netNew, counts, line);
+  }
+
+  /** One getleads list: three counts and the partition check. Does not finish the step. */
+  private async measureGetleads(
+    run: RunRow,
+    recipe: Recipe,
+    source: GetleadsSource,
+  ): Promise<{ ok: true; total: number; partition: Partition } | { ok: false; reason: string }> {
+    if (!recipeAuthorises(recipe, "size", "getleads")) {
+      return { ok: false, reason: "the recipe does not authorise a getleads count on this lane" };
+    }
+    const params = source.params;
+    const filters = params as GetleadsFilters;
+    const count = async (f: GetleadsFilters) => {
+      const r = await this.d.getleads.count(f);
+      await this.d.rails.record({
+        runId: run.run_id,
+        clientTag: run.client_tag,
+        step: "size",
+        vendor: "getleads",
+        action: "count",
+        rows: r.total_matching,
+        credits: 0,
+        worstCaseCents: 0,
+        balanceBefore: null,
+        balanceAfter: null,
+        vendorJobId: null,
+        approvedBy: null,
+      });
+      return r;
+    };
+    const { company_size: _omit, ...withoutBand } = filters;
+    const [segment, others, all] = await Promise.all([
+      count(filters),
+      count({ ...filters, company_size: bandComplement(params.company_size) as GetleadsFilters["company_size"] }),
+      count(withoutBand as GetleadsFilters),
+    ]);
+    const partition = partitionCheck(segment.total_matching, others.total_matching, all.total_matching, recipe.size.partition_tolerance);
+    if (!partition.ok) {
+      return {
+        ok: false,
+        reason: `the band filter does not bind: ${partition.bands} (bands) + ${partition.others} (other bands) ≠ ${partition.all} (no band filter), off by ${partition.diff}`,
+      };
+    }
+    return { ok: true, total: segment.total_matching, partition };
   }
 
   /** Distinct addresses this client sent in the recycle window, plus live-campaign holds (D36). Matches step 5. */

@@ -63,7 +63,104 @@ describe("D45 infer recipe from pull receipts", () => {
       }),
     );
     assert.equal(src.kind, "mixed");
-    if (src.kind === "mixed") assert.match(src.note, /Do not invent/);
+    if (src.kind === "mixed") {
+      assert.match(src.note, /Do not invent/);
+      assert.deepEqual(src.parts, []);
+    }
+  });
+
+  it("splits maps_and_permits into the lists the receipt named and does not invent categories", () => {
+    const src = sourceFromStamp(
+      stamp({
+        client_tag: "peterson",
+        lane: "c1_general_contractors",
+        icp_kind: "physical",
+        persona: "gc_owner_pm",
+        company_source: "maps_and_permits",
+        company_filters: {
+          maps: { categories: ["general contractor", "commercial construction"] },
+          permits: { categories_used: "ROOFING, NEW_CONSTRUCTION" },
+        },
+        how_i_did_it: "Maps grid plus PermitStack. Categories are the ones written on the receipt.",
+      }),
+    );
+    assert.equal(src.kind, "mixed");
+    if (src.kind === "mixed") {
+      assert.equal(src.parts[0]?.source.kind, "maps");
+      if (src.parts[0]?.source.kind === "maps") {
+        assert.deepEqual(src.parts[0].source.params.categories, ["general contractor", "commercial construction"]);
+      }
+      assert.equal(src.parts[1]?.source.kind, "permits");
+      if (src.parts[1]?.source.kind === "permits") {
+        assert.deepEqual(src.parts[1].source.params.permit_types, ["ROOFING", "NEW_CONSTRUCTION"]);
+      }
+    }
+
+    const bare = sourceFromStamp(
+      stamp({
+        company_source: "maps_and_permits",
+        company_filters: { geo: "DFW grid" },
+        how_i_did_it: "Maps and permits with no category list on the receipt.",
+      }),
+    );
+    assert.equal(bare.kind, "mixed");
+    if (bare.kind === "mixed") assert.deepEqual(bare.parts, []);
+  });
+
+  it("keeps a getleads segment list beside the maps lists", () => {
+    const recipe = recipeFromReceipts({
+      receipts: [
+        stamp({
+          client_tag: "peterson",
+          lane: "c1_general_contractors",
+          granularity: "lane",
+          icp_kind: "physical",
+          persona: "gc_owner_pm",
+          company_source: "maps_and_permits",
+          company_filters: { maps: { categories: ["general contractor"] } },
+          campaign_ids: [3798227],
+          how_i_did_it: "Lane filter book names the general contractor maps list.",
+          rows_imported: 10,
+        }),
+        stamp({
+          client_tag: "peterson",
+          lane: "c1_general_contractors",
+          granularity: "build",
+          icp_kind: "physical",
+          persona: "gc_owner_pm",
+          company_source: "maps_and_permits",
+          company_filters: { geo: "DFW grid", lane: "gc" },
+          campaign_ids: [3798227],
+          build_label: "gc_contacts_valid:gc",
+          how_i_did_it: "Best imported build did not repeat the category list.",
+          rows_imported: 1487,
+        }),
+        stamp({
+          client_tag: "peterson",
+          lane: "c1_general_contractors",
+          granularity: "build",
+          icp_kind: "linkedin_native",
+          persona: "property_manager",
+          company_source: "getleads",
+          company_filters: {
+            segment: "PROPERTY_MGR",
+            job_titles: ["Property Manager"],
+            company_size: ["11 to 50"],
+          },
+          campaign_ids: [3798229],
+          how_i_did_it: "Property managers counted in getleads on the receipt titles and bands.",
+          rows_imported: 318,
+        }),
+      ],
+      smartleadClientId: 548610,
+    });
+    assert.equal(recipe.source.kind, "mixed");
+    if (recipe.source.kind === "mixed") {
+      assert.deepEqual(
+        recipe.source.parts.map((p) => p.label),
+        ["maps", "PROPERTY_MGR"],
+      );
+    }
   });
 
   it("file-shaped merge prefers the file recipe on the same lane", async () => {

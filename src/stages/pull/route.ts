@@ -1,11 +1,12 @@
 import { campaignGroups, type CampaignGroup } from "../../recipes/campaigns.js";
-import type { GetleadsSource, Recipe } from "../../recipes/schema.js";
+import type { GetleadsSource, Recipe, Source } from "../../recipes/schema.js";
 
 /**
  * Step zero of leadgen-mcp-routing: LinkedIn-native vs physical, then the
  * source the *campaigns* named (D30). getleads is the free first pass on
- * desk ICPs and structurally zero on rooftops — never a fallback. Mixed
- * kinds or personas in one run park: split them, do not pick one stack.
+ * desk ICPs and structurally zero on rooftops — never a fallback. Pull
+ * still parks when one run would walk two stacks. Size counts each
+ * segment list on its own and combines the totals.
  */
 export type PullRoute = { kind: "run"; source: "getleads"; filters: GetleadsSource } | { kind: "park"; reason: string };
 
@@ -60,19 +61,73 @@ export function routePull(recipe: Recipe, campaignIds?: number[]): PullRoute {
   return { kind: "park", reason: `no step 3 adapter for a ${src} source in this build` };
 }
 
-export type SizeRoute =
+export type SizeLeaf =
   | { kind: "getleads"; source: GetleadsSource }
   | { kind: "skip"; line: string }
   | { kind: "park"; reason: string };
 
-/** tam-sizing: classify each campaign's ICP, then pick the cheapest counter that can express the group. */
+export type SizeSegment = { label: string; campaignIds: number[]; route: SizeLeaf };
+
+export type SizeRoute = SizeLeaf | { kind: "combine"; segments: SizeSegment[] };
+
+/** tam-sizing: one list per segment. Several lists are counted separately and combined by the size step. */
 export function routeSize(recipe: Recipe, campaignIds?: number[]): SizeRoute {
   const groups = campaignGroups(recipe, campaignIds);
-  const mixed = mixedStackReason(groups);
-  if (mixed) return { kind: "park", reason: mixed };
+  if (groups.length === 0) return { kind: "park", reason: "no target campaigns to size" };
+  const segments = groups.flatMap((g) => segmentLists(g));
+  if (segments.length === 1) return segments[0]!.route;
+  return { kind: "combine", segments };
+}
 
-  const g = groups[0];
-  if (!g) return { kind: "park", reason: "no target campaigns to size" };
+function segmentLists(group: CampaignGroup): SizeSegment[] {
+  if (group.source.kind === "mixed" && group.source.parts.length > 0) {
+    return group.source.parts.flatMap((part) => listsForPart(group, part));
+  }
+  return [leaf(groupLabel(group), group)];
+}
+
+function listsForPart(group: CampaignGroup, part: Extract<Source, { kind: "mixed" }>["parts"][number]): SizeSegment[] {
+  if (part.source.kind === "maps") {
+    const params = part.source.params;
+    return params.categories.map((category) =>
+      leaf(category, {
+        ...group,
+        key: category,
+        kind: "physical",
+        source: { kind: "maps", params: { ...params, categories: [category] } },
+      }),
+    );
+  }
+  if (part.source.kind === "permits") {
+    const params = part.source.params;
+    return params.permit_types.map((permitType) =>
+      leaf(permitType, {
+        ...group,
+        key: permitType,
+        kind: "physical",
+        source: { kind: "permits", params: { ...params, permit_types: [permitType] } },
+      }),
+    );
+  }
+  return [
+    leaf(part.label, {
+      ...group,
+      key: part.label,
+      kind: part.icp_kind,
+      source: part.source,
+    }),
+  ];
+}
+
+function leaf(label: string, group: CampaignGroup): SizeSegment {
+  return { label, campaignIds: group.campaignIds, route: routeSizeGroup(group) };
+}
+
+function groupLabel(group: CampaignGroup): string {
+  return `${group.persona} / ${group.kind} / ${group.source.kind}`;
+}
+
+function routeSizeGroup(g: CampaignGroup): SizeLeaf {
   if (g.source.kind === "mixed") {
     return { kind: "park", reason: "mixed ICP: size each campaign separately. Do not report one TAM for two stacks." };
   }

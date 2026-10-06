@@ -199,7 +199,7 @@ describe("D29 — pull and size routing", () => {
     assert.match((routePull(maps) as { reason: string }).reason, /not wired/);
   });
 
-  it("D30 — mixed campaign ICPs in one run park; same persona unions bands", () => {
+  it("D30 — size counts each segment list; pull still parks a mixed run; same persona unions bands", () => {
     const mixed = parseRecipe({
       ...base,
       source: { kind: "getleads", params: { job_titles: ["CIO"], company_size: ["11 to 50", "1 to 10"], email_status: ["VALID"] } },
@@ -209,8 +209,15 @@ describe("D29 — pull and size routing", () => {
         { when: { band: "1_10" }, campaign_id: 2, icp: { kind: "physical", persona: "owner" } },
       ],
     });
-    assert.equal(routeSize(mixed).kind, "park");
-    assert.match((routeSize(mixed) as { reason: string }).reason, /mixed campaign ICPs/);
+    const sized = routeSize(mixed);
+    assert.equal(sized.kind, "combine");
+    if (sized.kind === "combine") {
+      assert.equal(sized.segments.length, 2);
+      assert.equal(sized.segments[0]?.route.kind, "getleads");
+      assert.equal(sized.segments[1]?.route.kind, "park");
+    }
+    assert.equal(routePull(mixed).kind, "park");
+    assert.match((routePull(mixed) as { reason: string }).reason, /mixed campaign ICPs/);
     assert.equal(routePull(mixed, [1]).kind, "run", "one campaign of the pair still pulls");
 
     const same = parseRecipe({
@@ -222,9 +229,42 @@ describe("D29 — pull and size routing", () => {
         { when: { band: "51_200" }, campaign_id: 2, icp: { kind: "linkedin_native", persona: "it_dm" } },
       ],
     });
-    const sized = routeSize(same);
-    assert.equal(sized.kind, "getleads");
-    if (sized.kind === "getleads") assert.deepEqual(sized.source.params.company_size, ["11 to 50", "51 to 200"]);
+    const unioned = routeSize(same);
+    assert.equal(unioned.kind, "getleads");
+    if (unioned.kind === "getleads") assert.deepEqual(unioned.source.params.company_size, ["11 to 50", "51 to 200"]);
+  });
+
+  it("a maps_and_permits source is one list per category and permit type", () => {
+    const sized = routeSize(
+      parseRecipe({
+        ...base,
+        recipe_id: "peterson.c1_general_contractors.v0",
+        client_tag: "peterson",
+        lane: "c1_general_contractors",
+        source: {
+          kind: "mixed",
+          note: "maps and permits",
+          parts: [
+            {
+              label: "maps",
+              icp_kind: "physical",
+              source: { kind: "maps", params: { categories: ["general contractor", "commercial construction"] } },
+            },
+            { label: "permits", icp_kind: "physical", source: { kind: "permits", params: { permit_types: ["ROOFING"] } } },
+          ],
+        },
+        segments: { slot: ["3798227"] },
+        routing: [{ when: { slot: "3798227" }, campaign_id: 3798227, icp: { kind: "physical", persona: "gc_owner_pm" } }],
+      }),
+    );
+    assert.equal(sized.kind, "combine");
+    if (sized.kind === "combine") {
+      assert.deepEqual(
+        sized.segments.map((s) => s.label),
+        ["general contractor", "commercial construction", "ROOFING"],
+      );
+      assert.ok(sized.segments.every((s) => s.route.kind === "park"));
+    }
   });
 
   it("the tam-sizing report is five lines in order", () => {

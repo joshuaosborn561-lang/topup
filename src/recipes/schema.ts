@@ -87,20 +87,43 @@ const aiArkParams = z
   })
   .strict();
 
+const getleadsSource = z.object({ kind: z.literal("getleads"), params: getleadsParams, widening_candidates: z.array(wideningCandidate).default([]) });
+const aiArkSource = z.object({ kind: z.literal("ai_ark"), params: aiArkParams });
+const mapsSource = z.object({ kind: z.literal("maps"), params: mapsParams });
+const permitsSource = z.object({ kind: z.literal("permits"), params: permitsParams });
+const tableSource = z.object({
+  kind: z.literal("supabase_table"),
+  project_ref: z.string().optional(),
+  table: z.string().regex(/^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/, "schema.table"),
+  where: z.string().min(1),
+});
+
+/** A list the size step can count on its own. Mixed nests these; it does not nest mixed. */
+const concreteSource = z.discriminatedUnion("kind", [getleadsSource, aiArkSource, mapsSource, permitsSource, tableSource]);
+
 const source = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("getleads"), params: getleadsParams, widening_candidates: z.array(wideningCandidate).default([]) }),
-  z.object({ kind: z.literal("ai_ark"), params: aiArkParams }),
-  z.object({ kind: z.literal("maps"), params: mapsParams }),
-  z.object({ kind: z.literal("permits"), params: permitsParams }),
+  getleadsSource,
+  aiArkSource,
+  mapsSource,
+  permitsSource,
+  tableSource,
   z.object({
     kind: z.literal("mixed"),
     note: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("supabase_table"),
-    project_ref: z.string().optional(),
-    table: z.string().regex(/^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/, "schema.table"),
-    where: z.string().min(1),
+    /**
+     * Separate lists inside one ICP (a maps category, a permit type, a
+     * getleads segment). Size counts each, then combines. Empty means the
+     * receipt did not name the lists.
+     */
+    parts: z
+      .array(
+        z.object({
+          label: z.string().min(1),
+          icp_kind: z.enum(["linkedin_native", "physical"]),
+          source: concreteSource,
+        }),
+      )
+      .default([]),
   }),
 ]);
 
@@ -325,6 +348,10 @@ export function recipeAuthorises(recipe: Recipe, step: string, vendor?: string):
       const kinds = new Set<string>();
       const add = (src: Source | undefined) => {
         if (!src) return;
+        if (src.kind === "mixed") {
+          for (const part of src.parts) add(part.source);
+          return;
+        }
         if (src.kind === "getleads") kinds.add("getleads");
         if (src.kind === "ai_ark") kinds.add("aiark");
         if (src.kind === "maps" || src.kind === "permits") kinds.add("apify");

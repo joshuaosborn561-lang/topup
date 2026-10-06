@@ -81,6 +81,87 @@ function mixedNote(stamp: ReceiptStamp, why: string): string {
   return [why, `how_i_did_it: ${stamp.how_i_did_it}`, notes ? `notes: ${notes}` : null].filter(Boolean).join(" ");
 }
 
+function asObject(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function permitTypeList(v: unknown): string[] {
+  if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+  return asStringArray(v);
+}
+
+export type SegmentPart = Extract<Source, { kind: "mixed" }>["parts"][number];
+
+/**
+ * Maps categories and permit types already written on a maps_and_permits
+ * receipt. Missing lists stay missing. Nothing here is invented.
+ */
+export function stackParts(stamp: ReceiptStamp): SegmentPart[] {
+  if (stamp.company_source !== "maps_and_permits") return [];
+  const filters = stamp.company_filters ?? {};
+  const maps = asObject(filters.maps);
+  const categories = asStringArray(maps?.categories);
+  const permits = asObject(filters.permits);
+  const types = permitTypeList(permits?.permit_types ?? permits?.categories_used);
+  const parts: SegmentPart[] = [];
+  if (categories.length) {
+    const states = asStringArray(maps?.states);
+    const cities = asStringArray(maps?.cities);
+    parts.push({
+      label: "maps",
+      icp_kind: "physical",
+      source: {
+        kind: "maps",
+        params: {
+          categories,
+          ...(states.length ? { states } : {}),
+          ...(cities.length ? { cities } : {}),
+        },
+      },
+    });
+  }
+  if (types.length) {
+    const states = asStringArray(permits?.states);
+    const counties = asStringArray(permits?.counties);
+    parts.push({
+      label: "permits",
+      icp_kind: "physical",
+      source: {
+        kind: "permits",
+        params: {
+          permit_types: types,
+          ...(states.length ? { states } : {}),
+          ...(counties.length ? { counties } : {}),
+        },
+      },
+    });
+  }
+  return parts;
+}
+
+/** One concrete list per company_filters.segment, from the best imported build of that segment. */
+export function segmentParts(stamps: ReceiptStamp[]): SegmentPart[] {
+  const best = new Map<string, ReceiptStamp>();
+  for (const stamp of stamps) {
+    const raw = stamp.company_filters?.segment;
+    const label = typeof raw === "string" ? raw.trim() : "";
+    if (!label) continue;
+    const prev = best.get(label);
+    if (!prev || (stamp.rows_imported ?? 0) > (prev.rows_imported ?? 0)) best.set(label, stamp);
+  }
+  const parts: SegmentPart[] = [];
+  for (const [label, stamp] of best) {
+    const source = sourceFromStamp(stamp);
+    if (source.kind === "mixed") continue;
+    parts.push({
+      label,
+      icp_kind: stamp.icp_kind === "physical" ? "physical" : "linkedin_native",
+      source,
+    });
+  }
+  return parts;
+}
+
 export function sourceFromStamp(stamp: ReceiptStamp): Source {
   if (stamp.company_source === "getleads") {
     const params = getleadsParamsFromFilters(stamp.company_filters ?? {});
@@ -91,6 +172,7 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
         stamp,
         "Receipt company_source is getleads but company_filters are not a complete getleads param set (need job_titles and exact band labels). Do not invent them.",
       ),
+      parts: [],
     };
   }
   if (stamp.company_source === "maps") {
@@ -131,6 +213,16 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
       };
     }
   }
+  if (stamp.company_source === "maps_and_permits") {
+    return {
+      kind: "mixed",
+      note: mixedNote(
+        stamp,
+        "Receipt company_source maps_and_permits. Each named list is sized on its own and the counts are combined. Do not invent a filter.",
+      ),
+      parts: stackParts(stamp),
+    };
+  }
   if (stamp.company_source === "table") {
     const table = typeof stamp.company_filters.table === "string" ? stamp.company_filters.table : null;
     const where = typeof stamp.company_filters.where === "string" ? stamp.company_filters.where : null;
@@ -144,7 +236,17 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
       stamp,
       `Receipt company_source ${stamp.company_source} is not a complete pull adapter input. Size/pull parks. Do not invent a filter.`,
     ),
+    parts: [],
   };
+}
+
+/** Best build wins when it names a complete source. Otherwise the lane filter book does. */
+export function sourceForLane(book: ReceiptStamp, method: ReceiptStamp): Source {
+  const fromMethod = sourceFromStamp(method);
+  if (fromMethod.kind !== "mixed" || fromMethod.parts.length > 0) return fromMethod;
+  const fromBook = sourceFromStamp(book);
+  if (fromBook.kind !== "mixed" || fromBook.parts.length > 0) return fromBook;
+  return fromMethod;
 }
 
 function emailFindingFromStamp(stamp: ReceiptStamp): Recipe["email_finding"] {
@@ -229,6 +331,13 @@ export function recipeFromReceipts(input: {
   );
   const slots = ids.map(String);
   const icp = { kind: icpKind(method), persona: persona(method) };
+  let source = sourceForLane(book, method);
+  if (source.kind === "mixed") {
+    const existing = source.parts;
+    const covered = new Set(existing.map((p) => p.source.kind));
+    const more = segmentParts(input.receipts).filter((p) => !covered.has(p.source.kind) && !existing.some((x) => x.label === p.label));
+    if (more.length) source = { ...source, parts: [...existing, ...more] };
+  }
   const raw: unknown = {
     recipe_id: inferredRecipeId(book.client_tag, book.lane),
     client_tag: book.client_tag,
@@ -236,7 +345,7 @@ export function recipeFromReceipts(input: {
     smartlead_client_id: input.smartleadClientId,
     supabase_project: "azpapwtnrbzywlnxxecz",
     owner_approved_at: null,
-    source: sourceFromStamp(method),
+    source,
     suppression: {
       response_based: true,
       client_prior_contacts: true,
