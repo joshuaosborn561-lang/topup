@@ -10,13 +10,32 @@ export interface MapsStats {
   scopedBusinesses(args: { category: string; state?: string; clientTag?: string }): Promise<number>;
 }
 
-/** Read `scoped_businesses`. Missing field is an error, including when `businesses` is present. Zero is a count. */
+function asRecord(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  return payload as Record<string, unknown>;
+}
+
+/**
+ * Read `scoped_businesses`. The live tool puts the JSON in
+ * `structuredContent.result` as a string, and that object also carries the
+ * global `businesses` total. Missing `scoped_businesses` is an error.
+ * Zero is a count.
+ */
 export function mapsScopedCount(payload: unknown): number {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new Error("pipeline_stats returned no scoped_businesses");
+  let rec = asRecord(payload);
+  if (rec && !Object.prototype.hasOwnProperty.call(rec, "scoped_businesses") && "result" in rec) {
+    const inner = rec.result;
+    if (typeof inner === "string") {
+      try {
+        rec = asRecord(JSON.parse(inner));
+      } catch {
+        rec = null;
+      }
+    } else {
+      rec = asRecord(inner);
+    }
   }
-  const rec = payload as Record<string, unknown>;
-  if (!Object.prototype.hasOwnProperty.call(rec, "scoped_businesses")) {
+  if (!rec || !Object.prototype.hasOwnProperty.call(rec, "scoped_businesses")) {
     throw new Error("pipeline_stats returned no scoped_businesses; the global businesses total is not a list count");
   }
   const n = typeof rec.scoped_businesses === "number" ? rec.scoped_businesses : Number(rec.scoped_businesses);

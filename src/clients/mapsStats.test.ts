@@ -8,6 +8,12 @@ describe("maps pipeline_stats parser", () => {
     assert.equal(mapsScopedCount({ scoped_businesses: 0, businesses: 294566 }), 0);
   });
 
+  it("unwraps the JSON string the live tool returns and still ignores the global total", () => {
+    const wrapped = { result: JSON.stringify({ businesses: 294566, scoped_businesses: 2178, scope: { state: "TX" } }) };
+    assert.equal(mapsScopedCount(wrapped), 2178);
+    assert.throws(() => mapsScopedCount({ result: JSON.stringify({ businesses: 294566 }) }), /scoped_businesses/);
+  });
+
   it("refuses a payload that only has the global total", () => {
     assert.throws(() => mapsScopedCount({ businesses: 294566 }), /scoped_businesses/);
     assert.throws(() => mapsScopedCount({ scoped_businesses: -1 }), /not a count/);
