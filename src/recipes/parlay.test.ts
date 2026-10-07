@@ -9,6 +9,7 @@ import {
   isParlayRefreshCampaign,
   parlayCampaignRetired,
   parlayQueueKeeps,
+  parlayCampaignIndustries,
   shapeParlayRecipe,
 } from "./parlay.js";
 import { parseRecipe, type Recipe } from "./schema.js";
@@ -133,5 +134,63 @@ describe("Parlay Sept 29 refresh", () => {
       { campaign_id: 4049065, client_tag: "parlay", smartlead_client_id: 418274, lane: "it_dm", status: "ACTIVE" },
     ]);
     assert.deepEqual(rebuilt.routing.map((rule) => rule.campaign_id), [4049055, 4049056]);
+  });
+
+  it("gives FinServ and Architecture their receipt industries and leaves the unnamed sibling list off", () => {
+    assert.deepEqual(parlayCampaignIndustries(4049053), ["Financial Services"]);
+    assert.deepEqual(parlayCampaignIndustries(4049046), ["Financial Services"]);
+    assert.deepEqual(parlayCampaignIndustries(4049063), ["Architecture and Planning"]);
+    assert.equal(parlayCampaignIndustries(4049047), null);
+    const ops = parseRecipe({
+      recipe_id: "parlay.ops_dm.v0",
+      client_tag: "parlay",
+      lane: "ops_dm",
+      smartlead_client_id: 418274,
+      supabase_project: "azpapwtnrbzywlnxxecz",
+      source: {
+        kind: "getleads",
+        params: {
+          job_function: "Operations",
+          seniority: ["C-Team", "VP", "Director"],
+          company_size: ["11 to 50", "51 to 200", "201 to 500"],
+          countries: ["United States"],
+          email_status: ["VALID"],
+          max_per_company: 3,
+        },
+      },
+      suppression: { response_based: true, same_offer_any_client: true },
+      email_finding: { enabled: false },
+      verify: { seg_split: true },
+      normalize: {},
+      segments: { slot: ["4049046", "4049063"] },
+      routing: [
+        { when: { slot: "4049046" }, campaign_id: 4049046, icp: { kind: "linkedin_native", persona: "ops_dm" } },
+        { when: { slot: "4049063" }, campaign_id: 4049063, icp: { kind: "linkedin_native", persona: "ops_dm" } },
+      ],
+      runway: { floor_days: 7, target_days: 30, max_per_run: 10000 },
+      working: { interested_per_2000_sends: 1, variant_min_sends: 1000 },
+      spend: { auto_cap_usd: 5 },
+    }) as Recipe;
+    const shaped = shapeParlayRecipe(ops);
+    const finserv = shaped.routing.find((rule) => rule.campaign_id === 4049046)?.source;
+    const arch = shaped.routing.find((rule) => rule.campaign_id === 4049063)?.source;
+    assert.equal(finserv?.kind, "getleads");
+    assert.equal(arch?.kind, "getleads");
+    if (finserv?.kind === "getleads" && arch?.kind === "getleads") {
+      assert.deepEqual(finserv.params.industries, ["Financial Services"]);
+      assert.deepEqual(arch.params.industries, ["Architecture and Planning"]);
+      assert.equal(finserv.params.job_function, "Operations");
+      assert.equal(arch.params.job_function, "Operations");
+      assert.notDeepEqual(finserv.params.industries, arch.params.industries);
+    }
+    const owner = shapeParlayRecipe({
+      ...ops,
+      recipe_id: "parlay.owner.v0",
+      lane: "owner",
+      routing: [{ when: { slot: "4049053" }, campaign_id: 4049053, icp: { kind: "linkedin_native", persona: "owner" } }],
+    });
+    const ownerSource = owner.routing[0]?.source;
+    assert.equal(ownerSource?.kind, "getleads");
+    if (ownerSource?.kind === "getleads") assert.deepEqual(ownerSource.params.industries, ["Financial Services"]);
   });
 });

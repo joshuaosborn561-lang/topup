@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { BCP_HEALTHCARE_DESCRIPTION, BCP_HEALTHCARE_INDUSTRIES, BCP_SENIOR_IT_TITLES, BCP_BANDS } from "../../recipes/bcp.js";
 import { MSP_OWNER_BANDS, MSP_OWNER_TITLES } from "../../recipes/powergryd.js";
-import { pilotAllowsSize, pilotExpectFor, pilotRowsFromCsv, scorePilot, type PilotRow } from "./pilot.js";
+import { pilotAllowsSize, pilotExpectFor, pilotFieldsFromRecords, pilotRowsFromCsv, pilotSampleFromCsv, scorePilot, type PilotRow } from "./pilot.js";
 
 function row(patch: Partial<PilotRow> & Record<string, unknown>): PilotRow {
   return {
@@ -95,5 +95,44 @@ describe("pilot before size", () => {
     assert.equal(JSON.stringify(rows).includes("@"), false);
     assert.equal(JSON.stringify(rows).includes("Acme"), false);
     assert.equal(rows[0]?.title, "CIO");
+  });
+
+  it("reads the rebuilt export headers and leaves a missing column unscored", () => {
+    const expect = pilotExpectFor("bcp", "it_dm_airpods", {
+      job_titles: ["CIO", "Chief Information Officer"],
+      industries: ["Hospitals and Health Care"],
+      company_description: "hospital, clinic",
+      company_size: ["51 to 200"],
+      countries: ["United States"],
+    });
+    const csv = [
+      "current_title,company_industry,company_description,employee_count_range,contact_country",
+      "CIO,Hospitals and Health Care,regional hospital,51-200,United States",
+      "Chief Information Officer,Hospitals and Health Care,clinic,51 to 200,USA",
+    ].join("\n");
+    const sample = pilotSampleFromCsv(csv);
+    assert.equal(sample.fields.title, true);
+    assert.equal(sample.fields.headcount, true);
+    assert.equal(sample.fields.country, true);
+    const score = scorePilot(sample.rows, expect, sample.fields);
+    assert.equal(score.title_match, 100);
+    assert.equal(score.headcount_match, 100);
+    assert.equal(score.geography_match, 100);
+    assert.deepEqual(score.top_titles.map((item) => item.name), ["Chief Information Officer", "CIO"]);
+    assert.equal(score.gate, "ok");
+
+    const thin = "company_industry,company_description\nHospitals and Health Care,hospital\n";
+    const missing = pilotSampleFromCsv(thin);
+    assert.equal(missing.fields.title, false);
+    assert.equal(missing.fields.headcount, false);
+    assert.equal(missing.fields.country, false);
+    const unscored = scorePilot(missing.rows, expect, missing.fields);
+    assert.equal(unscored.title_match, null);
+    assert.equal(unscored.headcount_match, null);
+    assert.equal(unscored.geography_match, null);
+    assert.equal(unscored.industry_match, 100);
+    assert.equal(unscored.gate, "ok");
+    assert.deepEqual(unscored.top_titles, []);
+    assert.equal(pilotFieldsFromRecords(pilotRowsFromCsv(thin).map(() => ({}))).title, false);
   });
 });

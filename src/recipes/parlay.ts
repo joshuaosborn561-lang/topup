@@ -1,4 +1,4 @@
-import type { Recipe, RoutingRule } from "./schema.js";
+import type { Recipe, RoutingRule, Source } from "./schema.js";
 
 /**
  * Sept 29 2026 Parlay refresh. Top ups use only these campaigns.
@@ -80,20 +80,59 @@ export function parlayQueueKeeps(clientTag: string, campaignId: number): boolean
   return isParlayRefreshCampaign(campaignId);
 }
 
+/**
+ * Industries the Sept 29 receipts stored as arrays.
+ * Adjacent builds say "10 FinServ sibling industries (adjacent set)" in prose.
+ * Those ten names are not on the receipt, so they are not sent.
+ */
+export const PARLAY_FINSERV_INDUSTRIES = ["Financial Services"] as const;
+export const PARLAY_ARCH_INDUSTRIES = ["Architecture and Planning"] as const;
+
+const PARLAY_CAMPAIGN_INDUSTRIES: Readonly<Record<number, readonly string[]>> = {
+  4049046: PARLAY_FINSERV_INDUSTRIES,
+  4049052: PARLAY_FINSERV_INDUSTRIES,
+  4049053: PARLAY_FINSERV_INDUSTRIES,
+  4049054: PARLAY_FINSERV_INDUSTRIES,
+  4049055: PARLAY_FINSERV_INDUSTRIES,
+  4049056: PARLAY_FINSERV_INDUSTRIES,
+  4049061: PARLAY_ARCH_INDUSTRIES,
+  4049062: PARLAY_ARCH_INDUSTRIES,
+  4049063: PARLAY_ARCH_INDUSTRIES,
+  4049064: PARLAY_ARCH_INDUSTRIES,
+};
+
+export function parlayCampaignIndustries(campaignId: number): readonly string[] | null {
+  return PARLAY_CAMPAIGN_INDUSTRIES[campaignId] ?? null;
+}
+
 type Routed = {
   recipe_id: string;
   client_tag: string;
   lane: string;
+  source: Source;
   routing: RoutingRule[];
   segments: Recipe["segments"];
 };
+
+function withParlayIndustry(fallback: Source, rule: RoutingRule): RoutingRule {
+  const industries = PARLAY_CAMPAIGN_INDUSTRIES[rule.campaign_id];
+  if (!industries) return rule;
+  const base = rule.source ?? fallback;
+  if (base.kind !== "getleads") return rule;
+  const current = base.params.industries ?? [];
+  const same = current.length === industries.length && current.every((name, i) => name === industries[i]);
+  if (rule.source && same) return rule;
+  return { ...rule, source: { ...base, params: { ...base.params, industries: [...industries] } } };
+}
 
 /** Drop retired Parlay campaigns from a recipe. A retired lane or recipe loses every route. */
 export function shapeParlayRecipe<T extends Routed>(recipe: T): T {
   if (recipe.client_tag !== PARLAY_CLIENT) return recipe;
   const dropAll = isRetiredParlayRecipe(recipe.recipe_id) || isRetiredParlayLane(recipe.lane);
-  const routing = dropAll ? [] : recipe.routing.filter((rule) => isParlayRefreshCampaign(rule.campaign_id));
-  if (routing.length === recipe.routing.length && !dropAll) return recipe;
+  const routing = (dropAll ? [] : recipe.routing.filter((rule) => isParlayRefreshCampaign(rule.campaign_id))).map((rule) =>
+    withParlayIndustry(recipe.source, rule),
+  );
+  if (routing.length === recipe.routing.length && routing.every((rule, i) => rule === recipe.routing[i]) && !dropAll) return recipe;
   const segments = { ...recipe.segments };
   if (Array.isArray(segments.slot)) {
     const keep = new Set(routing.map((rule) => String(rule.campaign_id)));

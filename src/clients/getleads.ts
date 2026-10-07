@@ -40,7 +40,7 @@ export interface ExportStatus {
 
 export interface Getleads {
   count(filters: GetleadsFilters): Promise<CountResult>;
-  startExport(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }): Promise<ExportStarted>;
+  startExport(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number; columns?: string[] }): Promise<ExportStarted>;
   checkExport(exportId: string): Promise<ExportStatus>;
 }
 
@@ -155,8 +155,8 @@ export async function countOrSplit(
 /** Export the query. City lists over 45 are one export per chunk, and the caps sum to plan_rows. On count_timeout, half the largest list. */
 export async function exportOrSplit(
   filters: GetleadsFilters,
-  opts: { max_rows: number; max_per_company?: number },
-  start: (filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }) => Promise<{ export_id: string }>,
+  opts: { max_rows: number; max_per_company?: number; columns?: string[] },
+  start: (filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number; columns?: string[] }) => Promise<{ export_id: string }>,
   depth = 0,
 ): Promise<{ export_ids: string[] }> {
   const limit = exportRowLimit(opts.max_rows);
@@ -237,7 +237,22 @@ export const GETLEADS_COUNT_KEYS = [
   "employee_profiles_on_linkedin_max",
 ] as const;
 
-/** Omit empty email_status so getleads returns every status (D35 item 15). Strip export-only keys. */
+/**
+ * `count_contacts` takes `job_function` and `seniority`. `export_contacts`
+ * rejects `job_function` and takes `job_functions` (one-item list) plus the
+ * same `seniority` list. The filter values are not rewritten.
+ */
+export function exportFilters(filters: GetleadsFilters): Record<string, unknown> {
+  const out = outboundFilters(filters);
+  const job = out.job_function;
+  if (typeof job === "string" && job.trim()) {
+    const already = Array.isArray(out.job_functions) ? out.job_functions.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+    out.job_functions = [...new Set([job.trim(), ...already])];
+  }
+  delete out.job_function;
+  return out;
+}
+
 export function outboundFilters(filters: GetleadsFilters): Record<string, unknown> {
   const src = filters as unknown as Record<string, unknown>;
   const out: Record<string, unknown> = {};
@@ -290,17 +305,18 @@ export class GetleadsClient implements Getleads {
     return { total_matching: total, exportable_rows: exportable };
   }
 
-  async startExport(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }): Promise<ExportStarted> {
+  async startExport(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number; columns?: string[] }): Promise<ExportStarted> {
     this.ready();
     const started = await exportOrSplit(filters, opts, (slice, sliceOpts) => this.exportOnce(slice, sliceOpts));
     return { export_id: started.export_ids[0]!, export_ids: started.export_ids };
   }
 
-  private async exportOnce(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }): Promise<{ export_id: string }> {
+  private async exportOnce(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number; columns?: string[] }): Promise<{ export_id: string }> {
     assertGetleadsFilters(filters);
     if (!(opts.max_rows >= 1 && opts.max_rows <= 50_000)) throw new Error(`export max_rows must be 1..50000, got ${opts.max_rows}`);
-    const args: Record<string, unknown> = { ...outboundFilters(filters), max_rows: opts.max_rows, confirmed: true };
+    const args: Record<string, unknown> = { ...exportFilters(filters), max_rows: opts.max_rows, confirmed: true };
     if (opts.max_per_company !== undefined) args.max_per_company = opts.max_per_company;
+    if (opts.columns?.length) args.columns = opts.columns;
     const res = await this.mcp.call<Record<string, unknown>>("export_contacts", args);
     const id = res.export_id ?? res.id;
     if (typeof id !== "string" && typeof id !== "number") throw new Error(`export_contacts returned no export_id: ${JSON.stringify(Object.keys(res))}`);

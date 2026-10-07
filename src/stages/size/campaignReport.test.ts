@@ -43,6 +43,29 @@ describe("per-campaign report", () => {
     assert.equal(formatCampaignReport(buildCampaignReport([fields])).includes("@"), false);
   });
 
+  it("a parked pilot is pilot_mismatch with found and tam null", () => {
+    const parked = buildCampaignReport([
+      {
+        ...fields,
+        found: null,
+        tam_total: null,
+        tam_left: null,
+        to_add: 0,
+        not_sized: true,
+        pilot_failed: true,
+      },
+    ]);
+    assert.equal(parked[0]?.gate, "pilot_mismatch");
+    assert.equal(parked[0]?.found, null);
+    assert.equal(parked[0]?.tam_total, null);
+    assert.equal(parked[0]?.tam_left, null);
+    assert.equal(reportFieldsFilled(parked[0]!), true);
+    const unread = buildCampaignReport([{ ...fields, found: null, tam_total: null, tam_left: null, not_sized: true }]);
+    assert.equal(unread[0]?.gate, "not_sized");
+    assert.match(formatCampaignReport(unread), /found not sized/);
+    assert.match(formatCampaignReport(unread), /gate not_sized/);
+  });
+
   it("flags tam_filled under 1,000 left and does not treat too early as a pass", () => {
     const filled = buildCampaignReport([{ ...fields, tam_total: 800, tam_left: 700, found: 800, to_add: 700, market_cap: null }]);
     assert.equal(filled[0]?.gate, "tam_filled");

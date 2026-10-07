@@ -8,7 +8,7 @@ import { shapeBcpRecipe } from "./recipes/bcp.js";
 import { shapeMspOwnersRecipe } from "./recipes/powergryd.js";
 import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
-import { parlayLaneFileSuperseded } from "./recipes/parlay.js";
+import { parlayLaneFileSuperseded, shapeParlayRecipe } from "./recipes/parlay.js";
 import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
 import { trimToOwningClient } from "./recipes/trim.js";
 import { campaignReportFromCounts, formatCampaignReport, isPausedLabel } from "./stages/size/campaignReport.js";
@@ -266,7 +266,7 @@ export class Orchestrator {
         return [] as Record<string, unknown>[];
       });
     const applied = applyIcpSources(trimmed.recipe, this.d.fileRecipes ?? [], buildsFromRows(buildRows));
-    const recipe = shapeMspOwnersRecipe(shapeBcpRecipe(applied.recipe));
+    const recipe = shapeParlayRecipe(shapeMspOwnersRecipe(shapeBcpRecipe(applied.recipe)));
     if (applied.missing.length || Object.keys(applied.used).length) {
       log.info("icp source", { run_id: initial.run_id, used: applied.used, missing: applied.missing });
     }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { assertGetleadsFilters, outboundFilters, type GetleadsFilters } from "./getleads.js";
+import { assertGetleadsFilters, exportFilters, outboundFilters, type GetleadsFilters } from "./getleads.js";
 
 /** D34 — band labels plus a numeric employee bound is the August overlap. */
 
@@ -49,5 +49,22 @@ describe("getleads filters — D34", () => {
 
   it("D43 — refuses company_size together with company_size_min", () => {
     assert.throws(() => assertGetleadsFilters(bands({ company_size_min: 11 })), /band overlap/);
+  });
+
+  it("maps job_function to job_functions for export and keeps seniority", () => {
+    const filters = {
+      job_function: "Operations",
+      seniority: ["C-Team", "VP", "Director"],
+      company_size: ["11 to 50", "51 to 200", "201 to 500"],
+      countries: ["United States"],
+      email_status: ["VALID"],
+    } as GetleadsFilters;
+    const counted = outboundFilters(filters);
+    assert.equal(counted.job_function, "Operations");
+    assert.deepEqual(counted.seniority, ["C-Team", "VP", "Director"]);
+    const exported = exportFilters(filters);
+    assert.equal("job_function" in exported, false);
+    assert.deepEqual(exported.job_functions, ["Operations"]);
+    assert.deepEqual(exported.seniority, ["C-Team", "VP", "Director"]);
   });
 });

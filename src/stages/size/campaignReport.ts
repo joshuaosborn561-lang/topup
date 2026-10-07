@@ -5,15 +5,15 @@ import type { PilotScore } from "./pilot.js";
 export interface CampaignReportEntry {
   campaign_id: number;
   campaign_name: string;
-  found: number;
+  found: number | null;
   to_add: number;
   source: string;
   titles: string;
   filters: string;
-  tam_total: number;
-  tam_left: number;
+  tam_total: number | null;
+  tam_left: number | null;
   reply_rate: string;
-  gate: "ok" | "under_reply_bar" | "tam_filled" | "paused" | "suspect_filter";
+  gate: "ok" | "under_reply_bar" | "tam_filled" | "paused" | "suspect_filter" | "pilot_mismatch" | "not_sized";
   strategy: string;
   tam_source?: string;
   tam_check?: "ok" | "tam_mismatch" | "tam_source_missing";
@@ -114,13 +114,13 @@ export function filtersWords(source: Source): string {
 export interface CampaignReportInput {
   campaign_id: number;
   campaign_name: string;
-  found: number;
+  found: number | null;
   to_add: number;
   source: string;
   titles: string;
   filters: string;
-  tam_total: number;
-  tam_left: number;
+  tam_total: number | null;
+  tam_left: number | null;
   sends: number;
   interested: number;
   /** Sends are under the volume floor. "Too early to judge" does not clear the bar. */
@@ -131,6 +131,10 @@ export interface CampaignReportInput {
   strategy: string;
   /** Pilot passed and TAM was not counted. The gate stays ok. */
   pilot_only?: boolean;
+  /** Parked before a count. found and tam stay null. */
+  not_sized?: boolean;
+  /** The sample was scored and missed the gate. */
+  pilot_failed?: boolean;
   tam_source?: string;
   tam_check?: CampaignReportEntry["tam_check"];
   getleads_count?: number | null;
@@ -144,11 +148,12 @@ export function replyRateText(sends: number, interested: number, tooEarly: boole
   return `${rate.toFixed(1)} per 2,000 (${interested} interested in ${sends} sends)`;
 }
 
-export function campaignGate(input: Pick<CampaignReportInput, "paused" | "tam_total" | "tam_left" | "sends" | "interested" | "too_early" | "rows_found" | "market_cap" | "pilot_only">): CampaignReportEntry["gate"] {
+export function campaignGate(input: Pick<CampaignReportInput, "paused" | "tam_total" | "tam_left" | "sends" | "interested" | "too_early" | "rows_found" | "market_cap" | "pilot_only" | "not_sized" | "pilot_failed">): CampaignReportEntry["gate"] {
   if (input.paused) return "paused";
+  if (input.not_sized) return input.pilot_failed ? "pilot_mismatch" : "not_sized";
   if (input.pilot_only) return "ok";
-  if (isSuspectFilter(input.tam_total, input.rows_found, input.market_cap)) return "suspect_filter";
-  if (input.tam_left < TAM_LEFT_FLOOR) return "tam_filled";
+  if (isSuspectFilter(input.tam_total ?? 0, input.rows_found, input.market_cap)) return "suspect_filter";
+  if ((input.tam_left ?? 0) < TAM_LEFT_FLOOR) return "tam_filled";
   const rate = input.sends === 0 ? 0 : (input.interested / input.sends) * 2000;
   if (input.too_early || rate < 1) return "under_reply_bar";
   return "ok";
@@ -189,7 +194,7 @@ export function formatCampaignReport(rows: readonly CampaignReportEntry[]): stri
     .map(
       (row) =>
         [
-          `#${row.campaign_id} ${row.campaign_name}: found ${row.found}, to add ${row.to_add}, source ${row.source}, titles ${row.titles}, filters ${row.filters}, TAM ${row.tam_total}, left ${row.tam_left}, replies ${row.reply_rate}, gate ${row.gate}.`,
+          `#${row.campaign_id} ${row.campaign_name}: found ${row.found ?? "not sized"}, to add ${row.to_add}, source ${row.source}, titles ${row.titles}, filters ${row.filters}, TAM ${row.tam_total ?? "not sized"}, left ${row.tam_left ?? "not sized"}, replies ${row.reply_rate}, gate ${row.gate}.`,
           row.tam_source ? ` TAM source ${row.tam_source}.` : "",
           row.tam_check ? ` tam_check ${row.tam_check}.` : "",
           row.getleads_count != null ? ` getleads ${row.getleads_count}.` : "",
@@ -228,6 +233,9 @@ const REPORT_FIELDS = ["campaign_id", "campaign_name", "found", "to_add", "sourc
 export function reportFieldsFilled(row: CampaignReportEntry): boolean {
   return REPORT_FIELDS.every((key) => {
     const value = row[key];
+    if (value == null && (key === "found" || key === "tam_total" || key === "tam_left")) {
+      return row.gate === "pilot_mismatch" || row.gate === "not_sized";
+    }
     if (typeof value === "number") return Number.isFinite(value);
     return typeof value === "string" && value.trim().length > 0;
   });

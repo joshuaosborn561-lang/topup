@@ -30,13 +30,16 @@ import { recycleDays } from "../suppress/recycle.js";
 import { combineSizeLine, listCountLine, type CountUnit, type SegmentMeasure, type UnitTotal } from "./combine.js";
 import { sizeReport } from "./report.js";
 import {
+  PILOT_EXPORT_COLUMNS,
   PILOT_ROWS,
   pilotAllowsSize,
   pilotExpectFor,
+  pilotFieldsFromRecords,
   pilotMismatchReason,
-  pilotRowsFromCsv,
+  pilotSampleFromCsv,
   recipeFingerprint,
   scorePilot,
+  type PilotFields,
   type PilotRow,
   type PilotScore,
 } from "./pilot.js";
@@ -52,6 +55,8 @@ interface SizeReportContext {
   builds: Record<string, unknown>[];
   icp: IcpKind;
   pilotOnly?: boolean;
+  /** Pilot parked before any count. found and tam stay null. */
+  notSized?: boolean;
 }
 
 function emptyContext(fingerprint: string): SizeReportContext {
@@ -65,8 +70,8 @@ function emptyContext(fingerprint: string): SizeReportContext {
   };
 }
 
-function scoreSafe(recipe: Recipe, params: GetleadsFilters, rows: PilotRow[]): PilotScore {
-  return scorePilot(rows, pilotExpectFor(recipe.client_tag, recipe.lane, params));
+function scoreSafe(recipe: Recipe, params: GetleadsFilters, rows: PilotRow[], fields?: PilotFields): PilotScore {
+  return scorePilot(rows, pilotExpectFor(recipe.client_tag, recipe.lane, params), fields);
 }
 
 /**
@@ -564,7 +569,7 @@ export class SizeStage {
       const persona = rule?.icp.persona ?? "persona not set";
       const stats = await variantStats(this.d.repo.raw(), id).catch(() => ({ sends: 0, interested: 0, variants: [] }));
       const build = rowsFoundFromBuilds(builds, id);
-      const tamTotal = counts[`tam_${id}`] ?? counts.lane_tam ?? counts.total_matching ?? counts.businesses ?? 0;
+      const tamTotal = context?.notSized ? null : (counts[`tam_${id}`] ?? counts.lane_tam ?? counts.total_matching ?? counts.businesses ?? 0);
       const held = counts[`already_held_${id}`] ?? (campaignIds.length === 1 ? (counts.already_held ?? 0) : 0);
       const name = names.get(id) || `campaign ${id}`;
       const words = sourceWords(source);
@@ -577,13 +582,13 @@ export class SizeStage {
       rows.push({
         campaign_id: id,
         campaign_name: name,
-        found: counts[`tam_${id}`] ?? tamTotal,
+        found: context?.notSized ? null : (counts[`tam_${id}`] ?? tamTotal ?? 0),
         to_add: counts[`plan_rows_${id}`] ?? (campaignIds.length === 1 ? (counts.plan_rows ?? 0) : 0),
         source: words,
         titles: titlesWords(source, persona),
         filters: filtersWords(source),
         tam_total: tamTotal,
-        tam_left: Math.max(0, tamTotal - held),
+        tam_left: tamTotal == null ? null : Math.max(0, tamTotal - held),
         sends: stats.sends,
         interested: stats.interested,
         too_early: stats.sends < recipe.working.variant_min_sends,
@@ -596,6 +601,8 @@ export class SizeStage {
             ? `Repeats ${build.build_label}. Same source and titles as that build.`
             : `Repeats ${recipe.recipe_id}. Same source and titles as the saved recipe.`,
         pilot_only: context?.pilotOnly,
+        not_sized: context?.notSized,
+        pilot_failed: context?.notSized === true && pilot != null && pilot.gate !== "ok",
         ...(tamSource ? { tam_source: tamSource } : {}),
         ...(tamCheck ? { tam_check: tamCheck } : {}),
         ...(decision ? { getleads_count: decision.getleads_count, ai_ark_count: decision.ai_ark_count } : {}),
@@ -676,8 +683,8 @@ export class SizeStage {
     if (groups.size === 0) return { kind: "ok", scores };
     try {
       for (const group of groups.values()) {
-        const rows = await this.samplePilotRows(run, group.params);
-        const score = scoreSafe(recipe, group.params, rows);
+        const sample = await this.samplePilotRows(run, group.params);
+        const score = scoreSafe(recipe, group.params, sample.rows, sample.fields);
         for (const id of group.ids) {
           scores.set(id, score);
           const why = pilotMismatchReason(id, score);
@@ -694,7 +701,7 @@ export class SizeStage {
       }
     } catch (err) {
       const reason = `pilot_mismatch: the vendor sample could not be scored (${(err as Error).message})`;
-      const outcome = await this.parkReported(run, recipe, campaignIds, {}, [], emptyContext(recipeFingerprint(recipe)), reason);
+      const outcome = await this.parkReported(run, recipe, campaignIds, {}, [], { ...emptyContext(recipeFingerprint(recipe)), notSized: true }, reason);
       return { kind: "park", outcome };
     }
     if (reasons.length || [...scores.values()].some((score) => !pilotAllowsSize(score))) {
@@ -705,7 +712,7 @@ export class SizeStage {
         campaignIds,
         {},
         [],
-        { ...emptyContext(recipeFingerprint(recipe)), pilots: scores, icp: "linkedin_native" },
+        { ...emptyContext(recipeFingerprint(recipe)), pilots: scores, icp: "linkedin_native", notSized: true },
         reason,
       );
       return { kind: "park", outcome };
@@ -713,10 +720,11 @@ export class SizeStage {
     return { kind: "ok", scores };
   }
 
-  private async samplePilotRows(run: RunRow, filters: GetleadsFilters): Promise<PilotRow[]> {
+  private async samplePilotRows(run: RunRow, filters: GetleadsFilters): Promise<{ rows: PilotRow[]; fields: PilotFields }> {
     const started = await this.d.getleads.startExport(filters, {
       max_rows: PILOT_ROWS,
       max_per_company: filters.max_per_company,
+      columns: [...PILOT_EXPORT_COLUMNS],
     });
     const deadline = Date.now() + 45_000;
     let url: string | null = null;
@@ -748,7 +756,8 @@ export class SizeStage {
     });
     const res = await fetch(url);
     if (!res.ok) throw new Error("pilot export could not be read");
-    return pilotRowsFromCsv(await res.text()).slice(0, PILOT_ROWS);
+    const sample = pilotSampleFromCsv(await res.text());
+    return { rows: sample.rows.slice(0, PILOT_ROWS), fields: sample.fields };
   }
 
   private async aiArkCount(filters: GetleadsFilters): Promise<number | null> {
