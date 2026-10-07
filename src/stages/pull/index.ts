@@ -1,7 +1,7 @@
 import type { MapsQuote } from "../../clients/mapsStats.js";
 import type { PermitCounts } from "../../clients/permits.js";
 import type { RunRow } from "../../domain/runs.js";
-import { runTargetCampaignIds } from "../../recipes/campaigns.js";
+import { runTargetCampaignIds, withoutSkipped } from "../../recipes/campaigns.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
 import { mapsPermitAsk } from "../../spend/audience.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
@@ -65,7 +65,8 @@ export class PullStage {
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
     return attempt(this.d, run, "pull", "pulling", async (attempts) => {
-      const campaignIds = await runTargetCampaignIds(this.d.repo, run, recipe);
+      const sizeStep = await this.d.repo.getStep(run.run_id, "size");
+      const campaignIds = withoutSkipped(await runTargetCampaignIds(this.d.repo, run, recipe), sizeStep?.counts);
       const routed = pullPlans(recipe, campaignIds);
       if (routed.kind === "park") {
         await this.d.repo.failStep(run.run_id, "pull", routed.reason, true);
@@ -77,7 +78,6 @@ export class PullStage {
         return { kind: "declined" };
       }
 
-      const sizeStep = await this.d.repo.getStep(run.run_id, "size");
       const own = await this.d.repo.getStep(run.run_id, "pull");
       const jobs = parseJobBook(own?.vendor_job_id ?? null, routed.plans);
       const missing = credentialGap(routed.plans, this.d.maps ?? null, this.d.permits ?? null);
@@ -236,7 +236,8 @@ export class PullStage {
   async resolve(run: RunRow, recipe: Recipe): Promise<ResolvedPull> {
     const own = await this.d.repo.getStep(run.run_id, "pull");
     if (!own?.vendor_job_id) throw new Error("pull has no vendor job id; nothing to ingest");
-    const campaignIds = await runTargetCampaignIds(this.d.repo, run, recipe);
+    const sizeStep = await this.d.repo.getStep(run.run_id, "size");
+    const campaignIds = withoutSkipped(await runTargetCampaignIds(this.d.repo, run, recipe), sizeStep?.counts);
     const routed = pullPlans(recipe, campaignIds);
     if (routed.kind !== "run") throw new Error(`pull cannot resolve: ${routed.reason}`);
     const jobs = parseJobBook(own.vendor_job_id, routed.plans);

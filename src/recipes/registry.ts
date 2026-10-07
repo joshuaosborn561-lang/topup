@@ -1,3 +1,4 @@
+import { neverTopUp } from "../config.js";
 import type { Recipe, RoutingRule } from "./schema.js";
 
 /**
@@ -36,46 +37,61 @@ export function petersonLaneCaseSql(): { caseSql: string; idsSql: string } {
 
 export interface RegistryCampaign {
   campaign_id: number;
+  campaign_name?: string | null;
   client_tag: string;
   smartlead_client_id: number | null;
   lane: string | null;
+  /** Missing means ACTIVE, so an older registry row still counts. */
+  status?: string | null;
 }
 
-/**
- * A reopened run takes its campaigns from the registry rows for this
- * client's Smartlead id and this lane. Other clients' campaigns drop.
- * No rows for the lane means the saved routing stays.
- */
-export function routingFromRegistry(recipe: Recipe, rows: readonly RegistryCampaign[]): Recipe {
-  if (rows.length === 0) return recipe;
-  const known = new Map(rows.map((row) => [row.campaign_id, row]));
-  const laneIds = rows
-    .filter(
-      (row) =>
-        row.client_tag === recipe.client_tag &&
-        row.smartlead_client_id === recipe.smartlead_client_id &&
-        row.lane === recipe.lane,
-    )
-    .map((row) => row.campaign_id);
-  const kept = recipe.routing
-    .map((rule) => rule.campaign_id)
-    .filter((id) => {
-      const row = known.get(id);
-      if (!row) return true;
-      return row.client_tag === recipe.client_tag && row.smartlead_client_id === recipe.smartlead_client_id && row.lane === recipe.lane;
-    });
-  const ids = [...new Set([...kept, ...laneIds])].filter((id) => Number.isInteger(id) && id > 0).sort((a, b) => a - b);
-  if (ids.length === 0) return { ...recipe, routing: [], segments: { ...recipe.segments, slot: [] } };
+function registryActive(status: string | null | undefined): boolean {
+  if (status == null || status.trim() === "") return true;
+  return status.trim().toUpperCase() === "ACTIVE";
+}
+
+function routingFor(recipe: Recipe, ids: number[]): Recipe {
+  const unique = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0).sort((a, b) => a - b);
+  if (unique.length === 0) return { ...recipe, routing: [], segments: { ...recipe.segments, slot: [] } };
   const byId = new Map(recipe.routing.map((rule) => [rule.campaign_id, rule]));
-  const fallback = recipe.routing.find((rule) => ids.includes(rule.campaign_id))?.icp ?? recipe.routing[0]?.icp ?? { kind: "linkedin_native" as const, persona: "unspecified" };
-  const routing: RoutingRule[] = ids.map((id) => {
+  const fallback = recipe.routing.find((rule) => unique.includes(rule.campaign_id))?.icp ?? recipe.routing[0]?.icp ?? { kind: "linkedin_native" as const, persona: "unspecified" };
+  const routing: RoutingRule[] = unique.map((id) => {
     const existing = byId.get(id);
     if (existing) return existing;
     return { when: { slot: String(id) }, campaign_id: id, icp: fallback };
   });
   const segments = { ...recipe.segments };
   if (recipe.segments.slot || routing.some((rule) => typeof rule.when.slot === "string")) {
-    segments.slot = ids.map(String);
+    segments.slot = unique.map(String);
   }
   return { ...recipe, routing, segments };
+}
+
+/**
+ * Lane targets are the recipe's campaigns that the registry also names for
+ * this client's Smartlead id, this lane, and status ACTIVE. A registry row
+ * that is not in the recipe is not added. A recipe campaign with no registry
+ * row is dropped once any registry rows exist. No rows at all leaves the
+ * recipe, minus campaigns that are never topped up.
+ */
+export function routingFromRegistry(recipe: Recipe, rows: readonly RegistryCampaign[]): Recipe {
+  const recipeIds = new Set(recipe.routing.map((rule) => rule.campaign_id));
+  if (rows.length === 0) {
+    return routingFor(
+      recipe,
+      recipe.routing.map((rule) => rule.campaign_id).filter((id) => !neverTopUp(id)),
+    );
+  }
+  const ids = rows
+    .filter((row) => {
+      if (!recipeIds.has(row.campaign_id)) return false;
+      if (row.client_tag !== recipe.client_tag) return false;
+      if (row.smartlead_client_id !== recipe.smartlead_client_id) return false;
+      if (row.lane !== recipe.lane) return false;
+      if (!registryActive(row.status)) return false;
+      if (neverTopUp(row.campaign_id, row.campaign_name)) return false;
+      return true;
+    })
+    .map((row) => row.campaign_id);
+  return routingFor(recipe, ids);
 }

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { mapsSyncRows } from "../clients/mapsStats.js";
 import { openRunBlocksLane } from "../mcp/queue.js";
 import { aliasLanes, dedupeAliasLanes } from "../recipes/dedupe.js";
+import { targetCampaignIds, withoutSkipped } from "../recipes/campaigns.js";
 import { applyIcpSources } from "../recipes/icpSource.js";
 import { PETERSON_LANES, petersonLaneCaseSql, repairedClient, repairedLane, routingFromRegistry } from "../recipes/registry.js";
 import { parseRecipe, type Recipe } from "../recipes/schema.js";
@@ -14,7 +15,7 @@ import { sourceLabel } from "./ingest/index.js";
 import { credentialGap, pricePlans, shareRows } from "./pull/index.js";
 import { pullPlans, routeSize } from "./pull/route.js";
 import { campaignIdFromSourceLabel } from "./route/index.js";
-import { bandMismatchReason, bandSizeDecision, outsideBandCount, partitionCheck } from "./size/index.js";
+import { bandMismatchReason, bandSizeDecision, outsideBandCount, partitionCheck, skippedSizeRoutes } from "./size/index.js";
 
 const base = {
   client_tag: "emcor",
@@ -223,6 +224,38 @@ describe("finish the open runs", () => {
       ],
     );
     assert.deepEqual(rebuilt.routing.map((rule) => rule.campaign_id), [111]);
+    const trades = {
+      ...linkedin("salesglider.trades.v0", "trades", [111, 333, 3890658, 4085158]),
+      client_tag: "salesglider",
+      smartlead_client_id: 7,
+    };
+    const kept = routingFromRegistry(trades, [
+      { campaign_id: 111, campaign_name: "Trades", client_tag: "salesglider", smartlead_client_id: 7, lane: "trades", status: "ACTIVE" },
+      { campaign_id: 333, campaign_name: "Paused", client_tag: "salesglider", smartlead_client_id: 7, lane: "trades", status: "PAUSED" },
+      { campaign_id: 3890658, campaign_name: "Foreign", client_tag: "other", smartlead_client_id: 345263, lane: "trades", status: "ACTIVE" },
+      { campaign_id: 4085158, campaign_name: "SG Gabe Calls", client_tag: "salesglider", smartlead_client_id: 7, lane: "trades", status: "ACTIVE" },
+      { campaign_id: 777, campaign_name: "Not in the recipe", client_tag: "salesglider", smartlead_client_id: 7, lane: "trades", status: "ACTIVE" },
+    ]);
+    assert.deepEqual(kept.routing.map((rule) => rule.campaign_id), [111]);
+    const targets = targetCampaignIds(kept, {
+      campaign_id: null,
+      counts_by_status: { target_111: 1, target_3890658: 1, target_4085158: 1, target_3122546: 1 },
+    });
+    assert.deepEqual(targets, [111]);
+    const skipped = skippedSizeRoutes(kept, [111, 3890658]);
+    assert.deepEqual(skipped.run, [111]);
+    assert.match(skipped.skipped.join(" "), /#3890658/);
+    const pullIds = withoutSkipped([111, 3890658], { skipped_3890658: 1, plan_rows_111: 10 });
+    assert.deepEqual(pullIds, [111]);
+    assert.equal(routeSize(kept, pullIds).kind, "getleads");
+    assert.equal(pullPlans(kept, pullIds).kind, "run");
+    const cayden = routingFromRegistry(
+      { ...linkedin("salesglider.calls.v0", "calls", [42]), client_tag: "salesglider", smartlead_client_id: 7 },
+      [{ campaign_id: 42, campaign_name: "SG Cayden Calls", client_tag: "salesglider", smartlead_client_id: 7, lane: "calls", status: "ACTIVE" }],
+    );
+    assert.deepEqual(cayden.routing.map((rule) => rule.campaign_id), []);
+    const nurture = routingFromRegistry({ ...linkedin("salesglider.nurture.v0", "nurture", [3122546, 111]), client_tag: "salesglider", smartlead_client_id: 7 }, []);
+    assert.deepEqual(nurture.routing.map((rule) => rule.campaign_id), [111]);
   });
 
   it("does not call a maps scrape or a permit row export", async () => {

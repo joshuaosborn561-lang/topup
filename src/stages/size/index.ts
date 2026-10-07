@@ -134,8 +134,8 @@ export class SizeStage {
   /**
    * One TAM and one requested count per target campaign. A lane with
    * several campaigns does not collapse them. A campaign that cannot be
-   * sized fails the run and is named. An unknown headcount band is part
-   * of the total, not a Josh gate.
+   * sized is skipped and named. The run parks only when none remain.
+   * An unknown headcount band is part of the total, not a Josh gate.
    */
   private async sizeEach(run: RunRow, recipe: Recipe, campaignIds: number[], attempts: number): Promise<StageOutcome> {
     if (campaignIds.length === 0) {
@@ -146,26 +146,34 @@ export class SizeStage {
     const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
     const counts: Record<string, number> = { size_sources: 0 };
     const lines: string[] = [];
-    const failures: string[] = [];
+    const pre = skippedSizeRoutes(recipe, campaignIds);
+    const skipped = [...pre.skipped];
+    for (const id of campaignIds) {
+      if (pre.skipped.some((line) => line.startsWith(`#${id}:`))) counts[`skipped_${id}`] = 1;
+    }
     let peopleNet = 0;
     let peopleCampaigns = 0;
-    for (const id of campaignIds) {
+    let sized = 0;
+    for (const id of pre.run) {
       const routed = campaignSizeRoutes(recipe, [id])[0]?.route;
       if (!routed || routed.kind === "park") {
-        failures.push(`#${id}: ${routed && routed.kind === "park" ? routed.reason : "no size route"}`);
+        skipped.push(`#${id}: ${routed && routed.kind === "park" ? routed.reason : "no size route"}`);
+        counts[`skipped_${id}`] = 1;
         continue;
       }
       if (routed.kind === "skip") {
         counts[`tam_${id}`] = 0;
         counts[`plan_rows_${id}`] = 0;
         lines.push(`#${id}: nothing to count`);
+        sized += 1;
         continue;
       }
       const segments = segmentsFor(routed, id);
       const rows = await Promise.all(segments.map((seg) => this.measureSegment(run, recipe, seg)));
       const bad = rows.filter((row) => !row.measure.counted);
       if (bad.length) {
-        failures.push(`#${id}: ${bad.map((row) => row.measure.reason ?? "could not be counted").join("; ")}`);
+        skipped.push(`#${id}: ${bad.map((row) => row.measure.reason ?? "could not be counted").join("; ")}`);
+        counts[`skipped_${id}`] = 1;
         continue;
       }
       const people = rows.filter((row) => row.measure.unit === "people").reduce((sum, row) => sum + row.measure.total, 0);
@@ -193,9 +201,10 @@ export class SizeStage {
       if (permits) counts[`permits_${id}`] = permits;
       counts.size_sources += segments.length;
       lines.push(`#${id}: TAM ${tam}, request ${planRows}`);
+      sized += 1;
     }
-    if (failures.length) {
-      const reason = failures.join("; ");
+    if (sized === 0) {
+      const reason = skipped.length ? skipped.join("; ") : "no target campaigns to size";
       await this.d.repo.failStep(run.run_id, "size", reason, true);
       return park(this.d, run, "size", reason, attempts);
     }
@@ -212,7 +221,14 @@ export class SizeStage {
         );
       }
     }
-    const line = [`Size done (${campaignIds.length} campaign(s)):`, ...lines, "Each campaign keeps its own TAM and requested count."].join("\n");
+    const line = [
+      `Size done (${sized} campaign(s)):`,
+      ...lines,
+      skipped.length ? `Skipped: ${skipped.join("; ")}` : null,
+      "Each campaign keeps its own TAM and requested count.",
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join("\n");
     return finish(this.d, run, "size", peopleCampaigns > 0 ? peopleNet : (counts.plan_rows ?? 0), counts, line);
   }
 
@@ -556,6 +572,21 @@ export class SizeStage {
         : `subtracted addresses this client sent in the last ${days} days`,
     };
   }
+}
+
+/** A campaign whose route parks is skipped. The others still size. */
+export function skippedSizeRoutes(recipe: Recipe, campaignIds: readonly number[]): { run: number[]; skipped: string[] } {
+  const run: number[] = [];
+  const skipped: string[] = [];
+  for (const id of campaignIds) {
+    const route = campaignSizeRoutes(recipe, [id])[0]?.route;
+    if (!route || route.kind === "park") {
+      skipped.push(`#${id}: ${route && route.kind === "park" ? route.reason : "no size route"}`);
+      continue;
+    }
+    run.push(id);
+  }
+  return { run, skipped };
 }
 
 function segmentsFor(route: SizeRoute, campaignId: number): SizeSegment[] {

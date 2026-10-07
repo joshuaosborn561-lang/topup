@@ -1,3 +1,4 @@
+import { neverTopUp } from "../config.js";
 import { GETLEADS_BANDS, type GetleadsSource, type Recipe, type RoutingRule, type Source } from "./schema.js";
 
 /**
@@ -109,18 +110,50 @@ export function idsFromTargetCounts(counts?: Record<string, number>): number[] {
     .sort((a, b) => a - b);
 }
 
-/** Watch / `/topup` targets, falling back to every campaign the recipe names. */
+function ownedTargets(recipe: Recipe, ids: readonly number[]): number[] {
+  const allowed = new Set(recipeCampaignIds(recipe));
+  return ids.filter((id) => allowed.has(id) && !neverTopUp(id));
+}
+
+/**
+ * Watch / `/topup` targets, falling back to every campaign the recipe names.
+ * A stale target_* set cannot bring back a campaign the recipe no longer
+ * names, or one that is never topped up.
+ */
 export function targetCampaignIds(
   recipe: Recipe,
   run?: { campaign_id: number | null; counts_by_status?: Record<string, number> },
   stepCounts?: Record<string, number>,
 ): number[] {
   const fromStep = idsFromTargetCounts(stepCounts);
-  if (fromStep.length) return fromStep;
+  if (fromStep.length) {
+    const kept = ownedTargets(recipe, fromStep);
+    if (kept.length) return kept;
+  }
   const fromRun = idsFromTargetCounts(run?.counts_by_status);
-  if (fromRun.length) return fromRun;
-  if (run?.campaign_id) return [run.campaign_id];
-  return recipeCampaignIds(recipe);
+  if (fromRun.length) {
+    const kept = ownedTargets(recipe, fromRun);
+    if (kept.length) return kept;
+  }
+  if (run?.campaign_id) {
+    const one = ownedTargets(recipe, [run.campaign_id]);
+    if (one.length) return one;
+  }
+  return ownedTargets(recipe, recipeCampaignIds(recipe));
+}
+
+/** Campaigns the size step marked skipped. The pull uses whoever is left. */
+export function withoutSkipped(targets: readonly number[], sizeCounts?: Record<string, number>): number[] {
+  if (!sizeCounts) return [...targets];
+  const skipped = new Set(
+    Object.entries(sizeCounts)
+      .filter(([key, value]) => key.startsWith("skipped_") && value > 0)
+      .map(([key]) => Number(key.slice("skipped_".length)))
+      .filter((id) => Number.isInteger(id) && id > 0),
+  );
+  if (skipped.size === 0) return [...targets];
+  const kept = targets.filter((id) => !skipped.has(id));
+  return kept.length ? kept : [...targets];
 }
 
 export async function runTargetCampaignIds(
@@ -137,8 +170,11 @@ export function resolveTargetCampaignIds(
   requested?: number[],
 ): { ok: true; ids: number[] } | { ok: false; message: string } {
   const all = recipeCampaignIds(recipe);
-  const unique = [...new Set(requested ?? [])];
-  if (unique.length === 0) return { ok: true, ids: all };
+  const unique = [...new Set(requested ?? [])].filter((id) => !neverTopUp(id));
+  if ((requested ?? []).some((id) => neverTopUp(id)) && unique.length === 0) {
+    return { ok: false, message: `Campaign(s) ${(requested ?? []).map((id) => `#${id}`).join(", ")} are never topped up.` };
+  }
+  if (unique.length === 0) return { ok: true, ids: all.filter((id) => !neverTopUp(id)) };
   const unknown = unique.filter((id) => !all.includes(id));
   if (unknown.length) {
     return {

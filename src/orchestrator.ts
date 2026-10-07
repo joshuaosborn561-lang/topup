@@ -554,9 +554,11 @@ function registryRows(rows: readonly Record<string, unknown>[]): RegistryCampaig
     const client = row.smartlead_client_id == null ? null : Number(row.smartlead_client_id);
     out.push({
       campaign_id: id,
+      campaign_name: row.campaign_name == null ? null : String(row.campaign_name),
       client_tag: String(row.client_tag ?? ""),
       smartlead_client_id: client != null && Number.isFinite(client) ? client : null,
       lane: row.lane == null ? null : String(row.lane),
+      status: row.status == null ? null : String(row.status),
     });
   }
   return out;

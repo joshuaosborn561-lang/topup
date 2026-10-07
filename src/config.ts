@@ -9,6 +9,21 @@ import { z } from "zod";
 /** The only Supabase project this service may write to (D6). */
 export const ALLOWED_SUPABASE_PROJECT_REF = "azpapwtnrbzywlnxxecz";
 
+/**
+ * Campaigns that are never topped up.
+ * 4085158 is SG Gabe Calls. 3122546 is SG Nurture.
+ * SG Cayden Calls is matched by name because its id is not fixed here.
+ */
+export const NEVER_TOPUP_CAMPAIGN_IDS = [4085158, 3122546] as const;
+
+const NEVER_TOPUP_NAME = [/cayden calls/i, /gabe calls/i, /sg nurture/i];
+
+export function neverTopUp(id: number, name?: string | null): boolean {
+  if ((NEVER_TOPUP_CAMPAIGN_IDS as readonly number[]).includes(id)) return true;
+  const label = name?.trim() ?? "";
+  return label.length > 0 && NEVER_TOPUP_NAME.some((re) => re.test(label));
+}
+
 const csvIds = z
   .string()
   .default("")
