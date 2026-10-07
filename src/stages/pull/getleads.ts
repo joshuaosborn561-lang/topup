@@ -1,5 +1,6 @@
 import { EXPORT_DONE, EXPORT_FAILED, exportRowLimit, type Getleads, type GetleadsFilters } from "../../clients/getleads.js";
 import type { RunRow } from "../../domain/runs.js";
+import { countSlices, type GeoCity, type GeoFenceRef } from "../../recipes/geoFence.js";
 import type { Recipe } from "../../recipes/schema.js";
 import { worstCaseCents } from "../../spend/prices.js";
 import type { PollVerdict } from "../common.js";
@@ -16,17 +17,33 @@ export class GetleadsPull implements PullAdapter {
   readonly kind = "getleads" as const;
   readonly vendor = "getleads";
 
-  constructor(private readonly getleads: Getleads) {}
+  constructor(
+    private readonly getleads: Getleads,
+    private readonly loadCities?: (ref: GeoFenceRef) => Promise<GeoCity[]>,
+  ) {}
 
   async start(_run: RunRow, recipe: Recipe, planRows: number, source?: Recipe["source"]): Promise<PullHandle> {
     const src = source ?? recipe.source;
     if (src.kind !== "getleads") throw new Error("GetleadsPull needs a getleads source");
-    const params = src.params;
+    const params = await this.withFenceCities(src.params as GetleadsFilters);
     const maxRows = exportRowLimit(planRows);
-    const started = await this.getleads.startExport(params as GetleadsFilters, { max_rows: maxRows, max_per_company: params.max_per_company });
+    const started = await this.getleads.startExport(params, { max_rows: maxRows, max_per_company: params.max_per_company });
     const ids = started.export_ids?.length ? started.export_ids : [started.export_id];
     const handle = ids.length === 1 ? ids[0]! : `multi:${JSON.stringify(ids)}`;
     return { handle, worstCaseCents: worstCaseCents("getleads", "export", maxRows) };
+  }
+
+  /** A geo_fence pointer becomes city chunks. The sentence is not sent as a city. */
+  private async withFenceCities(filters: GetleadsFilters): Promise<GetleadsFilters> {
+    if (!filters.geo_fence) return filters;
+    if (!this.loadCities) throw new Error(`geo fence ${filters.geo_fence.schema}.${filters.geo_fence.table} could not be loaded`);
+    const cities = await this.loadCities(filters.geo_fence);
+    const slices = countSlices(filters, cities);
+    if (slices.length === 0) throw new Error(`geo fence ${filters.geo_fence.schema}.${filters.geo_fence.table} has no cities`);
+    if (slices.length === 1) return slices[0]!;
+    const flat = slices.flatMap((slice) => slice.cities ?? []);
+    const { geo_fence: _omit, ...rest } = filters;
+    return { ...rest, cities: flat };
   }
 
   async check(handle: string): Promise<PollVerdict<PullResult>> {

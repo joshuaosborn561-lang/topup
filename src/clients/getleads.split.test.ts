@@ -38,6 +38,28 @@ describe("getleads count timeout", () => {
     assert.equal(total.exportable_rows, 8);
   });
 
+  it("exports 137 cities in 3 or 4 chunks when a count over 45 cities times out", async () => {
+    const cities = Array.from({ length: 137 }, (_, i) => `City ${i}`);
+    const filters: GetleadsFilters = {
+      job_titles: ["Property Manager"],
+      cities,
+      states: ["California"],
+      email_status: ["VALID"],
+    };
+    const seen: number[] = [];
+    const timeout = `tool export_contacts failed: ${JSON.stringify({ ok: false, message: "Count timed out after 55s. Narrow the query (add a company, industry, or seniority filter) and retry.", error: "count_timeout" })}`;
+    const started = await exportOrSplit(filters, { max_rows: 1445 }, async (slice) => {
+      const n = slice.cities?.length ?? 0;
+      seen.push(n);
+      if (n > 45) throw new Error(timeout);
+      return { export_id: `chunk-${seen.length}` };
+    });
+    assert.ok(started.export_ids.length >= 3 && started.export_ids.length <= 4);
+    assert.ok(seen.every((n) => n <= 45));
+    assert.equal(seen.filter((n) => n > 45).length, 0);
+    assert.equal(seen.reduce((sum, n) => sum + n, 0), 137);
+  });
+
   it("does not retry a query that cannot be split", async () => {
     const single: GetleadsFilters = { job_titles: ["CIO"], company_size: ["11 to 50"] };
     await assert.rejects(

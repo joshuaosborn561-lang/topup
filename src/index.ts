@@ -22,6 +22,7 @@ import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { loadClientMap, loadClientTags } from "./mcp/recipe.js";
 import { dedupeAliasLanes } from "./recipes/dedupe.js";
+import { loadGeoFenceCities } from "./recipes/geoFence.js";
 import { mergeRecipes } from "./recipes/infer.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { mcpRouter } from "./mcp/server.js";
@@ -135,7 +136,7 @@ async function main(): Promise<void> {
   const pull = new PullStage({
     ...base,
     rails,
-    adapters: [new GetleadsPull(getleads), new MapsPull(maps), new PermitsPull(permitCounts)],
+    adapters: [new GetleadsPull(getleads, (ref) => loadGeoFenceCities(db, ref)), new MapsPull(maps), new PermitsPull(permitCounts)],
     maps,
     permits: permitCounts,
     cfg: jobs,

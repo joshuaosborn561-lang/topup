@@ -1,3 +1,4 @@
+import { GEO_CHUNK_MAX } from "../recipes/geoFence.js";
 import { GETLEADS_BANDS, type Recipe } from "../recipes/schema.js";
 import { McpHttpClient } from "./mcpHttp.js";
 
@@ -57,22 +58,50 @@ export function isCountTimeout(message: string): boolean {
   return /count_timeout|count timed out/i.test(message);
 }
 
+/** How many times a timed-out query may be halved. The same wide query is not sent again. */
+export const MAX_SPLIT_DEPTH = 4;
+
+/** City lists over 45 time out. Each chunk stays at or under that cap. */
+export function chunkCities(filters: GetleadsFilters, max = GEO_CHUNK_MAX): GetleadsFilters[] {
+  const cities = filters.cities ?? [];
+  if (cities.length <= max) return [filters];
+  const out: GetleadsFilters[] = [];
+  for (let i = 0; i < cities.length; i += max) out.push({ ...filters, cities: cities.slice(i, i + max) });
+  return out;
+}
+
 /**
- * One narrower query. Bands first, then industries, then titles (seniority).
+ * Half the largest list. Ties keep company_size, then cities, then industries, then titles.
  * An empty result means the query cannot be split, so the caller does not retry it as-is.
  */
 export function splitGetleadsQuery(filters: GetleadsFilters): GetleadsFilters[] {
-  const bands = filters.company_size ?? [];
-  if (bands.length > 1) return bands.map((band) => ({ ...filters, company_size: [band] }));
-  const industries = filters.industries ?? [];
-  if (industries.length > 1) return industries.map((industry) => ({ ...filters, industries: [industry] }));
-  const titles = filters.job_titles ?? [];
-  if (titles.length > 1) {
-    const mid = Math.ceil(titles.length / 2);
-    const parts = [titles.slice(0, mid), titles.slice(mid)].filter((part) => part.length > 0);
-    if (parts.length > 1) return parts.map((job_titles) => ({ ...filters, job_titles }));
+  const lists: Array<{ key: "company_size" | "cities" | "industries" | "job_titles"; values: string[] }> = [
+    { key: "company_size", values: [...(filters.company_size ?? [])] },
+    { key: "cities", values: [...(filters.cities ?? [])] },
+    { key: "industries", values: [...(filters.industries ?? [])] },
+    { key: "job_titles", values: [...(filters.job_titles ?? [])] },
+  ];
+  let best: (typeof lists)[number] | null = null;
+  for (const list of lists) {
+    if (list.values.length > 1 && (best === null || list.values.length > best.values.length)) best = list;
   }
-  return [];
+  if (!best) return [];
+  const mid = Math.ceil(best.values.length / 2);
+  const parts = [best.values.slice(0, mid), best.values.slice(mid)].filter((part) => part.length > 0);
+  if (parts.length < 2) return [];
+  return parts.map((values) => ({ ...filters, [best.key]: values }) as GetleadsFilters);
+}
+
+function shareCap(total: number, parts: number): number[] {
+  const n = Math.max(0, Math.floor(total));
+  if (parts <= 0) return [];
+  const base = Math.floor(n / parts);
+  let rem = n - base * parts;
+  return Array.from({ length: parts }, () => {
+    const extra = rem > 0 ? 1 : 0;
+    rem -= extra;
+    return base + extra;
+  });
 }
 
 /** The sized plan_rows cap. A known plan does not need another full-lane count before export. */
@@ -81,22 +110,38 @@ export function exportRowLimit(planRows: number): number {
   return Math.max(1, Math.min(50_000, Number.isFinite(rows) && rows > 0 ? rows : 1));
 }
 
-/** Count the query. On count_timeout, sum one split. Do not send the wide query again. */
+/** Count the query. City lists over 45 are chunked first. On count_timeout, half the largest list. Do not send the wide query again. */
 export async function countOrSplit(
   filters: GetleadsFilters,
   count: (filters: GetleadsFilters) => Promise<CountResult>,
+  depth = 0,
 ): Promise<CountResult> {
+  const cityParts = chunkCities(filters);
+  if (cityParts.length > 1) {
+    let total = 0;
+    let exportable = 0;
+    let sawExportable = false;
+    for (const part of cityParts) {
+      const counted = await countOrSplit(part, count, depth);
+      total += counted.total_matching;
+      if (counted.exportable_rows != null) {
+        sawExportable = true;
+        exportable += counted.exportable_rows;
+      }
+    }
+    return { total_matching: total, exportable_rows: sawExportable ? exportable : null };
+  }
   try {
     return await count(filters);
   } catch (err) {
-    if (!isCountTimeout((err as Error).message ?? String(err))) throw err;
+    if (!isCountTimeout((err as Error).message ?? String(err)) || depth >= MAX_SPLIT_DEPTH) throw err;
     const slices = splitGetleadsQuery(filters);
     if (slices.length < 2) throw err;
     let total = 0;
     let exportable = 0;
     let sawExportable = false;
     for (const slice of slices) {
-      const part = await count(slice);
+      const part = await countOrSplit(slice, count, depth + 1);
       total += part.total_matching;
       if (part.exportable_rows != null) {
         sawExportable = true;
@@ -107,26 +152,42 @@ export async function countOrSplit(
   }
 }
 
-/** Export the query. On count_timeout, export each slice once. Do not send the wide query again. */
+/** Export the query. City lists over 45 are one export per chunk, and the caps sum to plan_rows. On count_timeout, half the largest list. */
 export async function exportOrSplit(
   filters: GetleadsFilters,
   opts: { max_rows: number; max_per_company?: number },
   start: (filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }) => Promise<{ export_id: string }>,
+  depth = 0,
 ): Promise<{ export_ids: string[] }> {
   const limit = exportRowLimit(opts.max_rows);
+  const cityParts = chunkCities(filters);
+  if (cityParts.length > 1) {
+    const caps = shareCap(limit, cityParts.length);
+    const ids: string[] = [];
+    for (let i = 0; i < cityParts.length; i++) {
+      const cap = caps[i] ?? 0;
+      if (cap < 1) continue;
+      const started = await exportOrSplit(cityParts[i]!, { ...opts, max_rows: cap }, start, depth);
+      ids.push(...started.export_ids);
+    }
+    return { export_ids: ids };
+  }
   try {
     const one = await start(filters, { ...opts, max_rows: limit });
     return { export_ids: [one.export_id] };
   } catch (err) {
-    if (!isCountTimeout((err as Error).message ?? String(err))) throw err;
+    if (!isCountTimeout((err as Error).message ?? String(err)) || depth >= MAX_SPLIT_DEPTH) throw err;
     const slices = splitGetleadsQuery(filters);
     if (slices.length < 2) throw err;
-    const per = Math.max(1, Math.floor(limit / slices.length));
+    const caps = shareCap(limit, slices.length);
     const ids: string[] = [];
-    for (const slice of slices) {
-      const started = await start(slice, { ...opts, max_rows: per });
-      ids.push(started.export_id);
+    for (let i = 0; i < slices.length; i++) {
+      const cap = caps[i] ?? 0;
+      if (cap < 1) continue;
+      const started = await exportOrSplit(slices[i]!, { ...opts, max_rows: cap }, start, depth + 1);
+      ids.push(...started.export_ids);
     }
+    if (ids.length === 0) throw err;
     return { export_ids: ids };
   }
 }
