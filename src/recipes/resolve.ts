@@ -1,6 +1,7 @@
 import type { Repo } from "../db/repo.js";
 import { parseRecipe, type Recipe } from "./schema.js";
 import { inferredRecipeId, laneFromReceipts, recipeFromReceipts, type ReceiptStamp } from "./infer.js";
+import { isParlayRefreshCampaign, isRetiredParlayLane, PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, shapeParlayRecipe } from "./parlay.js";
 import { trimToOwningClient } from "./trim.js";
 
 export type ResolvedRecipe = { ok: true; recipe: Recipe; inferred: boolean } | { ok: false; message: string };
@@ -48,6 +49,18 @@ export async function resolveRecipeForStart(
     const receipts = await repo.listPullReceipts({ clientTag: input.clientTag, campaignId: input.campaignId });
     lane = laneFromReceipts(stampsFromRepo(receipts), input.campaignId ?? undefined);
   }
+  if (input.clientTag === "parlay" && input.campaignId && !isParlayRefreshCampaign(input.campaignId)) {
+    return {
+      ok: false,
+      message: `Campaign #${input.campaignId} is retired. Parlay top ups use campaigns ${PARLAY_REFRESH_FIRST} to ${PARLAY_REFRESH_LAST}.`,
+    };
+  }
+  if (input.clientTag === "parlay" && lane && isRetiredParlayLane(lane)) {
+    return {
+      ok: false,
+      message: `parlay/${lane} is retired. Top ups use the Sept 29 campaigns ${PARLAY_REFRESH_FIRST} to ${PARLAY_REFRESH_LAST}.`,
+    };
+  }
   if (!lane) {
     return {
       ok: false,
@@ -62,7 +75,10 @@ export async function resolveRecipeForStart(
   // re-read from receipts so a new stamp is not stuck behind an old row.
   if (found && !found.recipe_id.endsWith(".v0")) {
     try {
-      return { ok: true, recipe: parseRecipe(found.body), inferred: false };
+      const parsed = shapeParlayRecipe(parseRecipe(found.body));
+      if (parsed.client_tag !== "parlay" || parsed.routing.length > 0) {
+        return { ok: true, recipe: parsed, inferred: false };
+      }
     } catch (err) {
       return { ok: false, message: `Recipe ${found.recipe_id} does not validate: ${(err as Error).message}` };
     }
@@ -103,8 +119,14 @@ export async function resolveRecipeForStart(
     return { ok: false, message: `Could not infer a recipe from receipts for ${input.clientTag}/${lane}: ${(err as Error).message}` };
   }
 
-  const trimmed = await trimToOwningClient(repo, recipe);
+  const trimmed = await trimToOwningClient(repo, shapeParlayRecipe(recipe));
   recipe = trimmed.recipe;
+  if (recipe.client_tag === "parlay" && recipe.routing.length === 0) {
+    return {
+      ok: false,
+      message: `parlay/${recipe.lane} has no Sept 29 campaigns. Top ups use ${PARLAY_REFRESH_FIRST} to ${PARLAY_REFRESH_LAST}.`,
+    };
+  }
 
   await repo.upsertRecipe({
     recipe_id: inferredRecipeId(recipe.client_tag, recipe.lane),

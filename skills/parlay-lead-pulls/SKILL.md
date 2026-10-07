@@ -7,23 +7,13 @@ description: Pull net-new leads for Randy at Parlay Tech. The live lane receipt 
 
 **Grok bot (D39):** do not execute this pull in chat. `start_topup` or LeadPipe `ingest_csv`.
 
-Client: Randy / Parlay Tech. Smartlead client_id 418274. LeadPipe client_tag `parlay`. Service lane `it_dm`. Receipt lane `it_dm_tickets`.
+Client: Randy / Parlay Tech. Smartlead client_id 418274. LeadPipe client_tag `parlay`. Live lanes are `owner`, `ops_dm`, and `it_dm` on the Sept 29 refresh, campaigns 4049046–4049064. `it_dm_legacy_sports`, `it_dm_tickets`, `it_dm_airpods`, and `adjacent_dm` are retired. Do not top those up.
 
 ## Filter book
 
-Do not copy titles or bands from this file. They drifted once (Aug 16 was 51–200 only; Sept 9 widened). The live **lane** receipt is the filter book:
+Do not copy titles or bands from this file. Top ups use the Sept 29 receipts (`getleads_parlay_{owner,ops,itdm}_finserv[_adj]_20260929` and the Architecture and Planning builds) on lanes `owner`, `ops_dm`, and `it_dm`. Ops and IT use getleads job function plus seniority. Owners use titles. Industries, company size 11 to 500, United States, VALID, max 3 per company, as the receipt recorded them.
 
-```sql
-select company_filters, campaign_ids, tam_count, rows_found, notes, owner_confirmed_at, written_by, written_at
-from topup.pull_receipts
-where client_tag = 'parlay'
-  and lane = 'it_dm_tickets'
-  and granularity = 'lane'
-order by written_at desc
-limit 1;
-```
-
-The service recipe `recipes/parlay/it_dm.json` is what a top-up run executes today (bands `11 to 50` and `51 to 200`, the recipe title list, every email status, US). The backfill receipt is wider (also `201 to 500` and extra titles) and is a **proposal** until Josh scales it — do not silently export the widened set.
+`recipes/parlay/it_dm.json` no longer names campaigns. A file that only lists retired ids does not override those receipts.
 
 If that receipt's `written_by` is `claude_backfill` or `claude_backfill_build`, **recount** with getleads `count_contacts` before proposing. `rows_found` on those rows is the old export, not the pool. `tam_count` is blank until someone recounts.
 

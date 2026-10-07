@@ -191,9 +191,9 @@ describe("D45 infer recipe from pull receipts", () => {
 
   it("file-shaped merge prefers the file recipe on the same lane", async () => {
     const { mergeRecipes } = await import("./infer.js");
-    const file = recipeFromReceipts({ receipts: [stamp()], smartleadClientId: 418274 });
+    const file = recipeFromReceipts({ receipts: [stamp({ campaign_ids: [4049055, 4049056] })], smartleadClientId: 418274 });
     const inferred = recipeFromReceipts({
-      receipts: [stamp({ lane: "it_dm", campaign_ids: [1] })],
+      receipts: [stamp({ lane: "it_dm", campaign_ids: [4049061] })],
       smartleadClientId: 418274,
     });
     const merged = mergeRecipes([{ ...file, recipe_id: "parlay.it_dm.v3" }], [inferred]);

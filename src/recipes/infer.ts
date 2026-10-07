@@ -1,4 +1,5 @@
 import { shapeBcpRecipe } from "./bcp.js";
+import { shapeParlayRecipe } from "./parlay.js";
 import { shapeMspOwnersRecipe } from "./powergryd.js";
 import { GETLEADS_BANDS, GETLEADS_EMAIL_STATUSES } from "./schema.js";
 import { parseRecipe, type Recipe, type Source } from "./schema.js";
@@ -53,9 +54,22 @@ function validBands(v: unknown): Array<(typeof GETLEADS_BANDS)[number]> {
   return asStringArray(v).filter((b): b is (typeof GETLEADS_BANDS)[number] => BANDS.has(b));
 }
 
-/** Copy getleads filters from the receipt. Null when titles are missing, or a named headcount is not a real band. Do not invent a band. */
+function jobFunctionName(v: unknown): string | null {
+  if (typeof v === "string" && v.trim()) return v.trim();
+  const list = asStringArray(v);
+  return list.length === 1 ? list[0]! : null;
+}
+
+/** A prose summary is not an industry name. Do not send it to getleads. */
+function industryNames(v: unknown): string[] {
+  return asStringArray(v).filter((s) => !s.includes(",") && !/sibling industries|adjacent set/i.test(s));
+}
+
+/** Copy getleads filters from the receipt. Null when the person filter is missing, or a named headcount is not a real band. Do not invent a band or a title. */
 export function getleadsParamsFromFilters(filters: Record<string, unknown>): {
-  job_titles: string[];
+  job_titles?: string[];
+  job_function?: string;
+  seniority?: string[];
   company_size?: Array<(typeof GETLEADS_BANDS)[number]>;
   countries?: string[];
   states?: string[];
@@ -66,14 +80,16 @@ export function getleadsParamsFromFilters(filters: Record<string, unknown>): {
   max_per_company?: number;
 } | null {
   const titles = asStringArray(filters.job_titles ?? filters.titles);
-  if (titles.length === 0) return null;
+  const jobFunction = jobFunctionName(filters.job_function);
+  const seniority = asStringArray(filters.seniority);
+  if (titles.length === 0 && !(jobFunction && seniority.length)) return null;
   const namedBands = filters.company_size;
   const hasBandField = namedBands !== undefined && namedBands !== null && !(Array.isArray(namedBands) && namedBands.length === 0);
   const bands = validBands(namedBands);
   // A receipt that names a headcount and none of it is a real band is incomplete.
   // A receipt that names no headcount is counted with no band filter.
   if (hasBandField && bands.length === 0) return null;
-  const industries = asStringArray(filters.industries ?? filters.companyIndustry).filter((s) => !s.includes(","));
+  const industries = industryNames(filters.industries ?? filters.companyIndustry);
   const exportCaps = filters.export_caps && typeof filters.export_caps === "object" ? (filters.export_caps as Record<string, unknown>) : {};
   const maxPer = Number(filters.max_per_company ?? exportCaps.max_per_company);
   const cityList = asStringArray(filters.cities);
@@ -82,7 +98,8 @@ export function getleadsParamsFromFilters(filters: Record<string, unknown>): {
     .map((status) => status.toUpperCase())
     .filter((status): status is (typeof GETLEADS_EMAIL_STATUSES)[number] => EMAIL_STATUSES.has(status));
   return {
-    job_titles: titles,
+    ...(titles.length ? { job_titles: titles } : {}),
+    ...(jobFunction && seniority.length ? { job_function: jobFunction, seniority } : {}),
     ...(bands.length > 0 ? { company_size: bands } : {}),
     ...(asStringArray(filters.countries).length ? { countries: asStringArray(filters.countries) } : {}),
     ...(asStringArray(filters.states).length ? { states: asStringArray(filters.states) } : {}),
@@ -230,7 +247,7 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
       kind: "mixed",
       note: mixedNote(
         stamp,
-        "Receipt company_source is getleads but company_filters are not a complete getleads param set (need job_titles; a named headcount must be exact band labels). Do not invent them.",
+        "Receipt company_source is getleads but company_filters are not a complete getleads param set (need job_titles, or job_function plus seniority; a named headcount must be exact band labels). Do not invent them.",
       ),
       parts: [],
     };
@@ -470,8 +487,16 @@ export function laneFromReceipts(receipts: ReceiptStamp[], campaignId?: number):
   return laneRow?.lane ?? hits[0]?.lane ?? null;
 }
 
-/** File recipe wins on the same client+lane. */
+function liveRecipe(recipe: Recipe): Recipe | null {
+  const shaped = shapeParlayRecipe(recipe);
+  if (shaped.client_tag === "parlay" && shaped.routing.length === 0) return null;
+  return shaped;
+}
+
+/** File recipe wins on the same client+lane. A Parlay file that only names retired campaigns does not. */
 export function mergeRecipes(files: readonly Recipe[], inferred: readonly Recipe[]): Recipe[] {
-  const keys = new Set(files.map((r) => `${r.client_tag}/${r.lane}`));
-  return [...files, ...inferred.filter((r) => !keys.has(`${r.client_tag}/${r.lane}`))];
+  const liveFiles = files.map(liveRecipe).filter((recipe): recipe is Recipe => recipe !== null);
+  const keys = new Set(liveFiles.map((r) => `${r.client_tag}/${r.lane}`));
+  const liveInferred = inferred.map(liveRecipe).filter((recipe): recipe is Recipe => recipe !== null);
+  return [...liveFiles, ...liveInferred.filter((r) => !keys.has(`${r.client_tag}/${r.lane}`))];
 }

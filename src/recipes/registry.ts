@@ -1,4 +1,5 @@
 import { neverTopUp } from "../config.js";
+import { isParlayRefreshCampaign, isParlayRefreshLane, parlayCampaignRetired } from "./parlay.js";
 import type { Recipe, RoutingRule } from "./schema.js";
 
 /**
@@ -74,7 +75,33 @@ function routingFor(recipe: Recipe, ids: number[]): Recipe {
  * row is dropped once any registry rows exist. No rows at all leaves the
  * recipe, minus campaigns that are never topped up.
  */
+function parlayRefreshRouting(recipe: Recipe, rows: readonly RegistryCampaign[]): Recipe {
+  const ids = new Set<number>();
+  for (const id of recipe.routing.map((rule) => rule.campaign_id)) {
+    if (isParlayRefreshCampaign(id) && !parlayCampaignRetired(id) && !neverTopUp(id)) ids.add(id);
+  }
+  for (const row of rows) {
+    if (!ids.has(row.campaign_id)) continue;
+    if (row.client_tag !== recipe.client_tag) ids.delete(row.campaign_id);
+    else if (row.lane && row.lane !== recipe.lane) ids.delete(row.campaign_id);
+    else if (row.status != null && row.status.trim() !== "" && row.status.trim().toUpperCase() !== "ACTIVE") ids.delete(row.campaign_id);
+  }
+  if (rows.length > 0) {
+    for (const row of rows) {
+      if (row.client_tag !== recipe.client_tag) continue;
+      if (row.smartlead_client_id !== recipe.smartlead_client_id) continue;
+      if (row.lane !== recipe.lane) continue;
+      if (row.status != null && row.status.trim() !== "" && row.status.trim().toUpperCase() !== "ACTIVE") continue;
+      if (!isParlayRefreshCampaign(row.campaign_id) || parlayCampaignRetired(row.campaign_id)) continue;
+      if (neverTopUp(row.campaign_id, row.campaign_name)) continue;
+      ids.add(row.campaign_id);
+    }
+  }
+  return routingFor(recipe, [...ids]);
+}
+
 export function routingFromRegistry(recipe: Recipe, rows: readonly RegistryCampaign[]): Recipe {
+  if (recipe.client_tag === "parlay" && isParlayRefreshLane(recipe.lane)) return parlayRefreshRouting(recipe, rows);
   const recipeIds = new Set(recipe.routing.map((rule) => rule.campaign_id));
   if (rows.length === 0) {
     return routingFor(

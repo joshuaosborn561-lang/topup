@@ -224,6 +224,8 @@ export function assertGetleadsFilters(filters: GetleadsFilters): void {
  */
 export const GETLEADS_COUNT_KEYS = [
   "job_titles",
+  "job_function",
+  "seniority",
   "company_size",
   "countries",
   "states",

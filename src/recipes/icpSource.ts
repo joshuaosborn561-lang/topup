@@ -1,4 +1,5 @@
 import { ruleSource } from "./campaigns.js";
+import { parlayLaneFileSuperseded } from "./parlay.js";
 import { getleadsParamsFromFilters } from "./infer.js";
 import { GETLEADS_BANDS, type Recipe, type RoutingRule, type Source } from "./schema.js";
 
@@ -159,7 +160,12 @@ function receiptSource(recipe: Recipe, rule: RoutingRule): Source | null {
 
 function laneSource(recipe: Recipe, files: readonly Recipe[], rule: RoutingRule): Source | null {
   const laneFile = files.find(
-    (file) => file.client_tag === recipe.client_tag && file.lane === recipe.lane && !file.recipe_id.endsWith(".v0") && concreteSource(file.source),
+    (file) =>
+      file.client_tag === recipe.client_tag &&
+      file.lane === recipe.lane &&
+      !file.recipe_id.endsWith(".v0") &&
+      !parlayLaneFileSuperseded(file) &&
+      concreteSource(file.source),
   );
   if (laneFile) {
     const inherited = concreteSource(ruleSource(laneFile, { ...rule, source: undefined }));

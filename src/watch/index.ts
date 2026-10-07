@@ -6,6 +6,7 @@ import { logger } from "../lib/log.js";
 import type { Orchestrator } from "../orchestrator.js";
 import type { Recipe } from "../recipes/schema.js";
 import { recipeSummariesForWatch } from "../mcp/recipe.js";
+import { isParlayRefreshCampaign, isRetiredParlayLane, parlayCampaignRetired } from "../recipes/parlay.js";
 import { notWorkingCard, section } from "../slack/cards.js";
 import type { SlackConsole } from "../slack/console.js";
 import { Overlap, WATCH_ACROSS_CLIENTS, WATCH_WITHIN_CLIENT } from "../lib/concurrency.js";
@@ -64,11 +65,20 @@ export class RunwayWatch {
   }
 
   private async lane(recipe: Recipe): Promise<"go" | "ask" | "skip"> {
+    if (recipe.client_tag === "parlay" && isRetiredParlayLane(recipe.lane)) {
+      log.info("skip", { client_tag: recipe.client_tag, lane: recipe.lane, why: "parlay lane is retired" });
+      return "skip";
+    }
     const snap = await snapshotWatchLane({ db: this.d.db, repo: this.d.repo }, recipe);
     const { decision, camps, client, health, needy } = snap;
-    if (health.length > 0) {
+    const registryHealth = health.filter((h) => {
+      if (recipe.client_tag !== "parlay") return true;
+      if (parlayCampaignRetired(h.smartlead_campaign_id)) return false;
+      return isParlayRefreshCampaign(h.smartlead_campaign_id);
+    });
+    if (registryHealth.length > 0) {
       await this.d.repo.upsertCampaignRegistry(
-        health.map((h) => ({
+        registryHealth.map((h) => ({
           campaign_id: h.smartlead_campaign_id,
           campaign_name: h.name,
           client_tag: recipe.client_tag,

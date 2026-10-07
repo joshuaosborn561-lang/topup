@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { shapeParlayRecipe } from "./parlay.js";
 import { parseRecipe, type Recipe } from "./schema.js";
 import type { Repo } from "../db/repo.js";
 import { logger } from "../lib/log.js";
@@ -43,13 +44,14 @@ export async function syncRecipes(repo: Repo, root: string): Promise<number> {
   const recipes = await loadRecipeFiles(root);
   for (const r of recipes) {
     const version = Number(r.recipe_id.split(".v").pop());
+    const body = shapeParlayRecipe(r);
     await repo.upsertRecipe({
-      recipe_id: r.recipe_id,
-      client_tag: r.client_tag,
-      lane: r.lane,
+      recipe_id: body.recipe_id,
+      client_tag: body.client_tag,
+      lane: body.lane,
       version,
-      body: r,
-      owner_approved_at: r.owner_approved_at,
+      body,
+      owner_approved_at: body.owner_approved_at,
     });
   }
   log.info("recipes synced", { count: recipes.length, ids: recipes.map((r) => r.recipe_id) });

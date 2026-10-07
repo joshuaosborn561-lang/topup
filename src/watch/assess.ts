@@ -4,6 +4,7 @@ import { isWorking, variantStats } from "../domain/working.js";
 import { assessClientRunway, type ClientRunway } from "../ledger/client_runway.js";
 import { assessCampaign, campaignIdsForClient, campaignSnapshots, type CampaignHealth } from "../ledger/health.js";
 import { recipeCampaignIds } from "../recipes/campaigns.js";
+import { isParlayRefreshCampaign, isRetiredParlayLane, PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST } from "../recipes/parlay.js";
 import type { Recipe } from "../recipes/schema.js";
 import { isNeedy, watchDecision, type NeedyCampaign, type WatchDecision } from "./decide.js";
 
@@ -31,7 +32,7 @@ export async function snapshotWatchLane(
   d: { db: Queryable; repo: WatchRepo },
   recipe: Recipe,
 ): Promise<WatchLaneSnapshot> {
-  const ids = recipeCampaignIds(recipe);
+  const ids = await watchCampaignIds(d.db, recipe);
   if (ids.length === 0) {
     return {
       ids,
@@ -89,6 +90,29 @@ export async function snapshotWatchLane(
   });
 
   return { ids, health, needy, camps, client, decision, openRun: Boolean(open) };
+}
+
+/** Parlay watch targets are the Sept 29 campaigns on this lane, including ones the registry added. */
+async function watchCampaignIds(db: Queryable, recipe: Recipe): Promise<number[]> {
+  const fromRecipe = recipeCampaignIds(recipe).filter((id) => recipe.client_tag !== "parlay" || isParlayRefreshCampaign(id));
+  if (recipe.client_tag !== "parlay" || isRetiredParlayLane(recipe.lane)) return recipe.client_tag === "parlay" ? [] : fromRecipe;
+  try {
+    const { rows } = await db.query<{ campaign_id: string }>(
+      `select campaign_id::text from topup.campaign_registry
+        where client_tag = $1 and lane = $2
+          and campaign_id between $3 and $4
+          and coalesce(status, '') <> 'retired'`,
+      [recipe.client_tag, recipe.lane, PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST],
+    );
+    const ids = new Set(fromRecipe);
+    for (const row of rows) {
+      const id = Number(row.campaign_id);
+      if (isParlayRefreshCampaign(id)) ids.add(id);
+    }
+    return [...ids].sort((a, b) => a - b);
+  } catch {
+    return fromRecipe;
+  }
 }
 
 /** Campaigns the watch flagged on this lane. Empty when the decision is skip. */

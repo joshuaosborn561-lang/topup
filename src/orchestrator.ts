@@ -8,6 +8,7 @@ import { shapeBcpRecipe } from "./recipes/bcp.js";
 import { shapeMspOwnersRecipe } from "./recipes/powergryd.js";
 import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
+import { parlayLaneFileSuperseded } from "./recipes/parlay.js";
 import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
 import { trimToOwningClient } from "./recipes/trim.js";
 import { campaignReportFromCounts, formatCampaignReport, isPausedLabel } from "./stages/size/campaignReport.js";
@@ -233,7 +234,7 @@ export class Orchestrator {
     if (!rec) throw new Error(`recipe ${initial.recipe_id} is not in topup.lane_recipes`);
     await this.d.repo.repairCampaignRegistry().catch((err) => log.warn("registry repair failed", { error: (err as Error).message }));
     let loaded = parseRecipe(rec.body);
-    if (loaded.recipe_id.endsWith(".v0")) {
+    if (loaded.recipe_id.endsWith(".v0") || parlayLaneFileSuperseded(loaded)) {
       const again = await resolveRecipeForStart(this.d.repo, {
         clientTag: loaded.client_tag,
         lane: loaded.lane,

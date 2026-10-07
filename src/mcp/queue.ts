@@ -5,6 +5,7 @@ import type { ClientRunway } from "../ledger/client_runway.js";
 import { assessClientRunway } from "../ledger/client_runway.js";
 import { assessCampaign, campaignIdsForClient, campaignSnapshots } from "../ledger/health.js";
 import { recipeCampaignIds } from "../recipes/campaigns.js";
+import { parlayQueueKeeps } from "../recipes/parlay.js";
 import type { Recipe } from "../recipes/schema.js";
 import type { WatchRepo } from "../watch/assess.js";
 import { watchdogLeadFlag, watchDecision, type NeedyCampaign, type WatchdogLeadFlag } from "../watch/decide.js";
@@ -185,7 +186,9 @@ export async function buildTopupQueue(
   const wantClient = query.client_tag ?? null;
   for (const clientRow of clients) {
     if (wantClient && clientRow.client_tag !== wantClient) continue;
-    const ids = await campaignIdsForClient(db, clientRow.smartlead_client_id).catch(() => [] as number[]);
+    const ids = (await campaignIdsForClient(db, clientRow.smartlead_client_id).catch(() => [] as number[])).filter((id) =>
+      parlayQueueKeeps(clientRow.client_tag, id),
+    );
     if (ids.length === 0) continue;
     const snaps = await campaignSnapshots(db, ids);
     const health = snaps.map((s) => assessCampaign(s, DEFAULT_FLOOR_DAYS));

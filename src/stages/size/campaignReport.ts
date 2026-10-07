@@ -60,7 +60,11 @@ export function sourceWords(source: Source): string {
 }
 
 export function titlesWords(source: Source, persona: string): string {
-  if (source.kind === "getleads" && source.params.job_titles.length) return source.params.job_titles.join(", ");
+  if (source.kind === "getleads" && source.params.job_titles?.length) return source.params.job_titles.join(", ");
+  if (source.kind === "getleads" && source.params.job_function) {
+    const seniority = source.params.seniority?.join(", ");
+    return seniority ? `${source.params.job_function} (${seniority})` : source.params.job_function;
+  }
   if (source.kind === "ai_ark" && source.params.titles.length) return source.params.titles.join(", ");
   return persona || "persona not set";
 }
@@ -75,7 +79,10 @@ export function filtersWords(source: Source): string {
     if (industries?.length) parts.push(`industries ${industries.join(", ")}`);
   }
   if (source.kind === "getleads") {
+    if (source.params.job_function) parts.push(`job function ${source.params.job_function}`);
+    if (source.params.seniority?.length) parts.push(`seniority ${source.params.seniority.join(", ")}`);
     if (source.params.company_size?.length) parts.push(`company size ${source.params.company_size.join(", ")}`);
+    if (source.params.email_status?.length) parts.push(`email ${source.params.email_status.join(", ")}`);
     if (source.params.geo_fence) parts.push(`geography ${source.params.geo_fence.schema}.${source.params.geo_fence.table}`);
     else if (source.params.states?.length) parts.push(`geography ${source.params.states.join(", ")}`);
     else if (source.params.cities?.length) parts.push(`geography ${source.params.cities.join(", ")}`);

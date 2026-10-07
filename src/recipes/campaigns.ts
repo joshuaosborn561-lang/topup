@@ -1,4 +1,5 @@
 import { neverTopUp } from "../config.js";
+import { PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, parlayCampaignRetired } from "./parlay.js";
 import { GETLEADS_BANDS, type GetleadsSource, type Recipe, type RoutingRule, type Source } from "./schema.js";
 
 /**
@@ -50,7 +51,7 @@ export function mergeGetleadsSources(sources: Source[]): Source {
   if (!first) throw new Error("mergeGetleadsSources needs a source");
   if (first.kind !== "getleads" || sources.some((s) => s.kind !== "getleads")) return first;
   const bands = [...new Set(sources.flatMap((s) => (s.kind === "getleads" && s.params.company_size ? s.params.company_size : [])))];
-  const titles = [...new Set(sources.flatMap((s) => (s.kind === "getleads" ? s.params.job_titles : [])))];
+  const titles = [...new Set(sources.flatMap((s) => (s.kind === "getleads" ? (s.params.job_titles ?? []) : [])))];
   const params = {
     ...first.params,
     job_titles: titles.length ? titles : first.params.job_titles,
@@ -91,7 +92,7 @@ export function jobTitlesFor(recipe: Recipe, campaignIds?: number[]): string[] {
   const titles = new Set<string>();
   for (const rule of targetRules(recipe, campaignIds)) {
     const src = ruleSource(recipe, rule);
-    if (src.kind === "getleads") for (const t of src.params.job_titles) titles.add(t);
+    if (src.kind === "getleads") for (const t of src.params.job_titles ?? []) titles.add(t);
   }
   return [...titles];
 }
@@ -111,7 +112,7 @@ export function idsFromTargetCounts(counts?: Record<string, number>): number[] {
 
 function ownedTargets(recipe: Recipe, ids: readonly number[]): number[] {
   const allowed = new Set(recipeCampaignIds(recipe));
-  return ids.filter((id) => allowed.has(id) && !neverTopUp(id));
+  return ids.filter((id) => allowed.has(id) && !neverTopUp(id) && !parlayCampaignRetired(id));
 }
 
 /** Smartlead statuses that are not topped up. STOPPED stays. A blank status stays. */
@@ -242,8 +243,16 @@ export function resolveTargetCampaignIds(
   recipe: Recipe,
   requested?: number[],
 ): { ok: true; ids: number[] } | { ok: false; message: string } {
-  const all = recipeCampaignIds(recipe);
-  const unique = [...new Set(requested ?? [])].filter((id) => !neverTopUp(id));
+  const all = recipeCampaignIds(recipe).filter((id) => !parlayCampaignRetired(id));
+  const requestedIds = [...new Set(requested ?? [])];
+  const retired = requestedIds.filter((id) => parlayCampaignRetired(id));
+  const unique = requestedIds.filter((id) => !neverTopUp(id) && !parlayCampaignRetired(id));
+  if (retired.length && unique.length === 0) {
+    return {
+      ok: false,
+      message: `Campaign(s) ${retired.map((id) => `#${id}`).join(", ")} are retired. Parlay top ups use campaigns ${PARLAY_REFRESH_FIRST} to ${PARLAY_REFRESH_LAST}.`,
+    };
+  }
   if ((requested ?? []).some((id) => neverTopUp(id)) && unique.length === 0) {
     return { ok: false, message: `Campaign(s) ${(requested ?? []).map((id) => `#${id}`).join(", ")} are never topped up.` };
   }

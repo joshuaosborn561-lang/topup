@@ -35,7 +35,11 @@ const noComma = z.string().refine((s) => !s.includes(","), {
 
 const getleadsParams = z
   .object({
-    job_titles: z.array(z.string().min(1)).min(1),
+    /** Exact titles, or omit when the receipt counted by job_function plus seniority. */
+    job_titles: z.array(z.string().min(1)).min(1).optional(),
+    /** getleads function, used with seniority when the receipt did not name titles. */
+    job_function: z.string().min(1).optional(),
+    seniority: z.array(z.string().min(1)).min(1).optional(),
     /** Omit when the receipt names no band. Do not fill a default range. */
     company_size: z.array(bandLabel).min(1).optional(),
     employee_profiles_on_linkedin: z.object({ min: z.number().int().min(1), max: z.number().int().min(1) }).optional(),
@@ -63,6 +67,9 @@ const getleadsParams = z
   })
   .refine((p) => !p.employee_profiles_on_linkedin, {
     message: "cannot send company_size band labels and employee_profiles_on_linkedin together (silent band overlap)",
+  })
+  .refine((p) => (p.job_titles?.length ?? 0) > 0 || (Boolean(p.job_function) && (p.seniority?.length ?? 0) > 0), {
+    message: "getleads needs job_titles, or job_function plus seniority",
   });
 
 const wideningCandidate = z
