@@ -862,6 +862,44 @@ Not ours to write. Two things Josh must settle before a run reaches step 3:
 
 ---
 
+## 12. AI Ark People Preview
+
+### Identity
+
+Not one of the ten Railway servers. People Preview is
+`POST https://api.ai-ark.com/api/developer-portal/v1/people/preview`
+(docs.ai-ark.com, people-preview). Header `X-TOKEN` from `AI_ARK_TOKEN`.
+An empty token means the client is not constructed. A LinkedIn size then
+reports `tam_check: single_source` with the getleads count and does not park.
+
+### Call
+
+One page, `size: 1`, `page: 0`. The count is `totalElements`. The page body
+is discarded and never logged. Flat 1 credit per page. Rate limit 5 requests
+per second. Unknown keys are omitted: AI Ark answers HTTP 200 with an
+unfiltered count when a key is one it does not know.
+
+The body uses the documented People Search fields only: `account.employeeSize`
+RANGE for getleads band labels, `account.location`, `account.industries`
+mode WORD, `account.keyword` source DESCRIPTION mode WORD, `contact.experience.latest.title`
+mode STRICT, `contact.seniority`, and `contact.departmentAndFunction` only
+for `operations` and `information_technology` (departments-and-functions.csv).
+A filter that cannot be mapped is not sent. `email_status` is not a preview
+field, so it is not sent. The open band `10001+` is not sent.
+
+### Prices
+
+1 credit per preview page. The ledger uses vendor `aiark` and action
+`people_preview` (not `count`, which the price table treats as free).
+The cent price is the conservative AI Ark credit price already on file.
+
+### Never
+
+People Search, Export People, and any call that returns a person row into a
+log or a table. Company Search. The paid AI Ark MCP at `api.ai-ark.com/v1/mcp`.
+
+---
+
 ## What `leadtopup` may call
 
 Derived from the sections above and the non-negotiables. Anything not listed
@@ -880,6 +918,7 @@ is a decision for Josh (D18: unclear → judgement column).
 | Email Verifier Progression | `start_verification`, `get_verification_status`, `get_verification_results`, `resume_verification`, `list_verification_runs` | `export_all_sendable` (aggregate is a judgement) |
 | Smartlead server | `stage_leads_from_url`, `start_lead_import`, `get_lead_*_status`, `list_lead_*_runs`, `list_campaigns`, `get_campaign*`, `get_sequences`, `list_campaign_mailboxes`, analytics/statistics, `get_lead_by_email`, `add_to_block_list`, `list_email_accounts` | `update_campaign_status`, `delete_campaign`, `start_lead_purge`, `unsubscribe_lead`, `pause_lead`, `unlink_mailboxes`, `import_leads`, `list_campaign_leads`, `export_campaign_leads`, `smartlead_request` |
 | getleads (hosted) | `count_contacts`, `export_contacts` (`confirmed: true`, band labels, omit `email_status` so every status comes back; D35 item 15), `check_contact_export`, `get_fair_use` | every tool that returns contacts inline (`search_contacts`, `lookup_*`, `*_batch`), every wallet-funded scrape |
+| AI Ark People Preview | `POST /v1/people/preview` with `size: 1`, `page: 0`, reading `totalElements` only | People Search, export, and any call whose body is logged |
 
 `src/clients/smartlead.ts` carries the Smartlead allow list in code
 (`SMARTLEAD_ALLOWED`: `start_lead_import`, `get_lead_import_status`,

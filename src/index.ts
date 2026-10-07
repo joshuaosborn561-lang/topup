@@ -4,6 +4,7 @@ import express from "express";
 import cron from "node-cron";
 import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
 import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
+import { AiArkPreviewClient } from "./clients/aiArkPreview.js";
 import { GetleadsClient } from "./clients/getleads.js";
 import { MapsStatsClient } from "./clients/mapsStats.js";
 import { PermitCountsClient } from "./clients/permits.js";
@@ -110,6 +111,7 @@ async function main(): Promise<void> {
 
   const leadpipe = new LeadPipeClient(cfg.LEADPIPE_MCP_URL, cfg.LEADPIPE_TOKEN);
   const getleads = new GetleadsClient(cfg.GETLEADS_MCP_URL, cfg.GETLEADS_TOKEN);
+  const aiArk = cfg.AI_ARK_TOKEN ? new AiArkPreviewClient(cfg.AI_ARK_TOKEN, cfg.AI_ARK_PREVIEW_URL) : null;
   const maps = cfg.MAPS_MCP_URL ? new MapsStatsClient(cfg.MAPS_MCP_URL) : null;
   const permitCounts = cfg.PERMITSTACK_MCP_URL ? new PermitCountsClient(cfg.PERMITSTACK_MCP_URL) : null;
   const smartlead = new SmartleadClient(cfg.SMARTLEAD_MCP_URL, cfg.SMARTLEAD_TOKEN);
@@ -155,7 +157,7 @@ async function main(): Promise<void> {
     retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000,
     stages: {
       trigger: new TriggerStage(base),
-      size: new SizeStage({ ...base, getleads, rails, maps, permits: permitCounts }),
+      size: new SizeStage({ ...base, getleads, rails, maps, permits: permitCounts, aiArk }),
       pull,
       ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
       suppress: new SuppressStage({ ...base, ledger }),

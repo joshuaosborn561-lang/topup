@@ -66,6 +66,30 @@ describe("per-campaign report", () => {
     assert.match(formatCampaignReport(unread), /gate not_sized/);
   });
 
+  it("a missing AI Ark count is single_source and is not a park line", () => {
+    const [row] = buildCampaignReport([
+      {
+        ...fields,
+        tam_total: 1262,
+        tam_left: 1219,
+        found: 1262,
+        tam_check: "single_source",
+        getleads_count: 1262,
+        ai_ark_count: null,
+        pool_note: "Industry-only count 271. COO fallback pool 400.",
+      },
+    ]);
+    assert.equal(row?.tam_check, "single_source");
+    assert.equal(row?.ai_ark_count, null);
+    const text = formatCampaignReport([row!]);
+    assert.match(text, /tam_check single_source/);
+    assert.match(text, /getleads 1262/);
+    assert.match(text, /AI Ark count not available/);
+    assert.match(text, /COO fallback pool 400/);
+    assert.equal(text.includes("not wired"), false);
+    assert.equal(text.includes("tam_mismatch"), false);
+  });
+
   it("flags tam_filled under 1,000 left and does not treat too early as a pass", () => {
     const filled = buildCampaignReport([{ ...fields, tam_total: 800, tam_left: 700, found: 800, to_add: 700, market_cap: null }]);
     assert.equal(filled[0]?.gate, "tam_filled");

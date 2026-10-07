@@ -17,7 +17,7 @@ export const LINKEDIN_TAM_WITHIN = 0.1;
 
 export interface LinkedinTam {
   tam_total: number | null;
-  tam_check: "ok" | "tam_mismatch";
+  tam_check: "ok" | "tam_mismatch" | "single_source";
   getleads_count: number;
   ai_ark_count: number | null;
   tam_source: string;
@@ -32,12 +32,12 @@ function withinTen(a: number, b: number): boolean {
 export function linkedinTamDecision(getleads: number, aiArk: number | null): LinkedinTam {
   if (aiArk == null) {
     return {
-      tam_total: null,
-      tam_check: "tam_mismatch",
+      tam_total: getleads,
+      tam_check: "single_source",
       getleads_count: getleads,
       ai_ark_count: null,
-      tam_source: "getleads; AI Ark People Preview is not wired",
-      reason: `tam_mismatch: getleads ${getleads}, AI Ark People Preview is not wired, so the two counts are not within 10%`,
+      tam_source: "getleads; AI Ark People Preview count is not available",
+      reason: null,
     };
   }
   if (withinTen(getleads, aiArk)) {

@@ -89,6 +89,9 @@ const schema = z.object({
   /** getleads hosted MCP (steps 2 and 3). The token is whatever getleads issues for a service; see docs/servers.md §11. */
   GETLEADS_MCP_URL: z.string().default(""),
   GETLEADS_TOKEN: z.string().default(""),
+  /** AI Ark People Preview. Empty means a LinkedIn size reports single_source and does not park. */
+  AI_ARK_TOKEN: z.string().default(""),
+  AI_ARK_PREVIEW_URL: z.string().default("https://api.ai-ark.com/api/developer-portal/v1/people/preview"),
   /** Smartlead server on Railway (steps 11 and 12). It has no inbound auth today; the token slot is for when it does. */
   SMARTLEAD_MCP_URL: z.string().default(""),
   SMARTLEAD_TOKEN: z.string().default(""),
@@ -175,6 +178,7 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     verifier: Boolean(cfg.VERIFIER_BASE_URL),
     wizard: Boolean(cfg.WIZARD_HEALTH_URL),
     getleads: Boolean(cfg.GETLEADS_MCP_URL),
+    ai_ark: Boolean(cfg.AI_ARK_TOKEN),
     smartlead: Boolean(cfg.SMARTLEAD_MCP_URL),
     maps: Boolean(cfg.MAPS_MCP_URL),
     permits: Boolean(cfg.PERMITSTACK_MCP_URL),

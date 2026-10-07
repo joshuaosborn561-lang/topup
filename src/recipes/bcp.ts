@@ -87,8 +87,66 @@ export function bcpCampaignIsCeo(campaignId: number): boolean {
   return BCP_CEO_CAMPAIGNS.includes(campaignId);
 }
 
+/** The vendor count and the pilot use senior IT titles. COO is not in this list. */
 export function bcpCountTitles(ceo: boolean): string[] {
-  return ceo ? [...BCP_CEO_TITLES] : [...BCP_SENIOR_IT_TITLES, ...BCP_COO_TITLES];
+  return ceo ? [...BCP_CEO_TITLES] : [...BCP_SENIOR_IT_TITLES];
+}
+
+export function bcpCooCountTitles(): string[] {
+  return [...BCP_COO_TITLES];
+}
+
+export interface BcpPoolFilterSet<T extends { industries?: string[]; company_description?: string; job_titles?: string[] }> {
+  industry: T;
+  description: T;
+  both: T;
+  coo: T;
+}
+
+function withoutKey<T extends object>(filters: T, key: keyof T): T {
+  const next = { ...filters };
+  delete next[key];
+  return next;
+}
+
+/**
+ * Three company filters on the same titles, plus a COO-only count.
+ * The sized TAM is `industry`: the Sept 3 receipts sent the industry list
+ * and did not send a company description.
+ */
+export function bcpPoolFilters<T extends { industries?: string[]; company_description?: string; job_titles?: string[] }>(
+  filters: T,
+  vertical: BcpItVertical,
+): BcpPoolFilterSet<T> {
+  const industry = withoutKey({ ...filters, industries: bcpItIndustries(vertical) }, "company_description");
+  const description = withoutKey({ ...filters, company_description: bcpItDescription(vertical) }, "industries");
+  const both = { ...filters, industries: bcpItIndustries(vertical), company_description: bcpItDescription(vertical) };
+  const coo = { ...industry, job_titles: bcpCooCountTitles() };
+  return { industry, description, both, coo };
+}
+
+export function bcpPoolReport(input: {
+  industry: number | null;
+  description: number | null;
+  both: number | null;
+  coo: number | null;
+  rows_found: number | null;
+}): string {
+  const n = (value: number | null) => (value == null ? "not counted" : String(value));
+  const parts = [
+    `Industry-only count ${n(input.industry)}.`,
+    `Description-only count ${n(input.description)}.`,
+    `Industry and description together ${n(input.both)}.`,
+    "The sized TAM is the industry-only count. The Sept 3 receipts sent the industry list and no company description.",
+    `COO fallback pool ${n(input.coo)}. That pool is not in the TAM. A COO is added only for a company where the IT titles found no one.`,
+  ];
+  if (input.industry != null && input.industry < 1000) {
+    const found = input.rows_found != null ? ` The Sept 3 ingest rows_found was ${input.rows_found}, and that export's titles included IT Manager.` : "";
+    parts.push(
+      `This TAM is not in the thousands. The count is senior IT titles, US, headcount 51 to 1,000, and the industry list, with no description and no COO.${found}`,
+    );
+  }
+  return parts.join(" ");
 }
 
 function normTitle(title: string): string {
@@ -224,12 +282,7 @@ export function shapeBcpRecipe(recipe: Recipe): Recipe {
 }
 
 function withItFilter(source: Extract<Source, { kind: "getleads" }>, vertical: BcpItVertical): Extract<Source, { kind: "getleads" }> {
-  return {
-    ...source,
-    params: {
-      ...source.params,
-      industries: bcpItIndustries(vertical),
-      company_description: bcpItDescription(vertical),
-    },
-  };
+  const params = { ...source.params, industries: bcpItIndustries(vertical) };
+  delete params.company_description;
+  return { ...source, params };
 }

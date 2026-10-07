@@ -16,9 +16,14 @@ export interface CampaignReportEntry {
   gate: "ok" | "under_reply_bar" | "tam_filled" | "paused" | "suspect_filter" | "pilot_mismatch" | "not_sized";
   strategy: string;
   tam_source?: string;
-  tam_check?: "ok" | "tam_mismatch" | "tam_source_missing";
+  tam_check?: "ok" | "tam_mismatch" | "tam_source_missing" | "single_source";
   getleads_count?: number | null;
   ai_ark_count?: number | null;
+  pool_industry?: number | null;
+  pool_description?: number | null;
+  pool_both?: number | null;
+  coo_fallback_count?: number | null;
+  pool_note?: string;
   pilot?: PilotScore;
 }
 
@@ -139,6 +144,11 @@ export interface CampaignReportInput {
   tam_check?: CampaignReportEntry["tam_check"];
   getleads_count?: number | null;
   ai_ark_count?: number | null;
+  pool_industry?: number | null;
+  pool_description?: number | null;
+  pool_both?: number | null;
+  coo_fallback_count?: number | null;
+  pool_note?: string;
   pilot?: PilotScore;
 }
 
@@ -177,6 +187,11 @@ export function buildCampaignReport(rows: readonly CampaignReportInput[]): Campa
     ...(row.tam_check ? { tam_check: row.tam_check } : {}),
     ...(row.getleads_count !== undefined ? { getleads_count: row.getleads_count } : {}),
     ...(row.ai_ark_count !== undefined ? { ai_ark_count: row.ai_ark_count } : {}),
+    ...(row.pool_industry !== undefined ? { pool_industry: row.pool_industry } : {}),
+    ...(row.pool_description !== undefined ? { pool_description: row.pool_description } : {}),
+    ...(row.pool_both !== undefined ? { pool_both: row.pool_both } : {}),
+    ...(row.coo_fallback_count !== undefined ? { coo_fallback_count: row.coo_fallback_count } : {}),
+    ...(row.pool_note ? { pool_note: row.pool_note } : {}),
     ...(row.pilot ? { pilot: row.pilot } : {}),
   }));
 }
@@ -198,7 +213,8 @@ export function formatCampaignReport(rows: readonly CampaignReportEntry[]): stri
           row.tam_source ? ` TAM source ${row.tam_source}.` : "",
           row.tam_check ? ` tam_check ${row.tam_check}.` : "",
           row.getleads_count != null ? ` getleads ${row.getleads_count}.` : "",
-          row.ai_ark_count != null ? ` AI Ark ${row.ai_ark_count}.` : row.tam_check === "tam_mismatch" && row.ai_ark_count === null ? " AI Ark not wired." : "",
+          row.ai_ark_count != null ? ` AI Ark ${row.ai_ark_count}.` : row.tam_check === "single_source" ? " AI Ark count not available." : "",
+          row.pool_note ? ` ${row.pool_note}` : "",
           row.pilot
             ? ` Pilot ${row.pilot.rows_scored} scored, title ${row.pilot.title_match ?? "n/a"}%, industry ${row.pilot.industry_match ?? "n/a"}%, description ${row.pilot.description_match ?? "n/a"}%, headcount ${row.pilot.headcount_match ?? "n/a"}%, geography ${row.pilot.geography_match ?? "n/a"}%, gate ${row.pilot.gate}.`
             : "",

@@ -43,6 +43,7 @@ import {
   type PilotRow,
   type PilotScore,
 } from "./pilot.js";
+import { bcpItVertical, bcpPoolFilters, bcpPoolReport } from "../../recipes/bcp.js";
 import { icpKindForClient, linkedinTamDecision, originalTamFromBuilds, type IcpKind, type LinkedinTam, type OriginalTam } from "./tamSource.js";
 
 const log = logger("size");
@@ -78,8 +79,8 @@ function scoreSafe(recipe: Recipe, params: GetleadsFilters, rows: PilotRow[], fi
  * Step 2 — Size it (skill lead-list-build; skill tam-sizing; D29, D33).
  *
  * Classify each target campaign's ICP first. LinkedIn-native: getleads `count_contacts` is the
- * free second opinion; AI Ark People Preview is the default primary and is
- * not a leadtopup client yet (D22), so the run says so. Physical maps
+ * free count. AI Ark People Preview is the second count when AI_ARK_TOKEN is set.
+ * A missing preview count is single_source and does not park. Physical maps
  * lists use pipeline_stats `scoped_businesses`. Permit lists use
  * metrics_monthly `total_permits`. Those units are not added together
  * and are not a getleads number. Partition-check a getleads filter. Subtract emails this
@@ -96,7 +97,7 @@ export interface SizeDeps extends StageDeps {
   rails: SpendRails;
   maps: MapsStats | null;
   permits: PermitCounts | null;
-  /** Same filters as getleads. Unset means the count is not wired, and a LinkedIn size parks tam_mismatch. */
+  /** Same filters as getleads. Unset means the preview count is not available, and the size stays single_source. */
   aiArk?: { count(filters: GetleadsFilters): Promise<{ total_matching: number }> } | null;
 }
 
@@ -337,9 +338,10 @@ export class SizeStage {
       for (const id of peopleIds) {
         const filters = getleadsFilters(campaignSizeRoutes(recipe, [id])[0]?.route ?? { kind: "skip", line: "" });
         const key = filters ? JSON.stringify(filters) : "";
-        if (!arkByFilter.has(key)) arkByFilter.set(key, filters ? await this.aiArkCount(filters) : null);
+        if (!arkByFilter.has(key)) arkByFilter.set(key, filters ? await this.aiArkCount(run, filters) : null);
         linkedin.set(id, linkedinTamDecision(counts[`tam_${id}`] ?? 0, arkByFilter.get(key) ?? null));
       }
+      if (recipe.client_tag === "bcp") await this.bcpAlternateCounts(recipe, peopleIds, counts);
     }
     if (sized === 0) {
       const reason = skipped.length ? skipped.join("; ") : "no target campaigns to size";
@@ -577,8 +579,22 @@ export class SizeStage {
       const decision = context?.linkedin.get(id);
       const pilot = context?.pilots.get(id);
       const tamSource = original?.tam_source ?? decision?.tam_source;
-      const tamCheck: "ok" | "tam_mismatch" | "tam_source_missing" | undefined =
+      const tamCheck: "ok" | "tam_mismatch" | "tam_source_missing" | "single_source" | undefined =
         original?.kind === "missing" ? "tam_source_missing" : original?.kind === "pool" ? "ok" : decision?.tam_check;
+      const poolIndustry = counts[`pool_industry_${id}`];
+      const poolDescription = counts[`pool_description_${id}`];
+      const poolBoth = counts[`pool_both_${id}`];
+      const cooFallback = counts[`coo_fallback_${id}`];
+      const poolNote =
+        poolIndustry != null || poolDescription != null || poolBoth != null || cooFallback != null
+          ? bcpPoolReport({
+              industry: poolIndustry ?? null,
+              description: poolDescription ?? null,
+              both: poolBoth ?? null,
+              coo: cooFallback ?? null,
+              rows_found: build.rows_found,
+            })
+          : undefined;
       rows.push({
         campaign_id: id,
         campaign_name: name,
@@ -606,6 +622,11 @@ export class SizeStage {
         ...(tamSource ? { tam_source: tamSource } : {}),
         ...(tamCheck ? { tam_check: tamCheck } : {}),
         ...(decision ? { getleads_count: decision.getleads_count, ai_ark_count: decision.ai_ark_count } : {}),
+        ...(poolIndustry != null ? { pool_industry: poolIndustry } : {}),
+        ...(poolDescription != null ? { pool_description: poolDescription } : {}),
+        ...(poolBoth != null ? { pool_both: poolBoth } : {}),
+        ...(cooFallback != null ? { coo_fallback_count: cooFallback } : {}),
+        ...(poolNote ? { pool_note: poolNote } : {}),
         ...(pilot ? { pilot } : {}),
       });
     }
@@ -764,13 +785,78 @@ export class SizeStage {
     return { rows: sample.rows.slice(0, PILOT_ROWS), fields: sample.fields };
   }
 
-  private async aiArkCount(filters: GetleadsFilters): Promise<number | null> {
+  private async aiArkCount(run: RunRow, filters: GetleadsFilters): Promise<number | null> {
     if (!this.d.aiArk) return null;
+    const decision = await this.d.rails.gate({
+      runId: run.run_id,
+      clientTag: run.client_tag,
+      step: "size",
+      vendor: "aiark",
+      action: "people_preview",
+      rows: 1,
+      recipeAuthorised: true,
+    });
+    if (decision.kind !== "proceed") {
+      log.warn("AI Ark count skipped", { reason: decision.reason });
+      return null;
+    }
     try {
       const counted = await this.d.aiArk.count(filters);
-      return Number.isFinite(counted.total_matching) ? counted.total_matching : null;
+      if (!Number.isFinite(counted.total_matching)) return null;
+      await this.d.rails.record({
+        runId: run.run_id,
+        clientTag: run.client_tag,
+        step: "size",
+        vendor: "aiark",
+        action: "people_preview",
+        rows: 0,
+        credits: 1,
+        worstCaseCents: decision.worstCaseCents,
+        balanceBefore: null,
+        balanceAfter: null,
+        vendorJobId: null,
+        approvedBy: null,
+      });
+      return counted.total_matching;
     } catch (err) {
       log.warn("AI Ark count failed", { error: (err as Error).message });
+      return null;
+    }
+  }
+
+  /** Industry-only is the sized count. Description-only, both, and the COO pool are reported beside it. */
+  private async bcpAlternateCounts(recipe: Recipe, peopleIds: number[], counts: Record<string, number>): Promise<void> {
+    const seen = new Map<string, { description: number | null; both: number | null; coo: number | null }>();
+    for (const id of peopleIds) {
+      const vertical = bcpItVertical(recipe.lane, id);
+      if (!vertical) continue;
+      const filters = getleadsFilters(campaignSizeRoutes(recipe, [id])[0]?.route ?? { kind: "skip", line: "" });
+      if (!filters) continue;
+      const key = `${vertical}:${JSON.stringify(filters)}`;
+      let alt = seen.get(key);
+      if (!alt) {
+        const variants = bcpPoolFilters(filters, vertical);
+        alt = {
+          description: await this.countQuiet(variants.description),
+          both: await this.countQuiet(variants.both),
+          coo: await this.countQuiet(variants.coo),
+        };
+        seen.set(key, alt);
+      }
+      const industry = counts[`tam_${id}`];
+      if (industry != null) counts[`pool_industry_${id}`] = industry;
+      if (alt.description != null) counts[`pool_description_${id}`] = alt.description;
+      if (alt.both != null) counts[`pool_both_${id}`] = alt.both;
+      if (alt.coo != null) counts[`coo_fallback_${id}`] = alt.coo;
+    }
+  }
+
+  private async countQuiet(filters: GetleadsFilters): Promise<number | null> {
+    try {
+      const counted = await this.d.getleads.count(filters);
+      return Number.isFinite(counted.total_matching) ? counted.total_matching : null;
+    } catch (err) {
+      log.warn("alternate count failed", { error: (err as Error).message });
       return null;
     }
   }

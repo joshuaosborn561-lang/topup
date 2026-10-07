@@ -7,6 +7,8 @@ import {
   BCP_SENIOR_IT_TITLES,
   BCP_STOPPED_CAMPAIGNS,
   BCP_UNFILTERED_IT_POOL,
+  bcpPoolFilters,
+  bcpPoolReport,
   keepBcpPeople,
   routeBcpPeople,
   shapeBcpRecipe,
@@ -72,9 +74,10 @@ describe("BCP senior IT targeting", () => {
     const shaped = shapeBcpRecipe(recipe);
     assert.equal(shaped.source.kind, "getleads");
     if (shaped.source.kind !== "getleads") return;
-    assert.deepEqual(shaped.source.params.job_titles.slice(0, BCP_SENIOR_IT_TITLES.length), [...BCP_SENIOR_IT_TITLES]);
+    assert.deepEqual(shaped.source.params.job_titles, [...BCP_SENIOR_IT_TITLES]);
     assert.equal(shaped.source.params.job_titles.includes("CEO"), false);
-    assert.equal(shaped.source.params.job_titles.includes("COO"), true);
+    assert.equal(shaped.source.params.job_titles.includes("COO"), false);
+    assert.equal(shaped.source.params.job_titles.includes("Chief Operating Officer"), false);
     assert.deepEqual(shaped.source.params.company_size, ["51 to 200", "201 to 500", "501 to 1000"]);
     assert.equal(shaped.source.params.max_per_company, 3);
     assert.deepEqual(shaped.source.params.industries, ["Hospitals and Health Care"]);
@@ -126,9 +129,28 @@ describe("BCP senior IT targeting", () => {
     assert.deepEqual(logistics.params.industries, [...BCP_LOGISTICS_INDUSTRIES]);
     assert.deepEqual(logisticsSeg.params.industries, [...BCP_LOGISTICS_INDUSTRIES]);
     assert.notDeepEqual(healthcare.params.industries, logistics.params.industries);
-    assert.match(healthcare.params.company_description ?? "", /hospital/);
-    assert.match(logistics.params.company_description ?? "", /freight/);
+    assert.equal(healthcare.params.company_description, undefined);
+    assert.equal(logistics.params.company_description, undefined);
+    assert.equal(healthcare.params.job_titles?.includes("COO"), false);
     assert.ok((healthcare.params.industries?.length ?? 0) > 0);
     assert.ok(BCP_UNFILTERED_IT_POOL > 10_000);
+    const pools = bcpPoolFilters(healthcare.params, "healthcare");
+    assert.deepEqual(pools.industry.industries, [...BCP_HEALTHCARE_INDUSTRIES]);
+    assert.equal(pools.industry.company_description, undefined);
+    assert.equal(pools.description.industries, undefined);
+    assert.match(pools.description.company_description ?? "", /hospital/);
+    assert.deepEqual(pools.both.industries, [...BCP_HEALTHCARE_INDUSTRIES]);
+    assert.match(pools.both.company_description ?? "", /hospital/);
+    assert.deepEqual(pools.coo.job_titles, ["COO", "Chief Operating Officer"]);
+    assert.equal(pools.coo.job_titles?.includes("CIO"), false);
+    const small = bcpPoolReport({ industry: 271, description: 900, both: 180, coo: 400, rows_found: 3779 });
+    assert.match(small, /Industry-only count 271/);
+    assert.match(small, /Description-only count 900/);
+    assert.match(small, /together 180/);
+    assert.match(small, /COO fallback pool 400/);
+    assert.match(small, /not in the thousands/);
+    assert.match(small, /IT Manager/);
+    const wide = bcpPoolReport({ industry: 3779, description: 5000, both: 271, coo: 800, rows_found: 3779 });
+    assert.equal(wide.includes("not in the thousands"), false);
   });
 });

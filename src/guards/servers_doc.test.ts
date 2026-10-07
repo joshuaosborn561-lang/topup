@@ -16,6 +16,7 @@ const CLIENT_SERVER: Readonly<Record<string, string>> = {
   "leadpipe.ts": "LeadPipe",
   "verifier.ts": "Email Verifier Progression",
   "getleads.ts": "getleads",
+  "aiArkPreview.ts": "AI Ark",
   "smartlead.ts": "Smartlead server",
   "domainWaterfall.ts": "Domain Waterfall",
   "peopleWaterfall.ts": "Find Named Person",

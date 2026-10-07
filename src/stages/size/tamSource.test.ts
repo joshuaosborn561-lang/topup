@@ -58,10 +58,11 @@ describe("TAM source", () => {
     assert.equal(apart.ai_ark_count, 800);
     assert.match(apart.reason ?? "", /tam_mismatch/);
     const unwired = linkedinTamDecision(4040, null);
-    assert.equal(unwired.tam_check, "tam_mismatch");
+    assert.equal(unwired.tam_check, "single_source");
+    assert.equal(unwired.tam_total, 4040);
     assert.equal(unwired.getleads_count, 4040);
     assert.equal(unwired.ai_ark_count, null);
+    assert.equal(unwired.reason, null);
     assert.match(unwired.tam_source, /AI Ark/);
-    assert.match(unwired.reason ?? "", /not wired/);
   });
 });
