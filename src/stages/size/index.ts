@@ -199,7 +199,7 @@ export class SizeStage {
     }
     const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
     const builds = await this.d.repo.campaignBuilds(run.client_tag, campaignIds).catch(() => [] as Record<string, unknown>[]);
-    const icp = icpKindForClient(run.client_tag);
+    const icp = await this.d.repo.clientIcpKind(run.client_tag).catch(() => icpKindForClient(run.client_tag));
     const fingerprint = recipeFingerprint(recipe);
     const pilotOnly = run.counts_by_status?.stop_after_pilot === 1;
     const pilots = new Map<number, PilotScore>();

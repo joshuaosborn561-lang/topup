@@ -1,4 +1,8 @@
+import { logger } from "../lib/log.js";
+import { icpKindForClient, type IcpKind } from "../stages/size/tamSource.js";
 import { PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, PARLAY_REFRESH_KNOWN, PARLAY_RETIRED_CAMPAIGN_IDS } from "../recipes/parlay.js";
+
+const log = logger("repo");
 import { petersonLaneCaseSql } from "../recipes/registry.js";
 import type { Db, Queryable } from "./pool.js";
 import type { Role, RunRow, RunStepRow, RunStatus, Step } from "../domain/runs.js";
@@ -213,17 +217,39 @@ export class Repo {
     await this.db.query(
       `insert into topup.service_flags (flag, enabled) values ('loads_paused', false) on conflict (flag) do nothing`,
     );
+    await this.ensureIcpKind();
+  }
+
+  /**
+   * campaign_registry is owned by the migration role, so ALTER can fail.
+   * client_icp is the copy this service can create. The code default still
+   * applies when neither store is writable.
+   */
+  private async ensureIcpKind(): Promise<void> {
+    const nonLinkedin = ["peterson", "peterson_earthworks", "emcor", "vector_energy", "deep_roots"];
+    try {
+      await this.db.query(`alter table topup.campaign_registry add column if not exists icp_kind text`);
+      await this.db.query(
+        `update topup.campaign_registry set icp_kind = 'non_linkedin'
+          where icp_kind is null and client_tag = any($1::text[])`,
+        [nonLinkedin],
+      );
+      await this.db.query(`update topup.campaign_registry set icp_kind = 'linkedin_native' where icp_kind is null`);
+    } catch (err) {
+      log.warn("campaign_registry.icp_kind was not added", { error: (err as Error).message });
+    }
     await this.db.query(
-      `alter table topup.campaign_registry add column if not exists icp_kind text`,
+      `create table if not exists topup.client_icp (
+         client_tag text primary key,
+         icp_kind text not null check (icp_kind in ('linkedin_native', 'non_linkedin'))
+       )`,
     );
     await this.db.query(
-      `update topup.campaign_registry
-          set icp_kind = 'non_linkedin'
-        where icp_kind is null
-          and client_tag in ('peterson', 'peterson_earthworks', 'emcor', 'vector_energy', 'deep_roots')`,
-    );
-    await this.db.query(
-      `update topup.campaign_registry set icp_kind = 'linkedin_native' where icp_kind is null`,
+      `insert into topup.client_icp (client_tag, icp_kind)
+       select distinct client_tag, case when client_tag = any($1::text[]) then 'non_linkedin' else 'linkedin_native' end
+         from topup.campaign_registry
+       on conflict (client_tag) do nothing`,
+      [nonLinkedin],
     );
   }
 
@@ -786,11 +812,45 @@ export class Repo {
   }
 
   async campaignRegistry(clientTag?: string): Promise<Record<string, unknown>[]> {
-    const { rows } = await this.db.query(
-      `select * from topup.campaign_registry where ($1::text is null or client_tag = $1) order by client_tag, campaign_id`,
-      [clientTag ?? null],
-    );
-    return rows;
+    try {
+      const { rows } = await this.db.query(
+        `select cr.*, coalesce(k.icp_kind, cr_kind.icp_kind) as icp_kind
+           from topup.campaign_registry cr
+           left join topup.client_icp k on k.client_tag = cr.client_tag
+           left join lateral (
+             select nullif(to_jsonb(cr)->>'icp_kind', '') as icp_kind
+           ) cr_kind on true
+          where ($1::text is null or cr.client_tag = $1)
+          order by cr.client_tag, cr.campaign_id`,
+        [clientTag ?? null],
+      );
+      return rows;
+    } catch {
+      const { rows } = await this.db.query(
+        `select * from topup.campaign_registry where ($1::text is null or client_tag = $1) order by client_tag, campaign_id`,
+        [clientTag ?? null],
+      );
+      return rows;
+    }
+  }
+
+  /** Registry column, else client_icp, else the client default. */
+  async clientIcpKind(clientTag: string): Promise<IcpKind> {
+    try {
+      const { rows } = await this.db.query<{ icp_kind: string | null }>(
+        `select coalesce(
+            (select icp_kind from topup.client_icp where client_tag = $1),
+            nullif(to_jsonb(cr)->>'icp_kind', '')
+          ) as icp_kind
+           from topup.campaign_registry cr
+          where cr.client_tag = $1
+          limit 1`,
+        [clientTag],
+      );
+      return icpKindForClient(clientTag, rows[0]?.icp_kind ?? null);
+    } catch {
+      return icpKindForClient(clientTag, null);
+    }
   }
 
   async setWorkingOverride(campaignId: number, value: boolean | null): Promise<boolean> {
