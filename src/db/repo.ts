@@ -217,7 +217,6 @@ export class Repo {
     await this.db.query(
       `insert into topup.service_flags (flag, enabled) values ('loads_paused', false) on conflict (flag) do nothing`,
     );
-    await this.ensureIcpKind();
   }
 
   /**
@@ -225,7 +224,7 @@ export class Repo {
    * client_icp is the copy this service can create. The code default still
    * applies when neither store is writable.
    */
-  private async ensureIcpKind(): Promise<void> {
+  async ensureIcpKind(): Promise<void> {
     const nonLinkedin = ["peterson", "peterson_earthworks", "emcor", "vector_energy", "deep_roots"];
     try {
       await this.db.query(`alter table topup.campaign_registry add column if not exists icp_kind text`);
