@@ -635,6 +635,31 @@ export class Repo {
     }
   }
 
+  /**
+   * Builds that fed these campaigns, from topup.campaign_builds.
+   * An empty view falls through to pull receipts for the same campaigns.
+   */
+  async campaignBuilds(clientTag: string, campaignIds: number[]): Promise<Record<string, unknown>[]> {
+    if (campaignIds.length === 0) return [];
+    try {
+      const { rows } = await this.db.query(
+        `select * from topup.campaign_builds where client_tag = $1 and smartlead_campaign_id = any($2::bigint[])`,
+        [clientTag, campaignIds],
+      );
+      if (rows.length) return rows;
+    } catch {
+      /* the view is not on every database; the receipt rows below are the same facts */
+    }
+    const { rows } = await this.db.query(
+      `select r.build_label, r.company_source, r.company_filters, r.written_at, c.campaign_id
+         from topup.pull_receipts r
+         cross join lateral unnest(r.campaign_ids) as c(campaign_id)
+        where r.client_tag = $1 and c.campaign_id = any($2::bigint[])`,
+      [clientTag, campaignIds],
+    );
+    return rows;
+  }
+
   async campaignRegistry(clientTag?: string): Promise<Record<string, unknown>[]> {
     const { rows } = await this.db.query(
       `select * from topup.campaign_registry where ($1::text is null or client_tag = $1) order by client_tag, campaign_id`,

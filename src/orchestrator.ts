@@ -4,7 +4,7 @@ import { orderCounts, type Role, type RunRow, type Step } from "./domain/runs.js
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
-import { applyIcpSources } from "./recipes/icpSource.js";
+import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
 import { trimToOwningClient } from "./recipes/trim.js";
@@ -237,7 +237,16 @@ export class Orchestrator {
       });
     }
     const trimmed = await trimToOwningClient(this.d.repo, rebuilt);
-    const applied = applyIcpSources(trimmed.recipe, this.d.fileRecipes ?? []);
+    const buildRows = await this.d.repo
+      .campaignBuilds(
+        trimmed.recipe.client_tag,
+        trimmed.recipe.routing.map((rule) => rule.campaign_id),
+      )
+      .catch((err) => {
+        log.warn("campaign builds unavailable", { error: (err as Error).message });
+        return [] as Record<string, unknown>[];
+      });
+    const applied = applyIcpSources(trimmed.recipe, this.d.fileRecipes ?? [], buildsFromRows(buildRows));
     const recipe = applied.recipe;
     if (applied.missing.length || Object.keys(applied.used).length) {
       log.info("icp source", { run_id: initial.run_id, used: applied.used, missing: applied.missing });

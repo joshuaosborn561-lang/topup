@@ -164,6 +164,7 @@ function groupLabel(group: CampaignGroup): string {
 
 function routeSizeGroup(g: CampaignGroup): SizeLeaf {
   if (g.source.kind === "mixed") {
+    if (g.source.note.startsWith("Josh lane:")) return { kind: "park", reason: g.source.note };
     return {
       kind: "park",
       reason: "no ICP source. No recipe cell, the receipt did not name its lists, and the lane has no ICP.",

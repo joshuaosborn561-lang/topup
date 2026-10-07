@@ -168,6 +168,39 @@ describe("finish the open runs", () => {
     const parked = routeSize(none.recipe, [1]);
     assert.equal(parked.kind, "park");
     if (parked.kind === "park") assert.match(parked.reason, /No recipe cell, the receipt did not name its lists, and the lane has no ICP/);
+
+    const fromBuild = applyIcpSources({ ...linkedin("powergryd.vciso.v0", "vciso", [4005228], empty), client_tag: "powergryd" }, [], [
+      {
+        campaign_id: 4005228,
+        build_label: "powergryd_vciso_lane_20260922",
+        interested: 2,
+        company_source: "getleads",
+        company_filters: {
+          persona_terms: ["vCISO", "fractional CISO"],
+          company_size: "any (individuals and one person shops)",
+          countries: ["United States"],
+        },
+      },
+    ]);
+    assert.equal(fromBuild.used["4005228"], "build");
+    assert.deepEqual(fromBuild.missing, []);
+    const built = routeSize(fromBuild.recipe, [4005228]);
+    assert.equal(built.kind, "getleads");
+    if (built.kind === "getleads") assert.deepEqual(built.source.params.job_titles, ["vCISO", "fractional CISO"]);
+
+    const josh = applyIcpSources({ ...linkedin("cornerstone.nonprofit_role_inbox.v0", "nonprofit_role_inbox", [3954874], empty), client_tag: "emcor" }, [], [
+      { campaign_id: 3954874, build_label: "ew:maps_site:B", interested: 1, company_source: "maps", company_filters: {} },
+    ]);
+    const joshRoute = routeSize(josh.recipe, [3954874]);
+    assert.equal(joshRoute.kind, "park");
+    if (joshRoute.kind === "park") assert.equal(joshRoute.reason, "Josh lane: maps");
+
+    const engagers = applyIcpSources({ ...linkedin("salesglider.engagers.v0", "engagers", [3847940], empty), client_tag: "salesglider" }, [], [
+      { campaign_id: 3847940, build_label: "sg_linkedin_engagers_monitoring", interested: 4, company_source: "linkedin_engagers" },
+    ]);
+    const engagerRoute = routeSize(engagers.recipe, [3847940]);
+    assert.equal(engagerRoute.kind, "park");
+    if (engagerRoute.kind === "park") assert.equal(engagerRoute.reason, "Josh lane: linkedin_engagers");
   });
 
   it("prices maps and permitstack through the spend card and names a missing credential", () => {
