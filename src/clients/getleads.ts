@@ -187,6 +187,7 @@ export function outboundFilters(filters: GetleadsFilters): Record<string, unknow
     if (o.max != null) out.employee_profiles_on_linkedin_max = o.max;
   }
   const bands = Array.isArray(out.company_size) && (out.company_size as unknown[]).length > 0;
+  if (!bands) delete out.company_size;
   if (bands) {
     delete out.employee_profiles_on_linkedin_min;
     delete out.employee_profiles_on_linkedin_max;

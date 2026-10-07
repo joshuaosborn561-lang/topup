@@ -1,6 +1,7 @@
-import { GETLEADS_BANDS } from "./schema.js";
+import { GETLEADS_BANDS, GETLEADS_EMAIL_STATUSES } from "./schema.js";
 import { parseRecipe, type Recipe, type Source } from "./schema.js";
 import { latestLaneReceipt, bestYieldBuild } from "./receipt.js";
+import { geoFenceRef } from "./geoFence.js";
 
 /**
  * D45 — a file recipe is the override. Everyone else repeats from
@@ -10,6 +11,7 @@ import { latestLaneReceipt, bestYieldBuild } from "./receipt.js";
  */
 
 const BANDS = new Set<string>(GETLEADS_BANDS);
+const EMAIL_STATUSES = new Set<string>(GETLEADS_EMAIL_STATUSES);
 
 export interface ReceiptStamp {
   written_by: string;
@@ -49,14 +51,16 @@ function validBands(v: unknown): Array<(typeof GETLEADS_BANDS)[number]> {
   return asStringArray(v).filter((b): b is (typeof GETLEADS_BANDS)[number] => BANDS.has(b));
 }
 
-/** Copy getleads filters from the receipt. Null when titles or bands are missing — do not invent them. */
+/** Copy getleads filters from the receipt. Null when titles are missing, or a named headcount is not a real band. Do not invent a band. */
 export function getleadsParamsFromFilters(filters: Record<string, unknown>): {
   job_titles: string[];
-  company_size: Array<(typeof GETLEADS_BANDS)[number]>;
+  company_size?: Array<(typeof GETLEADS_BANDS)[number]>;
   countries?: string[];
   states?: string[];
   cities?: string[];
   industries?: string[];
+  email_status?: Array<(typeof GETLEADS_EMAIL_STATUSES)[number]>;
+  geo_fence?: { schema: string; table: string };
   max_per_company?: number;
 } | null {
   const titles = asStringArray(filters.job_titles ?? filters.titles);
@@ -65,19 +69,25 @@ export function getleadsParamsFromFilters(filters: Record<string, unknown>): {
   const hasBandField = namedBands !== undefined && namedBands !== null && !(Array.isArray(namedBands) && namedBands.length === 0);
   const bands = validBands(namedBands);
   // A receipt that names a headcount and none of it is a real band is incomplete.
-  // A receipt that names titles and no headcount is the full band range, not a guess.
+  // A receipt that names no headcount is counted with no band filter.
   if (hasBandField && bands.length === 0) return null;
-  const companySize = bands.length > 0 ? bands : [...GETLEADS_BANDS];
   const industries = asStringArray(filters.industries ?? filters.companyIndustry).filter((s) => !s.includes(","));
   const exportCaps = filters.export_caps && typeof filters.export_caps === "object" ? (filters.export_caps as Record<string, unknown>) : {};
   const maxPer = Number(filters.max_per_company ?? exportCaps.max_per_company);
+  const cityList = asStringArray(filters.cities);
+  const fence = cityList.length ? null : geoFenceRef(filters.cities);
+  const emailStatus = asStringArray(filters.email_status)
+    .map((status) => status.toUpperCase())
+    .filter((status): status is (typeof GETLEADS_EMAIL_STATUSES)[number] => EMAIL_STATUSES.has(status));
   return {
     job_titles: titles,
-    company_size: companySize,
+    ...(bands.length > 0 ? { company_size: bands } : {}),
     ...(asStringArray(filters.countries).length ? { countries: asStringArray(filters.countries) } : {}),
     ...(asStringArray(filters.states).length ? { states: asStringArray(filters.states) } : {}),
-    ...(asStringArray(filters.cities).length ? { cities: asStringArray(filters.cities) } : {}),
+    ...(cityList.length ? { cities: cityList } : {}),
+    ...(fence ? { geo_fence: fence } : {}),
     ...(industries.length ? { industries } : {}),
+    ...(emailStatus.length ? { email_status: emailStatus } : {}),
     ...(Number.isFinite(maxPer) && maxPer >= 1 ? { max_per_company: Math.floor(maxPer) } : {}),
   };
 }
@@ -218,7 +228,7 @@ export function sourceFromStamp(stamp: ReceiptStamp): Source {
       kind: "mixed",
       note: mixedNote(
         stamp,
-        "Receipt company_source is getleads but company_filters are not a complete getleads param set (need job_titles and exact band labels). Do not invent them.",
+        "Receipt company_source is getleads but company_filters are not a complete getleads param set (need job_titles; a named headcount must be exact band labels). Do not invent them.",
       ),
       parts: [],
     };

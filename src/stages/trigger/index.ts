@@ -1,8 +1,16 @@
 import type { RunRow } from "../../domain/runs.js";
-import { campaignGroups, icpSummary, recipeCampaignIds, targetCampaignIds, targetCountPatch } from "../../recipes/campaigns.js";
+import {
+  campaignGroups,
+  icpSummary,
+  liveTargetCampaignIds,
+  loadCampaignStatuses,
+  recipeCampaignIds,
+  targetCampaignIds,
+  targetCountPatch,
+} from "../../recipes/campaigns.js";
 import type { Recipe } from "../../recipes/schema.js";
 import { gateUnmet } from "../../spine/gate.js";
-import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, finish, park, type StageDeps, type StageOutcome } from "../common.js";
 import { cellLabel, uncoveredCells } from "./cells.js";
 
 /**
@@ -19,12 +27,18 @@ export class TriggerStage {
   constructor(private readonly d: StageDeps) {}
 
   async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
-    return attempt(this.d, run, "trigger", "open", async () => {
+    return attempt(this.d, run, "trigger", "open", async (attempts) => {
       const missing = uncoveredCells(recipe.segments, recipe.routing);
       const allIds = recipeCampaignIds(recipe);
-      const campaignIds = targetCampaignIds(recipe, run);
+      const statuses = await loadCampaignStatuses(this.d.repo.raw(), allIds);
+      const campaignIds = liveTargetCampaignIds(recipe, targetCampaignIds(recipe, run), statuses);
       if (allIds.length === 0) {
         return gateUnmet("trigger", "the saved recipe has no campaigns in its routing; Josh signs off on the segment before anything is pulled", { cells: 0, campaigns: 0 });
+      }
+      if (campaignIds.length === 0) {
+        const reason = "every campaign on this recipe is completed, drafted, paused, or archived; nothing live to top up";
+        await this.d.repo.failStep(run.run_id, "trigger", reason, true);
+        return park(this.d, run, "trigger", reason, attempts);
       }
       if (missing.length) {
         return gateUnmet(
@@ -33,7 +47,7 @@ export class TriggerStage {
           { cells: segmentCount(recipe), uncovered: missing.length, campaigns: allIds.length },
         );
       }
-      const wrong = await this.foreignCampaigns(allIds, recipe.smartlead_client_id);
+      const wrong = await this.foreignCampaigns(campaignIds, recipe.smartlead_client_id);
       if (wrong.length) {
         return gateUnmet(
           "trigger",
@@ -43,6 +57,10 @@ export class TriggerStage {
       }
       const cells = segmentCount(recipe);
       const groups = campaignGroups(recipe, campaignIds);
+      const dropped = allIds.filter((id) => !campaignIds.includes(id));
+      const droppedNote = dropped.length
+        ? ` Dropped non-live: ${dropped.map((id) => `#${id} (${(statuses.get(id) ?? "unknown").trim() || "unknown"})`).join(", ")}.`
+        : "";
       const scope =
         campaignIds.length === allIds.length
           ? `${campaignIds.length} campaign(s)`
@@ -53,7 +71,7 @@ export class TriggerStage {
         "trigger",
         campaignIds.length,
         { icp_saved: 1, cells, campaigns: campaignIds.length, recipe_campaigns: allIds.length, ...targetCountPatch(campaignIds) },
-        `Step 1: using saved campaign ICPs for ${recipe.client_tag}/${recipe.lane} (\`${recipe.recipe_id}\`) · ${cells} cells → ${scope} (${icpSummary(groups)}). Not asking Josh again.`,
+        `Step 1: using saved campaign ICPs for ${recipe.client_tag}/${recipe.lane} (\`${recipe.recipe_id}\`) · ${cells} cells → ${scope} (${icpSummary(groups)}). Not asking Josh again.${droppedNote}`,
       );
     });
   }

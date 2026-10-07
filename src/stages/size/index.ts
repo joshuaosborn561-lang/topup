@@ -6,6 +6,7 @@ import { campaignSnapshots } from "../../ledger/health.js";
 import { Overlap, SIZE_ACROSS_CLIENTS, SIZE_WITHIN_CLIENT } from "../../lib/concurrency.js";
 import { logger } from "../../lib/log.js";
 import { runTargetCampaignIds } from "../../recipes/campaigns.js";
+import { countSlices, loadGeoFenceCities } from "../../recipes/geoFence.js";
 import { recipeAuthorises, type GetleadsSource, type MapsSource, type PermitsSource, type Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
@@ -498,6 +499,20 @@ export class SizeStage {
     }
     const params = source.params;
     const filters = params as GetleadsFilters;
+    let slices: GetleadsFilters[];
+    if (filters.geo_fence) {
+      try {
+        const cities = await loadGeoFenceCities(this.d.repo.raw(), filters.geo_fence);
+        slices = countSlices(filters, cities);
+      } catch (err) {
+        return { ok: false, reason: (err as Error).message };
+      }
+      if (slices.length === 0) {
+        return { ok: false, reason: `geo fence ${filters.geo_fence.schema}.${filters.geo_fence.table} has no cities` };
+      }
+    } else {
+      slices = [filters];
+    }
     const count = async (f: GetleadsFilters) => {
       const r = await this.d.getleads.count(f);
       await this.d.rails.record({
@@ -516,9 +531,22 @@ export class SizeStage {
       });
       return r;
     };
-    const { company_size: _omit, ...withoutBand } = filters;
-    const [segment, all] = await Promise.all([count(filters), count(withoutBand as GetleadsFilters)]);
-    const decision = bandSizeDecision(segment.total_matching, all.total_matching, recipe.size.partition_tolerance);
+    const sum = async (parts: GetleadsFilters[]) => {
+      let total = 0;
+      for (const part of parts) total += (await count(part)).total_matching;
+      return total;
+    };
+    // No band on the recipe: one count per slice. Do not add a band, and do not issue a second unfiltered count.
+    if (!filters.company_size?.length) {
+      const total = await sum(slices);
+      return { ok: true, total, partition: partitionCheck(total, 0, total, recipe.size.partition_tolerance) };
+    }
+    const withoutBand = slices.map((part) => {
+      const { company_size: _omit, ...rest } = part;
+      return rest as GetleadsFilters;
+    });
+    const [segmentTotal, allTotal] = await Promise.all([sum(slices), sum(withoutBand)]);
+    const decision = bandSizeDecision(segmentTotal, allTotal, recipe.size.partition_tolerance);
     if (decision.warning) {
       log.warn("band partition still overlaps; sizing from the in-band count", {
         run_id: run.run_id,

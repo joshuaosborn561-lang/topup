@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   campaignGroups,
   jobTitlesFor,
+  liveTargetCampaignIds,
   resolveTargetCampaignIds,
   ruleSource,
   segmentToBand,
@@ -84,6 +85,14 @@ describe("D30 campaign ICP", () => {
     assert.deepEqual(targetCampaignIds(r, { campaign_id: 2, counts_by_status: {} }), [2]);
     assert.deepEqual(targetCampaignIds(r, { campaign_id: null, counts_by_status: targetCountPatch([1]) }), [1]);
     assert.equal(resolveTargetCampaignIds(r, [9]).ok, false);
+    const statuses = new Map<number, string | null>([
+      [1, "ACTIVE"],
+      [2, "COMPLETED"],
+      [3, "DRAFTED"],
+    ]);
+    assert.deepEqual(liveTargetCampaignIds(r, [1, 2, 3], statuses), [1]);
+    assert.deepEqual(liveTargetCampaignIds(r, [2], statuses), [1], "an ACTIVE recipe campaign the stored set skipped is still sized");
+    assert.deepEqual(liveTargetCampaignIds(r, [1, 2, 3], new Map()), [1, 2, 3]);
     const one = resolveTargetCampaignIds(r, [1, 1]);
     assert.equal(one.ok, true);
     if (one.ok) assert.deepEqual(one.ids, [1]);

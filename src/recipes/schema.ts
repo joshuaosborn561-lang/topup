@@ -36,11 +36,20 @@ const noComma = z.string().refine((s) => !s.includes(","), {
 const getleadsParams = z
   .object({
     job_titles: z.array(z.string().min(1)).min(1),
-    company_size: z.array(bandLabel).min(1),
+    /** Omit when the receipt names no band. Do not fill a default range. */
+    company_size: z.array(bandLabel).min(1).optional(),
     employee_profiles_on_linkedin: z.object({ min: z.number().int().min(1), max: z.number().int().min(1) }).optional(),
     countries: z.array(z.string()).optional(),
     states: z.array(z.string()).optional(),
     cities: z.array(z.string()).optional(),
+    /** Receipt pointer such as client_emcor.geo_fence. Not sent to getleads. */
+    geo_fence: z
+      .object({
+        schema: z.string().regex(/^[a-z_][a-z0-9_]*$/),
+        table: z.string().regex(/^[a-z_][a-z0-9_]*$/),
+      })
+      .strict()
+      .optional(),
     industries: z.array(noComma).optional(),
     companyIndustry: z.array(noComma).optional(),
     email_status: z.array(z.enum(GETLEADS_EMAIL_STATUSES)).min(1).optional(),

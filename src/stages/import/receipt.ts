@@ -10,7 +10,7 @@ import type { Recipe } from "../../recipes/schema.js";
  * Unknown recipe sources throw — there is no `other` (D33).
  */
 export async function writeRunReceipt(
-  repo: Pick<Repo, "insertPullReceipt" | "getStep">,
+  repo: Pick<Repo, "insertPullReceipt" | "getStep" | "raw">,
   run: RunRow,
   recipe: Recipe,
   counts: Record<string, number>,

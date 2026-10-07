@@ -186,7 +186,10 @@ describe("finish the open runs", () => {
     assert.deepEqual(fromBuild.missing, []);
     const built = routeSize(fromBuild.recipe, [4005228]);
     assert.equal(built.kind, "getleads");
-    if (built.kind === "getleads") assert.deepEqual(built.source.params.job_titles, ["vCISO", "fractional CISO"]);
+    if (built.kind === "getleads") {
+      assert.deepEqual(built.source.params.job_titles, ["vCISO", "fractional CISO"]);
+      assert.equal(built.source.params.company_size, undefined);
+    }
 
     const josh = applyIcpSources({ ...linkedin("cornerstone.nonprofit_role_inbox.v0", "nonprofit_role_inbox", [3954874], empty), client_tag: "emcor" }, [], [
       { campaign_id: 3954874, build_label: "ew:maps_site:B", interested: 1, company_source: "maps", company_filters: {} },

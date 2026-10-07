@@ -41,7 +41,7 @@ export function ruleSource(recipe: Recipe, rule: RoutingRule): Source {
   const src = recipe.source;
   if (src.kind !== "getleads") return src;
   const band = rule.when.band ? segmentToBand(rule.when.band) : null;
-  if (!band || !src.params.company_size.includes(band)) return src;
+  if (!band || !src.params.company_size?.includes(band)) return src;
   return { ...src, params: { ...src.params, company_size: [band] } };
 }
 
@@ -49,16 +49,15 @@ export function mergeGetleadsSources(sources: Source[]): Source {
   const first = sources[0];
   if (!first) throw new Error("mergeGetleadsSources needs a source");
   if (first.kind !== "getleads" || sources.some((s) => s.kind !== "getleads")) return first;
-  const bands = [...new Set(sources.flatMap((s) => (s.kind === "getleads" ? s.params.company_size : [])))];
+  const bands = [...new Set(sources.flatMap((s) => (s.kind === "getleads" && s.params.company_size ? s.params.company_size : [])))];
   const titles = [...new Set(sources.flatMap((s) => (s.kind === "getleads" ? s.params.job_titles : [])))];
-  return {
-    ...first,
-    params: {
-      ...first.params,
-      company_size: bands.length ? (bands as GetleadsSource["params"]["company_size"]) : first.params.company_size,
-      job_titles: titles.length ? titles : first.params.job_titles,
-    },
+  const params = {
+    ...first.params,
+    job_titles: titles.length ? titles : first.params.job_titles,
   };
+  if (bands.length) params.company_size = bands as GetleadsSource["params"]["company_size"];
+  else delete params.company_size;
+  return { ...first, params };
 }
 
 export type CampaignGroup = {
@@ -115,6 +114,75 @@ function ownedTargets(recipe: Recipe, ids: readonly number[]): number[] {
   return ids.filter((id) => allowed.has(id) && !neverTopUp(id));
 }
 
+/** Smartlead statuses that are not topped up. STOPPED stays. A blank status stays. */
+export const NON_LIVE_CAMPAIGN_STATUSES = ["COMPLETED", "DRAFTED", "DRAFT", "PAUSED", "ARCHIVED"] as const;
+
+export function isLiveCampaignStatus(status: string | null | undefined): boolean {
+  if (status == null) return true;
+  const name = status.trim().toUpperCase();
+  if (!name) return true;
+  return !(NON_LIVE_CAMPAIGN_STATUSES as readonly string[]).includes(name);
+}
+
+/** ACTIVE, or a blank status the mirror did not classify. */
+function isActiveCampaignStatus(status: string | null | undefined): boolean {
+  if (status == null) return true;
+  const name = status.trim().toUpperCase();
+  if (!name) return true;
+  return name === "ACTIVE";
+}
+
+/**
+ * Drop completed, drafted, paused, and archived campaigns.
+ * An id with no status row stays, so a mirror that has no status does not wipe the recipe.
+ */
+export function keepLiveCampaigns(ids: readonly number[], statusById: ReadonlyMap<number, string | null | undefined>): number[] {
+  return ids.filter((id) => {
+    if (!statusById.has(id)) return true;
+    return isLiveCampaignStatus(statusById.get(id));
+  });
+}
+
+/**
+ * Targets for a run: the stored set minus campaigns that are not live, plus
+ * every ACTIVE recipe campaign the stored set left out.
+ * An empty status map leaves the stored set alone.
+ */
+export function liveTargetCampaignIds(
+  recipe: Recipe,
+  stored: readonly number[],
+  statusById: ReadonlyMap<number, string | null | undefined>,
+): number[] {
+  const recipeIds = ownedTargets(recipe, recipeCampaignIds(recipe));
+  const keptStored = ownedTargets(recipe, stored);
+  if (statusById.size === 0) return keptStored.length ? keptStored : recipeIds;
+  const liveStored = keepLiveCampaigns(keptStored, statusById);
+  const extras = recipeIds.filter((id) => {
+    if (liveStored.includes(id)) return false;
+    if (!statusById.has(id)) return false;
+    return isActiveCampaignStatus(statusById.get(id));
+  });
+  return [...liveStored, ...extras];
+}
+
+type StatusQuery = {
+  query: <R extends Record<string, unknown> = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: R[] }>;
+};
+
+/** public.campaigns status by Smartlead id. Empty when the mirror is not here. */
+export async function loadCampaignStatuses(db: StatusQuery, ids: readonly number[]): Promise<Map<number, string | null>> {
+  const out = new Map<number, string | null>();
+  if (ids.length === 0) return out;
+  const { rows: tables } = await db.query<{ ok: boolean }>(`select to_regclass('public.campaigns') is not null as ok`);
+  if (!tables[0]?.ok) return out;
+  const { rows } = await db.query<{ id: string; status: string | null }>(
+    `select smartlead_campaign_id::text as id, status from public.campaigns where smartlead_campaign_id = any($1::bigint[])`,
+    [ids],
+  );
+  for (const row of rows) out.set(Number(row.id), row.status == null ? null : String(row.status));
+  return out;
+}
+
 /**
  * Watch / `/topup` targets, falling back to every campaign the recipe names.
  * A stale target_* set cannot bring back a campaign the recipe no longer
@@ -157,12 +225,17 @@ export function withoutSkipped(targets: readonly number[], sizeCounts?: Record<s
 }
 
 export async function runTargetCampaignIds(
-  repo: { getStep: (runId: string, step: "trigger") => Promise<{ counts: Record<string, number> } | null> },
+  repo: {
+    getStep: (runId: string, step: "trigger") => Promise<{ counts: Record<string, number> } | null>;
+    raw: () => StatusQuery;
+  },
   run: { run_id: string; campaign_id: number | null; counts_by_status: Record<string, number> },
   recipe: Recipe,
 ): Promise<number[]> {
   const trigger = await repo.getStep(run.run_id, "trigger");
-  return targetCampaignIds(recipe, run, trigger?.counts);
+  const stored = targetCampaignIds(recipe, run, trigger?.counts);
+  const statuses = await loadCampaignStatuses(repo.raw(), recipeCampaignIds(recipe));
+  return liveTargetCampaignIds(recipe, stored, statuses);
 }
 
 export function resolveTargetCampaignIds(
