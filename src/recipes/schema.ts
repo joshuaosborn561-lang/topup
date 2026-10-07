@@ -29,7 +29,13 @@ export const bandLabel = z.enum(GETLEADS_BANDS);
 /** getleads email_status values. Omit the field to pull every status (D35 item 15). */
 export const GETLEADS_EMAIL_STATUSES = ["VALID", "CATCH_ALL", "UNKNOWN", "INVALID"] as const;
 
-const noComma = z.string().refine((s) => !s.includes(","), {
+/**
+ * LinkedIn's industry label, stored as one value on the Sept 3 BCP logistics
+ * receipts. Any other comma is still two names jammed together, and getleads shreds those.
+ */
+export const LINKEDIN_COMMA_INDUSTRY = "Transportation, Logistics, Supply Chain and Storage";
+
+const noComma = z.string().refine((s) => !s.includes(",") || s === LINKEDIN_COMMA_INDUSTRY, {
   message: "industry names containing commas silently shred in getleads; split into separate values",
 });
 

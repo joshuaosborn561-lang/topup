@@ -40,6 +40,43 @@ export const BCP_DROPPED_TITLES = [
 
 export const BCP_BANDS = ["51 to 200", "201 to 500", "501 to 1000"] as const;
 
+/**
+ * Sept 3 receipts (getleads_bcp_healthcare_itdm_20260903,
+ * getleads_bcp_it_layer2_20260903, getleads_bcp_logistics_itdm_20260903).
+ * industries_by_campaign on those builds. Not the inferred longer lists.
+ */
+export const BCP_HEALTHCARE_IT_CAMPAIGNS = [3921850, 3921854] as const;
+export const BCP_LOGISTICS_IT_CAMPAIGNS = [3921852, 3921869] as const;
+
+export const BCP_HEALTHCARE_INDUSTRIES = ["Hospitals and Health Care", "Medical Practices"] as const;
+export const BCP_LOGISTICS_INDUSTRIES = ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"] as const;
+
+export const BCP_HEALTHCARE_DESCRIPTION = ["hospital", "clinic", "health system", "medical group", "home health"] as const;
+export const BCP_LOGISTICS_DESCRIPTION = ["3PL", "freight", "trucking", "logistics", "warehousing"] as const;
+
+/** The unfiltered US IT-leader count those three lanes shared before an industry was set. */
+export const BCP_UNFILTERED_IT_POOL = 27_790;
+
+export type BcpItVertical = "healthcare" | "logistics";
+
+export function bcpItVertical(lane: string, campaignId: number): BcpItVertical | null {
+  if (lane === "healthcare_exec" || lane === "logistics_exec" || lane === "pe_firms") return null;
+  if (lane.includes("healthcare") && lane.includes("it")) return "healthcare";
+  if (lane.includes("logistics") && lane.includes("it")) return "logistics";
+  if ((BCP_HEALTHCARE_IT_CAMPAIGNS as readonly number[]).includes(campaignId)) return "healthcare";
+  if ((BCP_LOGISTICS_IT_CAMPAIGNS as readonly number[]).includes(campaignId)) return "logistics";
+  return null;
+}
+
+export function bcpItIndustries(vertical: BcpItVertical): string[] {
+  return vertical === "healthcare" ? [...BCP_HEALTHCARE_INDUSTRIES] : [...BCP_LOGISTICS_INDUSTRIES];
+}
+
+export function bcpItDescription(vertical: BcpItVertical): string {
+  const phrases = vertical === "healthcare" ? BCP_HEALTHCARE_DESCRIPTION : BCP_LOGISTICS_DESCRIPTION;
+  return phrases.join(", ");
+}
+
 /** STOPPED. They stay out of BCP routing. */
 export const BCP_STOPPED_CAMPAIGNS = [3763797, 3763798] as const;
 
@@ -169,15 +206,30 @@ export function shapeBcpRecipe(recipe: Recipe): Recipe {
       source: { kind: "mixed", note: "bcp.pe_firms is retired", parts: [] },
     };
   }
+  const shapedSource = shapeSource(recipe.source, false);
   const routing = recipe.routing
     .filter((rule) => !(BCP_STOPPED_CAMPAIGNS as readonly number[]).includes(rule.campaign_id))
     .map((rule) => {
       const ceo = bcpCampaignIsCeo(rule.campaign_id);
+      const base = rule.source ? shapeSource(rule.source, ceo) : shapedSource;
+      const vertical = bcpItVertical(recipe.lane, rule.campaign_id);
+      const source = vertical && base.kind === "getleads" ? withItFilter(base, vertical) : rule.source ? base : undefined;
       return {
         ...rule,
         icp: { ...rule.icp, persona: ceo ? "ceo" : "senior_it" },
-        source: rule.source ? shapeSource(rule.source, ceo) : undefined,
+        source,
       };
     });
-  return { ...recipe, source: shapeSource(recipe.source, false), routing };
+  return { ...recipe, source: shapedSource, routing };
+}
+
+function withItFilter(source: Extract<Source, { kind: "getleads" }>, vertical: BcpItVertical): Extract<Source, { kind: "getleads" }> {
+  return {
+    ...source,
+    params: {
+      ...source.params,
+      industries: bcpItIndustries(vertical),
+      company_description: bcpItDescription(vertical),
+    },
+  };
 }

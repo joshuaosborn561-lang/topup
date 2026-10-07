@@ -44,8 +44,10 @@ describe("per-campaign report", () => {
   });
 
   it("flags tam_filled under 1,000 left and does not treat too early as a pass", () => {
-    const filled = buildCampaignReport([{ ...fields, tam_total: 800, tam_left: 700, found: 800, to_add: 700 }]);
+    const filled = buildCampaignReport([{ ...fields, tam_total: 800, tam_left: 700, found: 800, to_add: 700, market_cap: null }]);
     assert.equal(filled[0]?.gate, "tam_filled");
+    const thinMsp = buildCampaignReport([{ ...fields, tam_total: 800, tam_left: 700, found: 800, to_add: 700 }]);
+    assert.equal(thinMsp[0]?.gate, "suspect_filter");
     assert.ok(700 < TAM_LEFT_FLOOR);
     const early = buildCampaignReport([{ ...fields, sends: 120, interested: 1, too_early: true }]);
     assert.equal(early[0]?.gate, "under_reply_bar");

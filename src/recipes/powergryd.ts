@@ -7,6 +7,44 @@ export const MSP_OWNER_TITLES = ["Owner", "Co-Owner", "Founder", "Co-Founder", "
 
 export const MSP_LINKEDIN_HEADCOUNT = { min: 20, max: 100 } as const;
 
+/**
+ * Any of these may be sent to getleads. The pilot scores the tighter set:
+ * a row has to read as an MSP, not merely as IT support or a help desk.
+ */
+export const MSP_DESCRIPTION_PHRASES = [
+  "managed service provider",
+  "managed services provider",
+  "MSP",
+  "managed IT",
+  "managed IT services",
+  "managed services",
+  "IT support",
+  "outsourced IT",
+  "IT managed services",
+  "managed security services",
+  "MSSP",
+  "help desk",
+  "co-managed IT",
+] as const;
+
+/** Phrases that mean the company is an MSP. IT support and help desk are not enough. */
+export const MSP_REAL_PHRASES = [
+  "managed service provider",
+  "managed services provider",
+  "MSP",
+  "managed IT",
+  "managed IT services",
+  "managed services",
+  "IT managed services",
+  "managed security services",
+  "MSSP",
+  "co-managed IT",
+] as const;
+
+export function mspDescriptionQuery(): string {
+  return MSP_DESCRIPTION_PHRASES.join(", ");
+}
+
 export const MSP_HEADCOUNT_COLUMNS = ["employee_profiles_on_linkedin", "linkedin_employees", "employees_on_linkedin"] as const;
 
 /**
@@ -41,7 +79,7 @@ export function shapeMspOwnersRecipe(recipe: Recipe): Recipe {
         company_size: [...MSP_OWNER_BANDS],
         countries: ["United States"],
         industries: ["IT Services and IT Consulting"],
-        company_description: "managed service provider",
+        company_description: mspDescriptionQuery(),
         email_status: ["VALID"],
         max_per_company: 2,
       },

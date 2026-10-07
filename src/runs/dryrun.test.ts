@@ -150,8 +150,10 @@ describe("size-only dry run", () => {
   it("resolves dry_run and stop_after", () => {
     assert.equal(resolveStopAfter({ dryRun: true }), "size");
     assert.equal(resolveStopAfter({ stopAfter: "pull", dryRun: true }), "pull");
+    assert.equal(resolveStopAfter({ stopAfter: "pilot" }), "pilot");
     assert.equal(resolveStopAfter({}), null);
     assert.equal(haltBeforeStep("pull", { stop_after_size: 1 }, false), "sized");
+    assert.equal(haltBeforeStep("pull", { stop_after_pilot: 1 }, false), "sized");
     assert.equal(haltBeforeStep("size", { stop_after_size: 1 }, false), null);
     assert.equal(haltBeforeStep("ingest", { stop_after_pull: 1 }, false), "park_ingest");
     assert.equal(haltBeforeStep("ingest", {}, true), "park_ingest");

@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Recipe } from "./schema.js";
-import { BCP_SENIOR_IT_TITLES, BCP_STOPPED_CAMPAIGNS, keepBcpPeople, routeBcpPeople, shapeBcpRecipe } from "./bcp.js";
+import {
+  BCP_HEALTHCARE_INDUSTRIES,
+  BCP_LOGISTICS_INDUSTRIES,
+  BCP_SENIOR_IT_TITLES,
+  BCP_STOPPED_CAMPAIGNS,
+  BCP_UNFILTERED_IT_POOL,
+  keepBcpPeople,
+  routeBcpPeople,
+  shapeBcpRecipe,
+} from "./bcp.js";
 
 describe("BCP senior IT targeting", () => {
   it("keeps the CIO and drops the COO when both are at the company", () => {
@@ -88,5 +97,38 @@ describe("BCP senior IT targeting", () => {
     const shaped = shapeBcpRecipe(recipe);
     assert.deepEqual(shaped.routing, []);
     assert.equal(shaped.source.kind, "mixed");
+  });
+
+  it("gives healthcare IT and logistics IT the Sept 3 industry lists, and the pools are not the same", () => {
+    const recipe = {
+      recipe_id: "bcp.it_dm_airpods.v0",
+      client_tag: "bcp",
+      lane: "it_dm_airpods",
+      routing: [
+        { when: { slot: "3921850" }, campaign_id: 3921850, icp: { kind: "linkedin_native", persona: "senior_it" } },
+        { when: { slot: "3921852" }, campaign_id: 3921852, icp: { kind: "linkedin_native", persona: "senior_it" } },
+        { when: { slot: "3921869" }, campaign_id: 3921869, icp: { kind: "linkedin_native", persona: "senior_it" } },
+      ],
+      source: {
+        kind: "getleads",
+        params: { job_titles: ["CIO"], company_size: ["51 to 200"], countries: ["United States"] },
+        widening_candidates: [],
+      },
+    } as Recipe;
+    const shaped = shapeBcpRecipe(recipe);
+    const healthcare = shaped.routing.find((rule) => rule.campaign_id === 3921850)?.source;
+    const logistics = shaped.routing.find((rule) => rule.campaign_id === 3921852)?.source;
+    const logisticsSeg = shaped.routing.find((rule) => rule.campaign_id === 3921869)?.source;
+    assert.equal(healthcare?.kind, "getleads");
+    assert.equal(logistics?.kind, "getleads");
+    if (healthcare?.kind !== "getleads" || logistics?.kind !== "getleads" || logisticsSeg?.kind !== "getleads") return;
+    assert.deepEqual(healthcare.params.industries, [...BCP_HEALTHCARE_INDUSTRIES]);
+    assert.deepEqual(logistics.params.industries, [...BCP_LOGISTICS_INDUSTRIES]);
+    assert.deepEqual(logisticsSeg.params.industries, [...BCP_LOGISTICS_INDUSTRIES]);
+    assert.notDeepEqual(healthcare.params.industries, logistics.params.industries);
+    assert.match(healthcare.params.company_description ?? "", /hospital/);
+    assert.match(logistics.params.company_description ?? "", /freight/);
+    assert.ok((healthcare.params.industries?.length ?? 0) > 0);
+    assert.ok(BCP_UNFILTERED_IT_POOL > 10_000);
   });
 });

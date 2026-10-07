@@ -1,4 +1,5 @@
 import type { Source } from "../../recipes/schema.js";
+import type { PilotScore } from "./pilot.js";
 
 /** One row of the per-campaign report. Counts and words only. Never a lead. */
 export interface CampaignReportEntry {
@@ -14,12 +15,19 @@ export interface CampaignReportEntry {
   reply_rate: string;
   gate: "ok" | "under_reply_bar" | "tam_filled" | "paused" | "suspect_filter";
   strategy: string;
+  tam_source?: string;
+  tam_check?: "ok" | "tam_mismatch" | "tam_source_missing";
+  getleads_count?: number | null;
+  ai_ark_count?: number | null;
+  pilot?: PilotScore;
 }
 
 export const TAM_LEFT_FLOOR = 1000;
 export const SUSPECT_BUILD_MULTIPLE = 20;
 /** About 40k MSPs in the US. A people count above this is not that market. */
 export const MSP_MARKET_CAP = 40_000;
+/** Below the low thousands is the 71-row exact-phrase miss, not the MSP market. */
+export const MSP_MARKET_FLOOR = 1_000;
 
 export const COMPANY_FILTER_REASON = "recipe has no company filter";
 
@@ -41,6 +49,7 @@ export function marketCapFor(lane: string, sourceText: string): number | null {
 export function isSuspectFilter(tamTotal: number, rowsFound: number | null, marketCap: number | null): boolean {
   if (rowsFound != null && rowsFound > 0 && tamTotal > rowsFound * SUSPECT_BUILD_MULTIPLE) return true;
   if (marketCap != null && tamTotal > marketCap) return true;
+  if (marketCap === MSP_MARKET_CAP && tamTotal > 0 && tamTotal < MSP_MARKET_FLOOR) return true;
   return false;
 }
 
@@ -81,6 +90,7 @@ export function filtersWords(source: Source): string {
   if (source.kind === "getleads") {
     if (source.params.job_function) parts.push(`job function ${source.params.job_function}`);
     if (source.params.seniority?.length) parts.push(`seniority ${source.params.seniority.join(", ")}`);
+    if (source.params.company_description) parts.push(`description ${source.params.company_description}`);
     if (source.params.company_size?.length) parts.push(`company size ${source.params.company_size.join(", ")}`);
     if (source.params.email_status?.length) parts.push(`email ${source.params.email_status.join(", ")}`);
     if (source.params.geo_fence) parts.push(`geography ${source.params.geo_fence.schema}.${source.params.geo_fence.table}`);
@@ -119,6 +129,13 @@ export interface CampaignReportInput {
   rows_found: number | null;
   market_cap: number | null;
   strategy: string;
+  /** Pilot passed and TAM was not counted. The gate stays ok. */
+  pilot_only?: boolean;
+  tam_source?: string;
+  tam_check?: CampaignReportEntry["tam_check"];
+  getleads_count?: number | null;
+  ai_ark_count?: number | null;
+  pilot?: PilotScore;
 }
 
 export function replyRateText(sends: number, interested: number, tooEarly: boolean): string {
@@ -127,8 +144,9 @@ export function replyRateText(sends: number, interested: number, tooEarly: boole
   return `${rate.toFixed(1)} per 2,000 (${interested} interested in ${sends} sends)`;
 }
 
-export function campaignGate(input: Pick<CampaignReportInput, "paused" | "tam_total" | "tam_left" | "sends" | "interested" | "too_early" | "rows_found" | "market_cap">): CampaignReportEntry["gate"] {
+export function campaignGate(input: Pick<CampaignReportInput, "paused" | "tam_total" | "tam_left" | "sends" | "interested" | "too_early" | "rows_found" | "market_cap" | "pilot_only">): CampaignReportEntry["gate"] {
   if (input.paused) return "paused";
+  if (input.pilot_only) return "ok";
   if (isSuspectFilter(input.tam_total, input.rows_found, input.market_cap)) return "suspect_filter";
   if (input.tam_left < TAM_LEFT_FLOOR) return "tam_filled";
   const rate = input.sends === 0 ? 0 : (input.interested / input.sends) * 2000;
@@ -150,6 +168,11 @@ export function buildCampaignReport(rows: readonly CampaignReportInput[]): Campa
     reply_rate: replyRateText(row.sends, row.interested, row.too_early),
     gate: campaignGate(row),
     strategy: row.strategy || "Repeats the saved recipe.",
+    ...(row.tam_source ? { tam_source: row.tam_source } : {}),
+    ...(row.tam_check ? { tam_check: row.tam_check } : {}),
+    ...(row.getleads_count !== undefined ? { getleads_count: row.getleads_count } : {}),
+    ...(row.ai_ark_count !== undefined ? { ai_ark_count: row.ai_ark_count } : {}),
+    ...(row.pilot ? { pilot: row.pilot } : {}),
   }));
 }
 
@@ -165,7 +188,17 @@ export function formatCampaignReport(rows: readonly CampaignReportEntry[]): stri
   return rows
     .map(
       (row) =>
-        `#${row.campaign_id} ${row.campaign_name}: found ${row.found}, to add ${row.to_add}, source ${row.source}, titles ${row.titles}, filters ${row.filters}, TAM ${row.tam_total}, left ${row.tam_left}, replies ${row.reply_rate}, gate ${row.gate}. ${row.strategy}`,
+        [
+          `#${row.campaign_id} ${row.campaign_name}: found ${row.found}, to add ${row.to_add}, source ${row.source}, titles ${row.titles}, filters ${row.filters}, TAM ${row.tam_total}, left ${row.tam_left}, replies ${row.reply_rate}, gate ${row.gate}.`,
+          row.tam_source ? ` TAM source ${row.tam_source}.` : "",
+          row.tam_check ? ` tam_check ${row.tam_check}.` : "",
+          row.getleads_count != null ? ` getleads ${row.getleads_count}.` : "",
+          row.ai_ark_count != null ? ` AI Ark ${row.ai_ark_count}.` : row.tam_check === "tam_mismatch" && row.ai_ark_count === null ? " AI Ark not wired." : "",
+          row.pilot
+            ? ` Pilot ${row.pilot.rows_scored} scored, title ${row.pilot.title_match ?? "n/a"}%, industry ${row.pilot.industry_match ?? "n/a"}%, description ${row.pilot.description_match ?? "n/a"}%, headcount ${row.pilot.headcount_match ?? "n/a"}%, geography ${row.pilot.geography_match ?? "n/a"}%, gate ${row.pilot.gate}.`
+            : "",
+          ` ${row.strategy}`,
+        ].join(""),
     )
     .join("\n");
 }

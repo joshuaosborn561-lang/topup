@@ -96,6 +96,22 @@ export class Repo {
     return rows;
   }
 
+  /** Fingerprint stored on the last size step that passed its pilot. Null when this lane has not passed one. */
+  async lastGoodSizeFingerprint(clientTag: string, lane: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ fp: string | null }>(
+      `select s.counts->>'recipe_fingerprint' as fp
+         from topup.runs r
+         join topup.run_steps s on s.run_id = r.run_id and s.step = 'size' and s.status = 'done'
+        where r.client_tag = $1 and r.lane = $2
+          and s.counts->>'pilot_gate' = 'ok'
+          and coalesce(s.counts->>'recipe_fingerprint', '') <> ''
+        order by r.opened_at desc
+        limit 1`,
+      [clientTag, lane],
+    );
+    return rows[0]?.fp ?? null;
+  }
+
   async lastRunForLane(clientTag: string, lane: string): Promise<RunRow | null> {
     const { rows } = await this.db.query<RunRow>(
       `select * from topup.runs where client_tag = $1 and lane = $2 order by opened_at desc limit 1`,
@@ -196,6 +212,18 @@ export class Repo {
     );
     await this.db.query(
       `insert into topup.service_flags (flag, enabled) values ('loads_paused', false) on conflict (flag) do nothing`,
+    );
+    await this.db.query(
+      `alter table topup.campaign_registry add column if not exists icp_kind text`,
+    );
+    await this.db.query(
+      `update topup.campaign_registry
+          set icp_kind = 'non_linkedin'
+        where icp_kind is null
+          and client_tag in ('peterson', 'peterson_earthworks', 'emcor', 'vector_energy', 'deep_roots')`,
+    );
+    await this.db.query(
+      `update topup.campaign_registry set icp_kind = 'linkedin_native' where icp_kind is null`,
     );
   }
 

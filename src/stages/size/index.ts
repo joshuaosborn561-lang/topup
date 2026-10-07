@@ -29,8 +29,45 @@ import { campaignSizeRoutes, type SizeLeaf, type SizeRoute, type SizeSegment } f
 import { recycleDays } from "../suppress/recycle.js";
 import { combineSizeLine, listCountLine, type CountUnit, type SegmentMeasure, type UnitTotal } from "./combine.js";
 import { sizeReport } from "./report.js";
+import {
+  PILOT_ROWS,
+  pilotAllowsSize,
+  pilotExpectFor,
+  pilotMismatchReason,
+  pilotRowsFromCsv,
+  recipeFingerprint,
+  scorePilot,
+  type PilotRow,
+  type PilotScore,
+} from "./pilot.js";
+import { icpKindForClient, linkedinTamDecision, originalTamFromBuilds, type IcpKind, type LinkedinTam, type OriginalTam } from "./tamSource.js";
 
 const log = logger("size");
+
+interface SizeReportContext {
+  pilots: Map<number, PilotScore>;
+  originals: Map<number, OriginalTam>;
+  linkedin: Map<number, LinkedinTam>;
+  fingerprint: string;
+  builds: Record<string, unknown>[];
+  icp: IcpKind;
+  pilotOnly?: boolean;
+}
+
+function emptyContext(fingerprint: string): SizeReportContext {
+  return {
+    pilots: new Map(),
+    originals: new Map(),
+    linkedin: new Map(),
+    fingerprint,
+    builds: [],
+    icp: "linkedin_native",
+  };
+}
+
+function scoreSafe(recipe: Recipe, params: GetleadsFilters, rows: PilotRow[]): PilotScore {
+  return scorePilot(rows, pilotExpectFor(recipe.client_tag, recipe.lane, params));
+}
 
 /**
  * Step 2 — Size it (skill lead-list-build; skill tam-sizing; D29, D33).
@@ -54,6 +91,8 @@ export interface SizeDeps extends StageDeps {
   rails: SpendRails;
   maps: MapsStats | null;
   permits: PermitCounts | null;
+  /** Same filters as getleads. Unset means the count is not wired, and a LinkedIn size parks tam_mismatch. */
+  aiArk?: { count(filters: GetleadsFilters): Promise<{ total_matching: number }> } | null;
 }
 
 export interface Partition {
@@ -159,6 +198,24 @@ export class SizeStage {
       return park(this.d, run, "size", reason, attempts);
     }
     const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
+    const builds = await this.d.repo.campaignBuilds(run.client_tag, campaignIds).catch(() => [] as Record<string, unknown>[]);
+    const icp = icpKindForClient(run.client_tag);
+    const fingerprint = recipeFingerprint(recipe);
+    const pilotOnly = run.counts_by_status?.stop_after_pilot === 1;
+    const pilots = new Map<number, PilotScore>();
+    const originals = new Map<number, OriginalTam>();
+    const linkedin = new Map<number, LinkedinTam>();
+    if (icp === "linkedin_native") {
+      const last = await this.d.repo.lastGoodSizeFingerprint(run.client_tag, run.lane).catch(() => null);
+      if (pilotOnly || last !== fingerprint) {
+        const piloted = await this.pilotSamples(run, recipe, campaignIds);
+        if (piloted.kind === "park") return piloted.outcome;
+        for (const [id, score] of piloted.scores) pilots.set(id, score);
+        if (pilotOnly) {
+          return this.finishPilotOnly(run, recipe, campaignIds, pilots, fingerprint, snaps);
+        }
+      }
+    }
     const counts: Record<string, number> = { size_sources: 0 };
     const lines: string[] = [];
     const pre = skippedSizeRoutes(recipe, campaignIds);
@@ -184,6 +241,30 @@ export class SizeStage {
         lines.push(`#${id}: nothing to count`);
         sized += 1;
         continue;
+      }
+      if (icp === "non_linkedin") {
+        const original = originalTamFromBuilds(builds, id);
+        originals.set(id, original);
+        if (original.kind === "pool") {
+          counts[`tam_${id}`] = original.tam_total;
+          counts[`businesses_${id}`] = original.tam_total;
+          counts.size_sources += 1;
+          const snap = snaps.filter((s) => s.smartlead_campaign_id === id);
+          const need = rowsNeeded(snap, recipe.runway.target_days, 7);
+          const planRows =
+            original.tam_total <= 0
+              ? 0
+              : Math.max(1, Math.min(recipe.runway.max_per_run, need === null ? recipe.runway.max_per_run : Math.max(need, 0), original.tam_total));
+          counts[`plan_rows_${id}`] = planRows;
+          lines.push(`#${id}: TAM ${original.tam_total} from ${original.tam_source}`);
+          sized += 1;
+          continue;
+        }
+        if (routed.kind !== "maps" && routed.kind !== "permits") {
+          skipped.push(`#${id}: ${original.reason}`);
+          counts[`skipped_${id}`] = 1;
+          continue;
+        }
       }
       const segments = segmentsFor(routed, id);
       const rows = await Promise.all(segments.map((seg) => this.measureSegment(run, recipe, seg)));
@@ -246,6 +327,15 @@ export class SizeStage {
         if (line >= 0) lines[line] = `#${id}: TAM ${counts[`tam_${id}`] ?? 0}, request ${share}`;
       });
     }
+    if (icp === "linkedin_native") {
+      const arkByFilter = new Map<string, number | null>();
+      for (const id of peopleIds) {
+        const filters = getleadsFilters(campaignSizeRoutes(recipe, [id])[0]?.route ?? { kind: "skip", line: "" });
+        const key = filters ? JSON.stringify(filters) : "";
+        if (!arkByFilter.has(key)) arkByFilter.set(key, filters ? await this.aiArkCount(filters) : null);
+        linkedin.set(id, linkedinTamDecision(counts[`tam_${id}`] ?? 0, arkByFilter.get(key) ?? null));
+      }
+    }
     if (sized === 0) {
       const reason = skipped.length ? skipped.join("; ") : "no target campaigns to size";
       await this.d.repo.failStep(run.run_id, "size", reason, true);
@@ -274,7 +364,12 @@ export class SizeStage {
     ]
       .filter((part): part is string => Boolean(part))
       .join("\n");
-    return this.finishWithReport(run, recipe, campaignIds, counts, snaps, peopleCampaigns > 0 ? peopleNet : (counts.plan_rows ?? 0), line);
+    const context = { pilots, originals, linkedin, fingerprint, builds, icp };
+    const mismatched = [...linkedin.values()].flatMap((item) => (item.reason ? [item.reason] : []));
+    if (mismatched.length) {
+      return this.parkReported(run, recipe, campaignIds, counts, snaps, context, mismatched.join("; "));
+    }
+    return this.finishWithReport(run, recipe, campaignIds, counts, snaps, peopleCampaigns > 0 ? peopleNet : (counts.plan_rows ?? 0), line, context);
   }
 
   /**
@@ -432,10 +527,11 @@ export class SizeStage {
     snaps: Array<{ smartlead_campaign_id: number; name: string | null }>,
     useful: number,
     line: string,
+    context?: SizeReportContext,
   ): Promise<StageOutcome> {
     let report: CampaignReportEntry[] = [];
     try {
-      report = await this.reportFor(run, recipe, campaignIds, counts, snaps);
+      report = await this.reportFor(run, recipe, campaignIds, counts, snaps, context);
     } catch (err) {
       log.warn("campaign report failed", { run_id: run.run_id, error: (err as Error).message });
     }
@@ -444,6 +540,9 @@ export class SizeStage {
       await this.d.repo.mergeStepExtra(run.run_id, "size", { ...counts, campaign_report: report });
       await this.d.repo.failStep(run.run_id, "size", why, true);
       return park(this.d, run, "size", why, 1);
+    }
+    if (context?.fingerprint) {
+      await this.d.repo.mergeStepExtra(run.run_id, "size", { recipe_fingerprint: context.fingerprint, pilot_gate: "ok" });
     }
     return finish(this.d, run, "size", useful, counts, line, report);
   }
@@ -454,8 +553,9 @@ export class SizeStage {
     campaignIds: number[],
     counts: Record<string, number>,
     snaps: Array<{ smartlead_campaign_id: number; name: string | null }>,
+    context?: SizeReportContext,
   ): Promise<CampaignReportEntry[]> {
-    const builds = await this.d.repo.campaignBuilds(run.client_tag, campaignIds).catch(() => [] as Record<string, unknown>[]);
+    const builds = context?.builds ?? (await this.d.repo.campaignBuilds(run.client_tag, campaignIds).catch(() => [] as Record<string, unknown>[]));
     const names = new Map(snaps.map((snap) => [snap.smartlead_campaign_id, snap.name ?? ""]));
     const rows = [];
     for (const id of campaignIds) {
@@ -468,6 +568,12 @@ export class SizeStage {
       const held = counts[`already_held_${id}`] ?? (campaignIds.length === 1 ? (counts.already_held ?? 0) : 0);
       const name = names.get(id) || `campaign ${id}`;
       const words = sourceWords(source);
+      const original = context?.originals.get(id);
+      const decision = context?.linkedin.get(id);
+      const pilot = context?.pilots.get(id);
+      const tamSource = original?.tam_source ?? decision?.tam_source;
+      const tamCheck: "ok" | "tam_mismatch" | "tam_source_missing" | undefined =
+        original?.kind === "missing" ? "tam_source_missing" : original?.kind === "pool" ? "ok" : decision?.tam_check;
       rows.push({
         campaign_id: id,
         campaign_name: name,
@@ -484,12 +590,176 @@ export class SizeStage {
         paused: isPausedLabel(recipe.lane) || isPausedLabel(name),
         rows_found: build.rows_found,
         market_cap: marketCapFor(recipe.lane, words),
-        strategy: build.build_label
-          ? `Repeats ${build.build_label}. Same source and titles as that build.`
-          : `Repeats ${recipe.recipe_id}. Same source and titles as the saved recipe.`,
+        strategy: context?.pilotOnly
+          ? "Pilot passed. TAM was not sized. Nothing was loaded."
+          : build.build_label
+            ? `Repeats ${build.build_label}. Same source and titles as that build.`
+            : `Repeats ${recipe.recipe_id}. Same source and titles as the saved recipe.`,
+        pilot_only: context?.pilotOnly,
+        ...(tamSource ? { tam_source: tamSource } : {}),
+        ...(tamCheck ? { tam_check: tamCheck } : {}),
+        ...(decision ? { getleads_count: decision.getleads_count, ai_ark_count: decision.ai_ark_count } : {}),
+        ...(pilot ? { pilot } : {}),
       });
     }
     return buildCampaignReport(rows);
+  }
+
+  private async finishPilotOnly(
+    run: RunRow,
+    recipe: Recipe,
+    campaignIds: number[],
+    pilots: Map<number, PilotScore>,
+    fingerprint: string,
+    snaps: Array<{ smartlead_campaign_id: number; name: string | null }>,
+  ): Promise<StageOutcome> {
+    const context: SizeReportContext = {
+      pilots,
+      originals: new Map(),
+      linkedin: new Map(),
+      fingerprint,
+      builds: [],
+      icp: "linkedin_native",
+      pilotOnly: true,
+    };
+    const counts: Record<string, number> = { pilot_only: 1, size_sources: pilots.size };
+    return this.finishWithReport(
+      run,
+      recipe,
+      campaignIds,
+      counts,
+      snaps,
+      pilots.size,
+      `Pilot done (${pilots.size} campaign filter(s)). TAM was not sized. Nothing was loaded.`,
+      context,
+    );
+  }
+
+  private async parkReported(
+    run: RunRow,
+    recipe: Recipe,
+    campaignIds: number[],
+    counts: Record<string, number>,
+    snaps: Array<{ smartlead_campaign_id: number; name: string | null }>,
+    context: SizeReportContext,
+    reason: string,
+  ): Promise<StageOutcome> {
+    let report: CampaignReportEntry[] = [];
+    try {
+      report = await this.reportFor(run, recipe, campaignIds, counts, snaps, context);
+    } catch (err) {
+      log.warn("campaign report failed", { run_id: run.run_id, error: (err as Error).message });
+    }
+    await this.d.repo.mergeStepExtra(run.run_id, "size", { ...counts, campaign_report: report, pilot_gate: "pilot_mismatch" });
+    await this.d.repo.failStep(run.run_id, "size", reason, true);
+    return park(this.d, run, "size", reason, 1);
+  }
+
+  /** One sample per distinct getleads filter. Scores only. The CSV is not logged and not ingested. */
+  private async pilotSamples(
+    run: RunRow,
+    recipe: Recipe,
+    campaignIds: number[],
+  ): Promise<{ kind: "ok"; scores: Map<number, PilotScore> } | { kind: "park"; outcome: StageOutcome }> {
+    const groups = new Map<string, { params: GetleadsFilters; ids: number[] }>();
+    for (const id of campaignIds) {
+      const routed = campaignSizeRoutes(recipe, [id])[0]?.route;
+      const filters = routed ? getleadsFilters(routed) : null;
+      if (!filters) continue;
+      const key = JSON.stringify(filters);
+      const group = groups.get(key) ?? { params: filters, ids: [] };
+      group.ids.push(id);
+      groups.set(key, group);
+    }
+    const scores = new Map<number, PilotScore>();
+    const reasons: string[] = [];
+    if (groups.size === 0) return { kind: "ok", scores };
+    try {
+      for (const group of groups.values()) {
+        const rows = await this.samplePilotRows(run, group.params);
+        const score = scoreSafe(recipe, group.params, rows);
+        for (const id of group.ids) {
+          scores.set(id, score);
+          const why = pilotMismatchReason(id, score);
+          if (why) reasons.push(why);
+        }
+        log.info("pilot scored", {
+          run_id: run.run_id,
+          rows_scored: score.rows_scored,
+          gate: score.gate,
+          title_match: score.title_match,
+          industry_match: score.industry_match,
+          description_match: score.description_match,
+        });
+      }
+    } catch (err) {
+      const reason = `pilot_mismatch: the vendor sample could not be scored (${(err as Error).message})`;
+      const outcome = await this.parkReported(run, recipe, campaignIds, {}, [], emptyContext(recipeFingerprint(recipe)), reason);
+      return { kind: "park", outcome };
+    }
+    if (reasons.length || [...scores.values()].some((score) => !pilotAllowsSize(score))) {
+      const reason = reasons.join("; ") || "pilot_mismatch";
+      const outcome = await this.parkReported(
+        run,
+        recipe,
+        campaignIds,
+        {},
+        [],
+        { ...emptyContext(recipeFingerprint(recipe)), pilots: scores, icp: "linkedin_native" },
+        reason,
+      );
+      return { kind: "park", outcome };
+    }
+    return { kind: "ok", scores };
+  }
+
+  private async samplePilotRows(run: RunRow, filters: GetleadsFilters): Promise<PilotRow[]> {
+    const started = await this.d.getleads.startExport(filters, {
+      max_rows: PILOT_ROWS,
+      max_per_company: filters.max_per_company,
+    });
+    const deadline = Date.now() + 45_000;
+    let url: string | null = null;
+    let rowsExported = 0;
+    while (Date.now() < deadline) {
+      const status = await this.d.getleads.checkExport(started.export_id);
+      if (EXPORT_FAILED.includes(status.job_status)) throw new Error("pilot export failed");
+      if (status.export_url && (EXPORT_DONE.includes(status.job_status) || status.rows_exported !== null)) {
+        url = status.export_url;
+        rowsExported = status.rows_exported ?? 0;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    if (!url) throw new Error("pilot export was not ready");
+    await this.d.rails.record({
+      runId: run.run_id,
+      clientTag: run.client_tag,
+      step: "size",
+      vendor: "getleads",
+      action: "export",
+      rows: rowsExported,
+      credits: 0,
+      worstCaseCents: 0,
+      balanceBefore: null,
+      balanceAfter: null,
+      vendorJobId: started.export_id,
+      approvedBy: null,
+    });
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("pilot export could not be read");
+    return pilotRowsFromCsv(await res.text()).slice(0, PILOT_ROWS);
+  }
+
+  private async aiArkCount(filters: GetleadsFilters): Promise<number | null> {
+    if (!this.d.aiArk) return null;
+    try {
+      const counted = await this.d.aiArk.count(filters);
+      return Number.isFinite(counted.total_matching) ? counted.total_matching : null;
+    } catch (err) {
+      log.warn("AI Ark count failed", { error: (err as Error).message });
+      return null;
+    }
   }
 
   /** One list. Vendor calls take a slot so this client's other lists, and other clients, overlap. */

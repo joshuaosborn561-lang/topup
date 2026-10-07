@@ -260,14 +260,14 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "start_topup",
     {
       description:
-        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. dry_run or stop_after size counts and closes as sized, with no pull and no load. stop_after pull parks before ingest. Spend of $5 or above still asks Josh.",
+        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. stop_after pilot scores a 250-row sample and does not size TAM. dry_run or stop_after size counts and closes as sized, with no pull and no load. stop_after pull parks before ingest. Spend of $5 or above still asks Josh.",
       inputSchema: {
         client_tag: z.string(),
         lane: z.string().optional(),
         campaign_id: z.number().int().optional(),
         count: z.number().int().min(1).optional(),
         dry_run: z.boolean().optional().describe("Size only. Same as stop_after size."),
-        stop_after: z.enum(["size", "pull"]).optional().describe("size closes after the count. pull parks before ingest."),
+        stop_after: z.enum(["pilot", "size", "pull"]).optional().describe("pilot scores a sample and does not size TAM. size closes after the count. pull parks before ingest."),
       },
     },
     async ({ client_tag, lane, campaign_id, count, dry_run, stop_after }) => {

@@ -3,7 +3,8 @@ import { describe, it } from "node:test";
 import { outboundFilters } from "../clients/getleads.js";
 import { isSuspectFilter } from "../stages/size/campaignReport.js";
 import type { Recipe } from "./schema.js";
-import { linkedinHeadcountKeeps, sameOfferExcludedClients, shapeMspOwnersRecipe } from "./powergryd.js";
+import { MSP_DESCRIPTION_PHRASES, linkedinHeadcountKeeps, mspDescriptionQuery, sameOfferExcludedClients, shapeMspOwnersRecipe } from "./powergryd.js";
+import { MSP_MARKET_FLOOR } from "../stages/size/campaignReport.js";
 
 describe("PowerGRYD MSP owners filter", () => {
   it("replaces the empty mixed source with the Sept 22 getleads filter", () => {
@@ -23,7 +24,9 @@ describe("PowerGRYD MSP owners filter", () => {
     assert.deepEqual(sent.company_size, ["11 to 50", "51 to 200"]);
     assert.deepEqual(sent.countries, ["United States"]);
     assert.deepEqual(sent.industries, ["IT Services and IT Consulting"]);
-    assert.equal(sent.company_description, "managed service provider");
+    assert.equal(sent.company_description, mspDescriptionQuery());
+    for (const phrase of MSP_DESCRIPTION_PHRASES) assert.equal(sent.company_description?.includes(phrase), true);
+    assert.notEqual(sent.company_description, "managed service provider");
     assert.deepEqual(sent.email_status, ["VALID"]);
     assert.equal(sent.max_per_company, undefined);
     assert.equal(shaped.source.params.max_per_company, 2);
@@ -37,6 +40,8 @@ describe("PowerGRYD MSP owners filter", () => {
     const buildRows = 1362;
     assert.equal(isSuspectFilter(2400, buildRows, 40_000), false);
     assert.equal(isSuspectFilter(1_077_824, buildRows, 40_000), true);
+    assert.equal(isSuspectFilter(71, buildRows, 40_000), true);
+    assert.ok(71 < MSP_MARKET_FLOOR);
   });
 
   it("drops LinkedIn profile counts outside 20 to 100 and keeps a missing count", () => {

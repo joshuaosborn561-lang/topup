@@ -41,6 +41,9 @@ describe("recipe schema", () => {
     const base = await parlay();
     assert.throws(() => parseRecipe(withPath(base, ["source", "params", "industries"], ["Banking, Finance"])), /commas/);
     assert.doesNotThrow(() => parseRecipe(withPath(base, ["source", "params", "industries"], ["Banking", "Finance"])));
+    assert.doesNotThrow(() =>
+      parseRecipe(withPath(base, ["source", "params", "industries"], ["Transportation, Logistics, Supply Chain and Storage"])),
+    );
   });
 
   it("D35 item 15 — every email status may be pulled; unknown names are rejected", async () => {

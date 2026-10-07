@@ -88,7 +88,7 @@ export interface StartInput {
   smartleadClientId?: number;
   /** Size only. Same as stopAfter "size". */
   dryRun?: boolean;
-  /** size closes after the count. pull parks before ingest. */
+  /** pilot scores a sample and does not size TAM. size closes after the count. pull parks before ingest. */
   stopAfter?: StopAfter | null;
 }
 
@@ -158,6 +158,7 @@ export class Orchestrator {
       await this.d.repo.mergeRunCounts(opened.run.run_id, { requested_leads: Math.floor(input.requestedCount) });
     }
     const stopAfter = resolveStopAfter(input);
+    if (stopAfter === "pilot") await this.d.repo.mergeRunCounts(opened.run.run_id, { stop_after_pilot: 1 });
     if (stopAfter === "size") await this.d.repo.mergeRunCounts(opened.run.run_id, { stop_after_size: 1 });
     if (stopAfter === "pull") await this.d.repo.mergeRunCounts(opened.run.run_id, { stop_after_pull: 1 });
     const headline =
@@ -480,7 +481,9 @@ export class Orchestrator {
     const closed = (await this.d.repo.getRun(run.run_id))!;
     await this.closeWithReceipt(
       closed,
-      "Sized only. No pull, no export, no ingest. Nothing was loaded.",
+      run.counts_by_status?.stop_after_pilot === 1
+        ? "Pilot only. TAM was not sized. No pull, no ingest. Nothing was loaded."
+        : "Sized only. No pull, no export, no ingest. Nothing was loaded.",
       "Nothing queued. A full top-up is a new run.",
     );
   }
