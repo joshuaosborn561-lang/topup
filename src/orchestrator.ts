@@ -5,6 +5,7 @@ import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
 import { shapeBcpRecipe } from "./recipes/bcp.js";
+import { shapeMspOwnersRecipe } from "./recipes/powergryd.js";
 import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
@@ -263,7 +264,7 @@ export class Orchestrator {
         return [] as Record<string, unknown>[];
       });
     const applied = applyIcpSources(trimmed.recipe, this.d.fileRecipes ?? [], buildsFromRows(buildRows));
-    const recipe = shapeBcpRecipe(applied.recipe);
+    const recipe = shapeMspOwnersRecipe(shapeBcpRecipe(applied.recipe));
     if (applied.missing.length || Object.keys(applied.used).length) {
       log.info("icp source", { run_id: initial.run_id, used: applied.used, missing: applied.missing });
     }

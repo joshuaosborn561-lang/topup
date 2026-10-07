@@ -52,6 +52,8 @@ const getleadsParams = z
       .optional(),
     industries: z.array(noComma).optional(),
     companyIndustry: z.array(noComma).optional(),
+    /** About-text wording. Specialties and company_headline are not sent. */
+    company_description: z.string().min(1).optional(),
     email_status: z.array(z.enum(GETLEADS_EMAIL_STATUSES)).min(1).optional(),
     max_per_company: z.number().int().min(1).optional(),
   })

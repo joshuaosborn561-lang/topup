@@ -229,6 +229,7 @@ export const GETLEADS_COUNT_KEYS = [
   "states",
   "cities",
   "industries",
+  "company_description",
   "email_status",
   "employee_profiles_on_linkedin_min",
   "employee_profiles_on_linkedin_max",
