@@ -1,4 +1,4 @@
-import { type Getleads, type GetleadsFilters } from "../../clients/getleads.js";
+import { EXPORT_DONE, EXPORT_FAILED, type Getleads, type GetleadsFilters } from "../../clients/getleads.js";
 import type { MapsStats } from "../../clients/mapsStats.js";
 import type { PermitCounts } from "../../clients/permits.js";
 import type { RunRow } from "../../domain/runs.js";
@@ -7,6 +7,7 @@ import { Overlap, SIZE_ACROSS_CLIENTS, SIZE_WITHIN_CLIENT } from "../../lib/conc
 import { logger } from "../../lib/log.js";
 import { runTargetCampaignIds } from "../../recipes/campaigns.js";
 import { countSlices, loadGeoFenceCities } from "../../recipes/geoFence.js";
+import { heldMethodCode, lanePeopleTam, netNewFromOverlap, planShares, scaleOverlap, emailsFromCsv, type HeldMethod } from "./overlap.js";
 import { recipeAuthorises, type GetleadsSource, type MapsSource, type PermitsSource, type Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
@@ -155,6 +156,8 @@ export class SizeStage {
     let peopleNet = 0;
     let peopleCampaigns = 0;
     let sized = 0;
+    const peopleIds: number[] = [];
+    let sampleFilters: GetleadsFilters | null = null;
     for (const id of pre.run) {
       const routed = campaignSizeRoutes(recipe, [id])[0]?.route;
       if (!routed || routed.kind === "park") {
@@ -181,28 +184,54 @@ export class SizeStage {
       const businesses = rows.filter((row) => row.measure.unit === "businesses").reduce((sum, row) => sum + row.measure.total, 0);
       const permits = rows.filter((row) => row.measure.unit === "permits").reduce((sum, row) => sum + row.measure.total, 0);
       const hasPeople = rows.some((row) => row.measure.unit === "people");
-      let net = people;
-      if (hasPeople) {
-        const days = recycleDays(recipe.suppression.recycle_after_days);
-        const held = await this.alreadyHeld(recipe.smartlead_client_id, [id], days, recipe.suppression.exclude_other_live_campaigns);
-        net = Math.max(0, people - held.count);
-        peopleNet += net;
-        peopleCampaigns += 1;
-        counts[`already_held_${id}`] = held.count;
-      }
-      const snap = snaps.filter((s) => s.smartlead_campaign_id === id);
-      const need = rowsNeeded(snap, recipe.runway.target_days, 7);
-      const cap = hasPeople ? net : Math.max(businesses, permits, people);
-      const planRows = cap <= 0 ? 0 : Math.max(1, Math.min(recipe.runway.max_per_run, need === null ? recipe.runway.max_per_run : Math.max(need, 0), cap));
       const tam = hasPeople ? people : businesses > 0 ? businesses : permits;
       counts[`tam_${id}`] = tam;
-      counts[`plan_rows_${id}`] = planRows;
-      if (hasPeople) counts[`net_new_${id}`] = net;
       if (businesses) counts[`businesses_${id}`] = businesses;
       if (permits) counts[`permits_${id}`] = permits;
       counts.size_sources += segments.length;
-      lines.push(`#${id}: TAM ${tam}, request ${planRows}`);
+      if (hasPeople) {
+        peopleIds.push(id);
+        sampleFilters ??= getleadsFilters(routed);
+        lines.push(`#${id}: TAM ${tam}`);
+      } else {
+        const snap = snaps.filter((s) => s.smartlead_campaign_id === id);
+        const need = rowsNeeded(snap, recipe.runway.target_days, 7);
+        const cap = Math.max(businesses, permits, people);
+        const planRows = cap <= 0 ? 0 : Math.max(1, Math.min(recipe.runway.max_per_run, need === null ? recipe.runway.max_per_run : Math.max(need, 0), cap));
+        counts[`plan_rows_${id}`] = planRows;
+        lines.push(`#${id}: TAM ${tam}, request ${planRows}`);
+      }
       sized += 1;
+    }
+    let heldNote: string | null = null;
+    if (peopleIds.length) {
+      const tams = peopleIds.map((id) => counts[`tam_${id}`] ?? 0);
+      const laneTam = lanePeopleTam(tams);
+      const days = recycleDays(recipe.suppression.recycle_after_days);
+      const held = await this.heldInTam(run, recipe.smartlead_client_id, peopleIds, days, recipe.suppression.exclude_other_live_campaigns, laneTam, sampleFilters);
+      const net = netNewFromOverlap(laneTam, held.count);
+      const needs = peopleIds.map((id) => {
+        const snap = snaps.filter((s) => s.smartlead_campaign_id === id);
+        const need = rowsNeeded(snap, recipe.runway.target_days, 7);
+        return need === null ? recipe.runway.max_per_run : Math.max(need, 0);
+      });
+      const shares = planShares(net, needs);
+      const heldShares = planShares(held.count, peopleIds.map(() => Math.max(held.count, 1)));
+      peopleNet = net;
+      peopleCampaigns = peopleIds.length;
+      counts.lane_tam = laneTam;
+      counts.already_held = held.count;
+      counts.projected_net_new = net;
+      counts.held_method = heldMethodCode(held.method);
+      heldNote = held.note;
+      peopleIds.forEach((id, i) => {
+        const share = Math.min(recipe.runway.max_per_run, shares[i] ?? 0);
+        counts[`plan_rows_${id}`] = share;
+        counts[`net_new_${id}`] = share;
+        counts[`already_held_${id}`] = heldShares[i] ?? 0;
+        const line = lines.findIndex((text) => text.startsWith(`#${id}:`));
+        if (line >= 0) lines[line] = `#${id}: TAM ${counts[`tam_${id}`] ?? 0}, request ${share}`;
+      });
     }
     if (sized === 0) {
       const reason = skipped.length ? skipped.join("; ") : "no target campaigns to size";
@@ -225,8 +254,10 @@ export class SizeStage {
     const line = [
       `Size done (${sized} campaign(s)):`,
       ...lines,
+      peopleCampaigns > 0 ? `Lane TAM ${counts.lane_tam ?? 0}, held in this TAM ${counts.already_held ?? 0}, net new ${peopleNet}.` : null,
+      heldNote,
       skipped.length ? `Skipped: ${skipped.join("; ")}` : null,
-      "Each campaign keeps its own TAM and requested count.",
+      "The lane net new is split across campaigns. The plan does not exceed it.",
     ]
       .filter((part): part is string => Boolean(part))
       .join("\n");
@@ -270,8 +301,8 @@ export class SizeStage {
     _measures: SegmentMeasure[],
   ): Promise<StageOutcome> {
     const days = recycleDays(recipe.suppression.recycle_after_days);
-    const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns);
-    const netNew = Math.max(0, total - held.count);
+    const held = await this.heldInTam(run, recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns, total, null);
+    const netNew = netNewFromOverlap(total, held.count);
     const snaps = await campaignSnapshots(this.d.repo.raw(), campaignIds).catch(() => []);
     const need = rowsNeeded(snaps, recipe.runway.target_days, 7);
     const planRows = Math.max(1, Math.min(recipe.runway.max_per_run, need === null ? recipe.runway.max_per_run : Math.max(need, recipe.size.useful_floor), Math.max(netNew, 1)));
@@ -348,8 +379,8 @@ export class SizeStage {
     let heldNote: string | null = null;
     if (people) {
       const days = recycleDays(recipe.suppression.recycle_after_days);
-      const held = await this.alreadyHeld(recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns);
-      peopleNet = Math.max(0, people.total - held.count);
+      const held = await this.heldInTam(run, recipe.smartlead_client_id, campaignIds, days, recipe.suppression.exclude_other_live_campaigns, people.total, null);
+      peopleNet = netNewFromOverlap(people.total, held.count);
       heldNote = held.note;
     }
     const counts: Record<string, number> = {
@@ -558,18 +589,109 @@ export class SizeStage {
     return { ok: true, total: decision.total, partition: decision.partition };
   }
 
-  /** Distinct addresses this client sent in the recycle window, plus live-campaign holds (D36). Matches step 5. */
-  private async alreadyHeld(clientId: number, campaignIds: number[], days: number, excludeLive: boolean): Promise<{ count: number; note: string | null }> {
-    if (campaignIds.length === 0) return { count: 0, note: "this run targets no campaigns, so nothing was subtracted" };
+  /**
+   * People in this TAM who are already held. A sample of the TAM is matched
+   * to the client held set and scaled. If that sample cannot be taken, the
+   * count is this lane's campaigns only. The client total is never used.
+   */
+  private async heldInTam(
+    run: RunRow,
+    clientId: number,
+    campaignIds: number[],
+    days: number,
+    excludeLive: boolean,
+    tam: number,
+    filters: GetleadsFilters | null,
+  ): Promise<{ count: number; method: HeldMethod; note: string }> {
+    const sample = filters ? await this.sampleTamEmails(run, filters) : [];
+    if (sample.length > 0) {
+      const matched = await this.countHeldEmails(clientId, campaignIds, days, excludeLive, sample);
+      const scaled = scaleOverlap(tam, sample.length, matched);
+      return {
+        count: scaled.held,
+        method: scaled.method,
+        note:
+          scaled.method === "overlap"
+            ? `${scaled.held} of this TAM are already held (matched the export page). The client total was not subtracted.`
+            : `${matched} of ${sample.length} sampled TAM rows are already held, scaled to ${scaled.held} of ${tam}. The client total was not subtracted.`,
+      };
+    }
+    const lane = await this.countHeldEmails(clientId, campaignIds, days, excludeLive, null);
+    const held = Math.min(tam, lane);
+    return {
+      count: held,
+      method: "lane",
+      note: `${held} addresses already held on this lane's campaigns. The client total was not subtracted.`,
+    };
+  }
+
+  /** One page of the TAM, at most 100 rows and 45 cities, so the count does not time out. Emails only. */
+  private async sampleTamEmails(run: RunRow, filters: GetleadsFilters): Promise<string[]> {
+    try {
+      let slice = filters;
+      if (filters.geo_fence) {
+        const cities = await loadGeoFenceCities(this.d.repo.raw(), filters.geo_fence);
+        slice = countSlices(filters, cities)[0] ?? filters;
+      } else if ((filters.cities?.length ?? 0) > 45) {
+        slice = { ...filters, cities: filters.cities!.slice(0, 45) };
+      }
+      const started = await this.d.getleads.startExport(slice, { max_rows: 100 });
+      const deadline = Date.now() + 20_000;
+      let url: string | null = null;
+      let rows = 0;
+      while (Date.now() < deadline) {
+        const status = await this.d.getleads.checkExport(started.export_id);
+        if (EXPORT_FAILED.includes(status.job_status)) return [];
+        if (status.export_url && (EXPORT_DONE.includes(status.job_status) || status.rows_exported !== null)) {
+          url = status.export_url;
+          rows = status.rows_exported ?? 0;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      if (!url) return [];
+      await this.d.rails.record({
+        runId: run.run_id,
+        clientTag: run.client_tag,
+        step: "size",
+        vendor: "getleads",
+        action: "export",
+        rows,
+        credits: 0,
+        worstCaseCents: 0,
+        balanceBefore: null,
+        balanceAfter: null,
+        vendorJobId: started.export_id,
+        approvedBy: null,
+      });
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      return emailsFromCsv(await res.text());
+    } catch {
+      return [];
+    }
+  }
+
+  /** Distinct addresses this client sent in the recycle window, plus live-campaign holds (D36). A sample limits it to those emails. Lane mode limits it to these campaigns. */
+  private async countHeldEmails(
+    clientId: number,
+    campaignIds: number[],
+    days: number,
+    excludeLive: boolean,
+    emails: string[] | null,
+  ): Promise<number> {
+    if (campaignIds.length === 0) return 0;
     const db = this.d.repo.raw();
     const { rows: has } = await db.query<{ leads: boolean; sends: boolean; staging: boolean; campaigns: boolean }>(
       `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends,
               to_regclass('public.leads_staging') is not null as staging, to_regclass('public.campaigns') is not null as campaigns`,
     );
-    if (!has[0].leads || !has[0].sends) {
-      return { count: 0, note: "no public.leads/sends mirror here; nothing was subtracted" };
-    }
+    if (!has[0]?.leads || !has[0].sends) return 0;
+    const sample = emails !== null && emails.length > 0;
+    if (!sample && !has[0].campaigns) return 0;
     const live = excludeLive && has[0].campaigns;
+    const laneSend = sample ? "" : `and l.campaign_id in (select id from public.campaigns where smartlead_campaign_id = any($3::bigint[]))`;
+    const laneLive = sample ? "" : `and c.smartlead_campaign_id = any($3::bigint[])`;
     const { rows } = await db.query<{ n: string }>(
       `select count(distinct e)::text as n from (
          select lower(l.email) as e
@@ -578,28 +700,37 @@ export class SizeStage {
          where l.smartlead_client_id = $1 and l.email is not null
            and s.sent and s.sent_at is not null
            and s.sent_at >= now() - ($2::int * interval '1 day')
+           ${laneSend}
          ${live ? `union
          select lower(l.email) as e
          from public.leads l
          join public.campaigns c on c.id = l.campaign_id
          where l.smartlead_client_id = $1 and l.email is not null
-           and upper(coalesce(c.status, '')) not in ('STOPPED', 'COMPLETED')` : ""}
+           and upper(coalesce(c.status, '')) not in ('STOPPED', 'COMPLETED')
+           ${laneLive}` : ""}
          ${live && has[0].staging ? `union
          select lower(st.email) as e
          from public.leads_staging st
          join public.campaigns c on c.smartlead_campaign_id = st.campaign_id
          where c.smartlead_client_id = $1 and st.email is not null
-           and upper(coalesce(c.status, '')) not in ('STOPPED', 'COMPLETED')` : ""}
-       ) x`,
-      [clientId, days],
+           and upper(coalesce(c.status, '')) not in ('STOPPED', 'COMPLETED')
+           ${laneLive}` : ""}
+       ) x
+       ${sample ? "where e = any($3::text[])" : ""}`,
+      sample ? [clientId, days, emails] : [clientId, days, campaignIds],
     );
-    return {
-      count: Number(rows[0]?.n ?? 0),
-      note: excludeLive
-        ? `subtracted addresses this client sent in the last ${days} days, plus anyone already in a live campaign`
-        : `subtracted addresses this client sent in the last ${days} days`,
-    };
+    return Number(rows[0]?.n ?? 0);
   }
+}
+
+function getleadsFilters(route: SizeRoute): GetleadsFilters | null {
+  if (route.kind === "getleads") return route.source.params;
+  if (route.kind === "combine") {
+    for (const seg of route.segments) {
+      if (seg.route.kind === "getleads") return seg.route.source.params;
+    }
+  }
+  return null;
 }
 
 /** A campaign whose route parks is skipped. The others still size. */
