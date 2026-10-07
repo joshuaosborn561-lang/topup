@@ -167,7 +167,7 @@ function routeSizeGroup(g: CampaignGroup): SizeLeaf {
     if (g.source.note.startsWith("Josh lane:")) return { kind: "park", reason: g.source.note };
     return {
       kind: "park",
-      reason: "no ICP source. No recipe cell, the receipt did not name its lists, and the lane has no ICP.",
+      reason: "recipe has no company filter. No recipe cell, the receipt did not name its lists, and the lane has no ICP.",
     };
   }
   if (g.source.kind === "maps") return { kind: "maps", source: g.source };

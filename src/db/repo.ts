@@ -320,7 +320,9 @@ export class Repo {
   async finishStep(
     runId: string,
     step: Step,
-    patch: Partial<Pick<RunStepRow, "vendor_job_id" | "actual_cents" | "useful_output" | "counts" | "worst_case_cents" | "approved_cents">>,
+    patch: Partial<Omit<Pick<RunStepRow, "vendor_job_id" | "actual_cents" | "useful_output" | "worst_case_cents" | "approved_cents">, never>> & {
+      counts?: Record<string, unknown>;
+    },
   ): Promise<void> {
     await this.db.query(
       `update topup.run_steps set status = 'done', finished_at = now(),
@@ -345,6 +347,14 @@ export class Repo {
   }
 
   /** Add to a step's counts while it is still running (a marker such as "summary posted", or partial progress). */
+  async mergeStepExtra(runId: string, step: Step, extra: Record<string, unknown>): Promise<void> {
+    await this.db.query(
+      `insert into topup.run_steps (run_id, step, status, counts) values ($1, $2, 'running', $3::jsonb)
+       on conflict (run_id, step) do update set counts = topup.run_steps.counts || $3::jsonb`,
+      [runId, step, JSON.stringify(extra)],
+    );
+  }
+
   async mergeStepCounts(runId: string, step: Step, counts: Record<string, number>): Promise<void> {
     await this.db.query(
       `insert into topup.run_steps (run_id, step, status, counts) values ($1, $2, 'running', $3::jsonb)
@@ -737,7 +747,7 @@ export class Repo {
       /* the view is not on every database; the receipt rows below are the same facts */
     }
     const { rows } = await this.db.query(
-      `select r.build_label, r.company_source, r.company_filters, r.written_at, c.campaign_id
+        `select r.build_label, r.company_source, r.company_filters, r.written_at, r.rows_found, c.campaign_id
          from topup.pull_receipts r
          cross join lateral unnest(r.campaign_ids) as c(campaign_id)
         where r.client_tag = $1 and c.campaign_id = any($2::bigint[])`,

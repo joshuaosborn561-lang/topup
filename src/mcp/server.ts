@@ -6,6 +6,7 @@ import { z } from "zod";
 import { ingestedTable } from "../db/pool.js";
 import type { Repo } from "../db/repo.js";
 import { presentRun, type Role } from "../domain/runs.js";
+import { campaignReportFromCounts } from "../stages/size/campaignReport.js";
 import { variantStats } from "../domain/working.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
@@ -211,8 +212,14 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
         d.repo.openCardsForRun(run_id),
         d.repo.raw().query(`select batch, status, rows, last_percent, resumes_used, sendable, rejected, unresolved from topup.verify_batches where run_id = $1 order by batch`, [run_id]),
       ]);
-      const { rows: steps } = await d.repo.raw().query(`select step, status, attempts, worst_case_cents, approved_cents, actual_cents, useful_output, counts, last_error from topup.run_steps where run_id = $1`, [run_id]);
-      return text({ run, steps, verify_batches: batches.rows, open_cards: cards.map((c) => ({ card_id: c.card_id, kind: c.kind, audience: c.audience })) });
+      const { rows: steps } = await d.repo.raw().query<{ step: string; counts: Record<string, unknown> }>(
+        `select step, status, attempts, worst_case_cents, approved_cents, actual_cents, useful_output, counts, last_error from topup.run_steps where run_id = $1`,
+        [run_id],
+      );
+      const pull = steps.find((step) => step.step === "pull");
+      const size = steps.find((step) => step.step === "size");
+      const campaign_report = campaignReportFromCounts(pull?.counts ?? size?.counts);
+      return text({ run, steps, campaign_report, verify_batches: batches.rows, open_cards: cards.map((c) => ({ card_id: c.card_id, kind: c.kind, audience: c.audience })) });
     },
   );
 

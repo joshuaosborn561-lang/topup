@@ -8,6 +8,7 @@ import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
 import { trimToOwningClient } from "./recipes/trim.js";
+import { campaignReportFromCounts, formatCampaignReport, isPausedLabel } from "./stages/size/campaignReport.js";
 import { haltBeforeStep, parkIngestReason, resolveStopAfter, type StopAfter } from "./runs/halt.js";
 import { resumeEffect } from "./runs/resume.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
@@ -126,6 +127,9 @@ export class Orchestrator {
     const recipe = resolved.recipe;
     const targets = resolveTargetCampaignIds(recipe, input.campaignIds);
     if (!targets.ok) return { ok: false, message: targets.message };
+    if (await this.lanePaused(recipe.client_tag, recipe.lane, targets.ids)) {
+      return { ok: false, message: `${recipe.client_tag}/${recipe.lane} is paused. It does not start.` };
+    }
     const opened = await this.d.repo.openRun({
       recipe_id: recipe.recipe_id,
       client_tag: recipe.client_tag,
@@ -393,23 +397,41 @@ export class Orchestrator {
     await this.ledger((l) => l.gateUnmet(run.client_tag, run.lane, g.step, g.why, { run_id: run.run_id, waiting_on: "owner", next_intent: "Waiting for Resume or Abort on the gate card." }));
     const open = (await this.d.repo.openCardsForRun(run.run_id)).some((c) => c.kind === "gate" && c.payload.step === stage);
     if (open) return;
+    const sizeStep = await this.d.repo.getStep(run.run_id, "size").catch(() => null);
+    const reportRows = campaignReportFromCounts(sizeStep?.counts as unknown as Record<string, unknown>);
+    const report = formatCampaignReport(reportRows);
     await this.d.console.ask({
       run,
       kind: "gate",
       audience: "owner",
-      payload: { step: stage, spine_step: g.step, gate: g.gate, reason: g.why, counts: g.counts },
+      payload: { step: stage, spine_step: g.step, gate: g.gate, reason: g.why, counts: g.counts, campaign_report: reportRows },
       text: `${stepLabel(g.step)} gate unmet — ${g.gate}: ${g.why}`,
-      blocks: (cardId) => gateCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane, stepLabel: stepLabel(g.step), gate: g.gate, why: g.why, counts: g.counts }),
+      blocks: (cardId) => gateCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane, stepLabel: stepLabel(g.step), gate: g.gate, why: g.why, counts: g.counts, report: report || undefined }),
     });
+  }
+
+  /** A paused campaign name or lane does not open, including when the watch asks. */
+  private async lanePaused(clientTag: string, lane: string, campaignIds: number[]): Promise<boolean> {
+    if (isPausedLabel(lane)) return true;
+    const rows = await this.d.repo.campaignRegistry(clientTag).catch(() => [] as Record<string, unknown>[]);
+    return rows.some((row) => campaignIds.includes(Number(row.campaign_id)) && isPausedLabel(row.campaign_name == null ? "" : String(row.campaign_name)));
   }
 
   /** The receipt is the last gate: nothing is done until it posts, and it is the last event on the lane. */
   private async closeWithReceipt(closed: RunRow, note: string, nextIntent: string): Promise<void> {
     const shown = presentRun(closed);
-    await this.d.console.receipt(shown, note);
+    const [sizeStep, pullStep] = await Promise.all([
+      this.d.repo.getStep(closed.run_id, "size").catch(() => null),
+      this.d.repo.getStep(closed.run_id, "pull").catch(() => null),
+    ]);
+    const report = formatCampaignReport(
+      campaignReportFromCounts((pullStep?.counts ?? sizeStep?.counts) as unknown as Record<string, unknown>),
+    );
+    const fullNote = report ? `${note}\n${report}`.slice(0, 3500) : note;
+    await this.d.console.receipt(shown, fullNote);
     const counts = orderCounts(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts";
     await this.ledger((l) => l.setStep(shown.client_tag, shown.lane, null, { run_id: null, line: `Run ${shown.run_id.slice(0, 8)} closed ${shown.status}.`, next_intent: nextIntent }));
-    await this.ledger((l) => l.event({ client_tag: shown.client_tag, lane: shown.lane, run_id: shown.run_id, event: "receipt", line: `Receipt: ${shown.status} · ${counts} · ${note}`, next_intent: nextIntent, actor: "service" }));
+    await this.ledger((l) => l.event({ client_tag: shown.client_tag, lane: shown.lane, run_id: shown.run_id, event: "receipt", line: `Receipt: ${shown.status} · ${counts} · ${fullNote}`, next_intent: nextIntent, actor: "service" }));
   }
 
   /**
@@ -596,11 +618,16 @@ export class Orchestrator {
   }
 
   /** For /holds and list_holds: open cards with the run they belong to. */
-  async holds(clientTag?: string): Promise<Array<{ card_id: string; kind: string; audience: Role; run_id: string | null; client_tag: string | null; age_minutes: number; summary: string }>> {
+  async holds(clientTag?: string): Promise<Array<{ card_id: string; kind: string; audience: Role; run_id: string | null; client_tag: string | null; age_minutes: number; summary: string; campaign_report: ReturnType<typeof campaignReportFromCounts> }>> {
     const cards = await this.d.repo.openCards(undefined, clientTag);
     const out = [];
     for (const c of cards) {
       const run = c.run_id ? await this.d.repo.getRun(c.run_id) : null;
+      const campaign_report = Array.isArray(c.payload.campaign_report)
+        ? campaignReportFromCounts({ campaign_report: c.payload.campaign_report })
+        : run
+          ? campaignReportFromCounts((await this.d.repo.getStep(run.run_id, "size"))?.counts as unknown as Record<string, unknown>)
+          : [];
       out.push({
         card_id: c.card_id,
         kind: c.kind,
@@ -609,6 +636,7 @@ export class Orchestrator {
         client_tag: run?.client_tag ?? null,
         age_minutes: Math.round((Date.now() - Date.parse(c.created_at)) / 60000),
         summary: summarize(c.kind, c.payload),
+        campaign_report,
       });
     }
     return out;

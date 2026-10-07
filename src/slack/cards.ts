@@ -80,6 +80,8 @@ export interface SpendCard {
   dailyCapCents: number;
   /** Under $5 this is approve_small_spend (operator). $5 or more stays approve_spend (Josh). */
   approveChoice?: "approve_spend" | "approve_small_spend";
+  /** Per-campaign counts. Never lead rows. */
+  report?: string;
 }
 
 /** Rail 2: anything over the auto cap asks first, with the worst case in dollars. */
@@ -94,6 +96,7 @@ export function spendApprovalCard(c: SpendCard): Block[] {
       ["Projected useful output", c.projectedUseful == null ? "unknown" : String(c.projectedUseful)],
       ["Today so far", `${usd(c.spentTodayCents)} of ${usd(c.dailyCapCents)} daily cap`],
     ]),
+    ...(c.report ? [section(c.report.slice(0, 2500))] : []),
     context("Worst case is computed from the service's price table and batch size, not a vendor cost field. Silence parks the run after 24h."),
     actions(c.cardId, [
       { choice: c.approveChoice ?? "approve_spend", label: `Approve ${usd(c.worstCaseCents)}`, style: "primary" },
@@ -299,12 +302,14 @@ export interface ParkedCard {
   step: string;
   attempts: number;
   error: string;
+  report?: string;
 }
 
 export function parkedCard(c: ParkedCard): Block[] {
   return [
     section(`:octagonal_sign: *Run parked — ${c.clientTag}* · run \`${c.runId.slice(0, 8)}\` · step *${c.step}* failed ${c.attempts} times`),
     section(`\`\`\`${c.error.slice(0, 900)}\`\`\``),
+    ...(c.report ? [section(c.report.slice(0, 2500))] : []),
     context("A parked run never retries on its own. Resume re-runs the step once; Abort closes the run."),
     actions(c.cardId, [
       { choice: "resume_run", label: "Resume", style: "primary" },
@@ -323,6 +328,7 @@ export interface GateCard {
   gate: string;
   why: string;
   counts: Record<string, number>;
+  report?: string;
 }
 
 /** A spine gate failed (D24): the run halted at the step; here is why; Resume re-runs the step once, Abort closes the run. */
@@ -333,6 +339,7 @@ export function gateCard(c: GateCard): Block[] {
   return [
     section(`:no_entry: *${c.stepLabel} gate unmet — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\``),
     section(`*Gate:* ${c.gate}\n*Why:* ${c.why.slice(0, 600)}${counts ? `\n*Counts:* ${counts}` : ""}`),
+    ...(c.report ? [section(c.report.slice(0, 2500))] : []),
     context("The run halted at this step and will not move on its own. Resume re-runs the step and checks the gate again (fix the rows first); Abort closes the run. Silence never means yes."),
     actions(c.cardId, [
       { choice: "resume_run", label: "Resume", style: "primary" },

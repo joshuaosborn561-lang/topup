@@ -2,13 +2,26 @@ import { EXPORT_DONE, EXPORT_FAILED, type Getleads, type GetleadsFilters } from 
 import type { MapsStats } from "../../clients/mapsStats.js";
 import type { PermitCounts } from "../../clients/permits.js";
 import type { RunRow } from "../../domain/runs.js";
+import { variantStats } from "../../domain/working.js";
 import { campaignSnapshots } from "../../ledger/health.js";
 import { Overlap, SIZE_ACROSS_CLIENTS, SIZE_WITHIN_CLIENT } from "../../lib/concurrency.js";
 import { logger } from "../../lib/log.js";
 import { runTargetCampaignIds } from "../../recipes/campaigns.js";
 import { countSlices, loadGeoFenceCities } from "../../recipes/geoFence.js";
 import { heldMethodCode, lanePeopleTam, netNewFromOverlap, planShares, scaleOverlap, emailsFromCsv, type HeldMethod } from "./overlap.js";
-import { recipeAuthorises, type GetleadsSource, type MapsSource, type PermitsSource, type Recipe } from "../../recipes/schema.js";
+import { ruleSource } from "../../recipes/campaigns.js";
+import { recipeAuthorises, type GetleadsSource, type MapsSource, type PermitsSource, type Recipe, type Source } from "../../recipes/schema.js";
+import {
+  buildCampaignReport,
+  filtersWords,
+  isPausedLabel,
+  marketCapFor,
+  rowsFoundFromBuilds,
+  sourceWords,
+  suspectReason,
+  titlesWords,
+  type CampaignReportEntry,
+} from "./campaignReport.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, finish, park, type StageDeps, type StageOutcome } from "../common.js";
@@ -261,7 +274,7 @@ export class SizeStage {
     ]
       .filter((part): part is string => Boolean(part))
       .join("\n");
-    return finish(this.d, run, "size", peopleCampaigns > 0 ? peopleNet : (counts.plan_rows ?? 0), counts, line);
+    return this.finishWithReport(run, recipe, campaignIds, counts, snaps, peopleCampaigns > 0 ? peopleNet : (counts.plan_rows ?? 0), line);
   }
 
   /**
@@ -356,7 +369,7 @@ export class SizeStage {
         ? `campaign mirror has no sends in the window, so the pull plans the recipe's max_per_run (${planRows})`
         : `campaigns need ${need} rows for ${recipe.runway.target_days} days; the pull plans ${planRows}`;
     const line = `Size done (${segments.length} segment lists combined):\n${detail}\n${report}\n${plan}.${held.note ? ` ${held.note}` : ""}`;
-    return finish(this.d, run, "size", netNew, counts, line);
+    return this.finishWithReport(run, recipe, campaignIds, counts, [], netNew, line);
   }
 
   /**
@@ -407,7 +420,76 @@ export class SizeStage {
       heldNote,
       "Cost of sizing: $0.00",
     ].filter((line): line is string => Boolean(line));
-    return finish(this.d, run, "size", hasMaps ? businesses : 0, counts, lines.join("\n"));
+    return this.finishWithReport(run, recipe, campaignIds, counts, [], hasMaps ? businesses : 0, lines.join("\n"));
+  }
+
+  /** Writes campaign_report on the size step. A suspect filter parks before any pull. */
+  private async finishWithReport(
+    run: RunRow,
+    recipe: Recipe,
+    campaignIds: number[],
+    counts: Record<string, number>,
+    snaps: Array<{ smartlead_campaign_id: number; name: string | null }>,
+    useful: number,
+    line: string,
+  ): Promise<StageOutcome> {
+    let report: CampaignReportEntry[] = [];
+    try {
+      report = await this.reportFor(run, recipe, campaignIds, counts, snaps);
+    } catch (err) {
+      log.warn("campaign report failed", { run_id: run.run_id, error: (err as Error).message });
+    }
+    const why = suspectReason(report);
+    if (why) {
+      await this.d.repo.mergeStepExtra(run.run_id, "size", { ...counts, campaign_report: report });
+      await this.d.repo.failStep(run.run_id, "size", why, true);
+      return park(this.d, run, "size", why, 1);
+    }
+    return finish(this.d, run, "size", useful, counts, line, report);
+  }
+
+  private async reportFor(
+    run: RunRow,
+    recipe: Recipe,
+    campaignIds: number[],
+    counts: Record<string, number>,
+    snaps: Array<{ smartlead_campaign_id: number; name: string | null }>,
+  ): Promise<CampaignReportEntry[]> {
+    const builds = await this.d.repo.campaignBuilds(run.client_tag, campaignIds).catch(() => [] as Record<string, unknown>[]);
+    const names = new Map(snaps.map((snap) => [snap.smartlead_campaign_id, snap.name ?? ""]));
+    const rows = [];
+    for (const id of campaignIds) {
+      const rule = recipe.routing.find((item) => item.campaign_id === id);
+      const source: Source = rule ? ruleSource(recipe, rule) : recipe.source;
+      const persona = rule?.icp.persona ?? "persona not set";
+      const stats = await variantStats(this.d.repo.raw(), id).catch(() => ({ sends: 0, interested: 0, variants: [] }));
+      const build = rowsFoundFromBuilds(builds, id);
+      const tamTotal = counts[`tam_${id}`] ?? counts.lane_tam ?? counts.total_matching ?? counts.businesses ?? 0;
+      const held = counts[`already_held_${id}`] ?? (campaignIds.length === 1 ? (counts.already_held ?? 0) : 0);
+      const name = names.get(id) || `campaign ${id}`;
+      const words = sourceWords(source);
+      rows.push({
+        campaign_id: id,
+        campaign_name: name,
+        found: counts[`tam_${id}`] ?? tamTotal,
+        to_add: counts[`plan_rows_${id}`] ?? (campaignIds.length === 1 ? (counts.plan_rows ?? 0) : 0),
+        source: words,
+        titles: titlesWords(source, persona),
+        filters: filtersWords(source),
+        tam_total: tamTotal,
+        tam_left: Math.max(0, tamTotal - held),
+        sends: stats.sends,
+        interested: stats.interested,
+        too_early: stats.sends < recipe.working.variant_min_sends,
+        paused: isPausedLabel(recipe.lane) || isPausedLabel(name),
+        rows_found: build.rows_found,
+        market_cap: marketCapFor(recipe.lane, words),
+        strategy: build.build_label
+          ? `Repeats ${build.build_label}. Same source and titles as that build.`
+          : `Repeats ${recipe.recipe_id}. Same source and titles as the saved recipe.`,
+      });
+    }
+    return buildCampaignReport(rows);
   }
 
   /** One list. Vendor calls take a slot so this client's other lists, and other clients, overlap. */

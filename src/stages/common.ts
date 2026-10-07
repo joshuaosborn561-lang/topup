@@ -3,6 +3,7 @@ import { funnelCounts, MAX_STEP_ATTEMPTS, type Role, type RunRow, type RunStatus
 import { logger } from "../lib/log.js";
 import { parkedCard } from "../slack/cards.js";
 import type { SlackConsole } from "../slack/console.js";
+import { campaignReportFromCounts, formatCampaignReport, type CampaignReportEntry } from "./size/campaignReport.js";
 import type { GateUnmet } from "../spine/gate.js";
 
 const log = logger("stage");
@@ -92,25 +93,40 @@ export async function attempt(d: StageDeps, run: RunRow, stage: Step, status: Ru
 /** Park the run at a stage with one card to Cayden. A parked run never retries on its own. */
 export async function park(d: StageDeps, run: RunRow, stage: Step, reason: string, attempts: number): Promise<StageOutcome> {
   await d.repo.setRunStatus(run.run_id, "awaiting_operator", stage, reason);
+  const [sizeStep, pullStep] = await Promise.all([d.repo.getStep(run.run_id, "size"), d.repo.getStep(run.run_id, "pull")]);
+  const report = formatCampaignReport(
+    campaignReportFromCounts((pullStep?.counts ?? sizeStep?.counts) as unknown as Record<string, unknown>),
+  );
   const open = (await d.repo.openCardsForRun(run.run_id)).some((c) => c.kind === "parked" && c.payload.step === stage);
   if (!open) {
     await d.console.ask({
       run,
       kind: "parked",
       audience: "operator",
-      payload: { step: stage, reason },
+      payload: { step: stage, reason, campaign_report: campaignReportFromCounts((pullStep?.counts ?? sizeStep?.counts) as unknown as Record<string, unknown>) },
       text: `Run parked at ${stage}: ${reason}`,
-      blocks: (cardId) => parkedCard({ cardId, runId: run.run_id, clientTag: run.client_tag, step: stage, attempts, error: reason }),
+      blocks: (cardId) => parkedCard({ cardId, runId: run.run_id, clientTag: run.client_tag, step: stage, attempts, error: reason, report: report || undefined }),
     });
   }
   return { kind: "parked", reason };
 }
 
 /** Finish a step: all counts on run_steps, the funnel numbers on the run, one counts-only line in the thread. */
-export async function finish(d: StageDeps, run: RunRow, stage: Step, useful: number, counts: Record<string, number>, line: string): Promise<StageOutcome> {
-  await d.repo.finishStep(run.run_id, stage, { useful_output: useful, counts });
+export async function finish(
+  d: StageDeps,
+  run: RunRow,
+  stage: Step,
+  useful: number,
+  counts: Record<string, number>,
+  line: string,
+  report?: readonly CampaignReportEntry[],
+): Promise<StageOutcome> {
+  const stored: Record<string, unknown> = { ...counts };
+  if (report && report.length) stored.campaign_report = report;
+  await d.repo.finishStep(run.run_id, stage, { useful_output: useful, counts: stored });
   await d.repo.mergeRunCounts(run.run_id, funnelCounts(counts));
-  await d.console.postInThread(run, line);
+  const reportLine = report && report.length ? `\n${formatCampaignReport(report)}` : "";
+  await d.console.postInThread(run, `${line}${reportLine}`.slice(0, 3500));
   return { kind: "done", counts };
 }
 

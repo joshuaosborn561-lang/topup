@@ -8,6 +8,7 @@ import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { spendApprovalCard } from "../../slack/cards.js";
 import { gateUnmet } from "../../spine/gate.js";
+import { campaignReportFromCounts, formatCampaignReport } from "../size/campaignReport.js";
 import { attempt, finish, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import type { PullAdapter, PullResult } from "./adapter.js";
 import type { PullJob } from "./route.js";
@@ -124,6 +125,7 @@ export class PullStage {
               action: priced.action,
               rows: priced.rows,
               worst_case_cents: priced.worst,
+              campaign_report: campaignReportFromCounts(sizeStep?.counts as unknown as Record<string, unknown>),
             },
             text: `Pull spend ${usd(priced.worst)} on ${priced.vendor} needs a tap before any rows move.`,
             blocks: (cardId) =>
@@ -140,6 +142,7 @@ export class PullStage {
                 spentTodayCents: spentToday,
                 dailyCapCents: this.d.rails.cfg.dailyCapCents,
                 approveChoice: ask === "owner" ? "approve_spend" : "approve_small_spend",
+                report: formatCampaignReport(campaignReportFromCounts(sizeStep?.counts as unknown as Record<string, unknown>)) || undefined,
               }),
           });
         }
@@ -228,7 +231,12 @@ export class PullStage {
       const line = files
         .map((file) => `#${file.campaignId} ${file.segment}: ${file.rows_exported} via ${file.source}${file.count_only ? " (count)" : ""}`)
         .join("\n");
-      return finish(this.d, run, "pull", rowsExported, counts, `Pull done (${files.length} segment(s)):\n${line}`);
+      const prior = campaignReportFromCounts(sizeStep?.counts as unknown as Record<string, unknown>);
+      const report = prior.map((entry) => ({
+        ...entry,
+        found: counts[`rows_${entry.campaign_id}`] ?? entry.found,
+      }));
+      return finish(this.d, run, "pull", rowsExported, counts, `Pull done (${files.length} segment(s)):\n${line}`, report);
     });
   }
 
