@@ -1,4 +1,5 @@
 import { JOB_DONE, JOB_FAILED, type JobStatus, type LeadPipe } from "../../clients/leadpipe.js";
+import { dedupeMatchSql, shouldReuseIngest } from "./dedupe.js";
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import { jobTitlesFor, runTargetCampaignIds } from "../../recipes/campaigns.js";
@@ -74,9 +75,15 @@ export class IngestStage {
       const labels = csvs.map((file) => sourceLabel(run, file.campaignId));
       let readTotal = 0;
       let readKnown = true;
+      let reusedExisting = false;
       for (const file of csvs) {
         const label = sourceLabel(run, file.campaignId);
         let jobId = jobs[label] ?? null;
+        const already = jobId ? 0 : await this.rowsForLabel(table, label);
+        if (shouldReuseIngest(jobId, already) && !jobId) {
+          reusedExisting = true;
+          continue;
+        }
         if (!jobId) {
           const started = await this.d.leadpipe.ingestCsv(run.client_tag, {
             urls: file.export_url.split("\n").map((url) => url.trim()).filter(Boolean),
@@ -104,47 +111,78 @@ export class IngestStage {
       const csvExported = csvs.reduce((sum, file) => sum + file.rows_exported, 0);
 
       const cols = await columnsOf(this.d.repo, table);
+      const deduped = cols.has("source_label") ? await this.dedupeLanded(table, run.run_id, labels, cols) : 0;
       if (!cols.has("source_label")) throw new Error(`${table} has no source_label column; cannot claim the ingested rows for this run`);
       const fills: string[] = [];
       if (cols.has("employee_range")) fills.push("company_size = coalesce(company_size, employee_range)");
       if (cols.has("industry")) fills.push("vertical = coalesce(vertical, industry)");
       const claimed = await this.d.repo.withRun(run.run_id, async (tx) => {
-        const { rowCount } = await tx.query(
+        await tx.query(
           `update ${table} set run_id = $1, lead_status = 'ingested', status_changed_at = now()${fills.length ? ", " + fills.join(", ") : ""}
            where source_label = any($2::text[]) and run_id is null`,
           [run.run_id, labels],
         );
-        return rowCount ?? 0;
+        const { rows } = await tx.query<{ n: string }>(
+          `select count(*)::text as n from ${table} where run_id = $1 and source_label = any($2::text[])`,
+          [run.run_id, labels],
+        );
+        return Number(rows[0]?.n ?? 0);
       });
       const landed = await this.landedCounts(table, run.run_id, cols);
       const titles = jobTitlesFor(recipe, await runTargetCampaignIds(this.d.repo, run, recipe));
       const offTitle = titles.length ? await this.auditTitles(table, run, titles, cols) : 0;
 
+      if (reusedExisting && readTotal === 0) readKnown = false;
       const rowsRead = readKnown ? readTotal : null;
       const counts: Record<string, number> = {
         rows_exported: csvExported,
         rows_read: rowsRead ?? -1,
         rows_claimed: claimed,
-        dedupe_dropped: rowsRead === null ? -1 : Math.max(0, rowsRead - claimed),
+        dedupe_dropped: deduped,
         ...landed,
         off_title: offTitle,
       };
       for (const file of files) counts[`rows_${file.campaignId}`] = (counts[`rows_${file.campaignId}`] ?? 0) + file.rows_exported;
-      if (rowsRead !== null && rowsRead !== csvExported) {
+      if (!reusedExisting && rowsRead !== null && rowsRead !== csvExported) {
         await this.d.repo.finishStep(run.run_id, "ingest", { useful_output: claimed, counts });
         return gateUnmet("ingest", `LeadPipe read ${rowsRead} rows but the export had ${csvExported}. ${claimed} rows landed for this run.`, counts);
       }
-      if (rowsRead === null && claimed < csvExported) {
+      if (!reusedExisting && rowsRead === null && claimed < csvExported) {
         await this.d.repo.finishStep(run.run_id, "ingest", { useful_output: claimed, counts });
         return gateUnmet("ingest", `LeadPipe reported no read count and ${claimed} of ${csvExported} exported rows landed; the rest are dedupe drops or missing and the service cannot tell which.`, counts);
       }
       const nulls = Object.entries(landed).filter(([, n]) => n > 0).map(([k, n]) => `${k.replace("null_", "")} ${n}`);
       const line =
         `Ingest done: ${csvExported} exported, ${rowsRead === null ? "read count not reported (all landed)" : `${rowsRead} read`}, ${claimed} claimed for this run` +
+        (reusedExisting ? " · reused rows already ingested for this run" : "") +
+        (deduped > 0 ? ` (${deduped} duplicate people removed across campaigns)` : "") +
         (rowsRead !== null && rowsRead > claimed ? ` (${rowsRead - claimed} dropped as already in the table)` : "") +
         (nulls.length ? ` · empty after ingest: ${nulls.join(", ")} (LeadPipe column drop; see the parlay skill)` : " · city, state, industry, employee_range all landed") +
         ` · titles audited: ${offTitle} off-title flagged for step 8.`;
       return finish(this.d, run, "ingest", claimed, counts, line);
+    });
+  }
+
+  private async rowsForLabel(table: string, label: string): Promise<number> {
+    const { rows } = await this.d.repo.raw().query<{ n: string }>(`select count(*)::text as n from ${table} where source_label = $1`, [label]);
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  /** One row per email and per person id across this run's campaign labels. */
+  private async dedupeLanded(table: string, runId: string, labels: string[], cols: Set<string>): Promise<number> {
+    const match = dedupeMatchSql(cols);
+    if (!match || labels.length === 0) return 0;
+    return this.d.repo.withRun(runId, async (tx) => {
+      const { rowCount } = await tx.query(
+        `delete from ${table} a
+         using ${table} b
+         where a.source_label = any($1::text[])
+           and b.source_label = any($1::text[])
+           and a.ctid > b.ctid
+           and (${match})`,
+        [labels],
+      );
+      return rowCount ?? 0;
     });
   }
 

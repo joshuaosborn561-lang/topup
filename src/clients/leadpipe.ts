@@ -53,11 +53,11 @@ export interface LeadPipe {
 }
 
 /**
- * `lp_run ingest_csv` answers `{ok, tool, result}` and `job_id` lives on
+ * Every `lp_run` answer is `{ok, tool, result}` and `job_id` lives on
  * `result`. `result` may be that object or a JSON string. A missing id
  * parks with the response's own error, not the list of keys.
  */
-export function ingestJobFromResponse(payload: unknown): { job_id: string; status: string } | { error: string } {
+export function lpRunJobFromResponse(payload: unknown): { job_id: string; status: string } | { error: string } {
   const root = asRecord(parseJson(payload));
   const resultRaw = root ? parseJson(root.result) : null;
   const result = asRecord(resultRaw) ?? root ?? {};
@@ -68,7 +68,12 @@ export function ingestJobFromResponse(payload: unknown): { job_id: string; statu
   }
   const message = firstMessage(result) ?? (root ? firstMessage(root) : null);
   const keys = Object.keys(root ?? {});
-  return { error: message ?? `lp_run ingest_csv returned no job_id: ${JSON.stringify(keys)}` };
+  return { error: message ?? `lp_run returned no job_id: ${JSON.stringify(keys)}` };
+}
+
+/** Same unwrap `ingest_csv` used before every lp_run call shared it. */
+export function ingestJobFromResponse(payload: unknown): { job_id: string; status: string } | { error: string } {
+  return lpRunJobFromResponse(payload);
 }
 
 function parseJson(value: unknown): unknown {
@@ -133,14 +138,19 @@ export class LeadPipeClient implements LeadPipe {
   }
 
   async ingestCsv(clientTag: string, params: IngestCsvParams): Promise<JobStarted> {
+    return this.lpRun("ingest_csv", clientTag, { dedupe_key: "email", ...params });
+  }
+
+  /** One unwrap for every lp_run kind. ingest_csv and any later kind share it. */
+  private async lpRun(jobKind: string, clientTag: string, params: Record<string, unknown>): Promise<JobStarted> {
     if (!this.url) throw new Error("LEADPIPE_MCP_URL is not configured; cannot ingest the pull");
     const res = await this.mcp.call<Record<string, unknown>>("lp_run", {
-      job_kind: "ingest_csv",
+      job_kind: jobKind,
       client_tag: clientTag,
-      params: { dedupe_key: "email", ...params },
+      params,
     });
-    log.info("lp_run ingest_csv", { response: res });
-    const parsed = ingestJobFromResponse(res);
+    log.info("lp_run", { job_kind: jobKind, response: res });
+    const parsed = lpRunJobFromResponse(res);
     if ("error" in parsed) throw new Error(parsed.error);
     return parsed;
   }
