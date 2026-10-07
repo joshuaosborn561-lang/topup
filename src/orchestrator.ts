@@ -4,6 +4,7 @@ import { orderCounts, presentRun, type Role, type RunRow, type Step } from "./do
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
+import { shapeBcpRecipe } from "./recipes/bcp.js";
 import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
@@ -127,6 +128,9 @@ export class Orchestrator {
     const recipe = resolved.recipe;
     const targets = resolveTargetCampaignIds(recipe, input.campaignIds);
     if (!targets.ok) return { ok: false, message: targets.message };
+    if (recipe.client_tag === "bcp" && recipe.lane === "pe_firms") {
+      return { ok: false, message: "bcp.pe_firms is retired. It had no positive replies from PE partners." };
+    }
     if (await this.lanePaused(recipe.client_tag, recipe.lane, targets.ids)) {
       return { ok: false, message: `${recipe.client_tag}/${recipe.lane} is paused. It does not start.` };
     }
@@ -259,7 +263,7 @@ export class Orchestrator {
         return [] as Record<string, unknown>[];
       });
     const applied = applyIcpSources(trimmed.recipe, this.d.fileRecipes ?? [], buildsFromRows(buildRows));
-    const recipe = applied.recipe;
+    const recipe = shapeBcpRecipe(applied.recipe);
     if (applied.missing.length || Object.keys(applied.used).length) {
       log.info("icp source", { run_id: initial.run_id, used: applied.used, missing: applied.missing });
     }

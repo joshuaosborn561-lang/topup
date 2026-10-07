@@ -1,3 +1,4 @@
+import { shapeBcpRecipe } from "./bcp.js";
 import { GETLEADS_BANDS, GETLEADS_EMAIL_STATUSES } from "./schema.js";
 import { parseRecipe, type Recipe, type Source } from "./schema.js";
 import { latestLaneReceipt, bestYieldBuild } from "./receipt.js";
@@ -459,7 +460,7 @@ export function recipeFromReceipts(input: {
     spend: { auto_cap_usd: 5 },
     owner_approvals: ["icp_change", "new_campaign", "spend_over_cap", "copy"],
   };
-  return parseRecipe(raw);
+  return shapeBcpRecipe(parseRecipe(raw));
 }
 
 export function laneFromReceipts(receipts: ReceiptStamp[], campaignId?: number): string | null {
