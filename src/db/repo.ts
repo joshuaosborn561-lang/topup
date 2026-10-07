@@ -236,21 +236,25 @@ export class Repo {
       );
       await this.db.query(`update topup.campaign_registry set icp_kind = 'linkedin_native' where icp_kind is null`);
     } catch (err) {
-      log.warn("campaign_registry.icp_kind was not added", { error: (err as Error).message });
+      log.error(`campaign_registry.icp_kind was not added: ${(err as Error).message}`);
     }
-    await this.db.query(
-      `create table if not exists topup.client_icp (
-         client_tag text primary key,
-         icp_kind text not null check (icp_kind in ('linkedin_native', 'non_linkedin'))
-       )`,
-    );
-    await this.db.query(
-      `insert into topup.client_icp (client_tag, icp_kind)
-       select distinct client_tag, case when client_tag = any($1::text[]) then 'non_linkedin' else 'linkedin_native' end
-         from topup.campaign_registry
-       on conflict (client_tag) do nothing`,
-      [nonLinkedin],
-    );
+    try {
+      await this.db.query(
+        `create table if not exists topup.client_icp (
+           client_tag text primary key,
+           icp_kind text not null check (icp_kind in ('linkedin_native', 'non_linkedin'))
+         )`,
+      );
+      await this.db.query(
+        `insert into topup.client_icp (client_tag, icp_kind)
+         select distinct client_tag, case when client_tag = any($1::text[]) then 'non_linkedin' else 'linkedin_native' end
+           from topup.campaign_registry
+         on conflict (client_tag) do nothing`,
+        [nonLinkedin],
+      );
+    } catch (err) {
+      log.error(`client_icp was not created: ${(err as Error).message}`);
+    }
   }
 
   /** True only when the live function treats sized as closed. */
