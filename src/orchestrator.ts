@@ -4,6 +4,7 @@ import { orderCounts, type Role, type RunRow, type Step } from "./domain/runs.js
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
+import { applyIcpSources } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
 import { trimToOwningClient } from "./recipes/trim.js";
@@ -100,6 +101,8 @@ export class Orchestrator {
       /** Pause between a failed step attempt and the next (default 30s). */
       retryDelayMs?: number;
       sleep?: (ms: number) => Promise<void>;
+      /** File recipes on disk. A cell here wins over a receipt that did not name its lists. */
+      fileRecipes?: Recipe[];
     },
   ) {
     this.retryDelayMs = d.retryDelayMs ?? 30_000;
@@ -234,7 +237,11 @@ export class Orchestrator {
       });
     }
     const trimmed = await trimToOwningClient(this.d.repo, rebuilt);
-    const recipe = trimmed.recipe;
+    const applied = applyIcpSources(trimmed.recipe, this.d.fileRecipes ?? []);
+    const recipe = applied.recipe;
+    if (applied.missing.length || Object.keys(applied.used).length) {
+      log.info("icp source", { run_id: initial.run_id, used: applied.used, missing: applied.missing });
+    }
     if (trimmed.dropped.length) {
       log.info("trimmed foreign campaigns from saved recipe", { recipe_id: rec.recipe_id, dropped: trimmed.dropped });
       await this.d.repo.upsertRecipe({

@@ -166,7 +166,7 @@ function routeSizeGroup(g: CampaignGroup): SizeLeaf {
   if (g.source.kind === "mixed") {
     return {
       kind: "park",
-      reason: "mixed ICP: size each campaign separately. Do not report one TAM for two stacks. This campaign's receipt did not name its lists.",
+      reason: "no ICP source. No recipe cell, the receipt did not name its lists, and the lane has no ICP.",
     };
   }
   if (g.source.kind === "maps") return { kind: "maps", source: g.source };

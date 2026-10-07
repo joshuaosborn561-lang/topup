@@ -148,6 +148,7 @@ async function main(): Promise<void> {
     repo,
     console: console_,
     ledger,
+    fileRecipes: recipeFiles,
     retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000,
     stages: {
       trigger: new TriggerStage(base),

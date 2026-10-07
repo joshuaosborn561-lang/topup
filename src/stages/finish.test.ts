@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { mapsSyncRows } from "../clients/mapsStats.js";
 import { openRunBlocksLane } from "../mcp/queue.js";
 import { aliasLanes, dedupeAliasLanes } from "../recipes/dedupe.js";
+import { applyIcpSources } from "../recipes/icpSource.js";
 import { PETERSON_LANES, petersonLaneCaseSql, repairedClient, repairedLane, routingFromRegistry } from "../recipes/registry.js";
 import { parseRecipe, type Recipe } from "../recipes/schema.js";
 import { resumeEffect } from "../runs/resume.js";
@@ -139,6 +140,33 @@ describe("finish the open runs", () => {
     assert.equal(drift.partition.ok, false);
     assert.equal(drift.total, 120);
     assert.match(drift.warning ?? "", /cannot be trusted/);
+  });
+
+  it("sizes a campaign whose receipt names no lists when a file recipe cell does", () => {
+    const empty = { kind: "mixed", note: "receipt did not name its lists", parts: [] };
+    const receipt = { ...linkedin("parlay.it_dm_airpods.v0", "it_dm_airpods", [3929973], empty), client_tag: "parlay" };
+    const file = { ...linkedin("parlay.it_dm.v3", "it_dm", [3929973]), client_tag: "parlay" };
+    const applied = applyIcpSources(receipt, [file]);
+    assert.equal(applied.used["3929973"], "cell");
+    assert.deepEqual(applied.missing, []);
+    assert.equal(routeSize(applied.recipe, [3929973]).kind, "getleads");
+    assert.equal(pullPlans(applied.recipe, [3929973]).kind, "run");
+
+    const laneOnly = applyIcpSources(
+      { ...linkedin("emcor.owners.v0", "owners", [555], empty), client_tag: "emcor" },
+      [{ ...linkedin("emcor.owners.v1", "owners", [111]), client_tag: "emcor" }],
+    );
+    assert.equal(laneOnly.used["555"], "lane");
+    assert.equal(routeSize(laneOnly.recipe, [555]).kind, "getleads");
+
+    const fromReceipt = applyIcpSources(linkedin("emcor.owners.v0", "owners", [555]), []);
+    assert.equal(fromReceipt.used["555"], "receipt");
+
+    const none = applyIcpSources({ ...linkedin("emcor.a.v0", "a_property_facilities", [1], empty), client_tag: "emcor" }, []);
+    assert.deepEqual(none.missing, [1]);
+    const parked = routeSize(none.recipe, [1]);
+    assert.equal(parked.kind, "park");
+    if (parked.kind === "park") assert.match(parked.reason, /No recipe cell, the receipt did not name its lists, and the lane has no ICP/);
   });
 
   it("prices maps and permitstack through the spend card and names a missing credential", () => {
