@@ -1,7 +1,7 @@
 import type { Repo } from "../db/repo.js";
 import { parseRecipe, type Recipe } from "./schema.js";
-import { inferredRecipeId, laneFromReceipts, recipeFromReceipts, type ReceiptStamp } from "./infer.js";
-import { isParlayRefreshCampaign, isRetiredParlayLane, PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, shapeParlayRecipe } from "./parlay.js";
+import { getleadsParamsFromFilters, inferredRecipeId, laneFromReceipts, recipeFromReceipts, type ReceiptStamp } from "./infer.js";
+import { isParlayRefreshCampaign, isParlayRefreshLane, isRetiredParlayLane, PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, shapeParlayRecipe } from "./parlay.js";
 import { trimToOwningClient } from "./trim.js";
 
 export type ResolvedRecipe = { ok: true; recipe: Recipe; inferred: boolean } | { ok: false; message: string };
@@ -120,7 +120,8 @@ export async function resolveRecipeForStart(
   }
 
   const trimmed = await trimToOwningClient(repo, shapeParlayRecipe(recipe));
-  recipe = trimmed.recipe;
+  recipe = await addRegisteredParlayCampaigns(repo, trimmed.recipe);
+  recipe = await sourceFromSept29Builds(repo, recipe);
   if (recipe.client_tag === "parlay" && recipe.routing.length === 0) {
     return {
       ok: false,
@@ -137,4 +138,50 @@ export async function resolveRecipeForStart(
     owner_approved_at: null,
   });
   return { ok: true, recipe, inferred: true };
+}
+
+/** Registry rows in the Sept 29 range join the lane even when the receipt still lists the old campaign ids. */
+async function addRegisteredParlayCampaigns(repo: Repo, recipe: Recipe): Promise<Recipe> {
+  if (recipe.client_tag !== "parlay" || !isParlayRefreshLane(recipe.lane)) return recipe;
+  let rows: Array<{ id: string }> = [];
+  try {
+    const res = await repo.raw().query<{ id: string }>(
+      `select campaign_id::text as id from topup.campaign_registry
+        where client_tag = 'parlay' and lane = $1
+          and campaign_id between $2 and $3
+          and coalesce(status, '') <> 'retired'`,
+      [recipe.lane, PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST],
+    );
+    rows = res.rows;
+  } catch {
+    return recipe;
+  }
+  const have = new Set(recipe.routing.map((rule) => rule.campaign_id));
+  const extra = rows.map((row) => Number(row.id)).filter((id) => isParlayRefreshCampaign(id) && !have.has(id));
+  if (extra.length === 0) return recipe;
+  const icp = recipe.routing[0]?.icp ?? { kind: "linkedin_native" as const, persona: recipe.lane };
+  const routing = [...recipe.routing, ...extra.map((id) => ({ when: { slot: String(id) }, campaign_id: id, icp }))].sort(
+    (a, b) => a.campaign_id - b.campaign_id,
+  );
+  return { ...recipe, routing, segments: { ...recipe.segments, slot: routing.map((rule) => String(rule.campaign_id)) } };
+}
+
+/**
+ * A Sept 29 build that counted by job function replaces an older title list.
+ * Owner lanes that already name titles stay on those titles.
+ */
+async function sourceFromSept29Builds(repo: Repo, recipe: Recipe): Promise<Recipe> {
+  if (recipe.client_tag !== "parlay" || !isParlayRefreshLane(recipe.lane)) return recipe;
+  if (recipe.source.kind === "getleads" && recipe.source.params.job_function) return recipe;
+  const ids = recipe.routing.map((rule) => rule.campaign_id);
+  const rows = await repo.campaignBuilds(recipe.client_tag, ids).catch(() => [] as Record<string, unknown>[]);
+  const sept = rows.filter((row) => String(row.build_label ?? "").includes("20260929"));
+  for (const row of sept) {
+    const filters = row.company_filters;
+    if (!filters || typeof filters !== "object" || Array.isArray(filters)) continue;
+    const params = getleadsParamsFromFilters(filters as Record<string, unknown>);
+    if (!params?.job_function) continue;
+    return { ...recipe, source: { kind: "getleads", params, widening_candidates: [] } };
+  }
+  return recipe;
 }

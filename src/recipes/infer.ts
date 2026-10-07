@@ -1,5 +1,5 @@
 import { shapeBcpRecipe } from "./bcp.js";
-import { shapeParlayRecipe } from "./parlay.js";
+import { isParlayRefreshCampaign, isParlayRefreshLane, PARLAY_REFRESH_KNOWN, shapeParlayRecipe } from "./parlay.js";
 import { shapeMspOwnersRecipe } from "./powergryd.js";
 import { GETLEADS_BANDS, GETLEADS_EMAIL_STATUSES } from "./schema.js";
 import { parseRecipe, type Recipe, type Source } from "./schema.js";
@@ -420,24 +420,39 @@ export function pickStamps(receipts: ReceiptStamp[]): { book: ReceiptStamp; meth
   return { book, method };
 }
 
+/** Sept 29 Parlay lanes also name the campaigns registered for that lane. Older fixture receipts stay as written. */
+function parlayLaneCampaignIds(client: string, lane: string, stamped: number[], widen: boolean): number[] {
+  if (client !== "parlay" || !isParlayRefreshLane(lane)) return stamped;
+  if (!widen && !stamped.some((id) => isParlayRefreshCampaign(id))) return stamped;
+  const knownLane = PARLAY_REFRESH_KNOWN.filter((row) => row.lane === lane).map((row) => row.campaign_id);
+  const knownOther = new Set(PARLAY_REFRESH_KNOWN.filter((row) => row.lane !== lane).map((row) => row.campaign_id));
+  const fromStamp = stamped.filter((id) => isParlayRefreshCampaign(id) && !knownOther.has(id));
+  return [...new Set([...knownLane, ...fromStamp])].sort((a, b) => a - b);
+}
+
 export function recipeFromReceipts(input: {
   receipts: ReceiptStamp[];
   smartleadClientId: number;
   extraCampaignIds?: number[];
 }): Recipe {
-  const picked = pickStamps(input.receipts);
+  const forParlay = input.receipts.some((stamp) => stamp.client_tag === "parlay");
+  const sept29 = input.receipts.filter((stamp) => /20260929|Sept 29/.test(`${stamp.build_label ?? ""} ${stamp.how_i_did_it ?? ""}`));
+  const useSept29 = forParlay && sept29.length > 0;
+  const pool = useSept29 ? sept29 : input.receipts;
+  const picked = pickStamps(pool);
   if (!picked) throw new Error("no pull receipt to infer from");
   const { book, method } = picked;
-  const ids = [...new Set([...book.campaign_ids, ...method.campaign_ids, ...(input.extraCampaignIds ?? [])])].filter(
+  const stamped = [...new Set([...book.campaign_ids, ...method.campaign_ids, ...(input.extraCampaignIds ?? [])])].filter(
     (n) => Number.isInteger(n) && n > 0,
   );
+  const ids = parlayLaneCampaignIds(book.client_tag, book.lane, stamped, useSept29);
   const slots = ids.map(String);
   const icp = { kind: icpKind(method), persona: persona(method) };
   let source = sourceForLane(book, method);
   if (source.kind === "mixed") {
     const existing = source.parts;
     const covered = new Set(existing.map((p) => p.source.kind));
-    const more = segmentParts(input.receipts).filter((p) => !covered.has(p.source.kind) && !existing.some((x) => x.label === p.label));
+    const more = segmentParts(pool).filter((p) => !covered.has(p.source.kind) && !existing.some((x) => x.label === p.label));
     if (more.length) source = { ...source, parts: [...existing, ...more] };
   }
   const raw: unknown = {

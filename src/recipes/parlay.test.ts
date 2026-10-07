@@ -72,7 +72,14 @@ describe("Parlay Sept 29 refresh", () => {
 
   it("drops a file that only names retired campaigns so the Sept 29 recipe wins", () => {
     const oldFile = recipeFromReceipts({
-      receipts: [stamp({ campaign_ids: [3929973, 3847839], lane: "it_dm" })],
+      receipts: [
+        stamp({
+          campaign_ids: [3929973, 3847839],
+          lane: "it_dm",
+          how_i_did_it: "August tickets pull on IT titles.",
+          company_filters: { job_titles: ["IT Director"], company_size: ["11 to 50"], countries: ["United States"] },
+        }),
+      ],
       smartleadClientId: 418274,
     });
     const inferred = recipeFromReceipts({
@@ -82,7 +89,7 @@ describe("Parlay Sept 29 refresh", () => {
     const merged = mergeRecipes([{ ...oldFile, recipe_id: "parlay.it_dm.v3" }], [inferred]);
     assert.equal(merged.length, 1);
     assert.equal(merged[0]?.recipe_id, "parlay.it_dm.v0");
-    assert.deepEqual(merged[0]?.routing.map((rule) => rule.campaign_id), [4049055, 4049056]);
+    assert.deepEqual(merged[0]?.routing.map((rule) => rule.campaign_id), [4049055, 4049056, 4049061, 4049062]);
     const shaped = shapeParlayRecipe(oldFile);
     assert.deepEqual(shaped.routing, []);
   });
