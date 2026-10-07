@@ -1,4 +1,7 @@
+import { logger } from "../lib/log.js";
 import { McpHttpClient } from "./mcpHttp.js";
+
+const log = logger("leadpipe");
 
 /**
  * LeadPipe (existing ingestion service / Context Saver). Called, never forked.
@@ -49,6 +52,58 @@ export interface LeadPipe {
   jobStatus(jobId: string): Promise<JobStatus>;
 }
 
+/**
+ * `lp_run ingest_csv` answers `{ok, tool, result}` and `job_id` lives on
+ * `result`. `result` may be that object or a JSON string. A missing id
+ * parks with the response's own error, not the list of keys.
+ */
+export function ingestJobFromResponse(payload: unknown): { job_id: string; status: string } | { error: string } {
+  const root = asRecord(parseJson(payload));
+  const resultRaw = root ? parseJson(root.result) : null;
+  const result = asRecord(resultRaw) ?? root ?? {};
+  const id = firstId(result) ?? (root ? firstId(root) : null);
+  if (id != null) {
+    const status = result.status ?? root?.status ?? "queued";
+    return { job_id: String(id), status: String(status).toLowerCase() };
+  }
+  const message = firstMessage(result) ?? (root ? firstMessage(root) : null);
+  const keys = Object.keys(root ?? {});
+  return { error: message ?? `lp_run ingest_csv returned no job_id: ${JSON.stringify(keys)}` };
+}
+
+function parseJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return value;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return value;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function firstId(obj: Record<string, unknown>): string | number | null {
+  for (const key of ["job_id", "id", "jobId"]) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  const nested = asRecord(obj.data) ?? asRecord(obj.job);
+  return nested ? firstId(nested) : null;
+}
+
+function firstMessage(obj: Record<string, unknown>): string | null {
+  for (const key of ["error", "message", "detail"]) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 export class LeadPipeClient implements LeadPipe {
   private readonly mcp: McpHttpClient;
 
@@ -84,9 +139,10 @@ export class LeadPipeClient implements LeadPipe {
       client_tag: clientTag,
       params: { dedupe_key: "email", ...params },
     });
-    const id = res.job_id ?? res.id;
-    if (typeof id !== "string" && typeof id !== "number") throw new Error(`lp_run ingest_csv returned no job_id: ${JSON.stringify(Object.keys(res))}`);
-    return { job_id: String(id), status: String(res.status ?? "queued").toLowerCase() };
+    log.info("lp_run ingest_csv", { response: res });
+    const parsed = ingestJobFromResponse(res);
+    if ("error" in parsed) throw new Error(parsed.error);
+    return parsed;
   }
 
   async jobStatus(jobId: string): Promise<JobStatus> {
