@@ -161,14 +161,100 @@ export class Repo {
   }
 
   async setRunStatus(runId: string, status: RunStatus, step?: Step, lastError?: string): Promise<void> {
+    // A terminal row stays terminal. An in-flight stage cannot write "ingesting"
+    // back over an abort that already landed.
     await this.db.query(
       `update topup.runs set status = $2,
          current_step = coalesce($3, current_step),
          last_error = coalesce($4, last_error),
          closed_at = case when topup.run_is_open($2) then null else now() end
-       where run_id = $1`,
+       where run_id = $1 and topup.run_is_open(status)`,
       [runId, status, step ?? null, lastError ?? null],
     );
+  }
+
+  /**
+   * Teach an already-migrated database that sized is terminal, and create the
+   * loads_paused flag. Failure is logged by the caller; the size-only close
+   * falls back to done plus counts.sized so the lane lock still releases.
+   */
+  async ensureCore08(): Promise<void> {
+    await this.db.query(
+      `create or replace function topup.run_is_open(s text) returns boolean
+       language sql immutable as $$
+         select s not in ('done','failed','capacity_bound','not_working','pool_thin','declined','aborted','sized')
+       $$`,
+    );
+    await this.db.query(
+      `create table if not exists topup.service_flags (
+         flag text primary key,
+         enabled boolean not null,
+         updated_at timestamptz not null default now(),
+         updated_by text
+       )`,
+    );
+    await this.db.query(
+      `insert into topup.service_flags (flag, enabled) values ('loads_paused', false) on conflict (flag) do nothing`,
+    );
+  }
+
+  /** True only when the live function treats sized as closed. */
+  async sizedIsTerminal(): Promise<boolean> {
+    const { rows } = await this.db.query<{ open: boolean }>(`select topup.run_is_open('sized') as open`);
+    return rows[0]?.open === false;
+  }
+
+  /** Global operator switch. Service flag when the table exists, otherwise the latest lane event. */
+  async loadsPaused(): Promise<boolean> {
+    try {
+      const { rows } = await this.db.query<{ enabled: boolean }>(
+        `select enabled from topup.service_flags where flag = 'loads_paused'`,
+      );
+      return rows[0]?.enabled === true;
+    } catch (err) {
+      if ((err as { code?: string }).code !== "42P01") throw err;
+    }
+    const { rows } = await this.db.query<{ on: boolean }>(
+      `select coalesce((detail->>'on')::boolean, false) as on
+         from topup.lane_events
+        where client_tag = '_service' and lane = 'global' and event = 'loads_paused'
+        order by at desc limit 1`,
+    );
+    return rows[0]?.on === true;
+  }
+
+  async setLoadsPaused(enabled: boolean, by: string): Promise<boolean> {
+    try {
+      await this.db.query(
+        `insert into topup.service_flags (flag, enabled, updated_at, updated_by)
+         values ('loads_paused', $1, now(), $2)
+         on conflict (flag) do update set enabled = excluded.enabled, updated_at = now(), updated_by = excluded.updated_by`,
+        [enabled, by],
+      );
+      return enabled;
+    } catch (err) {
+      if ((err as { code?: string }).code !== "42P01") throw err;
+    }
+    await this.db.query(
+      `insert into topup.lane_events (client_tag, lane, event, line, actor, detail)
+       values ('_service', 'global', 'loads_paused', $1, $2, $3::jsonb)`,
+      [
+        enabled ? "Loads paused. Runs park before ingest." : "Loads resumed.",
+        by,
+        JSON.stringify({ on: enabled }),
+      ],
+    );
+    return enabled;
+  }
+
+  /** Abort cancels a step that is still marked running so it cannot be retried. */
+  async cancelRunningSteps(runId: string, reason = "aborted"): Promise<number> {
+    const { rowCount } = await this.db.query(
+      `update topup.run_steps set status = 'cancelled', finished_at = now(), last_error = $2
+       where run_id = $1 and status = 'running'`,
+      [runId, reason.slice(0, 500)],
+    );
+    return rowCount ?? 0;
   }
 
   async setRunThread(runId: string, channel: string, ts: string): Promise<void> {

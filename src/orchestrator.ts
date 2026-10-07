@@ -1,6 +1,6 @@
 import { ingestedTable } from "./db/pool.js";
 import type { Repo } from "./db/repo.js";
-import { orderCounts, type Role, type RunRow, type Step } from "./domain/runs.js";
+import { orderCounts, presentRun, type Role, type RunRow, type Step } from "./domain/runs.js";
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
@@ -8,6 +8,7 @@ import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
 import { trimToOwningClient } from "./recipes/trim.js";
+import { haltBeforeStep, parkIngestReason, resolveStopAfter, type StopAfter } from "./runs/halt.js";
 import { resumeEffect } from "./runs/resume.js";
 import { parseRecipe, type Recipe } from "./recipes/schema.js";
 import { gateCard } from "./slack/cards.js";
@@ -15,7 +16,7 @@ import type { SlackConsole } from "./slack/console.js";
 import type { GateUnmet } from "./spine/gate.js";
 import { stepForStage, stepLabel } from "./spine/steps.js";
 import type { TapListener } from "./slack/http.js";
-import type { StageOutcome } from "./stages/common.js";
+import { park, type StageOutcome } from "./stages/common.js";
 import type { FlipStage } from "./stages/flip/index.js";
 import type { FindEmailsStage } from "./stages/find_emails/index.js";
 import type { PuzzleStage } from "./stages/puzzle/index.js";
@@ -81,6 +82,10 @@ export interface StartInput {
   /** Optional lead count the operator asked for. Recorded on the run; size still recounts. */
   requestedCount?: number;
   smartleadClientId?: number;
+  /** Size only. Same as stopAfter "size". */
+  dryRun?: boolean;
+  /** size closes after the count. pull parks before ingest. */
+  stopAfter?: StopAfter | null;
 }
 
 export type StartResult = { ok: true; run: RunRow } | { ok: false; message: string };
@@ -142,6 +147,9 @@ export class Orchestrator {
     if (input.requestedCount && input.requestedCount > 0) {
       await this.d.repo.mergeRunCounts(opened.run.run_id, { requested_leads: Math.floor(input.requestedCount) });
     }
+    const stopAfter = resolveStopAfter(input);
+    if (stopAfter === "size") await this.d.repo.mergeRunCounts(opened.run.run_id, { stop_after_size: 1 });
+    if (stopAfter === "pull") await this.d.repo.mergeRunCounts(opened.run.run_id, { stop_after_pull: 1 });
     const headline =
       input.hold === "not_working"
         ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch stopped: a campaign is low and not working. This needs Josh.`
@@ -264,13 +272,17 @@ export class Orchestrator {
     }
 
     for (const [i, step] of PIPELINE_STEPS.entries()) {
+      const halted = await this.haltBefore(initial.run_id, step);
+      if (halted) return;
       const after = PIPELINE_STEPS[i + 1];
       for (;;) {
         const run = (await this.d.repo.getRun(initial.run_id))!;
+        if (run.status === "aborted") return;
         const stepRow = await this.d.repo.getStep(run.run_id, step);
         if (stepRow?.status === "done") break;
         await this.ledger((l) => l.setStepForStage(run.client_tag, run.lane, step, { run_id: run.run_id, next_intent: after ? `Then ${stepLabel(stepForStage(after)?.n ?? null)} (${after}).` : "Then close with a receipt." }));
         const outcome = await this.runStage(step, run, recipe);
+        if (outcome.kind === "stopped") return;
         if (outcome.kind === "gate") {
           await this.haltAtGate(run, step, outcome);
           return;
@@ -287,6 +299,7 @@ export class Orchestrator {
             l.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "retry", line: `${step} failed: ${outcome.error.slice(0, 160)}`, next_intent: `Retry ${step} in ${Math.round(this.retryDelayMs / 1000)}s.`, actor: "service" }),
           );
           await this.sleep(this.retryDelayMs);
+          if ((await this.d.repo.getRun(run.run_id))?.status === "aborted") return;
           continue;
         }
         if (outcome.kind === "parked" || outcome.kind === "declined") {
@@ -392,10 +405,56 @@ export class Orchestrator {
 
   /** The receipt is the last gate: nothing is done until it posts, and it is the last event on the lane. */
   private async closeWithReceipt(closed: RunRow, note: string, nextIntent: string): Promise<void> {
-    await this.d.console.receipt(closed, note);
+    const shown = presentRun(closed);
+    await this.d.console.receipt(shown, note);
     const counts = orderCounts(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts";
-    await this.ledger((l) => l.setStep(closed.client_tag, closed.lane, null, { run_id: null, line: `Run ${closed.run_id.slice(0, 8)} closed ${closed.status}.`, next_intent: nextIntent }));
-    await this.ledger((l) => l.event({ client_tag: closed.client_tag, lane: closed.lane, run_id: closed.run_id, event: "receipt", line: `Receipt: ${closed.status} · ${counts} · ${note}`, next_intent: nextIntent, actor: "service" }));
+    await this.ledger((l) => l.setStep(shown.client_tag, shown.lane, null, { run_id: null, line: `Run ${shown.run_id.slice(0, 8)} closed ${shown.status}.`, next_intent: nextIntent }));
+    await this.ledger((l) => l.event({ client_tag: shown.client_tag, lane: shown.lane, run_id: shown.run_id, event: "receipt", line: `Receipt: ${shown.status} · ${counts} · ${note}`, next_intent: nextIntent, actor: "service" }));
+  }
+
+  /**
+   * Size-only closes before pull. A counted pull, and every run while loads
+   * are paused, parks before ingest. Watch opens go through this same loop.
+   */
+  private async haltBefore(runId: string, step: Step): Promise<boolean> {
+    const run = await this.d.repo.getRun(runId);
+    if (!run || run.status === "aborted") return true;
+    const paused = await this.d.repo.loadsPaused().catch((err) => {
+      log.error("loads_paused unreadable", { error: (err as Error).message });
+      return false;
+    });
+    const halt = haltBeforeStep(step, run.counts_by_status ?? {}, paused);
+    if (halt === "sized") {
+      await this.closeSized(run);
+      return true;
+    }
+    if (halt === "park_ingest") {
+      const reason = parkIngestReason(run.counts_by_status ?? {}, paused);
+      if (run.counts_by_status?.stop_after_pull === 1) await this.d.repo.mergeRunCounts(run.run_id, { stop_after_pull: 0 });
+      await park(
+        { repo: this.d.repo, console: this.d.console },
+        run,
+        "ingest",
+        reason,
+        0,
+      );
+      return true;
+    }
+    return false;
+  }
+
+  /** Trigger and size already ran. Close without a pull, an export, or an approval card. */
+  private async closeSized(run: RunRow): Promise<void> {
+    await this.d.repo.ensureCore08().catch((err) => log.error("sized status ensure failed", { error: (err as Error).message }));
+    const terminal = await this.d.repo.sizedIsTerminal().catch(() => false);
+    await this.d.repo.mergeRunCounts(run.run_id, { sized: 1 });
+    await this.d.repo.setRunStatus(run.run_id, terminal ? "sized" : "done", "size");
+    const closed = (await this.d.repo.getRun(run.run_id))!;
+    await this.closeWithReceipt(
+      closed,
+      "Sized only. No pull, no export, no ingest. Nothing was loaded.",
+      "Nothing queued. A full top-up is a new run.",
+    );
   }
 
   /** What a resolved card should set in motion. Shared by Slack taps and MCP resolve_hold. */
@@ -481,6 +540,7 @@ export class Orchestrator {
         const run = await this.d.repo.getRun(runId);
         if (!run) return;
         if (card.kind === "stall") return; // the verify stage handles abort of a batch itself
+        await this.d.repo.cancelRunningSteps(runId, `aborted by ${card.by}`);
         const released = await this.releaseClaimedRows(run);
         await this.d.repo.setRunStatus(runId, "aborted", undefined, `aborted by ${card.by}`);
         const closed = (await this.d.repo.getRun(runId))!;

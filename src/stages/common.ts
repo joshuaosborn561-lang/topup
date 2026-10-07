@@ -27,6 +27,7 @@ export type StageOutcome =
   | { kind: "parked"; reason: string }
   | { kind: "declined" }
   | { kind: "retry"; error: string }
+  | { kind: "stopped" }
   | GateUnmet;
 
 export interface StageDeps {
@@ -47,18 +48,38 @@ export const realClock: Clock = { now: () => Date.now(), sleep: (ms) => new Prom
  * run the body; a thrown error is one failed attempt, the third parks the run
  * with one card to Cayden. Gate failures and card waits are returned, not thrown.
  */
+async function runWasAborted(repo: Repo, runId: string): Promise<boolean> {
+  const fresh = await repo.getRun(runId);
+  return !fresh || fresh.status === "aborted";
+}
+
+function isAbortError(err: unknown): boolean {
+  return (err as Error).message === "aborted";
+}
+
+/** Leave the step cancelled and do not park, retry, or rewrite the run status. */
+async function stopAborted(repo: Repo, runId: string): Promise<StageOutcome> {
+  await repo.cancelRunningSteps(runId, "aborted");
+  return { kind: "stopped" };
+}
+
 export async function attempt(d: StageDeps, run: RunRow, stage: Step, status: RunStatus, body: (attempts: number) => Promise<StageOutcome>): Promise<StageOutcome> {
+  if (await runWasAborted(d.repo, run.run_id)) return stopAborted(d.repo, run.run_id);
   const step = await d.repo.beginStep(run.run_id, stage);
+  if (await runWasAborted(d.repo, run.run_id)) return stopAborted(d.repo, run.run_id);
   if (!step.ok) return park(d, run, stage, `${stage} exhausted its ${MAX_STEP_ATTEMPTS} attempts`, step.attempts - 1);
   await d.repo.setRunStatus(run.run_id, status, stage);
+  if (await runWasAborted(d.repo, run.run_id)) return stopAborted(d.repo, run.run_id);
   try {
     const out = await body(step.attempts);
+    if (await runWasAborted(d.repo, run.run_id)) return stopAborted(d.repo, run.run_id);
     if (out.kind === "waiting") {
       await d.repo.setStepWaiting(run.run_id, stage, out.worstCaseCents ?? 0);
       await d.repo.setRunStatus(run.run_id, out.on === "owner" ? "awaiting_josh" : "awaiting_operator", stage);
     }
     return out;
   } catch (err) {
+    if ((await runWasAborted(d.repo, run.run_id)) || isAbortError(err)) return stopAborted(d.repo, run.run_id);
     const message = (err as Error).message;
     const parked = step.attempts >= MAX_STEP_ATTEMPTS;
     await d.repo.failStep(run.run_id, stage, message, parked);
@@ -100,9 +121,13 @@ export type PollVerdict<T> = { state: "running" } | { state: "done"; value: T } 
  * `deadMs` (then it is an error and the attempt fails: a job nobody can cancel
  * is not a job to wait on forever — docs/servers.md, "no cancel" on every server).
  */
-export async function poll<T>(check: () => Promise<PollVerdict<T>>, opts: { pollMs: number; deadMs: number; clock: Clock; what: string }): Promise<T> {
+export async function poll<T>(
+  check: () => Promise<PollVerdict<T>>,
+  opts: { pollMs: number; deadMs: number; clock: Clock; what: string; stop?: () => boolean | Promise<boolean> },
+): Promise<T> {
   const started = opts.clock.now();
   for (;;) {
+    if (await opts.stop?.()) throw new Error("aborted");
     const v = await check();
     if (v.state === "done") return v.value;
     if (v.state === "failed") throw new Error(`${opts.what} failed: ${v.error}`);

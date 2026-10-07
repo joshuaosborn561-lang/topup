@@ -25,6 +25,7 @@ export const RUN_STATUSES = [
   "pool_thin",
   "declined",
   "aborted",
+  "sized",
 ] as const;
 
 export type RunStatus = (typeof RUN_STATUSES)[number];
@@ -38,10 +39,22 @@ export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
   "pool_thin",
   "declined",
   "aborted",
+  "sized",
 ];
 
 export function runIsOpen(status: RunStatus): boolean {
   return !TERMINAL_RUN_STATUSES.includes(status);
+}
+
+/**
+ * A size-only run is closed. When the database already treats `sized` as
+ * terminal, that is the status. Until that function is in place the row is
+ * stored as `done` with counts.sized = 1 so the lane lock releases, and
+ * callers show it as sized.
+ */
+export function presentRun(row: RunRow): RunRow {
+  if (row.status === "done" && Number(row.counts_by_status?.sized) === 1) return { ...row, status: "sized" };
+  return row;
 }
 
 /** Stage names, in pipeline order. run_steps.step takes one of these. */
@@ -138,7 +151,7 @@ export interface RunRow {
 export interface RunStepRow {
   run_id: string;
   step: Step;
-  status: "pending" | "running" | "done" | "failed" | "parked" | "waiting_approval";
+  status: "pending" | "running" | "done" | "failed" | "parked" | "waiting_approval" | "cancelled";
   attempts: number;
   started_at: string | null;
   finished_at: string | null;

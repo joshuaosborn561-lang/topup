@@ -99,6 +99,7 @@ async function main(): Promise<void> {
   for (const r of readersFromEnv(process.env)) rails.registerBalanceReader(r);
 
   const locks = await repo.installLeadLocks();
+  await repo.ensureCore08().catch((err) => log.error("sized status ensure failed", { error: (err as Error).message }));
   const synced = await syncRecipes(repo, recipesRoot);
   log.info("database ready", { lead_tables_locked: locks, recipes_synced: synced });
 

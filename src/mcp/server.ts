@@ -5,7 +5,7 @@ import express, { type Request, type Response, type Router } from "express";
 import { z } from "zod";
 import { ingestedTable } from "../db/pool.js";
 import type { Repo } from "../db/repo.js";
-import type { Role } from "../domain/runs.js";
+import { presentRun, type Role } from "../domain/runs.js";
 import { variantStats } from "../domain/working.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
@@ -41,6 +41,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   list_holds: "operator",
   resolve_hold: "operator",
   start_topup: "operator",
+  loads_paused: "operator",
   register_queue_table: "operator",
   lane_note: "operator",
   add_client_domains: "operator",
@@ -203,8 +204,9 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "run_status",
     { description: "Counts, spend and step state for one run. Never rows.", inputSchema: { run_id: z.string() } },
     async ({ run_id }) => {
-      const run = await d.repo.getRun(run_id);
-      if (!run) return text({ error: "no such run" });
+      const found = await d.repo.getRun(run_id);
+      if (!found) return text({ error: "no such run" });
+      const run = presentRun(found);
       const [cards, batches] = await Promise.all([
         d.repo.openCardsForRun(run_id),
         d.repo.raw().query(`select batch, status, rows, last_percent, resumes_used, sendable, rejected, unresolved from topup.verify_batches where run_id = $1 order by batch`, [run_id]),
@@ -217,7 +219,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   server.registerTool(
     "list_runs",
     { description: "Recent runs, newest first.", inputSchema: { limit: z.number().int().min(1).max(50).default(20), client_tag: z.string().optional() } },
-    async ({ limit, client_tag }) => text(await d.repo.listRuns(limit, client_tag)),
+    async ({ limit, client_tag }) => text((await d.repo.listRuns(limit, client_tag)).map(presentRun)),
   );
 
   server.registerTool(
@@ -251,15 +253,17 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "start_topup",
     {
       description:
-        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. File recipe wins; otherwise the pull is inferred from topup.pull_receipts tags and notes. Spend of $5 or above still asks Josh.",
+        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. dry_run or stop_after size counts and closes as sized, with no pull and no load. stop_after pull parks before ingest. Spend of $5 or above still asks Josh.",
       inputSchema: {
         client_tag: z.string(),
         lane: z.string().optional(),
         campaign_id: z.number().int().optional(),
         count: z.number().int().min(1).optional(),
+        dry_run: z.boolean().optional().describe("Size only. Same as stop_after size."),
+        stop_after: z.enum(["size", "pull"]).optional().describe("size closes after the count. pull parks before ingest."),
       },
     },
-    async ({ client_tag, lane, campaign_id, count }) => {
+    async ({ client_tag, lane, campaign_id, count, dry_run, stop_after }) => {
       const target = resolveStartTarget({ clientTag: client_tag, lane, campaignId: campaign_id, count });
       if (!target.ok) return text({ ok: false, message: target.message });
       const res = await d.orchestrator.startTopup({
@@ -269,8 +273,25 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
         requestedCount: target.requestedCount,
         by: `mcp:${role}`,
         trigger: "manual",
+        dryRun: dry_run,
+        stopAfter: stop_after,
       });
       return text(res.ok ? { ok: true, run_id: res.run.run_id, slack_channel: res.run.slack_channel } : { ok: false, message: res.message });
+    },
+  );
+
+  server.registerTool(
+    "loads_paused",
+    {
+      description:
+        "Global switch. While paused, every run, including ones the watch opens, parks before ingest. Nothing reaches Smartlead. Omit paused to read the flag.",
+      inputSchema: { paused: z.boolean().optional().describe("Set true to pause loads, false to resume. Omit to read.") },
+    },
+    async ({ paused }) => {
+      if (!allowed("loads_paused")) return refused();
+      if (paused === undefined) return text({ paused: await d.repo.loadsPaused() });
+      const now = await d.repo.setLoadsPaused(paused, `mcp:${role}`);
+      return text({ paused: now });
     },
   );
 

@@ -67,7 +67,7 @@ create table if not exists topup.runs (
 -- A run is "open" until it reaches a terminal status.
 create or replace function topup.run_is_open(s text) returns boolean
 language sql immutable as $$
-  select s not in ('done','failed','capacity_bound','not_working','pool_thin','declined','aborted')
+  select s not in ('done','failed','capacity_bound','not_working','pool_thin','declined','aborted','sized')
 $$;
 
 -- One open run per lane and one per campaign, enforced in the database.

@@ -102,7 +102,13 @@ export class IngestStage {
             if (JOB_DONE.includes(s.status)) return { state: "done", value: s };
             return { state: "running" };
           },
-          { pollMs: this.d.cfg.pollMs, deadMs: this.d.cfg.deadMs, clock: this.clock, what: `LeadPipe ingest ${jobId}` },
+          {
+            pollMs: this.d.cfg.pollMs,
+            deadMs: this.d.cfg.deadMs,
+            clock: this.clock,
+            what: `LeadPipe ingest ${jobId}`,
+            stop: async () => (await this.d.repo.getRun(run.run_id))?.status === "aborted",
+          },
         );
         await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "leadpipe", action: "ingest_csv", rows: status.rows_read ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: jobId, approvedBy: null });
         if (status.rows_read === null) readKnown = false;
