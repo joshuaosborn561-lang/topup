@@ -1,9 +1,10 @@
-import { bandComplement, type Getleads, type GetleadsFilters } from "../../clients/getleads.js";
+import { type Getleads, type GetleadsFilters } from "../../clients/getleads.js";
 import type { MapsStats } from "../../clients/mapsStats.js";
 import type { PermitCounts } from "../../clients/permits.js";
 import type { RunRow } from "../../domain/runs.js";
 import { campaignSnapshots } from "../../ledger/health.js";
 import { Overlap, SIZE_ACROSS_CLIENTS, SIZE_WITHIN_CLIENT } from "../../lib/concurrency.js";
+import { logger } from "../../lib/log.js";
 import { runTargetCampaignIds } from "../../recipes/campaigns.js";
 import { recipeAuthorises, type GetleadsSource, type MapsSource, type PermitsSource, type Recipe } from "../../recipes/schema.js";
 import type { SpendRails } from "../../spend/rails.js";
@@ -13,6 +14,8 @@ import { campaignSizeRoutes, type SizeLeaf, type SizeRoute, type SizeSegment } f
 import { recycleDays } from "../suppress/recycle.js";
 import { combineSizeLine, listCountLine, type CountUnit, type SegmentMeasure, type UnitTotal } from "./combine.js";
 import { sizeReport } from "./report.js";
+
+const log = logger("size");
 
 /**
  * Step 2 — Size it (skill lead-list-build; skill tam-sizing; D29, D33).
@@ -70,6 +73,31 @@ export function partitionCheck(bands: number, others: number, all: number, toler
 export function bandMismatchReason(partition: Partition): string | null {
   if (partition.ok) return null;
   return `the band filter overlaps: ${partition.bands} (bands) + ${partition.others} (other bands) exceed ${partition.all} (no band filter) by ${partition.diff}. The count cannot be trusted (tam-sizing).`;
+}
+
+/**
+ * Records outside the in-ICP bands, including a null or unknown band.
+ * This is the unfiltered total minus the in-band count. A complement
+ * query is not used: an empty complement is sent as no filter, so
+ * "other bands" comes back equal to the total and the check can never pass.
+ */
+export function outsideBandCount(all: number, inBand: number): number {
+  return Math.max(0, all - inBand);
+}
+
+/**
+ * Size from the in-band count. Other bands are the rest of the total, so
+ * a null band sits inside "other" and the buckets add up. If they still
+ * do not, keep the in-band count and warn. Do not park the run.
+ */
+export function bandSizeDecision(
+  inBand: number,
+  all: number,
+  tolerance: number,
+): { total: number; partition: Partition; warning: string | null } {
+  const others = outsideBandCount(all, inBand);
+  const partition = partitionCheck(inBand, others, all, tolerance);
+  return { total: inBand, partition, warning: bandMismatchReason(partition) };
 }
 
 export function sourcesAgree(a: number, b: number, within = 0.25): boolean {
@@ -443,7 +471,7 @@ export class SizeStage {
     });
   }
 
-  /** One getleads list: three counts and the partition check. Does not finish the step. */
+  /** One getleads list: the in-band count and the unfiltered total. Other bands are the difference, so a null band is included. Does not finish the step. */
   private async measureGetleads(
     run: RunRow,
     recipe: Recipe,
@@ -473,15 +501,17 @@ export class SizeStage {
       return r;
     };
     const { company_size: _omit, ...withoutBand } = filters;
-    const [segment, others, all] = await Promise.all([
-      count(filters),
-      count({ ...filters, company_size: bandComplement(params.company_size) as GetleadsFilters["company_size"] }),
-      count(withoutBand as GetleadsFilters),
-    ]);
-    const partition = partitionCheck(segment.total_matching, others.total_matching, all.total_matching, recipe.size.partition_tolerance);
-    const mismatch = bandMismatchReason(partition);
-    if (mismatch) return { ok: false, reason: mismatch };
-    return { ok: true, total: segment.total_matching, partition };
+    const [segment, all] = await Promise.all([count(filters), count(withoutBand as GetleadsFilters)]);
+    const decision = bandSizeDecision(segment.total_matching, all.total_matching, recipe.size.partition_tolerance);
+    if (decision.warning) {
+      log.warn("band partition still overlaps; sizing from the in-band count", {
+        run_id: run.run_id,
+        bands: decision.partition.bands,
+        others: decision.partition.others,
+        all: decision.partition.all,
+      });
+    }
+    return { ok: true, total: decision.total, partition: decision.partition };
   }
 
   /** Distinct addresses this client sent in the recycle window, plus live-campaign holds (D36). Matches step 5. */

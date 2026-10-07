@@ -13,7 +13,7 @@ import { sourceLabel } from "./ingest/index.js";
 import { credentialGap, pricePlans, shareRows } from "./pull/index.js";
 import { pullPlans, routeSize } from "./pull/route.js";
 import { campaignIdFromSourceLabel } from "./route/index.js";
-import { bandMismatchReason, partitionCheck } from "./size/index.js";
+import { bandMismatchReason, bandSizeDecision, outsideBandCount, partitionCheck } from "./size/index.js";
 
 const base = {
   client_tag: "emcor",
@@ -120,6 +120,25 @@ describe("finish the open runs", () => {
     const reason = bandMismatchReason(overlap);
     assert.match(reason ?? "", /cannot be trusted/);
     assert.doesNotMatch(reason ?? "", /Josh/);
+
+    const nullBand = bandSizeDecision(70, 100, 0.01);
+    assert.equal(nullBand.partition.others, 30);
+    assert.equal(nullBand.partition.bands + nullBand.partition.others, nullBand.partition.all);
+    assert.equal(nullBand.partition.ok, true);
+    assert.equal(nullBand.warning, null);
+    assert.equal(nullBand.total, 70);
+
+    const live = bandSizeDecision(1_467_223, 2_551_200, 0.01);
+    assert.equal(outsideBandCount(2_551_200, 1_467_223), 2_551_200 - 1_467_223);
+    assert.equal(live.partition.others, 2_551_200 - 1_467_223);
+    assert.equal(live.partition.bands + live.partition.others, live.partition.all);
+    assert.equal(live.partition.ok, true);
+    assert.equal(live.total, 1_467_223);
+
+    const drift = bandSizeDecision(120, 100, 0.01);
+    assert.equal(drift.partition.ok, false);
+    assert.equal(drift.total, 120);
+    assert.match(drift.warning ?? "", /cannot be trusted/);
   });
 
   it("prices maps and permitstack through the spend card and names a missing credential", () => {
