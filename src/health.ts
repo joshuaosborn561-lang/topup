@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ALLOWED_SUPABASE_PROJECT_REF, configReadiness, type Config } from "./config.js";
 import type { Repo } from "./db/repo.js";
 import type { SpendRails } from "./spend/rails.js";
@@ -5,6 +8,29 @@ import { usd } from "./spend/prices.js";
 import { MCP_HTTPS_URL, SERVICE_VERSION } from "./version.js";
 
 const startedAt = Date.now();
+
+/** Git SHA of the running deploy, plus when `npm run build` wrote the image stamp. */
+export function deployIdentity(): { commit: string | null; built_at: string | null; deployment_id: string | null; started_at: string } {
+  return {
+    commit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || null,
+    built_at: readBuildStamp(),
+    deployment_id: process.env.RAILWAY_DEPLOYMENT_ID || null,
+    started_at: new Date(startedAt).toISOString(),
+  };
+}
+
+function readBuildStamp(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const path of [join(here, "build-stamp.json"), join(here, "..", "dist", "build-stamp.json")]) {
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as { built_at?: unknown };
+      if (typeof raw.built_at === "string" && raw.built_at.length > 0) return raw.built_at;
+    } catch {
+      /* the next candidate, or null when this process was not built */
+    }
+  }
+  return null;
+}
 
 /** Tables a run needs. /health is ok: false until they exist (D34). */
 export const REQUIRED_TOPUP_TABLES = [
@@ -31,6 +57,7 @@ export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: Sp
   const base: Record<string, unknown> = {
     service: "leadtopup",
     version: process.env.npm_package_version ?? SERVICE_VERSION,
+    ...deployIdentity(),
     mcp: { transport: "streamable-http", path: "/mcp", url: MCP_HTTPS_URL, auth: "none" },
     phase: "1 (verify + normalize; nothing is staged or imported)",
     uptime_s: Math.round((Date.now() - startedAt) / 1000),

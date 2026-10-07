@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { loadConfig } from "./config.js";
-import { REQUIRED_TOPUP_TABLES, buildHealth } from "./health.js";
+import { REQUIRED_TOPUP_TABLES, buildHealth, deployIdentity } from "./health.js";
 
 /** D34 — /health is not ok while required topup tables are missing. */
 
@@ -37,5 +37,16 @@ describe("health — D34 required tables", () => {
     });
     assert.equal(body.ok, false);
     assert.deepEqual(body.missing_tables, ["topup.qa_rules", "topup.campaign_registry"]);
+    assert.equal(typeof body.commit === "string" || body.commit === null, true);
+    assert.equal(typeof body.built_at === "string" || body.built_at === null, true);
+    assert.equal(typeof body.started_at, "string");
+  });
+
+  it("names the commit and the build time so a deploy can be told from the last one", () => {
+    const id = deployIdentity();
+    assert.equal("commit" in id, true);
+    assert.equal("built_at" in id, true);
+    assert.equal("deployment_id" in id, true);
+    assert.match(id.started_at, /^\d{4}-\d{2}-\d{2}T/);
   });
 });
