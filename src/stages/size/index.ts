@@ -657,7 +657,11 @@ export class SizeStage {
     } catch (err) {
       log.warn("campaign report failed", { run_id: run.run_id, error: (err as Error).message });
     }
-    await this.d.repo.mergeStepExtra(run.run_id, "size", { ...counts, campaign_report: report, pilot_gate: "pilot_mismatch" });
+    await this.d.repo.mergeStepExtra(run.run_id, "size", {
+      ...counts,
+      campaign_report: report,
+      pilot_gate: context.notSized ? "pilot_mismatch" : "ok",
+    });
     await this.d.repo.failStep(run.run_id, "size", reason, true);
     return park(this.d, run, "size", reason, 1);
   }

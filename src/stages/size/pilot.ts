@@ -83,15 +83,38 @@ function phraseHit(text: string, phrase: string): boolean {
   return text.toLowerCase().includes(needle.toLowerCase());
 }
 
+/** getleads expands these to each other. A listed CEO matches Chief Executive Officer. */
+const TITLE_TWINS: Readonly<Record<string, string>> = {
+  ceo: "chief executive officer",
+  cio: "chief information officer",
+  cto: "chief technology officer",
+  coo: "chief operating officer",
+  cfo: "chief financial officer",
+  ciso: "chief information security officer",
+  vp: "vice president",
+};
+
+function titleVariants(title: string): string[] {
+  const value = norm(title);
+  if (!value) return [];
+  const out = [value];
+  const twin = TITLE_TWINS[value];
+  if (twin) out.push(twin);
+  for (const [short, long] of Object.entries(TITLE_TWINS)) {
+    if (value === long) out.push(short);
+  }
+  return out;
+}
+
 function titleHit(title: string, allowed: string[]): boolean {
   const value = norm(title);
   if (!value) return false;
-  return allowed.some((item) => {
-    const need = norm(item);
-    if (!need) return false;
-    if (value === need) return true;
-    return new RegExp(`(?:^| )${need.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?: |$)`).test(value);
-  });
+  return allowed.some((item) =>
+    titleVariants(item).some((need) => {
+      if (value === need) return true;
+      return new RegExp(`(?:^| )${need.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?: |$)`).test(value);
+    }),
+  );
 }
 
 function industryHit(industry: string, allowed: string[]): boolean {

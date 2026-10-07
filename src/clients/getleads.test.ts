@@ -60,7 +60,8 @@ describe("getleads filters — D34", () => {
       email_status: ["VALID"],
     } as GetleadsFilters;
     const counted = outboundFilters(filters);
-    assert.equal(counted.job_function, "Operations");
+    assert.equal("job_function" in counted, false);
+    assert.deepEqual(counted.job_functions, ["Operations"]);
     assert.deepEqual(counted.seniority, ["C-Team", "VP", "Director"]);
     const exported = exportFilters(filters);
     assert.equal("job_function" in exported, false);

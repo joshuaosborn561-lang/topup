@@ -135,4 +135,18 @@ describe("pilot before size", () => {
     assert.deepEqual(unscored.top_titles, []);
     assert.equal(pilotFieldsFromRecords(pilotRowsFromCsv(thin).map(() => ({}))).title, false);
   });
+
+  it("treats a spelled-out title as the listed acronym and not as letters inside another word", () => {
+    const expect = pilotExpectFor("parlay", "owner", {
+      job_titles: ["Owner", "President", "CEO", "Managing Partner"],
+      industries: ["Financial Services"],
+      company_size: ["11 to 50", "51 to 200"],
+      countries: ["United States"],
+    });
+    const chief = scorePilot([row({ title: "Chief Executive Officer", industry: "Financial Services", company_size: "11 to 50", country: "United States" })], expect);
+    assert.equal(chief.title_match, 100);
+    const assistant = scorePilot([row({ title: "assistant", industry: "Financial Services", company_size: "11 to 50", country: "United States" })], expect);
+    assert.equal(assistant.title_match, 0);
+    assert.equal(assistant.gate, "pilot_mismatch");
+  });
 });

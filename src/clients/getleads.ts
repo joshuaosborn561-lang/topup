@@ -238,19 +238,12 @@ export const GETLEADS_COUNT_KEYS = [
 ] as const;
 
 /**
- * `count_contacts` takes `job_function` and `seniority`. `export_contacts`
- * rejects `job_function` and takes `job_functions` (one-item list) plus the
- * same `seniority` list. The filter values are not rewritten.
+ * Both `count_contacts` and `export_contacts` reject `job_function`.
+ * They take `job_functions` (one-item list) and the same `seniority` list.
+ * The function name is not rewritten.
  */
 export function exportFilters(filters: GetleadsFilters): Record<string, unknown> {
-  const out = outboundFilters(filters);
-  const job = out.job_function;
-  if (typeof job === "string" && job.trim()) {
-    const already = Array.isArray(out.job_functions) ? out.job_functions.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
-    out.job_functions = [...new Set([job.trim(), ...already])];
-  }
-  delete out.job_function;
-  return out;
+  return outboundFilters(filters);
 }
 
 export function outboundFilters(filters: GetleadsFilters): Record<string, unknown> {
@@ -273,6 +266,14 @@ export function outboundFilters(filters: GetleadsFilters): Record<string, unknow
   }
   const statuses = out.email_status;
   if (!Array.isArray(statuses) || statuses.length === 0) delete out.email_status;
+  const job = out.job_function;
+  if (typeof job === "string" && job.trim()) {
+    const already = Array.isArray(out.job_functions)
+      ? out.job_functions.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    out.job_functions = [...new Set([job.trim(), ...already])];
+  }
+  delete out.job_function;
   return out;
 }
 
