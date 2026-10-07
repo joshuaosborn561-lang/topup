@@ -78,7 +78,11 @@ export class IngestStage {
         const label = sourceLabel(run, file.campaignId);
         let jobId = jobs[label] ?? null;
         if (!jobId) {
-          const started = await this.d.leadpipe.ingestCsv(run.client_tag, { urls: [file.export_url], source_label: label, dedupe_key: "email" });
+          const started = await this.d.leadpipe.ingestCsv(run.client_tag, {
+            urls: file.export_url.split("\n").map((url) => url.trim()).filter(Boolean),
+            source_label: label,
+            dedupe_key: "email",
+          });
           jobId = started.job_id;
           jobs[label] = jobId;
           await this.d.repo.setStepVendorJob(run.run_id, "ingest", JSON.stringify(jobs));

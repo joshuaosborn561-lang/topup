@@ -24,6 +24,8 @@ export interface CountResult {
 
 export interface ExportStarted {
   export_id: string;
+  /** More than one when a count timeout was retried as separate slices. */
+  export_ids?: string[];
 }
 
 export interface ExportStatus {
@@ -48,6 +50,85 @@ export const EXPORT_FAILED = ["failed", "error", "errored", "cancelled", "cancel
 /** The band labels a recipe does not name, for the partition check in step 2. */
 export function bandComplement(bands: readonly string[]): string[] {
   return GETLEADS_BANDS.filter((b) => !bands.includes(b));
+}
+
+/** getleads says this when export_contacts or count_contacts times out on a wide query. */
+export function isCountTimeout(message: string): boolean {
+  return /count_timeout|count timed out/i.test(message);
+}
+
+/**
+ * One narrower query. Bands first, then industries, then titles (seniority).
+ * An empty result means the query cannot be split, so the caller does not retry it as-is.
+ */
+export function splitGetleadsQuery(filters: GetleadsFilters): GetleadsFilters[] {
+  const bands = filters.company_size ?? [];
+  if (bands.length > 1) return bands.map((band) => ({ ...filters, company_size: [band] }));
+  const industries = filters.industries ?? [];
+  if (industries.length > 1) return industries.map((industry) => ({ ...filters, industries: [industry] }));
+  const titles = filters.job_titles ?? [];
+  if (titles.length > 1) {
+    const mid = Math.ceil(titles.length / 2);
+    const parts = [titles.slice(0, mid), titles.slice(mid)].filter((part) => part.length > 0);
+    if (parts.length > 1) return parts.map((job_titles) => ({ ...filters, job_titles }));
+  }
+  return [];
+}
+
+/** The sized plan_rows cap. A known plan does not need another full-lane count before export. */
+export function exportRowLimit(planRows: number): number {
+  const rows = Math.floor(planRows);
+  return Math.max(1, Math.min(50_000, Number.isFinite(rows) && rows > 0 ? rows : 1));
+}
+
+/** Count the query. On count_timeout, sum one split. Do not send the wide query again. */
+export async function countOrSplit(
+  filters: GetleadsFilters,
+  count: (filters: GetleadsFilters) => Promise<CountResult>,
+): Promise<CountResult> {
+  try {
+    return await count(filters);
+  } catch (err) {
+    if (!isCountTimeout((err as Error).message ?? String(err))) throw err;
+    const slices = splitGetleadsQuery(filters);
+    if (slices.length < 2) throw err;
+    let total = 0;
+    let exportable = 0;
+    let sawExportable = false;
+    for (const slice of slices) {
+      const part = await count(slice);
+      total += part.total_matching;
+      if (part.exportable_rows != null) {
+        sawExportable = true;
+        exportable += part.exportable_rows;
+      }
+    }
+    return { total_matching: total, exportable_rows: sawExportable ? exportable : null };
+  }
+}
+
+/** Export the query. On count_timeout, export each slice once. Do not send the wide query again. */
+export async function exportOrSplit(
+  filters: GetleadsFilters,
+  opts: { max_rows: number; max_per_company?: number },
+  start: (filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }) => Promise<{ export_id: string }>,
+): Promise<{ export_ids: string[] }> {
+  const limit = exportRowLimit(opts.max_rows);
+  try {
+    const one = await start(filters, { ...opts, max_rows: limit });
+    return { export_ids: [one.export_id] };
+  } catch (err) {
+    if (!isCountTimeout((err as Error).message ?? String(err))) throw err;
+    const slices = splitGetleadsQuery(filters);
+    if (slices.length < 2) throw err;
+    const per = Math.max(1, Math.floor(limit / slices.length));
+    const ids: string[] = [];
+    for (const slice of slices) {
+      const started = await start(slice, { ...opts, max_rows: per });
+      ids.push(started.export_id);
+    }
+    return { export_ids: ids };
+  }
 }
 
 /**
@@ -132,6 +213,10 @@ export class GetleadsClient implements Getleads {
 
   async count(filters: GetleadsFilters): Promise<CountResult> {
     this.ready();
+    return countOrSplit(filters, (slice) => this.countOnce(slice));
+  }
+
+  private async countOnce(filters: GetleadsFilters): Promise<CountResult> {
     assertGetleadsFilters(filters);
     const res = await this.mcp.call<Record<string, unknown>>("count_contacts", outboundFilters(filters));
     const total = Number(res.total_matching ?? res.total ?? res.count ?? NaN);
@@ -142,6 +227,11 @@ export class GetleadsClient implements Getleads {
 
   async startExport(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }): Promise<ExportStarted> {
     this.ready();
+    const started = await exportOrSplit(filters, opts, (slice, sliceOpts) => this.exportOnce(slice, sliceOpts));
+    return { export_id: started.export_ids[0]!, export_ids: started.export_ids };
+  }
+
+  private async exportOnce(filters: GetleadsFilters, opts: { max_rows: number; max_per_company?: number }): Promise<{ export_id: string }> {
     assertGetleadsFilters(filters);
     if (!(opts.max_rows >= 1 && opts.max_rows <= 50_000)) throw new Error(`export max_rows must be 1..50000, got ${opts.max_rows}`);
     const args: Record<string, unknown> = { ...outboundFilters(filters), max_rows: opts.max_rows, confirmed: true };
