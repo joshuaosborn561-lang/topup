@@ -13,7 +13,7 @@ The routing rule for which server owns which job is in `leadgen-mcp-routing/SKIL
 
 | Server | URL | Owns |
 |---|---|---|
-| leadtopup | `https://leadtopup-production.up.railway.app/mcp` | Live pull recipe (`topup_recipe`, `topup_campaign_builds`, `topup_provenance_gaps`), `#campaign-watchdog` lead-refill queue (`topup_queue`), lane state, start a top-up from a campaign id or from pull_receipts tags. Counts only. Not LeadPipe. No login (D41). |
+| leadtopup | `https://leadtopup-production.up.railway.app/mcp` | Build records and the live pull recipe (`campaign_history`), `#campaign-watchdog` lead-refill queue with the policy gate applied (`topup_queue`), pilot and size one client in one call (`size_client`), Josh's `approval_briefing`, `start_topup`, `run_status`, `abort_run` / `resume_run`, holds, `loads_paused`, lane state. Counts only; no tool returns a row. Not LeadPipe. No login (D41). |
 | LeadPipe (named "Context Saver" in Claude) | `https://leadpipe-production-0df5.up.railway.app/mcp` | Client schemas, `ingest_csv`, `lp_export` signed URLs, `import_smartlead`, `sync_smartlead`, `build_suppression`, job status |
 | Google Maps Scraper | `https://google-maps-mcp-production-88a3.up.railway.app/mcp` | Local business discovery by category and geography, outcome mode v1.8, `estimate_only=true` first |
 | PermitStack | `https://permitstack-mcp-production.up.railway.app/mcp` | Building permits by type, date, geography, contractor; trade plays |

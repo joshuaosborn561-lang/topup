@@ -1,6 +1,6 @@
 import { ingestedTable } from "./db/pool.js";
 import type { Repo } from "./db/repo.js";
-import { orderCounts, presentRun, type Role, type RunRow, type Step } from "./domain/runs.js";
+import { orderCounts, presentRun, runIsOpen, type Role, type RunRow, type Step } from "./domain/runs.js";
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
@@ -568,14 +568,8 @@ export class Orchestrator {
       }
       case "abort": {
         if (!runId) return;
-        const run = await this.d.repo.getRun(runId);
-        if (!run) return;
         if (card.kind === "stall") return; // the verify stage handles abort of a batch itself
-        await this.d.repo.cancelRunningSteps(runId, `aborted by ${card.by}`);
-        const released = await this.releaseClaimedRows(run);
-        await this.d.repo.setRunStatus(runId, "aborted", undefined, `aborted by ${card.by}`);
-        const closed = (await this.d.repo.getRun(runId))!;
-        await this.closeWithReceipt(closed, `Aborted by <@${card.by}>. ${released} unverified rows returned to needs_verify. Nothing was sent.`, "Nothing queued.");
+        await this.abortRun(runId, card.by);
         return;
       }
       case "leave_it": {
@@ -596,6 +590,47 @@ export class Orchestrator {
         log.info("card resolved with no side effect in this build", { card_id: card.card_id, kind: card.kind, choice: card.choice });
     }
   };
+
+  /**
+   * Abort any open run, not only a parked one (D48). Running steps are
+   * cancelled, claimed rows go back to the queue, open cards on the run are
+   * resolved as aborted through the console, and the receipt posts. A step
+   * mid-vendor-call sees the aborted status at its next check and stops.
+   */
+  async abortRun(runId: string, by: string): Promise<{ ok: true; run: RunRow; released: number } | { ok: false; message: string }> {
+    const run = await this.d.repo.getRun(runId);
+    if (!run) return { ok: false, message: "no such run" };
+    if (!runIsOpen(presentRun(run).status)) return { ok: false, message: `run ${runId.slice(0, 8)} is already ${presentRun(run).status}` };
+    await this.d.repo.cancelRunningSteps(runId, `aborted by ${by}`);
+    const released = await this.releaseClaimedRows(run);
+    for (const card of await this.d.repo.openCardsForRun(runId)) {
+      if (card.kind === "stall") continue;
+      await this.d.console.resolveAs(by, "operator", card.card_id, "abort").catch(() => undefined);
+    }
+    await this.d.repo.setRunStatus(runId, "aborted", undefined, `aborted by ${by}`);
+    const closed = (await this.d.repo.getRun(runId))!;
+    await this.closeWithReceipt(closed, `Aborted by ${by}. ${released} unverified rows returned to needs_verify. Nothing was sent.`, "Nothing queued.");
+    return { ok: true, run: closed, released };
+  }
+
+  /**
+   * Resume a run that is waiting on a human or exhausted its retries (D48):
+   * the step it stopped on gets its attempts back and the run is driven
+   * again. A closed run is not resumed; a new top-up is a new run.
+   */
+  async resumeRun(runId: string, by: string): Promise<{ ok: true; run: RunRow; step: Step | null } | { ok: false; message: string }> {
+    const run = await this.d.repo.getRun(runId);
+    if (!run) return { ok: false, message: "no such run" };
+    const shown = presentRun(run);
+    if (!runIsOpen(shown.status)) return { ok: false, message: `run ${runId.slice(0, 8)} is ${shown.status}; a closed run is not resumed. Start a new one.` };
+    if (this.active.has(runId)) return { ok: false, message: `run ${runId.slice(0, 8)} is being driven right now` };
+    const step = run.current_step;
+    if (step) await this.d.repo.resetStep(runId, step);
+    await this.d.repo.setRunStatus(runId, "open", step ?? undefined);
+    await this.ledger((l) => l.event({ client_tag: run.client_tag, lane: run.lane, run_id: runId, event: "card_resolved", line: `Resumed at ${step ?? "the current step"} by ${by}.`, actor: by }));
+    void this.drive(runId);
+    return { ok: true, run: (await this.d.repo.getRun(runId))!, step };
+  }
 
   /**
    * Rows a run claimed but never got a verdict on go back to the queue

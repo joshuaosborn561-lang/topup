@@ -16,7 +16,8 @@ describe("D45 — queue runway, inferred recipes, Cayden can operate", () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8")) as { version: string };
-    assert.match(canon, /Canon as of \*\*D45\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
+    assert.match(ledger, /^\| D45 \| Live/m);
     assert.match(canon, /\$5 or above/);
     assert.match(canon, /send rate/);
     assert.match(canon, /pull_receipts/);
@@ -46,18 +47,18 @@ describe("D45 — queue runway, inferred recipes, Cayden can operate", () => {
     assert.equal(na.under_floor, true, "D45: n/a is not a pass. Ask Josh.");
   });
 
-  it("start_topup takes campaign_id; sample_rows is hidden from Cayden; spend copy is $5 or above — Ask Josh", () => {
+  it("start_topup takes campaign_id; no row tool is on the surface (D48 superseded sample_rows); spend copy is $5 or above — Ask Josh", () => {
     const t = resolveStartTarget({ clientTag: "powergryd", campaignId: 4005226, count: 400 });
     assert.equal(t.ok, true);
     if (t.ok) {
       assert.deepEqual(t.campaignIds, [4005226]);
       assert.equal(t.requestedCount, 400);
     }
-    assert.equal(MCP_TOOL_ROLE.sample_rows, "owner");
-    assert.ok(HIDDEN_FROM_OPERATOR.includes("sample_rows"));
+    assert.equal(MCP_TOOL_ROLE.sample_rows, undefined, "D48: sample_rows is retired; nothing on the surface returns rows. Ask Josh.");
+    assert.equal(HIDDEN_FROM_OPERATOR.length, 0, "D48: nothing is hidden because nothing returns rows. Ask Josh.");
     assert.equal(MCP_TOOL_ROLE.start_topup, "operator");
-    assert.equal(MCP_TOOL_ROLE.campaign_registry, "operator");
-    assert.equal(MCP_TOOL_ROLE.register_queue_table, "operator");
+    assert.equal(MCP_TOOL_ROLE.topup_queue, "operator");
+    assert.equal(MCP_TOOL_ROLE.campaign_history, "operator");
     const presented = presentTopupRecipe(
       { campaign: 1, vocab: { a: 1 }, rules: { spend: "any spend above $5 needs Josh" } },
       { includeVocab: true, sendsLast14d: 90 },

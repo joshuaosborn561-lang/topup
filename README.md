@@ -35,8 +35,7 @@ Read `CANON.md` first. It is one page and it is the current truth.
 - The **lane ledger**: step per lane, event log, queue registry. `/where
   <client> [lane]`, the `lane_state` MCP tool, and a daily ops digest that
   only names lanes whose state changed or whose campaign health crossed a
-  line. Claude sessions hand queue tables to the service with
-  `register_queue_table` and leave notes with `lane_note`.
+  line. Claude sessions leave notes with `lane_note`.
 - **Steps 1 → 13 end to end for a getleads lane** (Parlay `it_dm`): step 1
   reuses the saved ICP, then size,
   pull (`GetleadsPull` behind one adapter interface), find emails (skipped
@@ -121,8 +120,9 @@ scripts/seed-cities.ts  load topup.ref_cities once (npm run seed:cities)
 Streamable HTTP at **`https://leadtopup-production.up.railway.app/mcp`**.
 No login (D41). POST JSON-RPC; no `Authorization` header. CORS is open
 so Cursor can add the URL. GET is 405 (stateless). `/mcp` is always
-mounted once the database is up. An optional owner token still unlocks
-owner-only tools (`sample_rows`, `recipe_get`, …).
+mounted once the database is up. Operator and owner see the same tools;
+owner-only choices are enforced on the card. No tool returns a lead row
+or a file URL (D48).
 
 Cursor / Claude:
 
@@ -136,31 +136,36 @@ Cursor / Claude:
 }
 ```
 
-| Tool | Who | What |
-|---|---|---|
-| `lane_state` | both | Where a lane is. Counts only. |
-| `run_status` | both | Counts, spend and step for one run. |
-| `list_runs` | both | Recent runs. |
-| `list_holds` | both | Open cards. |
-| `resolve_hold` | both | Tap a card (same role rules as Slack). |
-| `start_topup` | both | Open a run. `client_tag` + `campaign_id` (optional `count`) or `lane`. File recipe wins; else infer from pull_receipts. Spend of $5 or above asks Josh. |
-| `add_client_domains` | both | Customer domains only, never rows. |
-| `topup_recipe` | both | **Read before any top up.** How this campaign's leads were pulled last time (`select topup.recipe($1, $2)`). `client_tag` is the live list from `topup.client_map` (D42), not a hardcoded twelve. `include_vocab` default false. Adds `sends_last_14d`. If `campaign` is null: `campaign not found in public.campaigns`. Counts only, never lead rows. |
-| `topup_campaign_builds` | both | Builds that fed a campaign, largest first. |
-| `topup_provenance_gaps` | both | Campaigns for a client still missing a pull stamp. |
-| `topup_queue` | both | Campaigns `#campaign-watchdog` would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the recipe count summary, `sends_last_14d`, and the 1-in-2000 working gate (1 reply under 2,000 sends is acceptable). Page with `limit` / `offset` / `client_tag`. Includes camps the client-wide watch would skip. Open the queue, pick the top one, read `topup_recipe`, run `start_topup`. No Slack, no Cursor (D43–D45). Counts only. |
-| `register_queue_table` | both | Hand a queue table to the service. Never rows. |
-| `lane_note` | both | One line on the lane event log. |
-| `sample_rows` | owner | Up to ten masked rows. Hidden from the operator list. |
-| `variant_stats` | both | Sends and interested by variant. |
-| `campaign_registry` | both | Campaigns the service knows. |
-| `recipe_get` | both | File or inferred recipe. Not the live pull record. |
-| `missing_piece_groups` | both | Rows grouped by what they still lack. Counts only. |
+The operator flow (D46–D48): `topup_queue` → `campaign_history` →
+`size_client` → read the report → `approval_briefing` to Josh →
+`start_topup` once approved and `loads_paused` is off.
 
-The live recipe tools and `topup_queue` are not on LeadPipe. The
-function and views already exist on campaignintelligence; this
-service does not change schema. `count_contacts` is count filters
-only — `max_per_company` is an export cap (D43).
+| Tool | What |
+|---|---|
+| `topup_queue` | Campaigns `#campaign-watchdog` would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the recipe count summary, `sends_last_14d`, and the policy gate and reason already applied (excluded, ignored client, retired, paused, dropped, not active, foreign client, under the 1-in-2000 reply bar — 1 reply under 2,000 sends is acceptable, zero positives never qualifies — or ok). Page with `limit` / `offset` / `client_tag`. No Slack, no Cursor (D43–D46). Counts only. |
+| `campaign_history` | **Read before any top up.** The build records for a campaign (vendor, exact query or stored pool, counts, interested, method note, reconstructed flag), lifetime sends and positives, the build the service would repeat and why, and the live pull recipe (`select topup.recipe($1, $2)`; `campaign not found in public.campaigns` when the mirror has no row). `client_tag` is the live list from `topup.client_map` (D42). Counts and method text, never lead rows. |
+| `size_client` | Pilot and size one client in one call: a size-only run per lane, concurrently; waits up to `wait_seconds`; returns each lane's one-line-per-campaign report and briefing. `pilot=true` scores the sample only. Nothing is pulled or loaded. |
+| `approval_briefing` | Josh's one line per campaign from the latest sized run of each lane, or one `run_id`: what loads, what is skipped and why, the build it repeats, whether loads are paused. |
+| `start_topup` | Open a run. `client_tag` + `campaign_id` (optional `count`) or `lane`. File recipe wins; else infer from pull_receipts. Every campaign is judged by the policy first. Spend of $5 or above asks Josh. |
+| `run_status` | Counts, spend, step state, the per-campaign report with gates and reasons, every vendor call's outcome, open cards. Never rows. |
+| `list_runs` | Recent runs. |
+| `abort_run` | Abort any open run, parked or running. |
+| `resume_run` | Give a waiting run's step its attempts back and drive it again. |
+| `list_holds` | Open cards, each with the per-campaign report. |
+| `resolve_hold` | Tap a card (same role rules as Slack; spend of $5 or above needs the owner token). |
+| `loads_paused` | The global switch. While on, nothing reaches Smartlead. |
+| `lane_state` | Where a lane is. Counts only. |
+| `lane_note` | One line on the lane event log. |
+| `add_client_domains` | Customer domains only, never rows. |
+
+Retired by D48 and no longer answering: `sample_rows`, `variant_stats`,
+`campaign_registry`, `recipe_get`, `missing_piece_groups`,
+`register_queue_table`, `topup_recipe`, `topup_campaign_builds`,
+`topup_provenance_gaps`. None of these tools is on LeadPipe. The
+`topup.recipe()` function and the views already exist on
+campaignintelligence; this service does not change schema.
+`count_contacts` is count filters only — `max_per_company` is an export
+cap (D43).
 
 ## Slack
 

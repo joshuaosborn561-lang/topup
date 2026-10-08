@@ -7,28 +7,26 @@
 export const GROK_SAMPLE_MAX = 10;
 
 /**
- * Tools Grok bot may call. Returns are counts, ids, a job_id, or a signed
- * URL the bot does not open. LeadPipe and the Railway service move the rows.
+ * Tools Grok bot may call (D39, D48). Returns are counts, ids, a job_id, or
+ * a signed URL the bot does not open. LeadPipe and the Railway service move
+ * the rows. No tool on the service surface returns a lead row or a file URL.
  */
 export const GROK_MAY = [
+  "topup_queue",
+  "campaign_history",
+  "size_client",
+  "approval_briefing",
   "start_topup",
-  "lane_state",
   "run_status",
   "list_runs",
+  "abort_run",
+  "resume_run",
   "list_holds",
   "resolve_hold",
-  "recipe_get",
-  "topup_recipe",
-  "topup_campaign_builds",
-  "topup_provenance_gaps",
-  "topup_queue",
-  "campaign_registry",
-  "variant_stats",
-  "missing_piece_groups",
-  "add_client_domains",
-  "register_queue_table",
+  "loads_paused",
+  "lane_state",
   "lane_note",
-  "sample_rows",
+  "add_client_domains",
   "lp_plan",
   "lp_run",
   "lp_status",

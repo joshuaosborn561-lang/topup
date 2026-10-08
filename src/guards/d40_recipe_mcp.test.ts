@@ -19,7 +19,7 @@ import { MCP_HTTPS_URL, SERVICE_VERSION } from "../version.js";
 const root = new URL("../../", import.meta.url);
 
 describe("D40 — live pull recipe lives on this service", () => {
-  it("CANON, the ledger, and README name the three tools and the HTTPS URL — Ask Josh", async () => {
+  it("CANON, the ledger, and README name the live pull record tool and the HTTPS URL — Ask Josh", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const readme = await readFile(new URL("README.md", root), "utf8");
@@ -27,9 +27,9 @@ describe("D40 — live pull recipe lives on this service", () => {
     const agents = await readFile(new URL("AGENTS.md", root), "utf8");
     const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8")) as { version: string };
     assert.match(canon, /Canon as of \*\*D\d+\*\*/);
-    assert.match(canon, /topup_recipe/);
-    assert.match(canon, /topup_campaign_builds/);
-    assert.match(canon, /topup_provenance_gaps/);
+    // D48 folded topup_recipe / topup_campaign_builds / topup_provenance_gaps into campaign_history.
+    assert.match(canon, /campaign_history/);
+    assert.match(canon, /topup\.recipe\(\)/);
     assert.match(canon, /not on LeadPipe/);
     assert.match(canon, /any_reconstructed/);
     assert.match(canon, /leads_without_method/);
@@ -37,23 +37,22 @@ describe("D40 — live pull recipe lives on this service", () => {
     assert.match(ledger, /## D40 — Live pull recipe lives on this service/);
     assert.match(ledger, /not on LeadPipe/);
     assert.match(ledger, /campaign not found in public\.campaigns/);
-    assert.match(readme, /`topup_recipe`/);
-    assert.match(readme, /`topup_campaign_builds`/);
-    assert.match(readme, /`topup_provenance_gaps`/);
+    assert.match(readme, /`campaign_history`/);
     assert.match(readme, /select topup\.recipe\(\$1, \$2\)/);
     assert.match(readme, new RegExp(MCP_HTTPS_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(servers, /leadtopup/);
-    assert.match(servers, /topup_recipe/);
+    assert.match(servers, /campaign_history/);
     assert.match(servers, /Not LeadPipe/);
-    assert.match(agents, /topup_recipe/);
+    assert.match(agents, /campaign_history/);
     assert.equal(pkg.version, SERVICE_VERSION, "D40: package.json version must match SERVICE_VERSION. Ask Josh.");
     assert.match(SERVICE_VERSION, /^\d+\.\d+\.\d+$/);
   });
 
-  it("the three tools are operator-readable, one SQL each, and not registered on LeadPipe — Ask Josh", async () => {
-    for (const t of ["topup_recipe", "topup_campaign_builds", "topup_provenance_gaps"] as const) {
-      assert.equal(MCP_TOOL_ROLE[t], "operator", `D40: ${t} is for Cayden as well as Josh. Ask Josh.`);
-      assert.ok((GROK_MAY as readonly string[]).includes(t), `D40: Grok babysitter may call ${t}. Ask Josh.`);
+  it("the live pull record is operator-readable, one SQL each, and not registered on LeadPipe — Ask Josh", async () => {
+    assert.equal(MCP_TOOL_ROLE.campaign_history, "operator", "D40/D48: campaign_history is for Cayden as well as Josh. Ask Josh.");
+    assert.ok((GROK_MAY as readonly string[]).includes("campaign_history"), "D40/D48: Grok babysitter may call campaign_history. Ask Josh.");
+    for (const t of ["topup_recipe", "topup_campaign_builds", "topup_provenance_gaps"]) {
+      assert.equal(MCP_TOOL_ROLE[t], undefined, `D48: ${t} is retired; campaign_history replaced it. Ask Josh.`);
     }
     assert.equal(TOPUP_RECIPE_SQL, "select topup.recipe($1, $2)");
     assert.equal(

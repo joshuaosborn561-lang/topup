@@ -30,7 +30,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D8 | Live; Hunter added by D35 |
 | D9 | Live; "$5 or above" wording by D45 |
 | D10 | Live |
-| D11 | Live; variant volume floor 300 superseded by D35 (1,000); 1-reply-under-2k confirmed by D44 |
+| D11 | Live; variant volume floor 300 superseded by D35 (1,000); 1-reply-under-2k confirmed by D44; measured per campaign on lifetime sends, zero positives never qualifies, by D46 |
 | D12 | Live |
 | D13 | Live; VALID-only superseded by D35 item 15 |
 | D14 | Live |
@@ -46,7 +46,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D24 | Live |
 | D25 | Live |
 | D26 | Live; pipeline order and find_emails-before-ingest superseded by D29 |
-| D27 | Live; per-campaign needy as the start signal superseded by D38 |
+| D27 | Live; per-campaign needy as the start signal superseded by D38; the not-working card removed by D46 |
 | D28 | Live; pipeline list superseded by D29 |
 | D29 | Live; recipe-level ICP superseded by D30; empty-list-proceeds superseded by D34; 90-day send window restored by D35 |
 | D30 | Live |
@@ -59,12 +59,15 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D37 | Live |
 | D38 | Live; n/a-as-healthy and inbox-only days superseded by D45 |
 | D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context; receipt inference is D45 |
-| D40 | Live; live pull recipe MCP on this service, not LeadPipe; watch Slack includes the count summary |
+| D40 | Live; live pull recipe MCP on this service, not LeadPipe; the three tools are folded into `campaign_history` by D48; watch Slack includes the count summary |
 | D41 | Live; HTTPS MCP needs no login; unauthenticated callers get the operator set |
 | D42 | Live; recipe-tool client_tag enum is topup.client_map at boot, not a hardcoded twelve |
-| D43 | Live; topup_queue visibility widened by D44; count_contacts is count filters only |
+| D43 | Live; topup_queue visibility widened by D44; its gate is the policy verdict by D46; count_contacts is count filters only |
 | D44 | Live; topup_queue shows #campaign-watchdog lead flags; 1 reply under 2,000 sends is working |
-| D45 | Live; client days from send rate; n/a fails; start_topup infers from receipts; Cayden runs ops |
+| D45 | Live; client days from send rate; n/a fails; start_topup infers from receipts; item 7 (sample_rows) and item 9 (campaign_registry on the surface) superseded by D48; Cayden runs ops |
+| D46 | Live; one policy layer, per-campaign parking, the Oct 8 rules |
+| D47 | Live; build records are the memory |
+| D48 | Live; the planner, the caches, the vendor-call log, lifecycle tools, the fifteen-tool surface, Slack optional |
 
 ---
 
@@ -1425,3 +1428,139 @@ and incomplete-filter lanes park at size. Name to Email stays
 paused. Bounce-by-build and a real pull-date column wait on Josh.
 
 **Guard.** `src/guards/d45_ops_findings.test.ts`. Ask Josh.
+
+## D46 — One policy layer: the Oct 8 rules, judged per campaign
+
+**Decision.** Every rule a top-up decision depends on lives in `src/policy`
+and nowhere else, and `evaluateCampaign(facts)` gives one verdict per
+campaign with a one-line reason. The queue, the watch, the size step and
+the start path call the same function. The rules, from the Oct 8 2026
+rewrite brief:
+
+1. **Never top up** SG Gabe Calls (4085158), SG Cayden Calls, SG Nurture
+   (3122546). Ignore client `goliath` until told otherwise.
+2. **Retired:** Parlay outside 4049046–4049064. **Dropped:** Insight
+   Google SADA. **Paused:** Insight OEM Channel Reps. None of them starts,
+   including from the watch.
+3. **Targets** are ACTIVE Smartlead campaigns of the lane's own Smartlead
+   client. COMPLETED, DRAFTED, PAUSED, ARCHIVED and another client's are not.
+4. **Reply bar:** at least 1 interested per 2,000 sends, measured per
+   campaign on lifetime sends. Zero positives never qualifies, however few
+   sends. One reply under 2,000 sends is acceptable (D44). "Too early to
+   judge" is not a pass. Josh's `/working` override wins either way.
+5. **Minimum pool:** at least 1,000 net new leads available for the
+   campaign, else `tam_filled` and not topped up. The skill's 200 "useful
+   floor" stays as the gate's wording; the per-campaign number is 1,000 and
+   a thin pool is reported, not parked.
+6. **Pilot before sizing:** 200–300 vendor rows scored on title, industry,
+   description, headcount band and geography; any scored dimension under
+   80% stops that pool. A column missing from the export is "not scored".
+7. **TAM source by ICP kind:** LinkedIn-native counts getleads and AI Ark
+   People Preview on the same filters; within 10% is the TAM; one missing is
+   `single_source`, not a mismatch. Non-LinkedIn sizes from the stored pool
+   in the build record, never a getleads count, never 0.
+8. **Sanity:** a pool more than 20× the build it repeats, or above a known
+   market cap (about 40,000 MSPs; one in the low hundreds is too narrow), is
+   a suspect filter. No company filter means no size from titles alone.
+9. **Spend:** free proceeds; under $5 is Cayden; $5 or above is Josh; over
+   the $25 day is Josh too. Loads reach Smartlead only when `loads_paused`
+   is off and Josh approved the briefing.
+10. **Parking is per campaign, never per run.** A campaign that fails is
+    skipped with its gate and reason; the rest continue. A run with no
+    qualifying campaign closes as sized with the report. The watch posts no
+    not-working card; the queue and the lane log carry the reason.
+11. A top-up repeats; it never widens bands, adds titles or industries, or
+    switches vendors on its own.
+
+**Why.** The rules were enforced in scattered places, some in code, some
+in Cayden's head, and the owner gate and the sizer disagreed on net new.
+One function, one answer.
+
+**Tradeoff.** Campaigns Josh used to be asked about with a card are now
+simply named in the queue with their reason; `/working on` is the way past
+the bar. PowerGRYD MSP Owners, with 0 net new, closes as `tam_filled`
+instead of waiting on a card.
+
+**Guard.** `src/guards/d46_policy_layer.test.ts`. Ask Josh.
+
+## D47 — Build records are the memory
+
+**Decision.** Every pull, past and future, is a first-class `BuildRecord`
+(`src/builds`): vendor, the exact query (titles or job function plus
+seniority, industries, description terms, headcount bands, geography
+including the fence, email status, max per company, fallback personas in
+order), source kind (vendor search or a stored Maps / permit pool with its
+count), the campaigns it fed, leads, interested replies, rows found and
+imported, the method note, the confidence stamp, and a `reconstructed`
+flag. Records are built from `topup.campaign_builds` and the pull
+receipts; rows that share a label are one build. Performance is joined per
+campaign from the Smartlead mirror: lifetime sends, positives, per 2,000.
+`chooseBuildForCampaign` repeats the build that earned the replies, else
+the latest repeatable build, else says the method cannot be reconstructed.
+A record with titles but no company filter, a stored pool with no count, or
+no source at all is marked not repeatable with the reason. Nothing is
+guessed. `queryFingerprint` names the pool two campaigns share.
+`campaign_history` is the operator's read of all of it.
+
+**Why.** BCP pulled a 27,790-person generic IT pool and PowerGRYD a 1.08M
+"MSP" pool because the record was thin and the service guessed. The next
+pull must come from the build that worked, or stop and say why not.
+
+**Tradeoff.** Builds whose method cannot be reconstructed are reported as
+such and need Josh. No new table: records are computed from the view and
+the receipts on read.
+
+**Guard.** `src/guards/d47_build_records.test.ts`. Ask Josh.
+
+## D48 — The planner, the caches, the lifecycle tools and the small surface
+
+**Decision.**
+
+1. **One planner sizes every target campaign of a lane at once**
+   (`src/plan`). Campaigns are judged by D46 first; the ones that qualify
+   are grouped into pools, one per distinct query; each pool is counted
+   once and concurrently under the client's vendor cap (4 within a client,
+   8 across); each pool is split across its campaigns by need; the same
+   person is never planned into two campaigns.
+2. **Queries are planned under the vendor timeout.** City fences are cut
+   into slices of at most 45 and industry lists into slices of at most 12
+   before any call; slices run concurrently; a disjoint sum is the count.
+3. **As little vendor data as possible.** Counts before exports; the pilot
+   is 250 rows; net new is a 100-row overlap sample scaled to the pool, with
+   the method recorded; counts (24 hours) and pilot scores (30 days) are
+   cached per query fingerprint on the size step (`pool_cache`) and reused
+   while the recipe is unchanged.
+4. **Every vendor call is on the step** (`vendor_calls`): vendor, action,
+   ok, HTTP status, redacted message, time, rows; cached reuse is marked.
+   The AI Ark reason that used to vanish is the first entry this exists for.
+5. **Lifecycle:** `abort_run` aborts any open run (cancels running steps,
+   returns claimed rows, resolves its cards, posts the receipt);
+   `resume_run` gives the stopped step its attempts back and drives again.
+   Steps already key work by run and campaign; a retry re-polls, it does
+   not restart.
+6. **The surface is fifteen tools and none returns a row or a file URL:**
+   `topup_queue`, `campaign_history`, `size_client`, `approval_briefing`,
+   `start_topup`, `run_status`, `list_runs`, `abort_run`, `resume_run`,
+   `list_holds`, `resolve_hold`, `loads_paused`, `lane_state`, `lane_note`,
+   `add_client_domains`. Retired: `sample_rows`, `variant_stats`,
+   `campaign_registry`, `recipe_get`, `missing_piece_groups`,
+   `register_queue_table`, `topup_recipe`, `topup_campaign_builds`,
+   `topup_provenance_gaps`. `size_client` pilots and sizes one client in
+   one call (a size-only run per lane, concurrently) and returns each
+   lane's report and briefing. `approval_briefing` is Josh's one line per
+   campaign, generated from the report.
+7. **Slack is optional.** Posts are dropped when no token is set; no run,
+   card or tool depends on a Slack channel.
+8. `/health` keeps exposing the commit, build and start time (core-00).
+
+**Why.** Sizing was one campaign at a time, one vendor call at a time,
+with full exports where a count would do and repeated counts across
+campaigns that share a pool; the run could not be stopped once started; the
+AI Ark error was not logged; the surface had eighteen tools, one of them
+returning rows.
+
+**Tradeoff.** A cached count can be a day old; a changed recipe
+invalidates it by fingerprint. The retired tools stop answering; callers
+move to `campaign_history` and `run_status`.
+
+**Guard.** `src/guards/d48_planner_surface.test.ts`. Ask Josh.
