@@ -16,6 +16,8 @@ export function resolveStopAfter(input: { dryRun?: boolean; stopAfter?: StopAfte
  */
 export function haltBeforeStep(step: Step, counts: Record<string, number>, loadsPaused: boolean): "sized" | "park_ingest" | null {
   if (step === "pull" && (counts.stop_after_size === 1 || counts.stop_after_pilot === 1)) return "sized";
+  // D46: when no campaign qualifies the run closes as sized with the report; nobody is paged for a pull of nothing.
+  if (step === "pull" && counts.nothing_to_pull === 1) return "sized";
   if (step === "ingest" && (counts.stop_after_pull === 1 || loadsPaused)) return "park_ingest";
   return null;
 }

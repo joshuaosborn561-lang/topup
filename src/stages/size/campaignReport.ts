@@ -107,6 +107,8 @@ export interface CampaignReportInput {
   lane?: string | null;
   status?: string | null;
   working_override?: boolean | null;
+  /** A verdict the planner already reached with the full facts. When set it is the gate; nothing is re-derived. */
+  verdict?: { gate: CampaignGate; reason: string };
   found: number | null;
   to_add: number;
   source: string;
@@ -150,7 +152,7 @@ export function replyRateText(sends: number, interested: number, tooEarly: boole
 
 type GateInput = Pick<
   CampaignReportInput,
-  "campaign_id" | "campaign_name" | "paused" | "tam_total" | "tam_left" | "sends" | "interested" | "too_early" | "rows_found" | "market_cap" | "pilot_only" | "not_sized" | "pilot_failed" | "tam_check" | "pilot" | "filters"
+  "campaign_id" | "campaign_name" | "paused" | "tam_total" | "tam_left" | "sends" | "interested" | "too_early" | "rows_found" | "market_cap" | "pilot_only" | "not_sized" | "pilot_failed" | "tam_check" | "pilot" | "filters" | "verdict"
 > & { client_tag?: string; lane?: string | null; status?: string | null; working_override?: boolean | null };
 
 /**
@@ -160,6 +162,7 @@ type GateInput = Pick<
  * would not say so.
  */
 export function campaignVerdict(input: GateInput): { gate: CampaignGate; reason: string } {
+  if (input.verdict) return input.verdict;
   if (input.paused && !isPausedOrDroppedLabel(input.campaign_name)) return { gate: "paused", reason: `#${input.campaign_id} is on a paused lane; it never starts` };
   const pilot =
     input.pilot ? { gate: input.pilot.gate, failed: input.pilot.failed, rows_scored: input.pilot.rows_scored }
