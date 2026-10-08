@@ -15,7 +15,8 @@ For humans and coding agents alike.
    it redacts.
 5. **Grok bot is the babysitter (D39).** Read `skills/grok-bot-babysitter`
    first. It starts `size_client` or `start_topup(client_tag, campaign_id)` or a LeadPipe / csv-endpoint job, reads
-   `topup_queue` (D43–D46) then `campaign_history` (D40, D47) then **every** campaignintelligence tag
+   `client_overview(client_tag)` (D49) or `topup_queue` (D43–D46), then `campaign_history` (D40, D47, D49) for the
+   campaigns it will top up, and with it **every** campaignintelligence tag
    (`company_source`,
    `domain_source`, `person_source`, `email_source`, plus
    `company_detail`, `evidence`, `confidence`, `build_label`,

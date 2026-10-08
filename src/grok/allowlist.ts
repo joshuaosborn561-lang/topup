@@ -7,12 +7,13 @@
 export const GROK_SAMPLE_MAX = 10;
 
 /**
- * Tools Grok bot may call (D39, D48). Returns are counts, ids, a job_id, or
+ * Tools Grok bot may call (D39, D48, D49). Returns are counts, ids, a job_id, or
  * a signed URL the bot does not open. LeadPipe and the Railway service move
  * the rows. No tool on the service surface returns a lead row or a file URL.
  */
 export const GROK_MAY = [
   "topup_queue",
+  "client_overview",
   "campaign_history",
   "size_client",
   "approval_briefing",

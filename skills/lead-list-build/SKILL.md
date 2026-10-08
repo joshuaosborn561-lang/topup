@@ -28,7 +28,7 @@ Gate: every cell has a campaign or Josh knows one must be built. Josh signs off 
 What: count the segment on more than one free or near free source before pulling. getleads `count_contacts`, DiscoLike counters, LeadMagic and AI Ark counts, Maps or PermitStack counts for physical lanes. Run the partition check that proves the filters bind. Trust a number only when two sources agree.
 Then: subtract what has already been sent to this ICP (`public.leads`, `leads_staging`) to get projected net new.
 Skill: `tam-sizing`.
-Gate: projected net new is above the useful floor (default 200). If thin, present widening options with counts; Josh decides. Never widen unasked, never declare a pool exhausted.
+Gate: projected net new is at least the useful floor of 1,000 per campaign (D46); under it the campaign line says TAM filled and that campaign parks. If thin, present widening options with counts; Josh decides. Never widen unasked, never declare a pool exhausted.
 
 ## Step 3. Pull (code, paid tiers approved by Josh)
 

@@ -1,0 +1,97 @@
+import type { Queryable } from "../db/pool.js";
+
+/**
+ * The campaignintelligence tags, as counts and method names (D39, D47, D49).
+ * `topup.campaign_method` is one row per campaign: the four source legs,
+ * the email tier, and whether a company detail and an evidence note were
+ * written. `topup.lead_provenance` is the per-lead stamp of the same tags:
+ * it is COUNTED by build label and confidence, never selected. Nothing here
+ * reads an email, a name or a phone.
+ */
+export const SOURCE_LEGS = ["company_source", "domain_source", "person_source", "email_source"] as const;
+
+export interface CampaignMethodTags {
+  campaign_id: number;
+  lane: string | null;
+  company_source: string | null;
+  domain_source: string | null;
+  person_source: string | null;
+  email_source: string | null;
+  email_tier: string | null;
+  company_detail: boolean;
+  evidence: boolean;
+}
+
+export interface ProvenanceCount {
+  build_label: string | null;
+  confidence: string | null;
+  leads: number;
+}
+
+export async function campaignMethodTags(db: Queryable, campaignIds: readonly number[]): Promise<Map<number, CampaignMethodTags>> {
+  const out = new Map<number, CampaignMethodTags>();
+  if (campaignIds.length === 0) return out;
+  try {
+    const { rows } = await db.query<Record<string, unknown>>(
+      `select smartlead_campaign_id::text as campaign_id, lane, company_source, domain_source, person_source, email_source, email_tier,
+              (company_detail is not null and company_detail <> '') as company_detail,
+              (evidence is not null and evidence <> '') as evidence
+         from topup.campaign_method
+        where smartlead_campaign_id = any($1::bigint[])`,
+      [campaignIds],
+    );
+    for (const row of rows) {
+      const id = Number(row.campaign_id);
+      if (!Number.isInteger(id)) continue;
+      out.set(id, {
+        campaign_id: id,
+        lane: str(row.lane),
+        company_source: str(row.company_source),
+        domain_source: str(row.domain_source),
+        person_source: str(row.person_source),
+        email_source: str(row.email_source),
+        email_tier: str(row.email_tier),
+        company_detail: Boolean(row.company_detail),
+        evidence: Boolean(row.evidence),
+      });
+    }
+  } catch {
+    /* the table is not on every database; the build records still answer */
+  }
+  return out;
+}
+
+/** Leads stamped per build label and confidence. A count, never a row. */
+export async function provenanceCounts(db: Queryable, clientTag: string, buildLabels: readonly string[]): Promise<ProvenanceCount[]> {
+  const labels = [...new Set(buildLabels.filter((l) => l.length > 0))];
+  if (labels.length === 0) return [];
+  try {
+    const { rows } = await db.query<{ build_label: string | null; confidence: string | null; leads: string }>(
+      `select build_label, confidence, count(*)::text as leads
+         from topup.lead_provenance
+        where client_tag = $1 and build_label = any($2::text[])
+        group by 1, 2
+        order by 1, 2`,
+      [clientTag, labels],
+    );
+    return rows.map((r) => ({ build_label: r.build_label, confidence: r.confidence, leads: Number(r.leads) }));
+  } catch {
+    return [];
+  }
+}
+
+/** Which tags a campaign still lacks. Physical lists also need the detail and evidence notes (D39). */
+export function missingTags(tags: CampaignMethodTags | undefined, physical: boolean): string[] {
+  if (!tags) return ["campaign_method row"];
+  const missing: string[] = [];
+  for (const leg of SOURCE_LEGS) if (!tags[leg]) missing.push(leg);
+  if (physical) {
+    if (!tags.company_detail) missing.push("company_detail");
+    if (!tags.evidence) missing.push("evidence");
+  }
+  return missing;
+}
+
+function str(v: unknown): string | null {
+  return v == null || v === "" ? null : String(v);
+}

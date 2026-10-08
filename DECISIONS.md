@@ -67,7 +67,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D45 | Live; client days from send rate; n/a fails; start_topup infers from receipts; item 7 (sample_rows) and item 9 (campaign_registry on the surface) superseded by D48; Cayden runs ops |
 | D46 | Live; one policy layer, per-campaign parking, the Oct 8 rules |
 | D47 | Live; build records are the memory |
-| D48 | Live; the planner, the caches, the vendor-call log, lifecycle tools, the fifteen-tool surface, Slack optional |
+| D48 | Live; the planner, the caches, the vendor-call log, lifecycle tools, the fifteen-tool surface, Slack optional; `client_overview` is the sixteenth tool by D49 |
+| D49 | Live; starts read the registry and the build tags for every client; `client_overview` and the `tags` block for the babysitter; the step 2 gate is the 1,000 floor |
 
 ---
 
@@ -1564,3 +1565,49 @@ invalidates it by fingerprint. The retired tools stop answering; callers
 move to `campaign_history` and `run_status`.
 
 **Guard.** `src/guards/d48_planner_surface.test.ts`. Ask Josh.
+
+## D49 — Starts read the tags, and the babysitter sees a client in one read
+
+**Decision.**
+
+1. **There is no hand-written method per campaign.** A lane's campaigns
+   are the ACTIVE rows `topup.campaign_registry` puts on that lane for
+   that client. They join the inferred routing for every client, even
+   when the pull receipt that named the lane still lists older campaign
+   ids (`addRegisteredLaneCampaigns`). Parlay keeps the Sept 29 rule of
+   D45. Nothing is removed by this step and nothing is invented: a row on
+   another lane, a retired or paused row, and a never-top-up campaign stay
+   out.
+2. **Each campaign is pulled from its own build record** (D47): the
+   source legs, `company_filters` and the method note in
+   `topup.campaign_builds` and `campaign_method`. A campaign with no
+   repeatable record is skipped with the missing tags named.
+3. **`client_overview(client_tag)`** is the babysitter's first read: every
+   campaign of one client with status, lane, lead flag, runway, untouched,
+   the policy gate and reason, the build the service would repeat and
+   whether it can, which tags it carries and which are missing, plus open
+   runs, client-wide runway, the loads switch and a `next` line naming the
+   next tool. Counts and short reasons only. `campaign_history` carries a
+   `tags` block: the `campaign_method` legs, `missing_tags`, and
+   `lead_provenance` counted by build label and confidence. No tool
+   selects a lead column.
+4. **The step 2 gate in the skill and the spine is the policy's floor:**
+   at least 1,000 net new per campaign (D46), else the campaign line says
+   TAM filled and that campaign parks. The recipe schema's `useful_floor`
+   defaults to the same number.
+
+**Why.** Josh, 2026-10-08: "There should not be a recipe for any person.
+You should be reading the Supabase tags and notes so that you know what
+to do", and "at least a thousand new contacts or it's not worth it". The
+first watch tick after the rewrite wanted to refill three BCP IT AirPods
+campaigns and the start refused them: the receipt that named the lane
+listed twelve older campaign ids, while the registry and the build
+records carried the three. The bot also had no single read for a client
+and was told to read the queue, then history, then tags table by table.
+
+**Tradeoff.** A registry row on the wrong lane now routes a campaign into
+that lane's run; the registry repair and the policy gate are the guard,
+and the report line names the campaign. The surface is sixteen tools, one
+more than D48.
+
+**Guard.** `src/guards/d49_tags_overview.test.ts`. Ask Josh.

@@ -15,6 +15,7 @@ import { NEEDS_JOSH } from "../slack/roles.js";
 import type { Recipe } from "../recipes/schema.js";
 import { MCP_HTTPS_URL, SERVICE_VERSION } from "../version.js";
 import { resolveStartTarget } from "../recipes/start.js";
+import { CLIENT_OVERVIEW_DESCRIPTION, clientOverview } from "./overview.js";
 import { buildTopupQueue, TOPUP_QUEUE_DESCRIPTION } from "./queue.js";
 import { CAMPAIGN_NOT_FOUND, clientTagSchema, loadClientTags, presentTopupRecipe, readTopupRecipe, recipeSummaryCounts } from "./recipe.js";
 import { SIZE_CLIENT_MAX_WAIT_SECONDS, sizeClient } from "./sizeClient.js";
@@ -31,6 +32,7 @@ export const SAMPLE_ROWS_MAX = 10;
  */
 export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   topup_queue: "operator",
+  client_overview: "operator",
   campaign_history: "operator",
   size_client: "operator",
   approval_briefing: "operator",
@@ -120,6 +122,15 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
       inputSchema: { client_tag: z.string().optional(), limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).default(0) },
     },
     async ({ client_tag, limit, offset }) => text(await buildTopupQueue(d.repo.raw(), d.repo, d.recipes, { client_tag, limit, offset })),
+  );
+
+  server.registerTool(
+    "client_overview",
+    {
+      description: CLIENT_OVERVIEW_DESCRIPTION,
+      inputSchema: { client_tag: recipeClient, include_inactive: z.boolean().optional().describe("Also list campaigns that are not ACTIVE. Default false.") },
+    },
+    async ({ client_tag, include_inactive }) => text(await clientOverview(d.repo.raw(), d.repo, client_tag, { include_inactive })),
   );
 
   server.registerTool(

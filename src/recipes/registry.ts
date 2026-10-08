@@ -122,3 +122,48 @@ export function routingFromRegistry(recipe: Recipe, rows: readonly RegistryCampa
     .map((row) => row.campaign_id);
   return routingFor(recipe, ids);
 }
+
+/** Registry rows as the repo returns them, mapped to the shape the routing helpers read. */
+export function registryRows(rows: readonly Record<string, unknown>[]): RegistryCampaign[] {
+  const out: RegistryCampaign[] = [];
+  for (const row of rows) {
+    const id = Number(row.campaign_id);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    const client = row.smartlead_client_id == null ? null : Number(row.smartlead_client_id);
+    out.push({
+      campaign_id: id,
+      campaign_name: row.campaign_name == null ? null : String(row.campaign_name),
+      client_tag: String(row.client_tag ?? ""),
+      smartlead_client_id: client != null && Number.isFinite(client) ? client : null,
+      lane: row.lane == null ? null : String(row.lane),
+      status: row.status == null ? null : String(row.status),
+    });
+  }
+  return out;
+}
+
+/**
+ * D49 — the registry names a lane's campaigns. An ACTIVE registry row for
+ * this client and this lane joins the inferred routing even when the receipt
+ * that named the lane still lists older campaign ids; the campaign's own
+ * build record then supplies its query (D47). Nothing is removed here and
+ * nothing is invented: a campaign the registry puts on another lane, or
+ * marks retired, or that is never topped up, stays out. Parlay keeps its
+ * Sept 29 rule (D45) and does not come through here.
+ */
+export function addRegisteredLaneCampaigns(recipe: Recipe, rows: readonly RegistryCampaign[]): Recipe {
+  if (recipe.client_tag === "parlay") return recipe;
+  const have = new Set(recipe.routing.map((rule) => rule.campaign_id));
+  const extra: number[] = [];
+  for (const row of rows) {
+    if (have.has(row.campaign_id) || extra.includes(row.campaign_id)) continue;
+    if (row.client_tag !== recipe.client_tag) continue;
+    if (row.smartlead_client_id != null && row.smartlead_client_id !== recipe.smartlead_client_id) continue;
+    if (row.lane !== recipe.lane) continue;
+    if (!registryActive(row.status)) continue;
+    if (neverTopUp(row.campaign_id, row.campaign_name)) continue;
+    extra.push(row.campaign_id);
+  }
+  if (extra.length === 0) return recipe;
+  return routingFor(recipe, [...have, ...extra]);
+}

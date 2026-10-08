@@ -3,6 +3,7 @@ import { parseRecipe, type Recipe } from "./schema.js";
 import { getleadsParamsFromFilters, inferredRecipeId, laneFromReceipts, recipeFromReceipts, type ReceiptStamp } from "./infer.js";
 import { isParlayRefreshCampaign, isParlayRefreshLane, isRetiredParlayLane, PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, shapeParlayRecipe } from "./parlay.js";
 import { trimToOwningClient } from "./trim.js";
+import { addRegisteredLaneCampaigns, registryRows } from "./registry.js";
 
 export type ResolvedRecipe = { ok: true; recipe: Recipe; inferred: boolean } | { ok: false; message: string };
 
@@ -120,7 +121,7 @@ export async function resolveRecipeForStart(
   }
 
   const trimmed = await trimToOwningClient(repo, shapeParlayRecipe(recipe));
-  recipe = await addRegisteredParlayCampaigns(repo, trimmed.recipe);
+  recipe = await addRegisteredCampaigns(repo, trimmed.recipe);
   recipe = await sourceFromSept29Builds(repo, recipe);
   if (recipe.client_tag === "parlay" && recipe.routing.length === 0) {
     return {
@@ -138,6 +139,13 @@ export async function resolveRecipeForStart(
     owner_approved_at: null,
   });
   return { ok: true, recipe, inferred: true };
+}
+
+/** D49: the registry's ACTIVE campaigns on this lane join the routing for every client; Parlay keeps its Sept 29 rule (D45). */
+async function addRegisteredCampaigns(repo: Repo, recipe: Recipe): Promise<Recipe> {
+  if (recipe.client_tag === "parlay") return addRegisteredParlayCampaigns(repo, recipe);
+  const rows = await repo.campaignRegistry(recipe.client_tag).catch(() => [] as Record<string, unknown>[]);
+  return addRegisteredLaneCampaigns(recipe, registryRows(rows));
 }
 
 /** Registry rows in the Sept 29 range join the lane even when the receipt still lists the old campaign ids. */

@@ -2,6 +2,7 @@ import type { Queryable } from "../db/pool.js";
 import { INTERESTED_CATEGORY_IDS } from "../domain/working.js";
 import { ratePer2000 } from "../policy/index.js";
 import { buildRecordsFromRows, strategyLine, type BuildRecord } from "./record.js";
+import { campaignMethodTags, missingTags, provenanceCounts, type CampaignMethodTags, type ProvenanceCount } from "./tags.js";
 import { chooseBuildForCampaign, type CampaignPerformance, type ChosenBuild } from "./choose.js";
 
 /**
@@ -49,12 +50,25 @@ export interface CampaignHistory {
   strategy: string;
   builds: Array<Omit<BuildRecord, "method_note"> & { method_note: string | null }>;
   cannot_reconstruct: boolean;
+  /** The campaignintelligence tags as counts and method names (D49). Never a lead row. */
+  tags: { method: CampaignMethodTags | null; missing: string[]; provenance: ProvenanceCount[] };
 }
 
 /** What `campaign_history` returns: the record, the choice and the strategy. Never a lead row. */
 export async function campaignHistory(deps: { db: Queryable; repo: BuildSource }, clientTag: string, campaignId: number, recipeId = "the saved recipe"): Promise<CampaignHistory> {
-  const [builds, perf] = await Promise.all([loadBuildRecords(deps.repo, clientTag, [campaignId]), campaignPerformance(deps.db, [campaignId])]);
+  const [builds, perf, methods] = await Promise.all([
+    loadBuildRecords(deps.repo, clientTag, [campaignId]),
+    campaignPerformance(deps.db, [campaignId]),
+    campaignMethodTags(deps.db, [campaignId]),
+  ]);
   const chosen = chooseBuildForCampaign(campaignId, builds);
+  const method = methods.get(campaignId) ?? null;
+  const physical = chosen.candidates.some((b) => b.icp_kind === "physical");
+  const provenance = await provenanceCounts(
+    deps.db,
+    clientTag,
+    chosen.candidates.map((b) => b.build_label).filter((l): l is string => typeof l === "string"),
+  );
   return {
     campaign_id: campaignId,
     client_tag: clientTag,
@@ -63,5 +77,6 @@ export async function campaignHistory(deps: { db: Queryable; repo: BuildSource }
     strategy: strategyLine(chosen.build, recipeId),
     builds: chosen.candidates,
     cannot_reconstruct: !chosen.repeatable,
+    tags: { method, missing: missingTags(method ?? undefined, physical), provenance },
   };
 }
