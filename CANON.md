@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D48** (2026-10-08). One page of current truth. When a new
+Canon as of **D49** (2026-10-08). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -295,7 +295,7 @@ open cards, open runs and which integrations are configured. It is
 - `/mcp` is Streamable HTTP over HTTPS at
   `https://leadtopup-production.up.railway.app/mcp` (D40, D41, D48). **No
   login.** Anyone who can reach the URL gets the whole surface, and the
-  surface is small: `topup_queue, campaign_history, size_client,
+  surface is small: `client_overview, topup_queue, campaign_history, size_client,
   approval_briefing, start_topup, run_status, list_runs, abort_run,
   resume_run, list_holds, resolve_hold, loads_paused, lane_state,
   lane_note, add_client_domains` (domains only). **No tool returns a lead
@@ -308,15 +308,17 @@ open cards, open runs and which integrations are configured. It is
   above. `start_topup` takes `client_tag` + `campaign_id` (optional
   `count`) or `client_tag` + `lane`. A file recipe is the override;
   otherwise the pull is inferred from `topup.pull_receipts` tags and
-  notes (D45). `topup_recipe` is how the last list was actually pulled
+  notes (D45), every ACTIVE campaign the registry puts on the lane joins
+  it, and each campaign is pulled from its own build record (D47, D49). `topup_recipe` is how the last list was actually pulled
   (`include_vocab` default false). `topup_queue` pages (`limit`,
   `offset`, `client_tag`) and is the same lead-refill lines
   `#campaign-watchdog` posts (empty, low, nearly-done 90%), ranked
   empty-first then shortest runway, each with the recipe count
   summary, `sends_last_14d`, and the working bar. It includes camps
   the client-wide watch would skip (D38 still governs auto-start).
-  Cayden's flow is `topup_queue` (gates already applied) →
-  `campaign_history` → `size_client` (pilot and size, one call per
+  Cayden's flow is `client_overview` for the client, or `topup_queue`
+  across clients (gates already applied) → `campaign_history` for each
+  campaign to top up → `size_client` (pilot and size, one call per
   client) → read the one-line-per-campaign report → `approval_briefing`
   to Josh → `start_topup` once approved and loads are open. Check
   `run_status` once per message — do not poll every two minutes in chat.
@@ -435,6 +437,23 @@ abort cancels running steps, returns claimed rows and closes the cards. The
 MCP surface is the fifteen tools above and none of them returns a row.
 Slack posts are dropped, never required, when no token is set.
 
+## Starts read the tags; the babysitter sees a client in one read (D49)
+
+There is no hand-written method per campaign. A lane's campaigns are the
+ACTIVE rows `topup.campaign_registry` puts on that lane for that client;
+they join the inferred routing even when the receipt that named the lane
+lists older ids (Parlay keeps its Sept 29 rule). Each campaign is then
+sized and pulled from its own build record (`topup.campaign_builds`,
+`campaign_method`: the source legs, `company_filters`, the method note).
+A campaign with no repeatable record is skipped with the missing tags
+named; nothing is guessed. `client_overview(client_tag)` is one read per
+client for the babysitter: every campaign with its flag, gate, reason,
+chosen build and tags, plus open runs and the loads switch, counts only.
+`campaign_history` carries the `tags` block (`campaign_method` legs,
+`missing_tags`, `lead_provenance` counted by build label and confidence).
+The step 2 gate is the policy's floor: at least 1,000 net new per
+campaign, else TAM filled (D46).
+
 ## Never (D1–D6, D8, D13, D14, D39, D48)
 
 - Never write to a Supabase project other than `azpapwtnrbzywlnxxecz`.
@@ -496,6 +515,7 @@ changes:
 | Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/leadpipe` and `skills/supabase-csv-endpoint` move rows without chat; `skills/grok-bot-babysitter` is D39; `skills/SKILLS_INDEX.md` says what is stale (D25) |
 | Live pull recipe | `topup.recipe()` and `topup.campaign_builds` via MCP `campaign_history` on `https://leadtopup-production.up.railway.app/mcp` (D40, D48), joined to the build records (D47). `topup_queue` is the watchdog lead-refill list with the policy gate applied (D43, D44, D46). `client_tag` from `topup.client_map` at boot (D42). On this service, not on LeadPipe. |
 | Policy | `src/policy/` — every rule, `evaluateCampaign`, the spend audiences (D46) |
+| Tags | `src/builds/tags.ts` — `campaign_method` legs and `lead_provenance` as counts; `src/mcp/overview.ts` — `client_overview` (D49) |
 | Build records | `src/builds/` — `BuildRecord`, `chooseBuildForCampaign`, `campaignHistory` (D47) |
 | Planner | `src/plan/` — pools, slices, the fingerprint cache, the vendor-call log, `planSize`, the approval briefing (D48) |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |

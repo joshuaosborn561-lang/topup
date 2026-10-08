@@ -9,7 +9,7 @@ import { shapeMspOwnersRecipe } from "./recipes/powergryd.js";
 import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { parlayLaneFileSuperseded, shapeParlayRecipe } from "./recipes/parlay.js";
-import { routingFromRegistry, type RegistryCampaign } from "./recipes/registry.js";
+import { routingFromRegistry, registryRows } from "./recipes/registry.js";
 import { trimToOwningClient } from "./recipes/trim.js";
 import { campaignReportFromCounts, formatCampaignReport, isPausedLabel } from "./stages/size/campaignReport.js";
 import { haltBeforeStep, parkIngestReason, resolveStopAfter, type StopAfter } from "./runs/halt.js";
@@ -687,23 +687,6 @@ export class Orchestrator {
   }
 }
 
-function registryRows(rows: readonly Record<string, unknown>[]): RegistryCampaign[] {
-  const out: RegistryCampaign[] = [];
-  for (const row of rows) {
-    const id = Number(row.campaign_id);
-    if (!Number.isInteger(id) || id <= 0) continue;
-    const client = row.smartlead_client_id == null ? null : Number(row.smartlead_client_id);
-    out.push({
-      campaign_id: id,
-      campaign_name: row.campaign_name == null ? null : String(row.campaign_name),
-      client_tag: String(row.client_tag ?? ""),
-      smartlead_client_id: client != null && Number.isFinite(client) ? client : null,
-      lane: row.lane == null ? null : String(row.lane),
-      status: row.status == null ? null : String(row.status),
-    });
-  }
-  return out;
-}
 
 function summarize(kind: string, payload: Record<string, unknown>): string {
   switch (kind) {

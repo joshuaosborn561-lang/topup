@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MIN_NET_NEW } from "../policy/rules.js";
 import { BANNED_ACTIONS, BANNED_VENDORS } from "../spend/prices.js";
 
 /**
@@ -247,20 +248,20 @@ const routingRule = z
   .strict();
 
 /**
- * Step 2 (skill lead-list-build): "projected net new is above the useful
- * floor (default 200)". The default is the skill's number; a recipe may set
- * its own. The partition tolerance is how far count(bands) + count(other
+ * Step 2 (skill lead-list-build): "projected net new is at least the useful
+ * floor of 1,000 per campaign". The default is the policy's number (D46,
+ * D49); a recipe may set its own. The partition tolerance is how far count(bands) + count(other
  * bands) may sit from count(no band filter) before the filters are judged
  * not to bind (tam-sizing: "prove the filters bind"); 1% is this service's
  * number, named in D26.
  */
 const size = z
   .object({
-    useful_floor: z.number().int().min(1).default(200),
+    useful_floor: z.number().int().min(1).default(MIN_NET_NEW),
     partition_tolerance: z.number().min(0).max(0.2).default(0.01),
   })
   .strict()
-  .default({ useful_floor: 200, partition_tolerance: 0.01 });
+  .default({ useful_floor: MIN_NET_NEW, partition_tolerance: 0.01 });
 
 /** Step 12 settings the pre launch check reads from get_campaign. Findings only; the merge tag check is the gate. */
 export const CAMPAIGN_SETTING_CHECKS = ["send_as_plain_text", "tracking_off", "stop_on_reply", "bounce_autopause_off", "schedule_mon_thu"] as const;

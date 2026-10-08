@@ -15,6 +15,7 @@ const root = new URL("../../", import.meta.url);
 
 export const D48_SURFACE = [
   "topup_queue",
+  "client_overview", // D49
   "campaign_history",
   "size_client",
   "approval_briefing",
@@ -37,7 +38,7 @@ describe("D48 — planner and surface", () => {
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const readme = await readFile(new URL("README.md", root), "utf8");
     const babysitter = await readFile(new URL("skills/grok-bot-babysitter/SKILL.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D48\*\*/);
+    assert.match(canon, /Canon as of \*\*D(48|49)\*\*/);
     assert.match(canon, /## The planner and the surface \(D48\)/);
     assert.match(canon, /No tool returns a lead\s+row or a file URL/);
     assert.match(ledger, /## D48 — /);
@@ -48,7 +49,7 @@ describe("D48 — planner and surface", () => {
     }
   });
 
-  it("the surface is exactly the fifteen tools, all operator-visible, none hidden, the retired ones gone", () => {
+  it("the surface is exactly the agreed tools (fifteen by D48, client_overview by D49), all operator-visible, none hidden, the retired ones gone", () => {
     assert.deepEqual(Object.keys(MCP_TOOL_ROLE).sort(), [...D48_SURFACE].sort(), "D48: adding or removing a tool is a new decision. Ask Josh.");
     for (const tool of D48_SURFACE) assert.equal(MCP_TOOL_ROLE[tool], "operator", `D48: ${tool} is for Cayden as well as Josh`);
     assert.deepEqual([...HIDDEN_FROM_OPERATOR], []);

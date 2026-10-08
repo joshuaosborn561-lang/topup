@@ -18,6 +18,29 @@ Read `skills/leadpipe/SKILL.md` and `skills/supabase-csv-endpoint/SKILL.md`
 before you move a single row. Those are how Claude already kept tokens
 down. Copy that, do not invent a chat pipeline.
 
+## Start here (D49): one client, one read, then only what you will act on
+
+1. `client_overview(client_tag)` — every campaign of the client with its
+   lead flag, policy gate and reason, the build the service would repeat,
+   and `missing_tags`. Read it **once** per client per turn. Its `next`
+   line names your next tool.
+2. `campaign_history(client_tag, campaign_id)` — **only** for the
+   campaigns you are about to top up. It carries the build records, the
+   `tags` block (`campaign_method` legs, `missing_tags`, `lead_provenance`
+   counted by build label and confidence) and the live pull record.
+3. `size_client(client_tag)` — pilot and size in one call; read the
+   one-line-per-campaign report; `approval_briefing` goes to Josh.
+4. Josh approves; `loads_paused` is off; `start_topup(client_tag,
+   campaign_id, count)`. The service pulls from the campaign's own build
+   record (the tags), never from a method you wrote in chat.
+5. `run_status` once per message. Post a card with counts and a link.
+
+Context rules: `topup_queue` only with `client_tag` or `limit` ≤ 20; no
+second read of a list you already have in this turn; never a Supabase
+query for what these tools answer; never a SELECT of a lead column. A
+campaign with `missing_tags` is not topped up until the tags are stamped
+(`skills/lead-provenance`); say which tags and stop.
+
 ## How you know what to start (tags, not thirteen steps)
 
 Infer the job from **campaignintelligence** (`azpapwtnrbzywlnxxecz`) tags.
@@ -73,7 +96,7 @@ Tables (counts / keys only):
   through `topup_queue` and `campaign_history`; the raw registry tool is
   retired, D48).
 
-Open `topup_queue` first (D43, D44, D46). It is the same lead-refill
+Open `client_overview` first for a named client (D49), or `topup_queue` across clients (D43, D44, D46). It is the same lead-refill
 lines `#campaign-watchdog` posts (empty, low, nearly-done 90%), ranked,
 each with the recipe count summary and the policy gate already applied
 (the 1-in-2000 reply bar — 1 reply under 2,000 sends is acceptable, zero
@@ -100,7 +123,7 @@ not poll every two minutes.
 
 ## Allow list (you may call these)
 
-Service MCP (D48): `topup_queue`, `campaign_history`, `size_client`,
+Service MCP (D48, D49): `client_overview`, `topup_queue`, `campaign_history`, `size_client`,
 `approval_briefing`, `start_topup`, `run_status`, `list_runs`,
 `abort_run`, `resume_run`, `list_holds`, `resolve_hold`, `loads_paused`,
 `lane_state`, `lane_note`, `add_client_domains` (domains only). No tool

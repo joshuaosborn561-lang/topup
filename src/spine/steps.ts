@@ -48,7 +48,7 @@ export const SPINE: readonly SpineStep[] = [
     title: "Size it",
     owner: "code",
     also: { who: "josh", when: "the pool is thin: widening options with counts, Josh decides" },
-    gate: "projected net new is above the useful floor (default 200). If thin, present widening options with counts; Josh decides. Never widen unasked, never declare a pool exhausted.",
+    gate: "projected net new is at least the useful floor of 1,000 per campaign (D46); under it the campaign line says TAM filled and that campaign parks. If thin, present widening options with counts; Josh decides. Never widen unasked, never declare a pool exhausted.",
     skill: "tam-sizing",
     pipeline: ["size"],
     card: "the segment with counts and ten sample rows",
