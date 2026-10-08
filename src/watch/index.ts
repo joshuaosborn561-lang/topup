@@ -122,7 +122,7 @@ export class RunwayWatch {
       campaignIds: decision.campaigns,
     });
     if (!started.ok) {
-      log.info("go refused", { client_tag: recipe.client_tag, lane: recipe.lane, message: started.message });
+      log.info("go refused", { client_tag: recipe.client_tag, lane: recipe.lane, why: started.message });
       return "skip";
     }
     const recipeSummary = await recipeSummariesForWatch(this.d.db, recipe.client_tag, decision.campaigns);
