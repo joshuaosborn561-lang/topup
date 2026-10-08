@@ -9,6 +9,7 @@ import {
   BCP_UNFILTERED_IT_POOL,
   bcpPoolFilters,
   bcpPoolReport,
+  bcpSizedTam,
   keepBcpPeople,
   routeBcpPeople,
   shapeBcpRecipe,
@@ -143,13 +144,21 @@ describe("BCP senior IT targeting", () => {
     assert.match(pools.both.company_description ?? "", /hospital/);
     assert.deepEqual(pools.coo.job_titles, ["COO", "Chief Operating Officer"]);
     assert.equal(pools.coo.job_titles?.includes("CIO"), false);
+    assert.equal(bcpSizedTam(816, 1041), 1857);
+    assert.equal(bcpSizedTam(816, null), 816);
     const small = bcpPoolReport({ industry: 271, description: 900, both: 180, coo: 400, rows_found: 3779 });
     assert.match(small, /Industry-only count 271/);
     assert.match(small, /Description-only count 900/);
     assert.match(small, /together 180/);
-    assert.match(small, /COO fallback pool 400/);
+    assert.match(small, /tam_it 271/);
+    assert.match(small, /tam_coo 400/);
     assert.match(small, /not in the thousands/);
     assert.match(small, /IT Manager/);
+    assert.equal(small.includes("not in the TAM"), false);
+    const healthcareNote = bcpPoolReport({ industry: 816, description: 177, both: 143, coo: 1041, rows_found: 3779 });
+    assert.match(healthcareNote, /tam_it 816/);
+    assert.match(healthcareNote, /tam_coo 1041/);
+    assert.equal(healthcareNote.includes("not in the thousands"), false);
     const wide = bcpPoolReport({ industry: 3779, description: 5000, both: 271, coo: 800, rows_found: 3779 });
     assert.equal(wide.includes("not in the thousands"), false);
   });

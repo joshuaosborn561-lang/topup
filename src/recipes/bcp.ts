@@ -111,9 +111,16 @@ function withoutKey<T extends object>(filters: T, key: keyof T): T {
 
 /**
  * Three company filters on the same titles, plus a COO-only count.
- * The sized TAM is `industry`: the Sept 3 receipts sent the industry list
- * and did not send a company description.
+ * The sized TAM is senior IT plus that COO fallback. The Sept 3 receipts
+ * sent the industry list and did not send a company description.
  */
+
+/** Senior IT count plus the COO fallback. A missing COO count leaves the IT count. */
+export function bcpSizedTam(itCount: number, cooCount: number | null): number {
+  const it = Math.max(0, Math.floor(itCount));
+  if (cooCount == null || !Number.isFinite(cooCount)) return it;
+  return it + Math.max(0, Math.floor(cooCount));
+}
 export function bcpPoolFilters<T extends { industries?: string[]; company_description?: string; job_titles?: string[] }>(
   filters: T,
   vertical: BcpItVertical,
@@ -137,13 +144,14 @@ export function bcpPoolReport(input: {
     `Industry-only count ${n(input.industry)}.`,
     `Description-only count ${n(input.description)}.`,
     `Industry and description together ${n(input.both)}.`,
-    "The sized TAM is the industry-only count. The Sept 3 receipts sent the industry list and no company description.",
-    `COO fallback pool ${n(input.coo)}. That pool is not in the TAM. A COO is added only for a company where the IT titles found no one.`,
+    "The sized TAM is the senior IT count plus the COO fallback, on the industry list from the Sept 3 receipts. Those receipts did not send a company description.",
+    `tam_it ${n(input.industry)}. tam_coo ${n(input.coo)}. A COO is counted only as the fallback, and the pull still takes IT titles first.`,
   ];
-  if (input.industry != null && input.industry < 1000) {
+  const sized = input.industry == null ? null : bcpSizedTam(input.industry, input.coo);
+  if (sized != null && sized < 1000) {
     const found = input.rows_found != null ? ` The Sept 3 ingest rows_found was ${input.rows_found}, and that export's titles included IT Manager.` : "";
     parts.push(
-      `This TAM is not in the thousands. The count is senior IT titles, US, headcount 51 to 1,000, and the industry list, with no description and no COO.${found}`,
+      `This TAM is not in the thousands. The count is senior IT titles plus the COO fallback, US, headcount 51 to 1,000, and the industry list, with no description.${found}`,
     );
   }
   return parts.join(" ");

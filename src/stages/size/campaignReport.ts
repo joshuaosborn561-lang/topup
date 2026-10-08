@@ -23,6 +23,8 @@ export interface CampaignReportEntry {
   pool_description?: number | null;
   pool_both?: number | null;
   coo_fallback_count?: number | null;
+  tam_it?: number | null;
+  tam_coo?: number | null;
   pool_note?: string;
   pilot?: PilotScore;
 }
@@ -148,6 +150,8 @@ export interface CampaignReportInput {
   pool_description?: number | null;
   pool_both?: number | null;
   coo_fallback_count?: number | null;
+  tam_it?: number | null;
+  tam_coo?: number | null;
   pool_note?: string;
   pilot?: PilotScore;
 }
@@ -191,6 +195,8 @@ export function buildCampaignReport(rows: readonly CampaignReportInput[]): Campa
     ...(row.pool_description !== undefined ? { pool_description: row.pool_description } : {}),
     ...(row.pool_both !== undefined ? { pool_both: row.pool_both } : {}),
     ...(row.coo_fallback_count !== undefined ? { coo_fallback_count: row.coo_fallback_count } : {}),
+    ...(row.tam_it !== undefined ? { tam_it: row.tam_it } : {}),
+    ...(row.tam_coo !== undefined ? { tam_coo: row.tam_coo } : {}),
     ...(row.pool_note ? { pool_note: row.pool_note } : {}),
     ...(row.pilot ? { pilot: row.pilot } : {}),
   }));
@@ -214,6 +220,8 @@ export function formatCampaignReport(rows: readonly CampaignReportEntry[]): stri
           row.tam_check ? ` tam_check ${row.tam_check}.` : "",
           row.getleads_count != null ? ` getleads ${row.getleads_count}.` : "",
           row.ai_ark_count != null ? ` AI Ark ${row.ai_ark_count}.` : row.tam_check === "single_source" ? " AI Ark count not available." : "",
+          row.tam_it != null ? ` tam_it ${row.tam_it}.` : "",
+          row.tam_coo != null ? ` tam_coo ${row.tam_coo}.` : "",
           row.pool_note ? ` ${row.pool_note}` : "",
           row.pilot
             ? ` Pilot ${row.pilot.rows_scored} scored, title ${row.pilot.title_match ?? "n/a"}%, industry ${row.pilot.industry_match ?? "n/a"}%, description ${row.pilot.description_match ?? "n/a"}%, headcount ${row.pilot.headcount_match ?? "n/a"}%, geography ${row.pilot.geography_match ?? "n/a"}%, gate ${row.pilot.gate}.`

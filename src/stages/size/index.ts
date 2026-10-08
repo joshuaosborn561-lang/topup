@@ -43,7 +43,7 @@ import {
   type PilotRow,
   type PilotScore,
 } from "./pilot.js";
-import { bcpItVertical, bcpPoolFilters, bcpPoolReport } from "../../recipes/bcp.js";
+import { bcpItVertical, bcpPoolFilters, bcpPoolReport, bcpSizedTam } from "../../recipes/bcp.js";
 import { icpKindForClient, linkedinTamDecision, originalTamFromBuilds, type IcpKind, type LinkedinTam, type OriginalTam } from "./tamSource.js";
 
 const log = logger("size");
@@ -303,6 +303,7 @@ export class SizeStage {
       }
       sized += 1;
     }
+    if (recipe.client_tag === "bcp") await this.bcpAlternateCounts(recipe, peopleIds, counts);
     let heldNote: string | null = null;
     if (peopleIds.length) {
       const tams = peopleIds.map((id) => counts[`tam_${id}`] ?? 0);
@@ -339,9 +340,9 @@ export class SizeStage {
         const filters = getleadsFilters(campaignSizeRoutes(recipe, [id])[0]?.route ?? { kind: "skip", line: "" });
         const key = filters ? JSON.stringify(filters) : "";
         if (!arkByFilter.has(key)) arkByFilter.set(key, filters ? await this.aiArkCount(run, filters) : null);
-        linkedin.set(id, linkedinTamDecision(counts[`tam_${id}`] ?? 0, arkByFilter.get(key) ?? null));
+        const itCount = counts[`tam_it_${id}`] ?? counts[`tam_${id}`] ?? 0;
+        linkedin.set(id, linkedinTamDecision(itCount, arkByFilter.get(key) ?? null));
       }
-      if (recipe.client_tag === "bcp") await this.bcpAlternateCounts(recipe, peopleIds, counts);
     }
     if (sized === 0) {
       const reason = skipped.length ? skipped.join("; ") : "no target campaigns to size";
@@ -585,6 +586,8 @@ export class SizeStage {
       const poolDescription = counts[`pool_description_${id}`];
       const poolBoth = counts[`pool_both_${id}`];
       const cooFallback = counts[`coo_fallback_${id}`];
+      const tamIt = counts[`tam_it_${id}`];
+      const tamCoo = counts[`tam_coo_${id}`];
       const poolNote =
         poolIndustry != null || poolDescription != null || poolBoth != null || cooFallback != null
           ? bcpPoolReport({
@@ -626,6 +629,8 @@ export class SizeStage {
         ...(poolDescription != null ? { pool_description: poolDescription } : {}),
         ...(poolBoth != null ? { pool_both: poolBoth } : {}),
         ...(cooFallback != null ? { coo_fallback_count: cooFallback } : {}),
+        ...(tamIt != null ? { tam_it: tamIt } : {}),
+        ...(tamCoo != null ? { tam_coo: tamCoo } : {}),
         ...(poolNote ? { pool_note: poolNote } : {}),
         ...(pilot ? { pilot } : {}),
       });
@@ -824,7 +829,10 @@ export class SizeStage {
     }
   }
 
-  /** Industry-only is the sized count. Description-only, both, and the COO pool are reported beside it. */
+  /**
+   * Industry-only stays the IT count. The sized TAM adds the COO fallback
+   * before held leads are subtracted, so tam_left comes off both parts.
+   */
   private async bcpAlternateCounts(recipe: Recipe, peopleIds: number[], counts: Record<string, number>): Promise<void> {
     const seen = new Map<string, { description: number | null; both: number | null; coo: number | null }>();
     for (const id of peopleIds) {
@@ -844,10 +852,17 @@ export class SizeStage {
         seen.set(key, alt);
       }
       const industry = counts[`tam_${id}`];
-      if (industry != null) counts[`pool_industry_${id}`] = industry;
+      if (industry != null) {
+        counts[`pool_industry_${id}`] = industry;
+        counts[`tam_it_${id}`] = industry;
+      }
       if (alt.description != null) counts[`pool_description_${id}`] = alt.description;
       if (alt.both != null) counts[`pool_both_${id}`] = alt.both;
-      if (alt.coo != null) counts[`coo_fallback_${id}`] = alt.coo;
+      if (alt.coo != null) {
+        counts[`coo_fallback_${id}`] = alt.coo;
+        counts[`tam_coo_${id}`] = alt.coo;
+      }
+      if (industry != null) counts[`tam_${id}`] = bcpSizedTam(industry, alt.coo);
     }
   }
 
