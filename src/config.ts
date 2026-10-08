@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DAILY_VENDOR_CAP_USD, OPERATOR_SPEND_CAP_USD } from "./policy/rules.js";
 
 /**
  * All configuration comes from the environment. Railway holds the secrets;
@@ -9,20 +10,8 @@ import { z } from "zod";
 /** The only Supabase project this service may write to (D6). */
 export const ALLOWED_SUPABASE_PROJECT_REF = "azpapwtnrbzywlnxxecz";
 
-/**
- * Campaigns that are never topped up.
- * 4085158 is SG Gabe Calls. 3122546 is SG Nurture.
- * SG Cayden Calls is matched by name because its id is not fixed here.
- */
-export const NEVER_TOPUP_CAMPAIGN_IDS = [4085158, 3122546] as const;
-
-const NEVER_TOPUP_NAME = [/cayden calls/i, /gabe calls/i, /sg nurture/i];
-
-export function neverTopUp(id: number, name?: string | null): boolean {
-  if ((NEVER_TOPUP_CAMPAIGN_IDS as readonly number[]).includes(id)) return true;
-  const label = name?.trim() ?? "";
-  return label.length > 0 && NEVER_TOPUP_NAME.some((re) => re.test(label));
-}
+/** Campaigns that are never topped up live in the policy layer (D46). Re-exported for the callers that grew up here. */
+export { NEVER_TOPUP_CAMPAIGN_IDS, isNeverTopUp as neverTopUp } from "./policy/rules.js";
 
 const csvIds = z
   .string()
@@ -119,8 +108,8 @@ const schema = z.object({
   JOB_POLL_SECONDS: numberWithDefault(30),
   JOB_DEAD_MINUTES: numberWithDefault(90),
 
-  AUTO_SPEND_CAP_USD: numberWithDefault(5),
-  DAILY_VENDOR_CAP_USD: numberWithDefault(25),
+  AUTO_SPEND_CAP_USD: numberWithDefault(OPERATOR_SPEND_CAP_USD),
+  DAILY_VENDOR_CAP_USD: numberWithDefault(DAILY_VENDOR_CAP_USD),
   SPEND_CARD_TIMEOUT_MINUTES: numberWithDefault(24 * 60),
 
   VERIFY_POLL_SECONDS: numberWithDefault(60),

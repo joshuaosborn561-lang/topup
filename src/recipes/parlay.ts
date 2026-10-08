@@ -1,13 +1,13 @@
+import { isParlayRefreshCampaign, PARLAY_CLIENT_TAG, PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, PARLAY_RETIRED_CAMPAIGN_IDS } from "../policy/index.js";
 import type { Recipe, RoutingRule, Source } from "./schema.js";
 
 /**
  * Sept 29 2026 Parlay refresh. Top ups use only these campaigns.
  * Older Sports Offer, Trendrr, Receipts, EOS, Tickets, and Choice
- * campaigns are retired.
+ * campaigns are retired. The ids live in the policy layer (D46).
  */
-export const PARLAY_CLIENT = "parlay";
-export const PARLAY_REFRESH_FIRST = 4049046;
-export const PARLAY_REFRESH_LAST = 4049064;
+export const PARLAY_CLIENT = PARLAY_CLIENT_TAG;
+export { PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, PARLAY_RETIRED_CAMPAIGN_IDS, isParlayRefreshCampaign };
 
 export const PARLAY_RETIRED_RECIPE_IDS = [
   "parlay.it_dm_legacy_sports.v0",
@@ -20,19 +20,6 @@ export const PARLAY_RETIRED_LANES = ["it_dm_legacy_sports", "it_dm_tickets", "it
 
 /** Lanes the Sept 29 refresh still fills. */
 export const PARLAY_REFRESH_LANES = ["owner", "ops_dm", "it_dm"] as const;
-
-/**
- * Campaigns Cayden retired on 2026-10-07. Includes the Sports Offer ids,
- * 3847837–3847850, and the two Choice campaigns that sat past that range.
- */
-export const PARLAY_RETIRED_CAMPAIGN_IDS: readonly number[] = [
-  3479011,
-  3628957,
-  3705889,
-  ...Array.from({ length: 3847850 - 3847837 + 1 }, (_, i) => 3847837 + i),
-  3929973,
-  3929974,
-];
 
 /**
  * Sept 29 campaigns already named in the live registry or on a Sept 29 build.
@@ -53,10 +40,6 @@ const RETIRED_IDS = new Set<number>(PARLAY_RETIRED_CAMPAIGN_IDS);
 const RETIRED_RECIPES = new Set<string>(PARLAY_RETIRED_RECIPE_IDS);
 const RETIRED_LANES = new Set<string>(PARLAY_RETIRED_LANES);
 const REFRESH_LANES = new Set<string>(PARLAY_REFRESH_LANES);
-
-export function isParlayRefreshCampaign(id: number): boolean {
-  return Number.isInteger(id) && id >= PARLAY_REFRESH_FIRST && id <= PARLAY_REFRESH_LAST;
-}
 
 export function parlayCampaignRetired(id: number): boolean {
   return RETIRED_IDS.has(id);

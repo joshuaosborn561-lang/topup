@@ -96,9 +96,13 @@ describe("per-campaign report", () => {
     const thinMsp = buildCampaignReport([{ ...fields, tam_total: 800, tam_left: 700, found: 800, to_add: 700 }]);
     assert.equal(thinMsp[0]?.gate, "suspect_filter");
     assert.ok(700 < TAM_LEFT_FLOOR);
+    // D44 / D46: one interested reply under 2,000 sends qualifies; zero positives never does, however few sends.
     const early = buildCampaignReport([{ ...fields, sends: 120, interested: 1, too_early: true }]);
-    assert.equal(early[0]?.gate, "under_reply_bar");
+    assert.equal(early[0]?.gate, "ok");
     assert.match(early[0]?.reply_rate ?? "", /too early to judge/);
+    const none = buildCampaignReport([{ ...fields, sends: 120, interested: 0, too_early: true }]);
+    assert.equal(none[0]?.gate, "under_reply_bar");
+    assert.match(none[0]?.gate_reason ?? "", /0 interested in 120 sends/);
   });
 
   it("parks a TAM that is 20× the build or above the MSP cap", () => {

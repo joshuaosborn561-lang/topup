@@ -1,5 +1,7 @@
-/** Peterson, EMCOR, and the next physical clients. LinkedIn-native is the default. */
-export const NON_LINKEDIN_CLIENTS = ["peterson", "peterson_earthworks", "emcor", "vector_energy", "deep_roots"] as const;
+import { countsAgree, LINKEDIN_TAM_WITHIN, NON_LINKEDIN_CLIENT_TAGS } from "../../policy/index.js";
+
+/** Peterson, EMCOR, and the next physical clients (policy, D46). LinkedIn-native is the default. */
+export const NON_LINKEDIN_CLIENTS = NON_LINKEDIN_CLIENT_TAGS;
 
 export type IcpKind = "linkedin_native" | "non_linkedin";
 
@@ -12,8 +14,8 @@ export function icpKindForClient(clientTag: string, registryKind?: string | null
   return "linkedin_native";
 }
 
-/** LinkedIn-native counts agree when they are within 10% of the larger. */
-export const LINKEDIN_TAM_WITHIN = 0.1;
+/** LinkedIn-native counts agree when they are within 10% of the larger (policy, D46). */
+export { LINKEDIN_TAM_WITHIN };
 
 export interface LinkedinTam {
   tam_total: number | null;
@@ -24,10 +26,7 @@ export interface LinkedinTam {
   reason: string | null;
 }
 
-function withinTen(a: number, b: number): boolean {
-  const hi = Math.max(a, b);
-  return hi === 0 ? true : Math.abs(a - b) / hi <= LINKEDIN_TAM_WITHIN;
-}
+const withinTen = countsAgree;
 
 export function linkedinTamDecision(getleads: number, aiArk: number | null, unavailable?: string | null): LinkedinTam {
   if (aiArk == null) {
