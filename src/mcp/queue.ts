@@ -1,27 +1,27 @@
 import type { Queryable } from "../db/pool.js";
 import type { RunStatus } from "../domain/runs.js";
-import { isWorking, variantStats } from "../domain/working.js";
 import type { ClientRunway } from "../ledger/client_runway.js";
 import { assessClientRunway } from "../ledger/client_runway.js";
 import { assessCampaign, campaignIdsForClient, campaignSnapshots } from "../ledger/health.js";
+import type { CampaignGate } from "../policy/index.js";
 import { recipeCampaignIds } from "../recipes/campaigns.js";
 import { parlayQueueKeeps } from "../recipes/parlay.js";
 import type { Recipe } from "../recipes/schema.js";
-import type { WatchRepo } from "../watch/assess.js";
+import { judgeCampaigns, type WatchRepo } from "../watch/assess.js";
 import { watchdogLeadFlag, watchDecision, type NeedyCampaign, type WatchdogLeadFlag } from "../watch/decide.js";
 import { loadClientMap, readTopupRecipe, recipeSummaryCounts, trimRecipeSummary, type RecipeSummaryCounts } from "./recipe.js";
 
 /**
- * D43 / D44 — Cayden's queue. Same lead-refill lines #campaign-watchdog
+ * D43 / D44 / D46 — Cayden's queue. Same lead-refill lines #campaign-watchdog
  * posts (empty / low / nearly-done 90%), ranked, with the recipe count
- * summary and the 1-in-2000 working gate. Counts and ids only. Read only.
+ * summary and the policy layer's gate and reason for each campaign. The
+ * queue, the watch and the size step judge a campaign the same way.
+ * Counts and ids only. Read only.
  */
 
 export const TOPUP_QUEUE_DESCRIPTION =
-  "Campaigns #campaign-watchdog would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the last-pull recipe count summary and the 1-in-2000 working gate (1 reply under 2,000 sends is acceptable). Page with limit/offset/client_tag. Includes camps the client-wide watch would skip. Open the queue, pick the top one, read topup_recipe, run start_topup(client_tag, campaign_id, count). Counts only, never lead rows.";
+  "Campaigns #campaign-watchdog would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the last-pull recipe count summary and the policy gate already applied: excluded, ignored client, retired, paused, dropped, not active, foreign client, under the 1-in-2000 reply bar (1 reply under 2,000 sends is acceptable; zero positives never qualifies), or ok. Page with limit/offset/client_tag. Includes camps the client-wide watch would skip. Open the queue, pick the top one, read campaign_history, run size_client or start_topup(client_tag, campaign_id, count). Counts only, never lead rows.";
 
-const DEFAULT_INTERESTED_PER_2000 = 1;
-const DEFAULT_VARIANT_MIN_SENDS = 1000;
 const DEFAULT_FLOOR_DAYS = 7;
 
 export interface QueueItem {
@@ -36,8 +36,13 @@ export interface QueueItem {
   runway_days: number | null;
   sends_last_14d: number;
   client_email_days: number | null;
-  decision: "go" | "ask" | "skip";
+  decision: "go" | "skip";
   why: string;
+  /** The policy layer's verdict (D46): the gate and its one-line reason. */
+  gate: CampaignGate;
+  gate_reason: string;
+  qualifies: boolean;
+  /** Kept for readers of the older shape: working is "passes the reply bar". */
   working: boolean;
   working_reason: string;
   client_under_floor: boolean;
@@ -202,21 +207,8 @@ export async function buildTopupQueue(
     const need = health.filter((h) => watchdogLeadFlag(h));
     if (need.length === 0) continue;
 
-    const overrides = await repo.workingOverrides(need.map((h) => h.smartlead_campaign_id));
-    const flagged: NeedyCampaign[] = [];
-    for (const h of need) {
-      const rec = recipeForCampaign(recipes, clientRow.client_tag, h.smartlead_campaign_id);
-      const stats = await variantStats(db, h.smartlead_campaign_id);
-      const working = isWorking({
-        sends: stats.sends,
-        interested: stats.interested,
-        variants: stats.variants,
-        interestedPer2000: rec?.working.interested_per_2000_sends ?? DEFAULT_INTERESTED_PER_2000,
-        variantMinSends: rec?.working.variant_min_sends ?? DEFAULT_VARIANT_MIN_SENDS,
-        override: overrides.get(h.smartlead_campaign_id) ?? null,
-      });
-      flagged.push({ health: h, working });
-    }
+    const judged = await judgeCampaigns(db, repo, { client_tag: clientRow.client_tag, lane: "", smartlead_client_id: clientRow.smartlead_client_id }, need);
+    const flagged: NeedyCampaign[] = judged;
 
     for (const camp of flagged) {
       const rec = recipeForCampaign(recipes, clientRow.client_tag, camp.health.smartlead_campaign_id);
@@ -256,8 +248,11 @@ export async function buildTopupQueue(
         client_email_days: client.email_days,
         decision: decision.kind,
         why: decision.why,
-        working: camp.working.working,
-        working_reason: camp.working.reason,
+        gate: camp.verdict.gate,
+        gate_reason: camp.verdict.reason,
+        qualifies: camp.verdict.qualifies,
+        working: camp.verdict.gate !== "under_reply_bar",
+        working_reason: camp.verdict.reason,
         client_under_floor: client.under_floor,
         sibling_rem: client.sibling_rem,
         recipe_summary: trimRecipeSummary(await summaryFor(db, clientRow.client_tag, camp.health.smartlead_campaign_id)),
