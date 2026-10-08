@@ -68,7 +68,7 @@ describe("D49 — client_overview", () => {
     assert.deepEqual(a!.missing_tags, []);
     assert.equal(b!.gate, "under_reply_bar");
     assert.equal(b!.chosen_build, null, "D47/D49: no build on record is said, not guessed");
-    assert.deepEqual(b!.missing_tags, ["campaign_method row"]);
+    assert.deepEqual(b!.missing_tags, ["campaign_method row or campaign_builds row"]);
     assert.equal(c!.flag, null);
     assert.deepEqual(out.counts, { campaigns: 3, needing_leads: 2, qualifying: 1, without_build_record: 2, missing_tags: 2 });
     assert.deepEqual(out.open_runs, [{ run_id: "abcdef12-0000", lane: "it_dm_airpods", status: "awaiting_operator", step: "size" }]);

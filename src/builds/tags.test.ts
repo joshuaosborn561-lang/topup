@@ -22,7 +22,7 @@ describe("D49 — campaignintelligence tags as counts", () => {
     assert.deepEqual(missingTags(full, false), []);
     assert.deepEqual(missingTags(full, true), ["evidence"]);
     assert.deepEqual(missingTags({ ...full, person_source: null, email_source: null }, false), ["person_source", "email_source"]);
-    assert.deepEqual(missingTags(undefined, false), ["campaign_method row"]);
+    assert.deepEqual(missingTags(undefined, false), ["campaign_method row or campaign_builds row"]);
   });
 
   it("reads campaign_method as booleans and names, and counts provenance without selecting a lead column", async () => {
@@ -33,11 +33,15 @@ describe("D49 — campaignintelligence tags as counts", () => {
         if (text.includes("topup.campaign_method")) {
           return { rows: [{ campaign_id: "7", lane: "owner", company_source: "maps", domain_source: null, person_source: "", email_source: "serp", email_tier: null, company_detail: true, evidence: false }] };
         }
+        if (text.includes("topup.campaign_builds")) {
+          return { rows: [{ campaign_id: "8", lane: "it_dm", company_source: "getleads", domain_source: "already", person_source: "getleads", email_source: "getleads", email_tier: "getleads", company_detail: true }] };
+        }
         return { rows: [{ build_label: "maps_x", confidence: "traced", leads: "41" }] };
       },
     };
-    const tags = await campaignMethodTags(db as never, [7]);
+    const tags = await campaignMethodTags(db as never, [7, 8]);
     assert.deepEqual(tags.get(7), { campaign_id: 7, lane: "owner", company_source: "maps", domain_source: null, person_source: null, email_source: "serp", email_tier: null, company_detail: true, evidence: false });
+    assert.deepEqual(tags.get(8), { campaign_id: 8, lane: "it_dm", company_source: "getleads", domain_source: "already", person_source: "getleads", email_source: "getleads", email_tier: "getleads", company_detail: true, evidence: false }, "D49: a campaign with no campaign_method row reads its latest build's legs");
     const counts = await provenanceCounts(db as never, "vasco", ["maps_x", "", "maps_x"]);
     assert.deepEqual(counts, [{ build_label: "maps_x", confidence: "traced", leads: 41 }]);
     for (const text of sql) {

@@ -158,7 +158,11 @@ describe("D48 — the size planner", () => {
     assert.equal(row.ai_ark_count, null);
     assert.equal(row.getleads_count, 5000);
     assert.equal(row.gate, "ok");
-    const calls = plan.extra.vendor_calls as Array<{ vendor: string; ok: boolean; message: string | null }>;
+    const calls = plan.extra.vendor_log as Array<{ vendor: string; ok: boolean; message: string | null }>;
+    assert.ok(Array.isArray(calls), "D48: the vendor log is a list on the step, under vendor_log");
+    assert.equal(typeof plan.counts.vendor_calls, "number", "D48: vendor_calls on the counts is the number of calls");
+    const overlap = Object.keys(plan.extra).filter((k) => k in plan.counts);
+    assert.deepEqual(overlap, [], "D48: an extra key that is also a count is overwritten when the step finishes; keep the names apart");
     assert.ok(calls.some((c) => c.vendor === "aiark" && !c.ok && /AI_ARK_TOKEN/.test(c.message ?? "")), "the vendor log keeps the AI Ark reason");
     assert.ok(calls.some((c) => c.vendor === "getleads" && c.ok));
   });

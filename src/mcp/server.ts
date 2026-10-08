@@ -239,7 +239,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
         run,
         steps,
         campaign_report,
-        vendor_calls: Array.isArray(sizeCounts.vendor_calls) ? sizeCounts.vendor_calls : [],
+        vendor_calls: Array.isArray(sizeCounts.vendor_log) ? sizeCounts.vendor_log : [],
         briefing: typeof sizeCounts.briefing === "string" ? sizeCounts.briefing : null,
         verify_batches: batches.rows,
         open_cards: cards.map((c) => ({ card_id: c.card_id, kind: c.kind, audience: c.audience })),
