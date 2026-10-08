@@ -24,7 +24,9 @@ function camp(id: number, flags: string[], runway: number | null, working = true
       runway_days: runway,
       flags: flags as never,
     },
-    working: { working, reason: working ? "ok" : "dead", deadVariants: [], liveVariants: [] },
+    verdict: working
+      ? { campaign_id: id, gate: "ok", reason: "ok", qualifies: true, reply_rate_per_2000: 1, sizing_pending: true }
+      : { campaign_id: id, gate: "under_reply_bar", reason: "dead", qualifies: false, reply_rate_per_2000: 0, sizing_pending: false },
   };
 }
 
@@ -40,6 +42,9 @@ function item(partial: Partial<UnrankedQueueItem> & Pick<UnrankedQueueItem, "cam
     client_email_days: 2.4,
     decision: "skip",
     why: "client-wide runway is healthy",
+    gate: "ok",
+    gate_reason: "1 interested in 1500 sends; sizing pending",
+    qualifies: true,
     working: true,
     working_reason: "1 interested in 1500 sends (under 2,000; acceptable)",
     client_under_floor: false,
@@ -55,14 +60,14 @@ describe("D43 / D44 — topup_queue ranking and watchdog flags", () => {
       item({ campaign_id: 2, watchdog: "low", flags: ["low"], remaining_new: 40, runway_days: 3 }),
       item({ campaign_id: 1, watchdog: "empty", flags: ["empty"], remaining_new: 0, runway_days: 0 }),
       item({ campaign_id: 4, watchdog: "nearly_done", flags: [], remaining_new: 12, runway_days: 20 }),
-      item({ campaign_id: 3, watchdog: "low", flags: ["low"], remaining_new: 80, runway_days: 6, decision: "ask", working: false }),
+      item({ campaign_id: 3, watchdog: "low", flags: ["low"], remaining_new: 80, runway_days: 6, decision: "skip", gate: "under_reply_bar", qualifies: false, working: false }),
     ];
     const ranked = rankQueueItems(items);
     assert.deepEqual(ranked.map((r) => r.campaign_id), [1, 4, 2, 3]);
     assert.deepEqual(ranked.map((r) => r.rank), [1, 2, 3, 4]);
     assert.equal(ranked[0]!.watchdog, "empty");
     assert.equal(ranked[1]!.watchdog, "nearly_done");
-    assert.ok(ranked.every((r) => "recipe_summary" in r && "working_reason" in r));
+    assert.ok(ranked.every((r) => "recipe_summary" in r && "gate" in r && "gate_reason" in r));
     assert.ok(!JSON.stringify(ranked).includes("@"), "D44: queue is counts, never an email. Ask Josh.");
   });
 
@@ -70,7 +75,7 @@ describe("D43 / D44 — topup_queue ranking and watchdog flags", () => {
     assert.ok(queueRankKey(item({ campaign_id: 1, watchdog: "empty", remaining_new: 0 })) < queueRankKey(item({ campaign_id: 2, watchdog: "low", runway_days: 1 })));
   });
 
-  it("flaggedCampaigns is empty on skip, the ask camp on ask, needy on go", () => {
+  it("flaggedCampaigns is empty on skip and needy on go", () => {
     const a = camp(1, ["empty"], 0);
     const b = camp(2, ["low"], 2);
     const skip: WatchLaneSnapshot = {
@@ -83,18 +88,11 @@ describe("D43 / D44 — topup_queue ranking and watchdog flags", () => {
       openRun: false,
     };
     assert.deepEqual(flaggedCampaigns(skip), []);
-    const ask: WatchLaneSnapshot = {
-      ...skip,
-      needy: [a, b],
-      camps: [a, b],
-      decision: { kind: "ask", why: "dead", campaignId: 2 },
-    };
-    assert.deepEqual(flaggedCampaigns(ask).map((c) => c.health.smartlead_campaign_id), [2]);
     const go: WatchLaneSnapshot = {
       ...skip,
       needy: [a, b],
       camps: [a, b],
-      decision: { kind: "go", why: "under floor", campaigns: [1, 2], proposeMock: false },
+      decision: { kind: "go", why: "under floor", campaigns: [1, 2], proposeMock: false, refused: [] },
     };
     assert.deepEqual(flaggedCampaigns(go).map((c) => c.health.smartlead_campaign_id), [1, 2]);
   });

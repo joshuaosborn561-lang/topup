@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { CampaignHealth } from "../ledger/health.js";
 import { assessClientRunway } from "../ledger/client_runway.js";
-import type { WorkingVerdict } from "../domain/working.js";
-import { isNeedy, isWatchdogLeadNeed, pickAsk, recipeCampaignIds, watchdogLeadFlag, watchDecision } from "./decide.js";
+import type { CampaignVerdict } from "../policy/index.js";
+import { isNeedy, isWatchdogLeadNeed, recipeCampaignIds, watchdogLeadFlag, watchDecision } from "./decide.js";
 
-/** D27 / D38 — the watch goes on its own when the *client* is low and still working. */
+/** D27 / D38 / D46 — the watch goes on its own when a dry campaign passes the policy; a refused one gets no card. */
 
 function health(partial: Partial<CampaignHealth> & { smartlead_campaign_id: number }): CampaignHealth {
   return {
@@ -26,8 +26,8 @@ function health(partial: Partial<CampaignHealth> & { smartlead_campaign_id: numb
   };
 }
 
-const live: WorkingVerdict = { working: true, reason: "2 interested in 4000 sends (1.00 per 2,000)", deadVariants: [], liveVariants: [] };
-const dead: WorkingVerdict = { working: false, reason: "0 interested in 4000 sends (0.00 per 2,000)", deadVariants: ["A"], liveVariants: [] };
+const live: CampaignVerdict = { campaign_id: 0, gate: "ok", reason: "2 interested in 4000 sends (1.00 per 2,000); sizing pending", qualifies: true, reply_rate_per_2000: 1, sizing_pending: true };
+const dead: CampaignVerdict = { campaign_id: 0, gate: "under_reply_bar", reason: "0 interested in 4000 sends; a campaign with no positive reply does not qualify", qualifies: false, reply_rate_per_2000: 0, sizing_pending: false };
 
 describe("D27 watch decision", () => {
   it("recipe campaign ids are the unique routing targets", () => {
@@ -62,7 +62,7 @@ describe("D27 watch decision", () => {
   it("skips when nothing is low or a run is already open", () => {
     assert.equal(watchDecision({ needy: [], openRun: false, lastStatus: null }).kind, "skip");
     assert.equal(
-      watchDecision({ needy: [{ health: health({ smartlead_campaign_id: 1 }), working: live }], openRun: true, lastStatus: null }).kind,
+      watchDecision({ needy: [{ health: health({ smartlead_campaign_id: 1 }), verdict: live }], openRun: true, lastStatus: null }).kind,
       "skip",
     );
   });
@@ -70,38 +70,46 @@ describe("D27 watch decision", () => {
   it("goes when any needy campaign is still working — no card, no Josh (legacy path, no client rollup)", () => {
     const d = watchDecision({
       needy: [
-        { health: health({ smartlead_campaign_id: 1 }), working: live },
-        { health: health({ smartlead_campaign_id: 2 }), working: dead },
+        { health: health({ smartlead_campaign_id: 1 }), verdict: live },
+        { health: health({ smartlead_campaign_id: 2 }), verdict: dead },
       ],
       openRun: false,
       lastStatus: null,
     });
     assert.equal(d.kind, "go");
-    if (d.kind === "go") assert.deepEqual(d.campaigns, [1]);
+    if (d.kind === "go") {
+      assert.deepEqual(d.campaigns, [1]);
+      assert.deepEqual(d.refused.map((r) => r.campaign_id), [2]);
+      assert.match(d.why, /Not started: #2 \(under_reply_bar\)/);
+    }
   });
 
-  it("asks Josh when every needy campaign is not working", () => {
+  it("D46 — refuses, with each campaign's gate and reason, when every needy campaign fails the policy; no card", () => {
     const d = watchDecision({
       needy: [
-        { health: health({ smartlead_campaign_id: 9, runway_days: 2 }), working: dead },
-        { health: health({ smartlead_campaign_id: 8, flags: ["empty"], runway_days: 0, untouched: 0 }), working: dead },
+        { health: health({ smartlead_campaign_id: 9, runway_days: 2 }), verdict: dead },
+        { health: health({ smartlead_campaign_id: 8, flags: ["empty"], runway_days: 0, untouched: 0 }), verdict: { ...dead, gate: "paused", reason: "#8 is paused; it never starts" } },
       ],
       openRun: false,
       lastStatus: "done",
     });
-    assert.equal(d.kind, "ask");
-    if (d.kind === "ask") assert.equal(d.campaignId, 8, "empty is asked first");
+    assert.equal(d.kind, "skip");
+    if (d.kind === "skip") {
+      assert.deepEqual(d.refused?.map((r) => [r.campaign_id, r.gate]), [[9, "under_reply_bar"], [8, "paused"]]);
+      assert.match(d.why, /#9 needs leads but under_reply_bar/);
+      assert.match(d.why, /\/working on is Josh's override/);
+    }
   });
 
   it("after Leave it, does not nag again until something is working", () => {
     const stillDead = watchDecision({
-      needy: [{ health: health({ smartlead_campaign_id: 1 }), working: dead }],
+      needy: [{ health: health({ smartlead_campaign_id: 1 }), verdict: dead }],
       openRun: false,
       lastStatus: "not_working",
     });
     assert.equal(stillDead.kind, "skip");
     const recovered = watchDecision({
-      needy: [{ health: health({ smartlead_campaign_id: 1 }), working: live }],
+      needy: [{ health: health({ smartlead_campaign_id: 1 }), verdict: live }],
       openRun: false,
       lastStatus: "not_working",
     });
@@ -110,18 +118,13 @@ describe("D27 watch decision", () => {
 
   it("does not restart a lane whose last run was aborted", () => {
     const d = watchDecision({
-      needy: [{ health: health({ smartlead_campaign_id: 1 }), working: live }],
+      needy: [{ health: health({ smartlead_campaign_id: 1 }), verdict: live }],
       openRun: false,
       lastStatus: "aborted",
     });
     assert.equal(d.kind, "skip");
   });
 
-  it("pickAsk prefers empty over a short runway", () => {
-    const a = { health: health({ smartlead_campaign_id: 1, runway_days: 1 }), working: dead };
-    const b = { health: health({ smartlead_campaign_id: 2, flags: ["empty"], runway_days: 0, untouched: 0 }), working: dead };
-    assert.equal(pickAsk([a, b]).health.smartlead_campaign_id, 2);
-  });
 });
 
 describe("D38 client-wide watch start", () => {
@@ -136,10 +139,10 @@ describe("D38 client-wide watch start", () => {
     const d = watchDecision({
       client,
       recipeCampaignIds: [3847846, 3847839],
-      needy: [{ health: health({ smartlead_campaign_id: 3847846, flags: ["empty"], untouched: 0, runway_days: 0 }), working: live }],
+      needy: [{ health: health({ smartlead_campaign_id: 3847846, flags: ["empty"], untouched: 0, runway_days: 0 }), verdict: live }],
       camps: [
-        { health: health({ smartlead_campaign_id: 3847846, flags: ["empty"], untouched: 0, runway_days: 0 }), working: live },
-        { health: health({ smartlead_campaign_id: 3847839, flags: [], untouched: 8000, runway_days: 20 }), working: live },
+        { health: health({ smartlead_campaign_id: 3847846, flags: ["empty"], untouched: 0, runway_days: 0 }), verdict: live },
+        { health: health({ smartlead_campaign_id: 3847839, flags: [], untouched: 8000, runway_days: 20 }), verdict: live },
       ],
       openRun: false,
       lastStatus: null,
@@ -163,10 +166,10 @@ describe("D38 client-wide watch start", () => {
     const d = watchDecision({
       client,
       recipeCampaignIds: [1, 2, 3],
-      needy: [{ health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0 }), working: live }],
+      needy: [{ health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0 }), verdict: live }],
       camps: [
-        { health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0 }), working: live },
-        { health: health({ smartlead_campaign_id: 2, flags: ["empty"], untouched: 0 }), working: dead },
+        { health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0 }), verdict: live },
+        { health: health({ smartlead_campaign_id: 2, flags: ["empty"], untouched: 0 }), verdict: dead },
       ],
       openRun: false,
       lastStatus: null,
@@ -194,8 +197,8 @@ describe("D38 client-wide watch start", () => {
     const go = watchDecision({
       client: parlay,
       recipeCampaignIds: [9],
-      needy: [{ health: health({ smartlead_campaign_id: 9 }), working: live }],
-      camps: [{ health: health({ smartlead_campaign_id: 9 }), working: live }],
+      needy: [{ health: health({ smartlead_campaign_id: 9 }), verdict: live }],
+      camps: [{ health: health({ smartlead_campaign_id: 9 }), verdict: live }],
       openRun: false,
       lastStatus: null,
     });
@@ -205,8 +208,8 @@ describe("D38 client-wide watch start", () => {
     const sgGo = watchDecision({
       client: sg,
       recipeCampaignIds: [9],
-      needy: [{ health: health({ smartlead_campaign_id: 9 }), working: live }],
-      camps: [{ health: health({ smartlead_campaign_id: 9 }), working: live }],
+      needy: [{ health: health({ smartlead_campaign_id: 9 }), verdict: live }],
+      camps: [{ health: health({ smartlead_campaign_id: 9 }), verdict: live }],
       openRun: false,
       lastStatus: null,
     });
@@ -228,10 +231,10 @@ describe("D38 client-wide watch start", () => {
     const d = watchDecision({
       client,
       recipeCampaignIds: [1, 2],
-      needy: [{ health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0 }), working: live }],
+      needy: [{ health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0 }), verdict: live }],
       camps: [
-        { health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0, runway_days: 0 }), working: live },
-        { health: health({ smartlead_campaign_id: 2, flags: [], untouched: 4000, runway_days: 20 }), working: live },
+        { health: health({ smartlead_campaign_id: 1, flags: ["empty"], untouched: 0, runway_days: 0 }), verdict: live },
+        { health: health({ smartlead_campaign_id: 2, flags: [], untouched: 4000, runway_days: 20 }), verdict: live },
       ],
       openRun: false,
       lastStatus: null,
@@ -244,8 +247,8 @@ describe("D38 client-wide watch start", () => {
     const d = watchDecision({
       needy: [],
       camps: [
-        { health: health({ smartlead_campaign_id: 1, flags: [], untouched: 500, runway_days: 12 }), working: live },
-        { health: health({ smartlead_campaign_id: 2, flags: [], untouched: 800, runway_days: 18 }), working: live },
+        { health: health({ smartlead_campaign_id: 1, flags: [], untouched: 500, runway_days: 12 }), verdict: live },
+        { health: health({ smartlead_campaign_id: 2, flags: [], untouched: 800, runway_days: 18 }), verdict: live },
       ],
       openRun: false,
       lastStatus: null,

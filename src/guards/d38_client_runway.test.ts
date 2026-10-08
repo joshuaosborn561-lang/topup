@@ -55,7 +55,7 @@ describe("D38 — client-wide runway, not one-camp SEG fills", () => {
             runway_days: 0,
             flags: ["empty"],
           },
-          working: { working: true, reason: "ok", deadVariants: [], liveVariants: [] },
+          verdict: { campaign_id: 0, gate: "ok", reason: "ok; sizing pending", qualifies: true, reply_rate_per_2000: 1, sizing_pending: true },
         },
       ],
       openRun: false,

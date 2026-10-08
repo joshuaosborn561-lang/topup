@@ -37,9 +37,9 @@ describe("roles", () => {
   it("MCP: the operator token gets the narrow set", () => {
     const operatorTools = Object.entries(MCP_TOOL_ROLE).filter(([, r]) => r === "operator").map(([t]) => t).sort();
     assert.ok(operatorTools.includes("start_topup"));
-    assert.ok(operatorTools.includes("campaign_registry"));
-    assert.ok(operatorTools.includes("register_queue_table"));
-    assert.equal(MCP_TOOL_ROLE.sample_rows, "owner", "D45: sample_rows stays owner. Ask Josh.");
+    assert.ok(operatorTools.includes("campaign_history"));
+    assert.ok(operatorTools.includes("size_client"));
+    assert.equal(MCP_TOOL_ROLE.sample_rows, undefined, "D48: no tool returns rows, so there is no owner-only row tool. Ask Josh.");
     assert.equal(MCP_TOOL_ROLE.add_client_domains, "operator");
     const d = { ownerToken: "owner-tok-1", operatorToken: "operator-tok-2" };
     assert.equal(roleForToken(`Bearer ${d.ownerToken}`, d), "owner");

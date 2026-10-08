@@ -1,17 +1,20 @@
 import type { CampaignHealth } from "../ledger/health.js";
 import type { ClientRunway } from "../ledger/client_runway.js";
-import type { WorkingVerdict } from "../domain/working.js";
+import type { CampaignVerdict } from "../policy/index.js";
 import type { RunStatus } from "../domain/runs.js";
 import { recipeCampaignIds } from "../recipes/campaigns.js";
 
 export { recipeCampaignIds };
 
 /**
- * The watch (D27, D38, D45): each ACTIVE campaign is judged on its own
- * runway so a dry campaign does not stop sending while a sibling still
- * has leads. Client-wide days stay on the board. A campaign under its
- * floor that is still working is filled. Josh is asked only when the
- * campaigns that need leads are not working. `/topup` is the override.
+ * The watch (D27, D38, D45, D46): each ACTIVE campaign is judged on its own
+ * runway so a dry campaign does not stop sending while a sibling still has
+ * leads. Client-wide days stay on the board. A campaign under its floor that
+ * the policy passes is filled. A campaign the policy refuses (under the
+ * reply bar, paused, dropped, retired, excluded) is named with its reason
+ * and never started, not even with a card: the report says why, and Josh's
+ * /working override is the only way past the bar. `/topup` is the override
+ * for everything else.
  */
 
 /** Per-campaign flag. Empty or low is the refill signal for that campaign. */
@@ -43,13 +46,13 @@ export function isWatchdogLeadNeed(h: CampaignHealth): boolean {
 
 export interface NeedyCampaign {
   health: CampaignHealth;
-  working: WorkingVerdict;
+  /** The policy layer's verdict on this campaign (D46). */
+  verdict: CampaignVerdict;
 }
 
 export type WatchDecision =
-  | { kind: "skip"; why: string }
-  | { kind: "go"; why: string; campaigns: number[]; proposeMock: boolean }
-  | { kind: "ask"; why: string; campaignId: number };
+  | { kind: "skip"; why: string; refused?: Array<{ campaign_id: number; gate: string; reason: string }> }
+  | { kind: "go"; why: string; campaigns: number[]; proposeMock: boolean; refused: Array<{ campaign_id: number; gate: string; reason: string }> };
 
 export function watchDecision(input: {
   needy: NeedyCampaign[];
@@ -59,7 +62,7 @@ export function watchDecision(input: {
   client?: ClientRunway | null;
   /** Campaigns this lane owns. A refill only targets ids in this list when it is set. */
   recipeCampaignIds?: number[];
-  /** Working verdicts for the recipe's ACTIVE campaigns (not only the dry ones). */
+  /** Verdicts for the recipe's ACTIVE campaigns (not only the dry ones). */
   camps?: NeedyCampaign[];
 }): WatchDecision {
   if (input.openRun) return { kind: "skip", why: "a run is already open for this lane" };
@@ -70,36 +73,29 @@ export function watchDecision(input: {
   const client = input.client ?? null;
   const pool = input.camps ?? input.needy;
   const needy = input.needy.length > 0 ? input.needy : pool.filter((n) => isNeedy(n.health));
-  const workingNeedy = needy.filter((n) => n.working.working);
-  const deadNeedy = needy.filter((n) => !n.working.working);
+  const passing = needy.filter((n) => n.verdict.qualifies);
+  const refused = needy
+    .filter((n) => !n.verdict.qualifies)
+    .map((n) => ({ campaign_id: n.health.smartlead_campaign_id, gate: n.verdict.gate, reason: n.verdict.reason }));
 
-  if (workingNeedy.length > 0) {
+  if (passing.length > 0) {
     const owned = new Set(input.recipeCampaignIds ?? []);
-    const campaigns = workingNeedy
-      .map((n) => n.health.smartlead_campaign_id)
-      .filter((id) => owned.size === 0 || owned.has(id));
-    if (campaigns.length === 0) return { kind: "skip", why: "the dry campaigns are not on this lane's recipe" };
+    const campaigns = passing.map((n) => n.health.smartlead_campaign_id).filter((id) => owned.size === 0 || owned.has(id));
+    if (campaigns.length === 0) return { kind: "skip", why: "the dry campaigns are not on this lane's recipe", refused };
     return {
       kind: "go",
-      why: fillWhy(
-        workingNeedy.filter((n) => campaigns.includes(n.health.smartlead_campaign_id)),
-        client,
-      ),
+      why: fillWhy(passing.filter((n) => campaigns.includes(n.health.smartlead_campaign_id)), client, refused),
       campaigns,
       proposeMock: Boolean(client?.propose_holistic_mock),
+      refused,
     };
   }
 
-  if (input.lastStatus === "not_working") {
-    return { kind: "skip", why: "Josh left this lane; it is still not working. /working on or a recovered rate will start it again." };
-  }
-
-  if (deadNeedy.length > 0) {
-    const ask = pickAsk(deadNeedy);
+  if (refused.length > 0) {
     return {
-      kind: "ask",
-      why: `#${ask.health.smartlead_campaign_id} needs leads and is not working: ${ask.working.reason}`,
-      campaignId: ask.health.smartlead_campaign_id,
+      kind: "skip",
+      why: `${refused.map((r) => `#${r.campaign_id} needs leads but ${r.gate}: ${r.reason}`).join("; ")}. Nothing starts on its own; /working on is Josh's override for the bar.`,
+      refused,
     };
   }
 
@@ -114,13 +110,12 @@ function campaignLine(n: NeedyCampaign): string {
   return `#${h.smartlead_campaign_id} ${flag} · ${days} · ${h.untouched} untouched`;
 }
 
-/** Name the campaigns being filled. Healthy siblings are not in the list. */
-function fillWhy(workingNeedy: NeedyCampaign[], client: ClientRunway | null): string {
-  const lists = workingNeedy.map(campaignLine).join("; ");
-  const context = client
-    ? ` Client-wide ${client.email_days === null ? "days n/a" : `${client.email_days}d`}, rem ${client.email_rem}.`
-    : "";
-  return `${lists}. Filling these campaigns so their sends do not stop.${context}`;
+/** Name the campaigns being filled and the ones refused. Healthy siblings are not in the list. */
+function fillWhy(passing: NeedyCampaign[], client: ClientRunway | null, refused: Array<{ campaign_id: number; gate: string }>): string {
+  const lists = passing.map(campaignLine).join("; ");
+  const context = client ? ` Client-wide ${client.email_days === null ? "days n/a" : `${client.email_days}d`}, rem ${client.email_rem}.` : "";
+  const left = refused.length ? ` Not started: ${refused.map((r) => `#${r.campaign_id} (${r.gate})`).join(", ")}.` : "";
+  return `${lists}. Filling these campaigns so their sends do not stop.${context}${left}`;
 }
 
 /** Every campaign on the lane still has runway. Say so per campaign. */
@@ -132,11 +127,6 @@ function coveredWhy(pool: NeedyCampaign[], client: ClientRunway | null): string 
   }
   const lists = pool.map(campaignLine).join("; ");
   return `${lists}. No campaign is under its own floor, so this lane does not need a refill.`;
-}
-
-/** Empty first, then shortest runway. */
-export function pickAsk(dead: NeedyCampaign[]): NeedyCampaign {
-  return [...dead].sort((a, b) => runwayKey(a.health) - runwayKey(b.health))[0];
 }
 
 export function runwayKey(h: { flags: readonly string[]; runway_days: number | null }): number {

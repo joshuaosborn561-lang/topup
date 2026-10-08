@@ -1,12 +1,11 @@
 import type { GetleadsSource, Recipe } from "../../recipes/schema.js";
 import { MSP_LINKEDIN_HEADCOUNT, MSP_REAL_PHRASES } from "../../recipes/powergryd.js";
 import { parseCsv } from "../../lib/csv.js";
+import { PILOT_GATE_PERCENT, PILOT_MAX_ROWS, PILOT_MIN_ROWS, PILOT_ROWS } from "../../policy/index.js";
 
-/** Vendor sample size. The brief asked for 200 to 300 rows, nothing loaded. */
-export const PILOT_ROWS = 250;
-export const PILOT_MIN_ROWS = 200;
-export const PILOT_MAX_ROWS = 300;
-export const PILOT_GATE = 80;
+/** Vendor sample size and gate from the policy layer (D46): 200 to 300 rows, nothing loaded, 80% on every scored dimension. */
+export { PILOT_ROWS, PILOT_MIN_ROWS, PILOT_MAX_ROWS };
+export const PILOT_GATE = PILOT_GATE_PERCENT;
 
 export interface PilotRow {
   title: string;

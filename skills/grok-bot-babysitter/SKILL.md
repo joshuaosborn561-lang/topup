@@ -66,25 +66,32 @@ Tables (counts / keys only):
   **COUNT by tag. Never SELECT `email`.**
 - `topup.provenance_sources` — the named evidence registry.
 - `topup.provenance_gaps` — campaigns still missing a stamp (counts).
-- `topup.lane_recipes` / `recipe_get` — file recipe override
-  (`recipes/parlay/it_dm.json`).
+- `topup.lane_recipes` — file recipe override
+  (`recipes/parlay/it_dm.json`); `campaign_history` shows the one in use.
 - `lane_state` / `/where` — which step the **service** is on.
-- `campaign_registry` — campaign ids, band, working flag.
+- `topup.campaign_registry` — campaign ids, band, working flag (read
+  through `topup_queue` and `campaign_history`; the raw registry tool is
+  retired, D48).
 
-Open `topup_queue` first (D43, D44). It is the same lead-refill lines
-`#campaign-watchdog` posts (empty, low, nearly-done 90%), ranked, each
-with the recipe count summary and the 1-in-2000 working gate (1 reply
-under 2,000 sends is acceptable). It includes camps the client-wide
-watch would skip. Pick the top one. Then read `topup_recipe` (and
-`topup_campaign_builds` / `topup_provenance_gaps` when you need the
-list or the gaps) **before any top-up**. That is the live pull record
-on this service (D40). Counts and method text. Never lead rows. Do
-not reconstruct the recipe from tags when the tool answers. If it
-says `campaign not found in public.campaigns`, say so and ask Josh.
-No Slack, no Cursor — the queue is the list.
+Open `topup_queue` first (D43, D44, D46). It is the same lead-refill
+lines `#campaign-watchdog` posts (empty, low, nearly-done 90%), ranked,
+each with the recipe count summary and the policy gate already applied
+(the 1-in-2000 reply bar — 1 reply under 2,000 sends is acceptable, zero
+positives never qualifies — plus excluded, retired, paused, dropped,
+not active, foreign client). It includes camps the client-wide watch
+would skip. Pick the top one. Then read `campaign_history` **before any
+top-up**: the build records, which build earned the replies, whether it
+can be repeated, and the live pull record (D40, D47). Counts and method
+text. Never lead rows. Do not reconstruct the recipe from tags when the
+tool answers. If it says `campaign not found in public.campaigns`, say
+so and ask Josh. No Slack, no Cursor — the queue is the list.
 
-Then **start the Railway service** with `start_topup(client_tag,
-campaign_id, count)`. The service walks the thirteen steps (D24, D28).
+Then **size the client in one call** with `size_client(client_tag)`:
+a size-only run per lane, every campaign judged and counted, one line
+per campaign with its gate and reason, and the `approval_briefing` for
+Josh. Once Josh approves and `loads_paused` is off, **start the Railway
+service** with `start_topup(client_tag, campaign_id, count)`. The
+service walks the thirteen steps (D24, D28).
 You do not. A file recipe is the override. Otherwise the service
 infers from `topup.pull_receipts` tags and notes (D45 — PRs #6 and #7
 landed here, not in a Grok session). Do not invent filters in chat.
@@ -93,12 +100,14 @@ not poll every two minutes.
 
 ## Allow list (you may call these)
 
-Service MCP: `start_topup`, `lane_state`, `run_status`, `list_runs`,
-`list_holds`, `resolve_hold`, `recipe_get`, `topup_queue`, `topup_recipe`,
-`topup_campaign_builds`, `topup_provenance_gaps`, `campaign_registry`,
-`variant_stats`, `missing_piece_groups`, `add_client_domains` (domains
-only), `register_queue_table` (`source_table`, never rows), `lane_note`,
-`sample_rows` (ten masked, owner token, prefer not to).
+Service MCP (D48): `topup_queue`, `campaign_history`, `size_client`,
+`approval_briefing`, `start_topup`, `run_status`, `list_runs`,
+`abort_run`, `resume_run`, `list_holds`, `resolve_hold`, `loads_paused`,
+`lane_state`, `lane_note`, `add_client_domains` (domains only). No tool
+on the service returns a lead row or a file URL. `sample_rows`,
+`variant_stats`, `campaign_registry`, `recipe_get`,
+`missing_piece_groups`, `register_queue_table`, `topup_recipe`,
+`topup_campaign_builds` and `topup_provenance_gaps` are retired.
 
 LeadPipe: `lp_plan`, `lp_run` (`ingest_csv` from a vendor URL;
 `import_smartlead`; `sync_smartlead`; `build_suppression`), `lp_status`,
@@ -150,7 +159,7 @@ Also banned:
 <url>.`
 
 Not the list. Not a sample dump unless Josh asks, and then ten masked
-rows from `lp_sample` or `sample_rows`.
+rows from `lp_sample` (the service's `sample_rows` is retired, D48).
 
 ## If you are stuck
 

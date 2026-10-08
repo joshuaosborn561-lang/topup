@@ -1,4 +1,5 @@
 import { neverTopUp } from "../config.js";
+import { NON_TARGET_CAMPAIGN_STATUSES } from "../policy/index.js";
 import { PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, parlayCampaignRetired } from "./parlay.js";
 import { GETLEADS_BANDS, type GetleadsSource, type Recipe, type RoutingRule, type Source } from "./schema.js";
 
@@ -115,8 +116,8 @@ function ownedTargets(recipe: Recipe, ids: readonly number[]): number[] {
   return ids.filter((id) => allowed.has(id) && !neverTopUp(id) && !parlayCampaignRetired(id));
 }
 
-/** Smartlead statuses that are not topped up. STOPPED stays. A blank status stays. */
-export const NON_LIVE_CAMPAIGN_STATUSES = ["COMPLETED", "DRAFTED", "DRAFT", "PAUSED", "ARCHIVED"] as const;
+/** Smartlead statuses that are not topped up (policy, D46). STOPPED stays. A blank status stays. */
+export const NON_LIVE_CAMPAIGN_STATUSES = NON_TARGET_CAMPAIGN_STATUSES;
 
 export function isLiveCampaignStatus(status: string | null | undefined): boolean {
   if (status == null) return true;

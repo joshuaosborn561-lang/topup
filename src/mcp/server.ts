@@ -3,11 +3,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { type Request, type Response, type Router } from "express";
 import { z } from "zod";
-import { ingestedTable } from "../db/pool.js";
+import { campaignHistory } from "../builds/load.js";
 import type { Repo } from "../db/repo.js";
 import { presentRun, type Role } from "../domain/runs.js";
 import { campaignReportFromCounts } from "../stages/size/campaignReport.js";
-import { variantStats } from "../domain/working.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
 import type { Orchestrator } from "../orchestrator.js";
@@ -15,50 +14,54 @@ import type { SlackConsole } from "../slack/console.js";
 import { NEEDS_JOSH } from "../slack/roles.js";
 import type { Recipe } from "../recipes/schema.js";
 import { MCP_HTTPS_URL, SERVICE_VERSION } from "../version.js";
-import { campaignSnapshots } from "../ledger/health.js";
 import { resolveStartTarget } from "../recipes/start.js";
 import { buildTopupQueue, TOPUP_QUEUE_DESCRIPTION } from "./queue.js";
-import {
-  CAMPAIGN_NOT_FOUND,
-  clientTagSchema,
-  loadClientTags,
-  presentTopupRecipe,
-  readCampaignBuilds,
-  readProvenanceGaps,
-  readTopupRecipe,
-  TOPUP_RECIPE_DESCRIPTION,
-} from "./recipe.js";
+import { CAMPAIGN_NOT_FOUND, clientTagSchema, loadClientTags, presentTopupRecipe, readTopupRecipe, recipeSummaryCounts } from "./recipe.js";
+import { SIZE_CLIENT_MAX_WAIT_SECONDS, sizeClient } from "./sizeClient.js";
 
 const log = logger("mcp");
 
-/** Hard ceiling on rows any MCP call may return (brief section 8: ten sample rows, never a list). */
+/** Hard ceiling on rows any card may show (D2: ten sample values, never a list). No MCP tool returns a row at all (D48). */
 export const SAMPLE_ROWS_MAX = 10;
 
-/** Tools and the least role that may call them. Operator sees the rest as "This needs Josh." */
+/**
+ * The surface (D48): a handful of tools, every one counts and ids only.
+ * None returns a lead row or a file URL. Operator and owner see the same
+ * list; owner-only choices are enforced on the card, not by hiding a tool.
+ */
 export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
-  lane_state: "operator",
+  topup_queue: "operator",
+  campaign_history: "operator",
+  size_client: "operator",
+  approval_briefing: "operator",
+  start_topup: "operator",
   run_status: "operator",
   list_runs: "operator",
+  abort_run: "operator",
+  resume_run: "operator",
   list_holds: "operator",
   resolve_hold: "operator",
-  start_topup: "operator",
   loads_paused: "operator",
-  register_queue_table: "operator",
+  lane_state: "operator",
   lane_note: "operator",
   add_client_domains: "operator",
-  sample_rows: "owner",
-  variant_stats: "operator",
-  campaign_registry: "operator",
-  recipe_get: "operator",
-  missing_piece_groups: "operator",
-  topup_recipe: "operator",
-  topup_campaign_builds: "operator",
-  topup_provenance_gaps: "operator",
-  topup_queue: "operator",
 };
 
-/** Lead-row dump stays owner-only. Cayden can run every other tool (D45). */
-export const HIDDEN_FROM_OPERATOR: readonly string[] = ["sample_rows"];
+/** Nothing is hidden: there is no row-returning tool left to hide (D48). */
+export const HIDDEN_FROM_OPERATOR: readonly string[] = [];
+
+/** Tools that were on the surface before D48 and are gone. A caller that asks gets this list back. */
+export const RETIRED_MCP_TOOLS: readonly string[] = [
+  "sample_rows",
+  "variant_stats",
+  "campaign_registry",
+  "recipe_get",
+  "missing_piece_groups",
+  "register_queue_table",
+  "topup_recipe",
+  "topup_campaign_builds",
+  "topup_provenance_gaps",
+];
 
 const SPEND_ASK_MIN_CENTS = 500;
 
@@ -71,7 +74,7 @@ export interface McpDeps {
   operatorToken: string;
   /** D42: from topup.client_map at boot; refreshed per request. */
   clientTags: string[];
-  /** File recipes the watch walks. Queue is read-only over the same set. */
+  /** File and inferred recipes the watch walks. The queue and size_client read the same set. */
   recipes: Recipe[];
 }
 
@@ -92,7 +95,7 @@ export function roleForToken(header: string | undefined, d: Pick<McpDeps, "owner
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
 
-/** Mask an address so a sample row shows shape, not a sendable email. */
+/** Mask an address so a card sample shows shape, not a sendable email (D2). */
 export function maskEmail(email: string | null | undefined): string | null {
   if (!email) return null;
   const [local, domain] = email.split("@");
@@ -103,107 +106,108 @@ export function maskEmail(email: string | null | undefined): string | null {
 /** Build a server whose tool set is fixed by the caller's role. One per request (stateless). */
 export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   const server = new McpServer({ name: "leadtopup", version: SERVICE_VERSION });
-  const visible = (tool: string) => role === "owner" || (MCP_TOOL_ROLE[tool] === "operator" && !HIDDEN_FROM_OPERATOR.includes(tool));
-  const allowed = (tool: string) => visible(tool);
+  const allowed = (tool: string) => role === "owner" || (MCP_TOOL_ROLE[tool] === "operator" && !HIDDEN_FROM_OPERATOR.includes(tool));
   const refused = () => text({ error: NEEDS_JOSH, role });
   const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
   const recipeClient = clientTagSchema(d.clientTags);
   const smartleadCampaignId = z.number().int().describe("Smartlead campaign id");
+  const by = `mcp:${role}`;
 
   server.registerTool(
-    "lane_state",
+    "topup_queue",
+    {
+      description: TOPUP_QUEUE_DESCRIPTION,
+      inputSchema: { client_tag: z.string().optional(), limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).default(0) },
+    },
+    async ({ client_tag, limit, offset }) => text(await buildTopupQueue(d.repo.raw(), d.repo, d.recipes, { client_tag, limit, offset })),
+  );
+
+  server.registerTool(
+    "campaign_history",
     {
       description:
-        "Where a lane is: which of the thirteen steps of skills/lead-list-build it is on and since when, the gate that is unmet if it halted there, what is queued where (counts by status and every registered queue table), who it is blocked on and what they need to do, spend this run and this month, campaign runway and health, and the recent event log. Same answer as /where. Counts only, never rows.",
-      inputSchema: { client_tag: snake, lane: snake.optional(), recount: z.boolean().default(false).describe("Re-run the registered queue counts first (live, slower).") },
+        "Read before any top up. The build record for a campaign: every build that fed it (vendor, exact query or stored pool, counts, interested replies, method note, whether the method was reconstructed), lifetime sends and positives, the build the service would repeat and why, and the live pull recipe. Counts, labels and method text only. Never a lead row.",
+      inputSchema: { client_tag: recipeClient, campaign_id: smartleadCampaignId },
     },
-    async ({ client_tag, lane, recount }) => {
-      if (lane) return text(await d.ledger.state(client_tag, lane, { recount }));
-      const lanes = await d.ledger.lanes(client_tag);
-      const out = [];
-      for (const l of lanes) out.push(await d.ledger.state(l.client_tag, l.lane, { recount }));
-      return text(out);
+    async ({ client_tag, campaign_id }) => {
+      const history = await campaignHistory({ db: d.repo.raw(), repo: d.repo }, client_tag, campaign_id);
+      const live = await readTopupRecipe(d.repo.raw(), client_tag, campaign_id).catch((): typeof CAMPAIGN_NOT_FOUND => CAMPAIGN_NOT_FOUND);
+      return text({
+        ...history,
+        live_recipe: live === CAMPAIGN_NOT_FOUND ? CAMPAIGN_NOT_FOUND : presentTopupRecipe(live, { includeVocab: false }),
+        recipe_summary: recipeSummaryCounts(live, campaign_id),
+      });
     },
   );
 
   server.registerTool(
-    "register_queue_table",
+    "size_client",
     {
       description:
-        "Hand a queue table to the service so the work survives the chat: which schema.table, an optional where predicate, what each row is still missing (domain, person, email or none) and the next method that fills it. The service counts it now and keeps the count current. Operator may call. Never pass rows.",
+        "Pilot and size one client in one call. Opens a size-only run per lane (every lane the recipes name, or the lanes or campaign_ids given), concurrently; waits up to wait_seconds; returns each lane's one-line-per-campaign report with the policy gate and reason, and Josh's approval briefing. pilot=true scores the 250-row sample and does not size. Nothing is pulled or loaded. Counts only.",
       inputSchema: {
-        client_tag: snake,
-        lane: snake,
-        queue_name: snake,
-        source_table: z.string().regex(/^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/, "schema.table"),
-        where_sql: z.string().max(500).optional(),
-        missing: z.enum(["domain", "person", "email", "none"]),
-        next_method: z.string().max(80).optional(),
-        note: z.string().max(500).optional(),
+        client_tag: recipeClient,
+        lanes: z.array(snake).optional(),
+        campaign_ids: z.array(smartleadCampaignId).max(50).optional(),
+        pilot: z.boolean().optional(),
+        wait_seconds: z.number().int().min(0).max(SIZE_CLIENT_MAX_WAIT_SECONDS).optional(),
       },
     },
-    async (input) => {
-      if (!allowed("register_queue_table")) return refused();
-      try {
-        const r = await d.ledger.registerQueue({ ...input, registered_by: `mcp:${role}` });
-        return text({ ok: true, queue: { ...r.entry }, count: r.count, count_error: r.count_error });
-      } catch (err) {
-        return text({ ok: false, error: (err as Error).message });
-      }
+    async ({ client_tag, lanes, campaign_ids, pilot, wait_seconds }) => {
+      if (!allowed("size_client")) return refused();
+      return text(await sizeClient({ repo: d.repo, orchestrator: d.orchestrator, recipes: d.recipes }, { clientTag: client_tag, lanes, campaignIds: campaign_ids, pilot, waitSeconds: wait_seconds, by }));
     },
   );
 
   server.registerTool(
-    "lane_note",
+    "approval_briefing",
     {
-      description: "Write one line to a lane's event log (what was done, what is intended next). For Claude sessions handing state to the service. Operator may call. No lead data.",
-      inputSchema: { client_tag: snake, lane: snake, line: z.string().min(1).max(500), next_intent: z.string().max(300).optional() },
+      description: "Josh's approval briefing: one line per campaign from the latest sized run of each lane (or one run_id), with what loads, what is skipped and why, the build it repeats, and whether loads are paused. Counts and dollars only.",
+      inputSchema: { client_tag: z.string().optional(), run_id: z.string().optional() },
     },
-    async ({ client_tag, lane, line, next_intent }) => {
-      if (!allowed("lane_note")) return refused();
-      await d.ledger.event({ client_tag, lane, event: "note", line, next_intent, actor: `mcp:${role}` });
-      return text({ ok: true });
+    async ({ client_tag, run_id }) => {
+      const runs = run_id ? [await d.repo.getRun(run_id)].filter((r): r is NonNullable<typeof r> => Boolean(r)) : await d.repo.listRuns(50, client_tag);
+      const seen = new Set<string>();
+      const out: Array<{ run_id: string; client_tag: string; lane: string; status: string; briefing: string | null; campaign_report: ReturnType<typeof campaignReportFromCounts> }> = [];
+      for (const run of runs) {
+        const key = `${run.client_tag}/${run.lane}`;
+        if (!run_id && seen.has(key)) continue;
+        const step = await d.repo.getStep(run.run_id, "size").catch(() => null);
+        if (!step) continue;
+        seen.add(key);
+        const counts = step.counts as Record<string, unknown>;
+        out.push({ run_id: run.run_id, client_tag: run.client_tag, lane: run.lane, status: presentRun(run).status, briefing: typeof counts.briefing === "string" ? counts.briefing : null, campaign_report: campaignReportFromCounts(counts) });
+      }
+      const loadsPaused = await d.repo.loadsPaused().catch(() => true);
+      return text({ loads_paused: loadsPaused, lanes: out, briefing: out.map((o) => o.briefing ?? `${o.client_tag}/${o.lane}: run ${o.run_id.slice(0, 8)} ${o.status}, no briefing yet`).join("\n\n") });
     },
   );
 
   server.registerTool(
-    "add_client_domains",
+    "start_topup",
     {
       description:
-        "Optional per-client customer domains (D37: not required to start a run). Adds domains (not addresses) to topup.client_domain_blocklist; existing rows are kept. The global list is campaignintelligence positives, 90 days after the reply. Operator may call. Domains only — never a lead row.",
+        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. stop_after pilot scores a 250-row sample and does not size TAM. dry_run or stop_after size counts and closes as sized, with no pull and no load. stop_after pull parks before ingest. Every campaign is judged by the policy first; the ones that fail are skipped with their reason. Spend of $5 or above still asks Josh. Loads stay off while loads_paused is on.",
       inputSchema: {
-        client_tag: snake,
-        domains: z.array(z.string().min(3).max(253)).min(1).max(5000),
-        note: z.string().max(300).optional(),
+        client_tag: z.string(),
+        lane: z.string().optional(),
+        campaign_id: z.number().int().optional(),
+        count: z.number().int().min(1).optional(),
+        dry_run: z.boolean().optional().describe("Size only. Same as stop_after size."),
+        stop_after: z.enum(["pilot", "size", "pull"]).optional().describe("pilot scores a sample and does not size TAM. size closes after the count. pull parks before ingest."),
       },
     },
-    async ({ client_tag, domains, note }) => {
-      if (!allowed("add_client_domains")) return refused();
-      const cleaned = new Set<string>();
-      const rejected: string[] = [];
-      for (const raw of domains) {
-        const d0 = raw.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
-        if (!d0 || d0.includes("@") || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d0)) rejected.push(raw.slice(0, 60));
-        else cleaned.add(d0);
-      }
-      const list = [...cleaned];
-      const { rowCount } = await d.repo.raw().query(
-        `insert into topup.client_domain_blocklist (client_tag, domain, added_by, note)
-         select $1, x, $3, $4 from unnest($2::text[]) as x on conflict (client_tag, domain) do nothing`,
-        [client_tag, list, `mcp:${role}`, note ?? null],
-      );
-      const { rows } = await d.repo.raw().query<{ n: string }>(`select count(*)::text as n from topup.client_domain_blocklist where client_tag = $1`, [client_tag]);
-      const lanes = await d.ledger.lanes(client_tag).catch(() => []);
-      for (const l of lanes) {
-        await d.ledger.event({ client_tag, lane: l.lane, event: "note", line: `Customer domain list: ${rowCount ?? 0} domains added (${rows[0]?.n ?? 0} total). Optional; an empty list does not halt (D37).`, actor: `mcp:${role}` }).catch(() => undefined);
-      }
-      return text({ ok: true, client_tag, added: rowCount ?? 0, total: Number(rows[0]?.n ?? 0), rejected_count: rejected.length, rejected: rejected.slice(0, 10) });
+    async ({ client_tag, lane, campaign_id, count, dry_run, stop_after }) => {
+      const target = resolveStartTarget({ clientTag: client_tag, lane, campaignId: campaign_id, count });
+      if (!target.ok) return text({ ok: false, message: target.message });
+      const res = await d.orchestrator.startTopup({ clientTag: target.clientTag, lane: target.lane, campaignIds: target.campaignIds, requestedCount: target.requestedCount, by, trigger: "manual", dryRun: dry_run, stopAfter: stop_after });
+      return text(res.ok ? { ok: true, run_id: res.run.run_id } : { ok: false, message: res.message });
     },
   );
 
   server.registerTool(
     "run_status",
-    { description: "Counts, spend and step state for one run. Never rows.", inputSchema: { run_id: z.string() } },
+    { description: "Counts, spend, step state, the per-campaign report with gates and reasons, every vendor call's outcome, and open cards for one run. Never rows.", inputSchema: { run_id: z.string() } },
     async ({ run_id }) => {
       const found = await d.repo.getRun(run_id);
       if (!found) return text({ error: "no such run" });
@@ -219,7 +223,16 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
       const pull = steps.find((step) => step.step === "pull");
       const size = steps.find((step) => step.step === "size");
       const campaign_report = campaignReportFromCounts(pull?.counts ?? size?.counts);
-      return text({ run, steps, campaign_report, verify_batches: batches.rows, open_cards: cards.map((c) => ({ card_id: c.card_id, kind: c.kind, audience: c.audience })) });
+      const sizeCounts = (size?.counts ?? {}) as Record<string, unknown>;
+      return text({
+        run,
+        steps,
+        campaign_report,
+        vendor_calls: Array.isArray(sizeCounts.vendor_calls) ? sizeCounts.vendor_calls : [],
+        briefing: typeof sizeCounts.briefing === "string" ? sizeCounts.briefing : null,
+        verify_batches: batches.rows,
+        open_cards: cards.map((c) => ({ card_id: c.card_id, kind: c.kind, audience: c.audience })),
+      });
     },
   );
 
@@ -230,183 +243,114 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   );
 
   server.registerTool(
+    "abort_run",
+    { description: "Abort any open run, parked or running. Running steps are cancelled, claimed rows go back to the queue, open cards close, the receipt posts. Nothing is loaded by an aborted run.", inputSchema: { run_id: z.string() } },
+    async ({ run_id }) => {
+      if (!allowed("abort_run")) return refused();
+      const res = await d.orchestrator.abortRun(run_id, by);
+      return text(res.ok ? { ok: true, run_id, status: presentRun(res.run).status, released_rows: res.released } : { ok: false, message: res.message });
+    },
+  );
+
+  server.registerTool(
+    "resume_run",
+    { description: "Resume a run that is waiting on a human or exhausted its retries: the step it stopped on gets its attempts back and the run is driven again. A closed run is not resumed.", inputSchema: { run_id: z.string() } },
+    async ({ run_id }) => {
+      if (!allowed("resume_run")) return refused();
+      const res = await d.orchestrator.resumeRun(run_id, by);
+      return text(res.ok ? { ok: true, run_id, step: res.step, status: presentRun(res.run).status } : { ok: false, message: res.message });
+    },
+  );
+
+  server.registerTool(
     "list_holds",
-    { description: "Open cards waiting on a human (spend asks, stalls, parked runs, QA holds).", inputSchema: { client_tag: z.string().optional() } },
+    { description: "Open cards waiting on a human (spend asks, stalls, parked runs, QA holds), each with the per-campaign report.", inputSchema: { client_tag: z.string().optional() } },
     async ({ client_tag }) => text(await d.orchestrator.holds(client_tag)),
   );
 
   server.registerTool(
     "resolve_hold",
-    {
-      description: "Tap a card's button from here. Same role rules as Slack: spend and recipe choices need the owner token.",
-      inputSchema: { card_id: z.string(), choice: z.string() },
-    },
+    { description: "Tap a card's button from here. Same role rules as Slack: spend and recipe choices need the owner token.", inputSchema: { card_id: z.string(), choice: z.string() } },
     async ({ card_id, choice }) => {
       if (role === "operator" && (choice === "approve_spend" || choice === "approve_small_spend" || choice === "split")) {
         const card = await d.repo.getCard(card_id);
         const cents = Number(card?.payload?.worst_case_cents ?? 0);
-        if (cents >= SPEND_ASK_MIN_CENTS) {
-          return text({ ok: false, error: "Spend of $5 or above needs Josh." });
-        }
+        if (cents >= SPEND_ASK_MIN_CENTS) return text({ ok: false, error: "Spend of $5 or above needs Josh." });
       }
-      const result = await d.console.resolveAs(`mcp:${role}`, role, card_id, choice);
+      const result = await d.console.resolveAs(by, role, card_id, choice);
       if (!result.ok) return text({ ok: false, reason: result.reason, message: result.message });
-      await d.orchestrator.onTap({ card_id: result.card.card_id, kind: result.card.kind, run_id: result.card.run_id, choice: result.choice, by: `mcp:${role}` });
+      await d.orchestrator.onTap({ card_id: result.card.card_id, kind: result.card.kind, run_id: result.card.run_id, choice: result.choice, by });
       return text({ ok: true, card_id, choice });
-    },
-  );
-
-  server.registerTool(
-    "start_topup",
-    {
-      description:
-        "Open a top-up run. Pass client_tag + campaign_id (and an optional lead count), or client_tag + lane. stop_after pilot scores a 250-row sample and does not size TAM. dry_run or stop_after size counts and closes as sized, with no pull and no load. stop_after pull parks before ingest. Spend of $5 or above still asks Josh.",
-      inputSchema: {
-        client_tag: z.string(),
-        lane: z.string().optional(),
-        campaign_id: z.number().int().optional(),
-        count: z.number().int().min(1).optional(),
-        dry_run: z.boolean().optional().describe("Size only. Same as stop_after size."),
-        stop_after: z.enum(["pilot", "size", "pull"]).optional().describe("pilot scores a sample and does not size TAM. size closes after the count. pull parks before ingest."),
-      },
-    },
-    async ({ client_tag, lane, campaign_id, count, dry_run, stop_after }) => {
-      const target = resolveStartTarget({ clientTag: client_tag, lane, campaignId: campaign_id, count });
-      if (!target.ok) return text({ ok: false, message: target.message });
-      const res = await d.orchestrator.startTopup({
-        clientTag: target.clientTag,
-        lane: target.lane,
-        campaignIds: target.campaignIds,
-        requestedCount: target.requestedCount,
-        by: `mcp:${role}`,
-        trigger: "manual",
-        dryRun: dry_run,
-        stopAfter: stop_after,
-      });
-      return text(res.ok ? { ok: true, run_id: res.run.run_id, slack_channel: res.run.slack_channel } : { ok: false, message: res.message });
     },
   );
 
   server.registerTool(
     "loads_paused",
     {
-      description:
-        "Global switch. While paused, every run, including ones the watch opens, parks before ingest. Nothing reaches Smartlead. Omit paused to read the flag.",
+      description: "Global switch. While paused, every run, including ones the watch opens, parks before ingest. Nothing reaches Smartlead. Omit paused to read the flag.",
       inputSchema: { paused: z.boolean().optional().describe("Set true to pause loads, false to resume. Omit to read.") },
     },
     async ({ paused }) => {
       if (!allowed("loads_paused")) return refused();
       if (paused === undefined) return text({ paused: await d.repo.loadsPaused() });
-      const now = await d.repo.setLoadsPaused(paused, `mcp:${role}`);
-      return text({ paused: now });
-    },
-  );
-
-  if (role === "owner") server.registerTool(
-    "sample_rows",
-    {
-      description: `Up to ${SAMPLE_ROWS_MAX} sample rows for a client and lead_status, with emails masked. Owner only.`,
-      inputSchema: { client_tag: z.string(), lead_status: z.string(), limit: z.number().int().min(1).max(SAMPLE_ROWS_MAX).default(SAMPLE_ROWS_MAX), run_id: z.string().optional() },
-    },
-    async ({ client_tag, lead_status, limit, run_id }) => {
-      if (!allowed("sample_rows")) return refused();
-      const table = ingestedTable(client_tag);
-      const n = Math.min(limit, SAMPLE_ROWS_MAX);
-      const { rows } = await d.repo.raw().query(
-        `select id, first_name, last_name, email, job_title, company_name, city, state, lead_status,
-                first_name_n, company_n, location, local_sports_team, mv_status, n2b_status, mail_class, verify_path, ev_status, normalize_flags
-         from ${table} where lead_status = $1 and ($3::uuid is null or run_id = $3) order by random() limit $2`,
-        [lead_status, n, run_id ?? null],
-      );
-      return text(rows.map((r) => ({ ...r, email: maskEmail(r.email as string) })));
+      return text({ paused: await d.repo.setLoadsPaused(paused, by) });
     },
   );
 
   server.registerTool(
-    "variant_stats",
-    { description: "Sends and interested replies by variant for a Smartlead campaign (last 30 days). Counts only.", inputSchema: { smartlead_campaign_id: z.number().int() } },
-    async ({ smartlead_campaign_id }) => {
-      if (!allowed("variant_stats")) return refused();
-      return text(await variantStats(d.repo.raw(), smartlead_campaign_id));
-    },
-  );
-
-  server.registerTool(
-    "campaign_registry",
-    { description: "Campaigns the service knows about, with their lane, band and working override.", inputSchema: { client_tag: z.string().optional() } },
-    async ({ client_tag }) => {
-      if (!allowed("campaign_registry")) return refused();
-      return text(await d.repo.campaignRegistry(client_tag));
-    },
-  );
-
-  server.registerTool(
-    "recipe_get",
-    { description: "The file or inferred recipe the pipeline walks. Recipes change in git or from pull_receipts, never here.", inputSchema: { recipe_id: z.string() } },
-    async ({ recipe_id }) => {
-      if (!allowed("recipe_get")) return refused();
-      const r = await d.repo.getRecipe(recipe_id);
-      return text(r ?? { error: "no such recipe" });
-    },
-  );
-
-  server.registerTool(
-    "missing_piece_groups",
-    { description: "Rows grouped by what they are missing (domain, person, email) and the next method that fills it. Counts only.", inputSchema: { client_tag: z.string().optional() } },
-    async ({ client_tag }) => {
-      if (!allowed("missing_piece_groups")) return refused();
-      return text(await d.repo.missingPieceGroups(client_tag));
-    },
-  );
-
-  server.registerTool(
-    "topup_recipe",
-    {
-      description: TOPUP_RECIPE_DESCRIPTION,
-      inputSchema: {
-        client_tag: recipeClient,
-        campaign_id: smartleadCampaignId,
-        include_vocab: z.boolean().default(false).describe("Include the ~50-entry vocab and house rules. Default false."),
-      },
-    },
-    async ({ client_tag, campaign_id, include_vocab }) => {
-      const recipe = await readTopupRecipe(d.repo.raw(), client_tag, campaign_id);
-      if (recipe === CAMPAIGN_NOT_FOUND) return text(CAMPAIGN_NOT_FOUND);
-      const snaps = await campaignSnapshots(d.repo.raw(), [campaign_id]).catch(() => []);
-      return text(presentTopupRecipe(recipe, { includeVocab: include_vocab, sendsLast14d: snaps[0]?.sends_last_14d ?? null }));
-    },
-  );
-
-  server.registerTool(
-    "topup_campaign_builds",
+    "lane_state",
     {
       description:
-        "Builds that fed a campaign, largest first. Counts, source tags and method labels from topup.campaign_builds. Never lead rows.",
-      inputSchema: { client_tag: recipeClient, campaign_id: smartleadCampaignId },
+        "Where a lane is: which of the thirteen steps of skills/lead-list-build it is on and since when, the gate that is unmet if it halted there, what is queued where, who it is blocked on, spend this run and this month, campaign runway and health, and the recent event log. Counts only, never rows.",
+      inputSchema: { client_tag: snake, lane: snake.optional(), recount: z.boolean().default(false).describe("Re-run the registered queue counts first (live, slower).") },
     },
-    async ({ client_tag, campaign_id }) => text(await readCampaignBuilds(d.repo.raw(), client_tag, campaign_id)),
+    async ({ client_tag, lane, recount }) => {
+      if (lane) return text(await d.ledger.state(client_tag, lane, { recount }));
+      const lanes = await d.ledger.lanes(client_tag);
+      const out = [];
+      for (const l of lanes) out.push(await d.ledger.state(l.client_tag, l.lane, { recount }));
+      return text(out);
+    },
   );
 
   server.registerTool(
-    "topup_provenance_gaps",
-    {
-      description: "Campaigns for a client still missing a pull stamp. Counts from topup.provenance_gaps. Never lead rows.",
-      inputSchema: { client_tag: recipeClient },
+    "lane_note",
+    { description: "Write one line to a lane's event log (what was done, what is intended next). No lead data.", inputSchema: { client_tag: snake, lane: snake, line: z.string().min(1).max(500), next_intent: z.string().max(300).optional() } },
+    async ({ client_tag, lane, line, next_intent }) => {
+      if (!allowed("lane_note")) return refused();
+      await d.ledger.event({ client_tag, lane, event: "note", line, next_intent, actor: by });
+      return text({ ok: true });
     },
-    async ({ client_tag }) => text(await readProvenanceGaps(d.repo.raw(), client_tag)),
   );
 
   server.registerTool(
-    "topup_queue",
+    "add_client_domains",
     {
-      description: TOPUP_QUEUE_DESCRIPTION,
-      inputSchema: {
-        client_tag: z.string().optional(),
-        limit: z.number().int().min(1).max(50).default(20),
-        offset: z.number().int().min(0).default(0),
-      },
+      description: "Optional per-client customer domains (D37: not required to start a run). Adds domains (not addresses) to topup.client_domain_blocklist; existing rows are kept. Domains only, never a lead row.",
+      inputSchema: { client_tag: snake, domains: z.array(z.string().min(3).max(253)).min(1).max(5000), note: z.string().max(300).optional() },
     },
-    async ({ client_tag, limit, offset }) => text(await buildTopupQueue(d.repo.raw(), d.repo, d.recipes, { client_tag, limit, offset })),
+    async ({ client_tag, domains, note }) => {
+      if (!allowed("add_client_domains")) return refused();
+      const cleaned = new Set<string>();
+      const rejected: string[] = [];
+      for (const raw of domains) {
+        const d0 = raw.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+        if (!d0 || d0.includes("@") || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d0)) rejected.push(raw.slice(0, 60));
+        else cleaned.add(d0);
+      }
+      const list = [...cleaned];
+      const { rowCount } = await d.repo.raw().query(
+        `insert into topup.client_domain_blocklist (client_tag, domain, added_by, note)
+         select $1, x, $3, $4 from unnest($2::text[]) as x on conflict (client_tag, domain) do nothing`,
+        [client_tag, list, by, note ?? null],
+      );
+      const { rows } = await d.repo.raw().query<{ n: string }>(`select count(*)::text as n from topup.client_domain_blocklist where client_tag = $1`, [client_tag]);
+      const lanes = await d.ledger.lanes(client_tag).catch(() => []);
+      for (const l of lanes) {
+        await d.ledger.event({ client_tag, lane: l.lane, event: "note", line: `Customer domain list: ${rowCount ?? 0} domains added (${rows[0]?.n ?? 0} total). Optional; an empty list does not halt (D37).`, actor: by }).catch(() => undefined);
+      }
+      return text({ ok: true, client_tag, added: rowCount ?? 0, total: Number(rows[0]?.n ?? 0), rejected_count: rejected.length, rejected: rejected.slice(0, 10) });
+    },
   );
 
   return server;
@@ -453,13 +397,7 @@ export function mcpRouter(d: McpDeps): Router {
 
   router.post("/", handle);
   router.get("/", (_req, res) => {
-    res.status(405).json({
-      error: "stateless server: POST JSON-RPC to /mcp",
-      transport: "streamable-http",
-      url: MCP_HTTPS_URL,
-      version: SERVICE_VERSION,
-      auth: "none",
-    });
+    res.status(405).json({ error: "stateless server: POST JSON-RPC to /mcp", transport: "streamable-http", url: MCP_HTTPS_URL, version: SERVICE_VERSION, auth: "none", retired_tools: RETIRED_MCP_TOOLS });
   });
   router.delete("/", (_req, res) => {
     res.status(405).end();

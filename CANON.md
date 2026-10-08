@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D45** (2026-10-01). One page of current truth. When a new
+Canon as of **D48** (2026-10-08). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -11,9 +11,10 @@ page; each rule cites its decision numbers.
 
 Client Smartlead campaigns stay topped up with verified, normalized leads
 without a human babysitting the pipeline — **any campaign, from any source**
-(D18). Slack is the console: every run is a thread, every decision that
-costs money or changes a list is a card, and the service does only what a
-lane recipe says (D9, D15).
+(D18). The MCP is the console (D48): every run is a record, every decision
+that costs money or changes a list is a card the operator resolves over
+MCP, Slack is optional and nothing depends on it, and the service does
+only what a build record says (D9, D15, D47).
 
 ## The line (D18)
 
@@ -54,9 +55,11 @@ why, posts one card, and waits; silence never means yes. The receipt is the
 last gate. `trigger` is step 1 (the recipe is the signed-off segment),
 `ingest` 4, `stage` 10.
 
-Gates live today (D25, D26). **Step 2**: the band filter must bind (bands +
-other bands = all, within 1%) and the projected net new must clear
-`size.useful_floor`, else `pool_thin`. **Step 3**: zero rows delivered stops
+Gates live today (D25, D26, D46). **Step 2**: the band filter must bind
+(bands + other bands = all, within 1%); every campaign gets the policy
+layer's verdict; a campaign with under 1,000 net new is `tam_filled` and
+skipped while the rest continue; a run with no qualifying campaign closes
+as sized with the report. Nobody is paged to widen a pool. **Step 3**: zero rows delivered stops
 the run. **Step 4**: rows read = rows exported; titles audited against the
 recipe as whole phrases, off-title flagged for step 8. **Step 5**: report raw, removed by reason, net new; prior contact is a send
 by this client in the last 90 days (D35 item 2; older recycles unless
@@ -160,9 +163,11 @@ can clear that rate; D11, D35 item 12, D44). Each dry campaign that is
 still working
 opens a run by itself — no `/topup`, no card. The run targets those
 campaigns only, so leads go where sends would otherwise stop. A
-campaign that needs leads and is **not** working posts one card: Top up anyway, or
-Leave it. Leave it stays quiet until the rate recovers or Josh flips
-`/working on`. `/topup` and MCP `start_topup` are the override. When the
+campaign that needs leads and fails the policy (under the bar, paused,
+dropped, retired, excluded, not ACTIVE, another client's) does not start
+and gets no card: the queue and the lane log say why (D46). `/working on`
+is Josh's override for the bar. `/topup` and MCP `start_topup` are the
+override for everything else. When the
 watch flags a campaign as needing leads (go or ask), Slack includes the
 `topup_recipe` count summary — builds, interested per build,
 `any_reconstructed`, `leads_without_method` — so the human starts from
@@ -183,16 +188,21 @@ The stages:
 1. **trigger** — the saved recipe is the signed-off ICP. Every cell still
    needs a campaign of this client; missing cells or foreign campaigns halt.
    No card when the saved ICP is complete.
-2. **size** — classify each **campaign's** ICP (`routing[].icp.kind` +
-   `persona`, D30). LinkedIn-native: getleads `count_contacts` plus the
-   partition check; AI Ark People Preview is the tam-sizing default primary
-   and is not a leadtopup client yet, so the five-line report says so.
-   Physical: park — TAM is a Maps/PermitStack range, never a getleads
-   number. Campaigns that share kind + persona + source union their bands
-   in one count; mixed kinds or personas in the same run park (split them).
-   Net-new subtracts emails this client sent in the last 90 days (D35
-   item 2) and anyone already in a live campaign of this client (D36).
-   Recycle window is `recycle_after_days` (default 90).
+2. **size** — the planner (D48). Every target campaign is judged by the
+   policy layer first (D46). The ones that qualify are grouped into pools,
+   one per distinct query, and each pool is counted once, concurrently,
+   under the client's vendor cap: getleads `count_contacts` with the
+   partition check and AI Ark People Preview together for LinkedIn-native
+   ICPs (within 10% is the TAM; one missing is `single_source`, never a
+   mismatch); the stored Maps or permit pool from the build record for
+   non-LinkedIn ICPs, never a getleads number. Long city and industry
+   lists are sliced before any call. BCP adds the COO fallback per
+   campaign. Net new is the sampled overlap with emails this client sent
+   in the last 90 days (D35 item 2) plus anyone in a live campaign (D36);
+   the client total is never subtracted. Counts and pilot scores are
+   cached per query fingerprint and reused while fresh. Each pool is split
+   across its campaigns by need. Every vendor call, sent or not, is on the
+   step with its outcome. One line per campaign with its gate and reason.
 3. **pull** — routed by the target campaigns' ICP and source
    (`leadgen-mcp-routing` step zero). The watch starts a **client-holistic
    DM pull** (same persona the client has been sending to), then route
@@ -283,15 +293,18 @@ open cards, open runs and which integrations are configured. It is
 - Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains the 90-day global positive list).
 - `/mcp` is Streamable HTTP over HTTPS at
-  `https://leadtopup-production.up.railway.app/mcp` (D40, D41). **No
-  login.** Anyone who can reach the URL gets the operator set:
-  `lane_state, run_status, list_runs, list_holds, resolve_hold,
-  start_topup, add_client_domains` (domains only, never rows),
-  `topup_recipe, topup_campaign_builds, topup_provenance_gaps, topup_queue`,
-  `register_queue_table, lane_note, variant_stats, campaign_registry,
-  recipe_get, missing_piece_groups`. Cayden can run the ops set. The only
-  tool hidden from the operator list is `sample_rows` (lead rows; owner
-  token). `resolve_hold` refuses operator approval of spend of $5 or
+  `https://leadtopup-production.up.railway.app/mcp` (D40, D41, D48). **No
+  login.** Anyone who can reach the URL gets the whole surface, and the
+  surface is small: `topup_queue, campaign_history, size_client,
+  approval_briefing, start_topup, run_status, list_runs, abort_run,
+  resume_run, list_holds, resolve_hold, loads_paused, lane_state,
+  lane_note, add_client_domains` (domains only). **No tool returns a lead
+  row or a file URL.** `sample_rows`, `variant_stats`, `campaign_registry`,
+  `recipe_get`, `missing_piece_groups`, `register_queue_table`,
+  `topup_recipe`, `topup_campaign_builds` and `topup_provenance_gaps` are
+  retired; `campaign_history` is the live pull record (`topup.recipe()`,
+  `topup.campaign_builds`) plus the build records and the lifetime
+  reply count. `resolve_hold` refuses operator approval of spend of $5 or
   above. `start_topup` takes `client_tag` + `campaign_id` (optional
   `count`) or `client_tag` + `lane`. A file recipe is the override;
   otherwise the pull is inferred from `topup.pull_receipts` tags and
@@ -302,10 +315,13 @@ open cards, open runs and which integrations are configured. It is
   empty-first then shortest runway, each with the recipe count
   summary, `sends_last_14d`, and the working bar. It includes camps
   the client-wide watch would skip (D38 still governs auto-start).
-  Cayden's flow is queue → recipe → `start_topup`. Check `run_status`
-  once per message, or watch the Slack thread — do not poll every two
-  minutes in chat. No Slack, no Cursor (D43, D44, D45). These live
-  tools are not on LeadPipe.
+  Cayden's flow is `topup_queue` (gates already applied) →
+  `campaign_history` → `size_client` (pilot and size, one call per
+  client) → read the one-line-per-campaign report → `approval_briefing`
+  to Josh → `start_topup` once approved and loads are open. Check
+  `run_status` once per message — do not poll every two minutes in chat.
+  No Slack, no Cursor (D43, D44, D45). These live tools are not on
+  LeadPipe.
   `client_tag` on the recipe tools is the live list from
   `topup.client_map` at boot (refreshed per request). Adding a client is
   a row in that table, not a hardcoded enum and not a service bump (D42).
@@ -360,7 +376,66 @@ It does not reconstruct the thirteen steps in chat.
 - Scheduled pulses are Railway crons. Grok bot does not set a self-routine
   that re-reads lists.
 
-## Never (D1–D6, D8, D13, D14, D39)
+## One policy layer (D46)
+
+Every rule a top-up decision depends on lives in `src/policy` and nowhere
+else, and `evaluateCampaign` gives one verdict per campaign with a one-line
+reason. The queue, the watch, the size step and the start path all call it,
+so they cannot disagree. In order: the never-top-up list (SG Gabe Calls
+4085158, SG Cayden Calls, SG Nurture 3122546); client `goliath` is ignored
+until told otherwise; Parlay outside 4049046–4049064 is retired; Insight
+Google SADA is dropped and Insight OEM Channel Reps is paused, and neither
+starts, not even from the watch; only ACTIVE campaigns are targets and a
+lane targets only its own Smartlead client's; the reply bar is **1
+interested per 2,000 sends, measured per campaign on lifetime sends** — a
+campaign with zero positives never qualifies however few sends it has, and
+1 reply under 2,000 sends is acceptable (D44); a recipe with no company
+filter is never sized from titles alone; a pilot (200–300 vendor rows)
+must score 80% or more on every dimension it can score, a missing export
+column is "not scored"; a pool more than 20× the build it repeats or above
+a known market cap (about 40,000 MSPs) is a suspect filter; a non-LinkedIn
+ICP sizes only from its stored pool; two LinkedIn-native counts more than
+10% apart are a mismatch; and under **1,000 net new** is `tam_filled`.
+Spend: free proceeds, under $5 is Cayden, $5 or above is Josh, and over
+the $25 day is Josh too. Parking is per campaign, never per run: a
+campaign that fails is skipped with its reason and the rest continue.
+The report and the briefing say the gate and the reason for every
+campaign. Nothing widens, adds a title or an industry, or switches vendors
+on its own.
+
+## Build records (D47)
+
+The build record is the memory. Every pull, past and future, is a
+`BuildRecord` (`src/builds`): the vendor, the exact query (titles or job
+function plus seniority, industries, description terms, headcount bands,
+geography including the fence, email status, max per company, fallback
+personas in order), the source kind (a vendor search, or a stored Maps or
+permit pool with its count), the campaigns it fed, what it yielded, the
+method note, and whether the method was reconstructed after the fact. It
+is joined to lifetime sends and positives per campaign. The next pull for a
+campaign repeats the build that earned its replies; failing that the latest
+build the service can repeat; failing that the record says the method
+cannot be reconstructed and names who to ask. Nothing is guessed from lane
+labels or client defaults. `campaign_history` is how the operator reads it.
+
+## The planner and the surface (D48)
+
+Clients and campaigns are independent, so they size in parallel, bounded by
+the per-client vendor cap and the daily spend cap. Within a client,
+campaigns that share a query share a pool: counted once, split by need,
+never the same person planned into two campaigns. Queries are planned under
+the vendor timeout (city fences in slices of 45, industry lists in slices of
+12) and the slices run concurrently; a timeout is not discovered and
+retried. Counts before exports, always; the pilot is a few hundred rows;
+net new is sampled and scaled, with the method recorded; counts and pilots
+are cached per query fingerprint on the size step. Every vendor call, sent
+or not, is written to the step with its outcome and no rows. A run can be
+aborted or resumed from the MCP at any step (`abort_run`, `resume_run`);
+abort cancels running steps, returns claimed rows and closes the cards. The
+MCP surface is the fifteen tools above and none of them returns a row.
+Slack posts are dropped, never required, when no token is set.
+
+## Never (D1–D6, D8, D13, D14, D39, D48)
 
 - Never write to a Supabase project other than `azpapwtnrbzywlnxxecz`.
 - Never hardcode a secret. Never call a vendor in a test.
@@ -376,6 +451,7 @@ It does not reconstruct the thirteen steps in chat.
   and say so in the PR.
 - Never trust "processed" or a zero-verdict resume as a verification.
 - Never run more than one replica.
+- Never add an MCP tool that returns a lead row or a file URL (D48).
 - Never pull lead rows into Grok bot context. No export payloads, no
   CSV paste, no child-agent GetLeads fire into chat, no walk of the
   thirteen-step skill in that context. Counts, ids, and a link only
@@ -418,7 +494,10 @@ changes:
 |---|---|
 | State | `topup.*` on campaignintelligence; migrations in `supabase/migrations` |
 | Skills | `skills/` — Josh's skills, the specification; `skills/merged-list` is the 78-item rulebook (D35); `skills/leadpipe` and `skills/supabase-csv-endpoint` move rows without chat; `skills/grok-bot-babysitter` is D39; `skills/SKILLS_INDEX.md` says what is stale (D25) |
-| Live pull recipe | `topup.recipe()`, `topup.campaign_builds`, `topup.provenance_gaps` via MCP `topup_recipe` / `topup_campaign_builds` / `topup_provenance_gaps` on `https://leadtopup-production.up.railway.app/mcp` (D40). `topup_queue` is the watchdog lead-refill list (D43, D44). `client_tag` from `topup.client_map` at boot (D42). Not LeadPipe. |
+| Live pull recipe | `topup.recipe()` and `topup.campaign_builds` via MCP `campaign_history` on `https://leadtopup-production.up.railway.app/mcp` (D40, D48), joined to the build records (D47). `topup_queue` is the watchdog lead-refill list with the policy gate applied (D43, D44, D46). `client_tag` from `topup.client_map` at boot (D42). On this service, not on LeadPipe. |
+| Policy | `src/policy/` — every rule, `evaluateCampaign`, the spend audiences (D46) |
+| Build records | `src/builds/` — `BuildRecord`, `chooseBuildForCampaign`, `campaignHistory` (D47) |
+| Planner | `src/plan/` — pools, slices, the fingerprint cache, the vendor-call log, `planSize`, the approval briefing (D48) |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
 | Stages | `src/stages/<stage>/` one per step, `src/stages/common.ts` the shared attempt/finish/park discipline, `PIPELINE_STEPS` in `src/orchestrator.ts` |
 | Vendor clients | `src/clients/` — getleads, Smartlead (D6 allow list), LeadPipe, verifier; every one documented in `docs/servers.md` first |

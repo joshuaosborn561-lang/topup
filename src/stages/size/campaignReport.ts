@@ -1,3 +1,4 @@
+import { evaluateCampaign, isPausedOrDroppedLabel, isSuspectFilter, marketCapFor, MIN_NET_NEW, MSP_MARKET_CAP, MSP_MARKET_FLOOR, SUSPECT_BUILD_MULTIPLE, type CampaignGate } from "../../policy/index.js";
 import type { Source } from "../../recipes/schema.js";
 import type { PilotScore } from "./pilot.js";
 
@@ -13,7 +14,9 @@ export interface CampaignReportEntry {
   tam_total: number | null;
   tam_left: number | null;
   reply_rate: string;
-  gate: "ok" | "under_reply_bar" | "tam_filled" | "paused" | "suspect_filter" | "pilot_mismatch" | "not_sized";
+  /** From the policy layer (D46). One verdict per campaign; the reason is on `gate_reason`. */
+  gate: CampaignGate;
+  gate_reason?: string;
   strategy: string;
   tam_source?: string;
   tam_check?: "ok" | "tam_mismatch" | "tam_source_missing" | "single_source";
@@ -29,36 +32,14 @@ export interface CampaignReportEntry {
   pilot?: PilotScore;
 }
 
-export const TAM_LEFT_FLOOR = 1000;
-export const SUSPECT_BUILD_MULTIPLE = 20;
-/** About 40k MSPs in the US. A people count above this is not that market. */
-export const MSP_MARKET_CAP = 40_000;
-/** Below the low thousands is the 71-row exact-phrase miss, not the MSP market. */
-export const MSP_MARKET_FLOOR = 1_000;
+/** The numbers live in src/policy (D46). Re-exported so the report and its tests keep their names. */
+export const TAM_LEFT_FLOOR = MIN_NET_NEW;
+export { SUSPECT_BUILD_MULTIPLE, MSP_MARKET_CAP, MSP_MARKET_FLOOR, marketCapFor, isSuspectFilter };
 
 export const COMPANY_FILTER_REASON = "recipe has no company filter";
 
-/** Insight OEM Channel Reps and Insight Google SADA stay paused. */
-const PAUSED_LABELS = [/oem channel reps/i, /google sada/i];
-
-export function isPausedLabel(text: string | null | undefined): boolean {
-  const value = (text ?? "").replace(/_/g, " ").trim();
-  if (!value) return false;
-  return PAUSED_LABELS.some((re) => re.test(value));
-}
-
-export function marketCapFor(lane: string, sourceText: string): number | null {
-  const blob = `${lane} ${sourceText}`.toLowerCase();
-  if (/\bmsp\b|managed service/.test(blob)) return MSP_MARKET_CAP;
-  return null;
-}
-
-export function isSuspectFilter(tamTotal: number, rowsFound: number | null, marketCap: number | null): boolean {
-  if (rowsFound != null && rowsFound > 0 && tamTotal > rowsFound * SUSPECT_BUILD_MULTIPLE) return true;
-  if (marketCap != null && tamTotal > marketCap) return true;
-  if (marketCap === MSP_MARKET_CAP && tamTotal > 0 && tamTotal < MSP_MARKET_FLOOR) return true;
-  return false;
-}
+/** Insight OEM Channel Reps (paused) and Insight Google SADA (dropped) stay off the board; neither starts. */
+export const isPausedLabel = isPausedOrDroppedLabel;
 
 export function sourceWords(source: Source): string {
   if (source.kind === "getleads") {
@@ -121,6 +102,13 @@ export function filtersWords(source: Source): string {
 export interface CampaignReportInput {
   campaign_id: number;
   campaign_name: string;
+  /** Policy facts (D46). Optional so older callers still build a report; the gate is weaker without them. */
+  client_tag?: string;
+  lane?: string | null;
+  status?: string | null;
+  working_override?: boolean | null;
+  /** A verdict the planner already reached with the full facts. When set it is the gate; nothing is re-derived. */
+  verdict?: { gate: CampaignGate; reason: string };
   found: number | null;
   to_add: number;
   source: string;
@@ -162,19 +150,53 @@ export function replyRateText(sends: number, interested: number, tooEarly: boole
   return `${rate.toFixed(1)} per 2,000 (${interested} interested in ${sends} sends)`;
 }
 
-export function campaignGate(input: Pick<CampaignReportInput, "paused" | "tam_total" | "tam_left" | "sends" | "interested" | "too_early" | "rows_found" | "market_cap" | "pilot_only" | "not_sized" | "pilot_failed">): CampaignReportEntry["gate"] {
-  if (input.paused) return "paused";
-  if (input.not_sized) return input.pilot_failed ? "pilot_mismatch" : "not_sized";
-  if (input.pilot_only) return "ok";
-  if (isSuspectFilter(input.tam_total ?? 0, input.rows_found, input.market_cap)) return "suspect_filter";
-  if ((input.tam_left ?? 0) < TAM_LEFT_FLOOR) return "tam_filled";
-  const rate = input.sends === 0 ? 0 : (input.interested / input.sends) * 2000;
-  if (input.too_early || rate < 1) return "under_reply_bar";
-  return "ok";
+type GateInput = Pick<
+  CampaignReportInput,
+  "campaign_id" | "campaign_name" | "paused" | "tam_total" | "tam_left" | "sends" | "interested" | "too_early" | "rows_found" | "market_cap" | "pilot_only" | "not_sized" | "pilot_failed" | "tam_check" | "pilot" | "filters" | "verdict"
+> & { client_tag?: string; lane?: string | null; status?: string | null; working_override?: boolean | null };
+
+/**
+ * The gate is the policy layer's verdict (D46). A pilot-only row passed its
+ * pilot and was not sized, so it carries no sizing facts and stays ok. A
+ * `paused` flag from the caller (a paused lane) wins when the name alone
+ * would not say so.
+ */
+export function campaignVerdict(input: GateInput): { gate: CampaignGate; reason: string } {
+  if (input.verdict) return input.verdict;
+  if (input.paused && !isPausedOrDroppedLabel(input.campaign_name)) return { gate: "paused", reason: `#${input.campaign_id} is on a paused lane; it never starts` };
+  const pilot =
+    input.pilot ? { gate: input.pilot.gate, failed: input.pilot.failed, rows_scored: input.pilot.rows_scored }
+    : input.pilot_failed ? { gate: "pilot_mismatch" as const, failed: [], rows_scored: 0 }
+    : null;
+  const sized = input.pilot_only ? undefined : input.not_sized ? (input.pilot_failed ? undefined : false) : true;
+  const tamCheck = input.tam_check === "tam_mismatch" || input.tam_check === "tam_source_missing" || input.tam_check === "single_source" || input.tam_check === "ok" ? input.tam_check : null;
+  const v = evaluateCampaign({
+    campaign_id: input.campaign_id,
+    campaign_name: input.campaign_name,
+    client_tag: input.client_tag ?? "",
+    lane: input.lane ?? null,
+    status: input.status ?? null,
+    sends: input.sends,
+    positives: input.interested,
+    working_override: input.working_override ?? null,
+    has_company_filter: input.filters !== COMPANY_FILTER_REASON,
+    ...(sized === undefined ? {} : { sized }),
+    ...(sized ? { tam_total: input.tam_total ?? null, tam_left: input.tam_left ?? null, tam_check: tamCheck } : {}),
+    ...(pilot ? { pilot } : {}),
+    rows_found_last_build: input.rows_found,
+    market_cap: input.market_cap,
+  });
+  return { gate: v.gate, reason: v.reason };
+}
+
+export function campaignGate(input: GateInput): CampaignGate {
+  return campaignVerdict(input).gate;
 }
 
 export function buildCampaignReport(rows: readonly CampaignReportInput[]): CampaignReportEntry[] {
-  return rows.map((row) => ({
+  return rows.map((row) => {
+    const verdict = campaignVerdict(row);
+    return {
     campaign_id: row.campaign_id,
     campaign_name: row.campaign_name || `campaign ${row.campaign_id}`,
     found: row.found,
@@ -185,7 +207,8 @@ export function buildCampaignReport(rows: readonly CampaignReportInput[]): Campa
     tam_total: row.tam_total,
     tam_left: row.tam_left,
     reply_rate: replyRateText(row.sends, row.interested, row.too_early),
-    gate: campaignGate(row),
+    gate: verdict.gate,
+    gate_reason: verdict.reason,
     strategy: row.strategy || "Repeats the saved recipe.",
     ...(row.tam_source ? { tam_source: row.tam_source } : {}),
     ...(row.tam_check ? { tam_check: row.tam_check } : {}),
@@ -199,7 +222,8 @@ export function buildCampaignReport(rows: readonly CampaignReportInput[]): Campa
     ...(row.tam_coo !== undefined ? { tam_coo: row.tam_coo } : {}),
     ...(row.pool_note ? { pool_note: row.pool_note } : {}),
     ...(row.pilot ? { pilot: row.pilot } : {}),
-  }));
+    };
+  });
 }
 
 export function suspectReason(rows: readonly CampaignReportEntry[]): string | null {
@@ -216,6 +240,7 @@ export function formatCampaignReport(rows: readonly CampaignReportEntry[]): stri
       (row) =>
         [
           `#${row.campaign_id} ${row.campaign_name}: found ${row.found ?? "not sized"}, to add ${row.to_add}, source ${row.source}, titles ${row.titles}, filters ${row.filters}, TAM ${row.tam_total ?? "not sized"}, left ${row.tam_left ?? "not sized"}, replies ${row.reply_rate}, gate ${row.gate}.`,
+          row.gate !== "ok" && row.gate_reason ? ` ${row.gate_reason}` : "",
           row.tam_source ? ` TAM source ${row.tam_source}.` : "",
           row.tam_check ? ` tam_check ${row.tam_check}.` : "",
           row.getleads_count != null ? ` getleads ${row.getleads_count}.` : "",
