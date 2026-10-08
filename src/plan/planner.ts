@@ -418,7 +418,8 @@ export async function planSize(d: PlannerDeps, run: RunLike, recipe: Recipe, cam
     campaign_report: report,
     recipe_fingerprint: fingerprint,
     pilot_gate: report.some((r) => r.gate === "pilot_mismatch") ? "pilot_mismatch" : "ok",
-    vendor_calls: d.log.calls,
+    // The list lives under vendor_log; vendor_calls on the counts is its length (a number).
+    vendor_log: d.log.calls,
     pool_cache: poolCache,
     verdicts: Object.fromEntries(report.map((r) => [r.campaign_id, { gate: r.gate, reason: r.gate_reason ?? "" }])),
     briefing,
