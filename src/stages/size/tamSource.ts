@@ -29,14 +29,15 @@ function withinTen(a: number, b: number): boolean {
   return hi === 0 ? true : Math.abs(a - b) / hi <= LINKEDIN_TAM_WITHIN;
 }
 
-export function linkedinTamDecision(getleads: number, aiArk: number | null): LinkedinTam {
+export function linkedinTamDecision(getleads: number, aiArk: number | null, unavailable?: string | null): LinkedinTam {
   if (aiArk == null) {
+    const why = unavailable?.trim() || "AI Ark People Preview count is not available";
     return {
       tam_total: getleads,
       tam_check: "single_source",
       getleads_count: getleads,
       ai_ark_count: null,
-      tam_source: "getleads; AI Ark People Preview count is not available",
+      tam_source: `getleads; ${why}`,
       reason: null,
     };
   }

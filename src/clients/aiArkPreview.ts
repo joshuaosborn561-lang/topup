@@ -8,6 +8,10 @@ import type { GetleadsFilters } from "./getleads.js";
  */
 export const AI_ARK_PREVIEW_URL = "https://api.ai-ark.com/api/developer-portal/v1/people/preview";
 
+/** Written on the size step when the service has no key. No request is sent. */
+export const AI_ARK_TOKEN_MISSING =
+  "AI_ARK_TOKEN is not set. No request was sent. Endpoint POST https://api.ai-ark.com/api/developer-portal/v1/people/preview. Header X-TOKEN.";
+
 /** Recipe seniority labels to the twelve values People Preview allows. */
 const SENIORITY: Readonly<Record<string, string>> = {
   "c-team": "c_suite",
@@ -134,6 +138,19 @@ export function peoplePreviewBody(filters: GetleadsFilters): PreviewBuild {
   return { ok: true, body };
 }
 
+function previewErrorDetail(text: string): string {
+  const clipped = text.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]").slice(0, 400);
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const bits = ["message", "error", "status", "code", "detail"].flatMap((key) =>
+      parsed[key] == null ? [] : [`${key}: ${String(parsed[key]).slice(0, 160)}`],
+    );
+    return bits.join("; ") || `keys ${Object.keys(parsed).filter((key) => key !== "content").slice(0, 8).join(", ") || "none"}`;
+  } catch {
+    return clipped;
+  }
+}
+
 export interface AiArkPreview {
   count(filters: GetleadsFilters): Promise<{ total_matching: number }>;
 }
@@ -146,7 +163,7 @@ export class AiArkPreviewClient implements AiArkPreview {
   ) {}
 
   async count(filters: GetleadsFilters): Promise<{ total_matching: number }> {
-    if (!this.token) throw new Error("AI_ARK_TOKEN is not configured");
+    if (!this.token) throw new Error(AI_ARK_TOKEN_MISSING);
     const built = peoplePreviewBody(filters);
     if (!built.ok) throw new Error(built.reason);
     const res = await this.fetchImpl(this.url, {
@@ -154,10 +171,19 @@ export class AiArkPreviewClient implements AiArkPreview {
       headers: { "Content-Type": "application/json", "X-TOKEN": this.token },
       body: JSON.stringify(built.body),
     });
-    if (!res.ok) throw new Error(`AI Ark people preview HTTP ${res.status}`);
-    const json = (await res.json()) as { totalElements?: unknown };
+    const text = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status} from ${this.url}: ${previewErrorDetail(text)}`);
+    let json: { totalElements?: unknown };
+    try {
+      json = JSON.parse(text) as { totalElements?: unknown };
+    } catch {
+      throw new Error(`HTTP ${res.status} from ${this.url}: response was not JSON`);
+    }
     const total = Number(json.totalElements);
-    if (!Number.isFinite(total)) throw new Error("AI Ark people preview returned no totalElements");
+    if (!Number.isFinite(total)) {
+      const keys = Object.keys(json).slice(0, 12).join(", ") || "none";
+      throw new Error(`HTTP ${res.status} from ${this.url}: no totalElements. Keys: ${keys}`);
+    }
     return { total_matching: total };
   }
 }

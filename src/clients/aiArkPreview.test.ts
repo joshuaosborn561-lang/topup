@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { GetleadsFilters } from "./getleads.js";
-import { AiArkPreviewClient, peoplePreviewBody } from "./aiArkPreview.js";
+import { AI_ARK_TOKEN_MISSING, AiArkPreviewClient, peoplePreviewBody } from "./aiArkPreview.js";
 
 const titles = {
   job_titles: ["CIO", "Director of IT"],
@@ -80,5 +80,17 @@ describe("AI Ark People Preview", () => {
     const body = JSON.parse(String(calls[0]?.init.body));
     assert.equal(body.size, 1);
     assert.equal(body.page, 0);
+  });
+
+  it("names the missing key and keeps a failed response out of the count", async () => {
+    assert.match(AI_ARK_TOKEN_MISSING, /AI_ARK_TOKEN is not set/);
+    assert.match(AI_ARK_TOKEN_MISSING, /No request was sent/);
+    assert.match(AI_ARK_TOKEN_MISSING, /people\/preview/);
+    const fetchImpl = (async () => new Response(JSON.stringify({ message: "unauthorized", content: [{ id: "person-row" }] }), { status: 401 })) as typeof fetch;
+    const client = new AiArkPreviewClient("secret-token", "https://api.ai-ark.com/api/developer-portal/v1/people/preview", fetchImpl);
+    await assert.rejects(
+      () => client.count({ job_titles: ["Owner"], countries: ["United States"] } as GetleadsFilters),
+      (err: Error) => /HTTP 401.*unauthorized/.test(err.message) && !err.message.includes("person-row"),
+    );
   });
 });

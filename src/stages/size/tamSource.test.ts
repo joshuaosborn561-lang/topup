@@ -64,5 +64,12 @@ describe("TAM source", () => {
     assert.equal(unwired.ai_ark_count, null);
     assert.equal(unwired.reason, null);
     assert.match(unwired.tam_source, /AI Ark/);
+    const named = linkedinTamDecision(1262, null, "AI_ARK_TOKEN is not set. No request was sent.");
+    assert.equal(named.tam_check, "single_source");
+    assert.equal(named.tam_total, 1262);
+    assert.equal(named.ai_ark_count, null);
+    assert.equal(named.reason, null);
+    assert.match(named.tam_source, /AI_ARK_TOKEN is not set/);
+    assert.match(named.tam_source, /No request was sent/);
   });
 });

@@ -1,3 +1,4 @@
+import { AI_ARK_TOKEN_MISSING } from "../../clients/aiArkPreview.js";
 import { EXPORT_DONE, EXPORT_FAILED, type Getleads, type GetleadsFilters } from "../../clients/getleads.js";
 import type { MapsStats } from "../../clients/mapsStats.js";
 import type { PermitCounts } from "../../clients/permits.js";
@@ -335,14 +336,30 @@ export class SizeStage {
       });
     }
     if (icp === "linkedin_native") {
-      const arkByFilter = new Map<string, number | null>();
+      const arkByFilter = new Map<string, { total: number | null; error: string | null; called: boolean }>();
+      const errors: string[] = [];
+      let called = false;
       for (const id of peopleIds) {
         const filters = getleadsFilters(campaignSizeRoutes(recipe, [id])[0]?.route ?? { kind: "skip", line: "" });
         const key = filters ? JSON.stringify(filters) : "";
-        if (!arkByFilter.has(key)) arkByFilter.set(key, filters ? await this.aiArkCount(run, filters) : null);
+        if (!arkByFilter.has(key)) {
+          const result = filters
+            ? await this.aiArkCount(run, filters)
+            : { total: null, called: false, error: "No getleads filter, so AI Ark was not called." };
+          arkByFilter.set(key, result);
+          if (result.called) called = true;
+          if (result.error && !errors.includes(result.error)) errors.push(result.error);
+        }
+        const slot = arkByFilter.get(key)!;
         const itCount = counts[`tam_it_${id}`] ?? counts[`tam_${id}`] ?? 0;
-        linkedin.set(id, linkedinTamDecision(itCount, arkByFilter.get(key) ?? null));
+        linkedin.set(id, linkedinTamDecision(itCount, slot.total, slot.error));
       }
+      const aiArkError = errors.join(" | ");
+      counts.ai_ark_called = called ? 1 : 0;
+      await this.d.repo.mergeStepExtra(run.run_id, "size", {
+        ai_ark_called: called ? 1 : 0,
+        ...(aiArkError ? { ai_ark_error: aiArkError } : {}),
+      });
     }
     if (sized === 0) {
       const reason = skipped.length ? skipped.join("; ") : "no target campaigns to size";
@@ -790,8 +807,8 @@ export class SizeStage {
     return { rows: sample.rows.slice(0, PILOT_ROWS), fields: sample.fields };
   }
 
-  private async aiArkCount(run: RunRow, filters: GetleadsFilters): Promise<number | null> {
-    if (!this.d.aiArk) return null;
+  private async aiArkCount(run: RunRow, filters: GetleadsFilters): Promise<{ total: number | null; called: boolean; error: string | null }> {
+    if (!this.d.aiArk) return { total: null, called: false, error: AI_ARK_TOKEN_MISSING };
     const decision = await this.d.rails.gate({
       runId: run.run_id,
       clientTag: run.client_tag,
@@ -803,11 +820,13 @@ export class SizeStage {
     });
     if (decision.kind !== "proceed") {
       log.warn("AI Ark count skipped", { reason: decision.reason });
-      return null;
+      return { total: null, called: false, error: `AI Ark count was not sent. ${decision.reason}` };
     }
     try {
       const counted = await this.d.aiArk.count(filters);
-      if (!Number.isFinite(counted.total_matching)) return null;
+      if (!Number.isFinite(counted.total_matching)) {
+        return { total: null, called: true, error: "AI Ark people preview returned no totalElements" };
+      }
       await this.d.rails.record({
         runId: run.run_id,
         clientTag: run.client_tag,
@@ -822,10 +841,12 @@ export class SizeStage {
         vendorJobId: null,
         approvedBy: null,
       });
-      return counted.total_matching;
+      return { total: counted.total_matching, called: true, error: null };
     } catch (err) {
-      log.warn("AI Ark count failed", { error: (err as Error).message });
-      return null;
+      const message = (err as Error).message.slice(0, 500);
+      const called = /HTTP \d+/.test(message);
+      log.warn("AI Ark count failed", { error: message });
+      return { total: null, called, error: message };
     }
   }
 
