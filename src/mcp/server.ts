@@ -16,6 +16,7 @@ import type { Recipe } from "../recipes/schema.js";
 import { MCP_HTTPS_URL, SERVICE_VERSION } from "../version.js";
 import { resolveStartTarget } from "../recipes/start.js";
 import { CLIENT_OVERVIEW_DESCRIPTION, clientOverview } from "./overview.js";
+import { registerGrokTools, type GrokDeps } from "./grok.js";
 import { buildTopupQueue, TOPUP_QUEUE_DESCRIPTION } from "./queue.js";
 import { CAMPAIGN_NOT_FOUND, clientTagSchema, loadClientTags, presentTopupRecipe, readTopupRecipe, recipeSummaryCounts } from "./recipe.js";
 import { SIZE_CLIENT_MAX_WAIT_SECONDS, sizeClient } from "./sizeClient.js";
@@ -47,6 +48,25 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   lane_state: "operator",
   lane_note: "operator",
   add_client_domains: "operator",
+  // D52: the reads and the verbs for Grok bot.
+  campaigns: "operator",
+  campaign_record: "operator",
+  sources: "operator",
+  count: "operator",
+  held: "operator",
+  jobs: "operator",
+  job: "operator",
+  spend: "operator",
+  pull: "operator",
+  suppress: "operator",
+  enrich: "operator",
+  verify: "operator",
+  normalize: "operator",
+  qa: "operator",
+  stage: "operator",
+  import: "operator",
+  write_receipt: "operator",
+  abort: "operator",
 };
 
 /** Nothing is hidden: there is no row-returning tool left to hide (D48). */
@@ -78,6 +98,8 @@ export interface McpDeps {
   clientTags: string[];
   /** File and inferred recipes the watch walks. The queue and size_client read the same set. */
   recipes: Recipe[];
+  /** D52: the reads and the verbs for Grok bot. */
+  grok?: Omit<GrokDeps, "by">;
 }
 
 function tokenMatches(given: string | undefined, expected: string): boolean {
@@ -382,6 +404,8 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
       return text({ ok: true, client_tag, added: rowCount ?? 0, total: Number(rows[0]?.n ?? 0), rejected_count: rejected.length, rejected: rejected.slice(0, 10) });
     },
   );
+
+  if (d.grok) registerGrokTools(server, { ...d.grok, by });
 
   return server;
 }

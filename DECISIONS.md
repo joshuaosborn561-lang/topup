@@ -71,6 +71,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D49 | Live; starts read the registry and the build tags for every client; `client_overview` and the `tags` block for the babysitter; the step 2 gate is the 1,000 floor |
 | D50 | Live; registry lane wins over the first recipe; a stored Maps pool is the TAM; a LinkedIn gap no longer parks |
 | D51 | Live; nothing starts on its own, Grok bot starts; every paid call waits for a named approval (auto cap $0); "the TAM for this campaign is exhausted"; Deep Roots mapped; the fourteen Peterson and Insight registry rows mapped |
+| D52 | Live; the reads and the verbs for Grok bot: reads state the rule and no verdict, verbs run one stage on a job, approvals by name through the console, no row or file URL |
 
 ---
 
@@ -1695,3 +1696,41 @@ are superseded for starting; their judgement still shows in `topup_queue`
 and `client_overview`.
 
 **Guard.** `src/guards/d51_grok_starts.test.ts`. Ask Josh.
+
+## D52 — The reads and the verbs: Grok bot reasons, the service moves rows
+
+**Decision.**
+
+1. **The reads** (`campaigns`, `campaign_record`, `sources`, `count`,
+   `held`, `jobs`, `job`, `spend`) return what Supabase and the vendors
+   hold: lifetime sends and positives, the receipts with their four source
+   legs and `company_filters` as stored, the method notes, the stamped
+   leads counted by label and by leg, a count on a source with the filters
+   Grok gives, how much of a pool the client already holds, the job log and
+   the spend. Each answer states the rule it bears on and gives no verdict.
+2. **The verbs** (`pull`, `suppress`, `enrich`, `verify`, `normalize`,
+   `qa`, `stage`, `import`, `write_receipt`, `abort`) run one stage of the
+   existing pipeline on a job and return counts. A job is one run row for
+   one campaign with a job recipe built from Grok's inputs and the service
+   defaults. Nothing chains: the next verb runs when Grok calls it, and the
+   orchestrator never drives a job. A step that needs money posts a spend
+   card and the verb returns the estimate; the same verb with `approved_by`
+   resolves that card through the console as the named person's tap,
+   records who, and runs. `import` refuses while loads are paused.
+3. **The job recipe is filed under its own lane name**
+   (`client.job_<campaign>_<stamp>.v1`), so a lane lookup never returns a
+   job recipe as a lane's recipe.
+4. **No read or verb returns a lead row or a file URL.** The record drops
+   any column that is not a count, a label or a note.
+
+**Why.** Josh, 2026-10-09: the app is dumb, a flat pipeline; Grok bot is
+the reasoning layer; it reads the Supabase tags and notes, works out how
+the leads were pulled the first time, and runs the same pull again. The
+audit found the tags on 86 of 90 active campaigns and the method notes on
+the same; the app only needed to show them and move rows on request.
+
+**Tradeoff.** Two surfaces answer until the rebuild removes the old one.
+A job is one campaign at a time. The old `size_client` and `start_topup`
+still infer from a lane; the verbs do not.
+
+**Guard.** `src/guards/d52_reads_verbs.test.ts`. Ask Josh.

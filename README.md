@@ -142,6 +142,25 @@ The operator flow (D46–D49): `client_overview` for the client (or
 will top up → `size_client` → read the report → `approval_briefing` to
 Josh → `start_topup` once approved and `loads_paused` is off.
 
+The reads and the verbs for Grok bot (D52). Reads return what Supabase and
+the vendors hold, the rule stated, no verdict. Verbs run one stage on a
+job and return counts.
+
+| Tool | What |
+|---|---|
+| `campaigns` | Every ACTIVE campaign with lifetime sends, positives, the rate per 2,000, leads left, lane and `passes_reply_bar`. |
+| `campaign_record` | Every receipt (four source legs, `company_filters` as stored, method note, yield, dates), the build rows, stamped leads by label and by leg, the registry row, the vocabulary for the values seen, the notes. |
+| `sources` | The source vocabulary: what each value means, how to repeat it, what it costs. |
+| `count` | A count on getleads (free), AI Ark (cents; `approved_by`), the stored Maps pool or PermitStack with the filters you give. |
+| `held` | How much of a getleads pool the client already holds, scaled to the count; `net_new`. |
+| `jobs`, `job`, `spend` | The job log, one job with its steps and vendor calls, spend and the cards waiting for a name. |
+| `pull` | Open a job for one campaign and run the pull; the estimate first, `approved_by` runs it. |
+| `suppress`, `enrich`, `verify`, `normalize`, `qa`, `stage`, `import` | One stage each on a job; `enrich` and `verify` estimate first; `import` refuses while loads are paused. |
+| `write_receipt` | The receipt for a job: legs, filters, counts and a plain-English note. |
+| `abort` | Abort any open job or run. |
+
+The older tools, still answering until the rebuild removes them:
+
 | Tool | What |
 |---|---|
 | `topup_queue` | Campaigns `#campaign-watchdog` would flag as needing leads (empty, low, nearly-done 90%), ranked empty-first then shortest runway, each with the recipe count summary, `sends_last_14d`, and the policy gate and reason already applied (excluded, ignored client, retired, paused, dropped, not active, foreign client, under the 1-in-2000 reply bar — 1 reply under 2,000 sends is acceptable, zero positives never qualifies — or ok). Page with `limit` / `offset` / `client_tag`. No Slack, no Cursor (D43–D46). Counts only. |

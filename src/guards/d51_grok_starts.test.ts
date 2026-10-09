@@ -21,7 +21,7 @@ describe("D51 — Grok bot starts; spend is approved first", () => {
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const readme = await readFile(new URL("README.md", root), "utf8");
     const babysitter = await readFile(new URL("skills/grok-bot-babysitter/SKILL.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D51\*\*/);
+    assert.match(canon, /Canon as of \*\*D5\d\*\*/);
     assert.match(canon, /## Nothing starts on its own; spend is approved first \(D51\)/);
     assert.match(canon, /Never open a run from the watch, and never spend before a named approval \(D51\)/);
     assert.match(canon, /the TAM for this campaign is exhausted/);

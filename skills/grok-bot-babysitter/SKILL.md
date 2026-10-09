@@ -18,6 +18,35 @@ Read `skills/leadpipe/SKILL.md` and `skills/supabase-csv-endpoint/SKILL.md`
 before you move a single row. Those are how Claude already kept tokens
 down. Copy that, do not invent a chat pipeline.
 
+## The reads and the verbs (D52): you reason, the service moves rows
+
+Reads return what Supabase and the vendors hold, with the rule stated and
+no verdict. Verbs run one stage of the pipeline on a job and return
+counts. Nothing starts on its own and nothing paid runs without a name.
+
+1. `campaigns(client_tag)`: every ACTIVE campaign with lifetime sends,
+   positives, the rate per 2,000, leads left and `passes_reply_bar`. Pick
+   the ones over the bar that are running out.
+2. `campaign_record(client_tag, campaign_id)`: every receipt with its four
+   source legs, `company_filters` as stored, the method note and the yield;
+   the stamped leads counted by leg. See where most of the leads came
+   from. `sources()` says what each value means and how to repeat it.
+3. `count(client_tag, source, filters)` with the filters off the record,
+   then `held(client_tag, campaign_id, filters, tam)`. Under 1,000 net new,
+   say "the TAM for this campaign is exhausted" and stop, or propose a
+   widening to Josh.
+4. `pull(client_tag, campaign_id, source, filters, max_rows)` returns the
+   estimate and a card. Ask Cayden or Josh. Then the same call with
+   `approved_by="their name"` runs it and returns a `job_id`.
+5. `suppress(job_id)`, `enrich(job_id)`, `verify(job_id)`,
+   `normalize(job_id)`, `qa(job_id)`, `stage(job_id)`: one at a time, in
+   that order; `enrich` and `verify` return an estimate first and run with
+   `approved_by`. Each answer names the next verb.
+6. `import(job_id)` only when `loads_paused` is off and a person said yes.
+7. `write_receipt(job_id, ...)` with the legs, the filters and a plain
+   English note of what you did, so the next top-up can read it.
+8. `jobs()`, `job(job_id)`, `spend()`, `abort(job_id)` are the log.
+
 ## Start here (D49): one client, one read, then only what you will act on
 
 1. `client_overview(client_tag)` — every campaign of the client with its
@@ -128,7 +157,11 @@ not poll every two minutes.
 
 ## Allow list (you may call these)
 
-Service MCP (D48, D49): `client_overview`, `topup_queue`, `campaign_history`, `size_client`,
+Service MCP (D52): `campaigns`, `campaign_record`, `sources`, `count`, `held`,
+`jobs`, `job`, `spend`, `pull`, `suppress`, `enrich`, `verify`, `normalize`,
+`qa`, `stage`, `import`, `write_receipt`, `abort`.
+
+Service MCP (D48, D49, until the rebuild removes them): `client_overview`, `topup_queue`, `campaign_history`, `size_client`,
 `approval_briefing`, `start_topup`, `run_status`, `list_runs`,
 `abort_run`, `resume_run`, `list_holds`, `resolve_hold`, `loads_paused`,
 `lane_state`, `lane_note`, `add_client_domains` (domains only). No tool

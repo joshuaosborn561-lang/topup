@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D51** (2026-10-09). One page of current truth. When a new
+Canon as of **D52** (2026-10-09). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -481,6 +481,24 @@ spend card (`list_holds`, `resolve_hold`); a free call proceeds. Under
 1,000 leads available the line reads "the TAM for this campaign is
 exhausted". `deep_roots` is a client in `topup.client_map`.
 
+## The reads and the verbs for Grok bot (D52)
+
+Grok bot reasons; the service moves rows. The reads return what Supabase
+and the vendors hold, the rule stated, no verdict: `campaigns` (sends,
+positives, the rate per 2,000, leads left, the bar), `campaign_record`
+(every receipt with its four source legs and `company_filters` as stored,
+the method notes, the stamped leads by label and by leg), `sources` (what
+each value means and how to repeat it), `count` and `held` (a count on a
+source with the filters Grok gives, and what the client already holds),
+`jobs`, `job`, `spend`. The verbs run one stage of the pipeline on a job
+and return counts: `pull`, `suppress`, `enrich`, `verify`, `normalize`,
+`qa`, `stage`, `import`, `write_receipt`, `abort`. A job is one campaign
+with a job recipe built from Grok's inputs; nothing chains; a paid step
+returns its estimate and runs with `approved_by`, which the console
+records as the named person's tap; `import` refuses while loads are
+paused. The job recipe is filed under its own lane name. Nothing here
+returns a lead row or a file URL.
+
 ## Never (D1–D6, D8, D13, D14, D39, D48, D51)
 
 - Never write to a Supabase project other than `azpapwtnrbzywlnxxecz`.
@@ -544,6 +562,7 @@ changes:
 | Live pull recipe | `topup.recipe()` and `topup.campaign_builds` via MCP `campaign_history` on `https://leadtopup-production.up.railway.app/mcp` (D40, D48), joined to the build records (D47). `topup_queue` is the watchdog lead-refill list with the policy gate applied (D43, D44, D46). `client_tag` from `topup.client_map` at boot (D42). On this service, not on LeadPipe. |
 | Policy | `src/policy/` — every rule, `evaluateCampaign`, the spend audiences (D46) |
 | Tags | `src/builds/tags.ts` — `campaign_method` legs and `lead_provenance` as counts; `src/mcp/overview.ts` — `client_overview` (D49) |
+| Reads and verbs | `src/canon/` (the reads), `src/jobs/` (the job recipe and runner), `src/mcp/grok.ts` (the tools) (D52) |
 | Build records | `src/builds/` — `BuildRecord`, `chooseBuildForCampaign`, `campaignHistory` (D47) |
 | Planner | `src/plan/` — pools, slices, the fingerprint cache, the vendor-call log, `planSize`, the approval briefing (D48) |
 | Spine | `src/spine/steps.ts` (the thirteen steps, from the skill), `src/spine/gate.ts` (`GateUnmet`, step 6 and 7 rules) |
