@@ -2,12 +2,12 @@ import type { LeadPipe } from "../../clients/leadpipe.js";
 import type { Verifier, VerifierResults, VerifierStatus } from "../../clients/verifier.js";
 import type { Repo } from "../../db/repo.js";
 import { ingestedTable } from "../../db/pool.js";
-import { funnelCounts, MAX_STEP_ATTEMPTS, type RunRow } from "../../domain/runs.js";
+import { funnelCounts, MAX_STEP_ATTEMPTS, type Role, type RunRow } from "../../domain/runs.js";
 import { parseCsv } from "../../lib/csv.js";
 import { logger } from "../../lib/log.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
-import { parkedCard, spendApprovalCard, stallCard } from "../../slack/cards.js";
-import type { SlackConsole } from "../../slack/console.js";
+import { parkedCard, spendApprovalCard, stallCard } from "../../console/cards.js";
+import type { Console } from "../../console/console.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet, pct, rejectRate, rejectRateGate, type GateUnmet } from "../../spine/gate.js";
@@ -26,7 +26,7 @@ export interface VerifyConfig {
 export interface VerifyDeps {
   repo: Repo;
   rails: SpendRails;
-  console: SlackConsole;
+  console: Console;
   leadpipe: LeadPipe;
   verifier: Verifier;
   fetchImpl?: typeof fetch;
@@ -39,6 +39,7 @@ export interface VerifyDeps {
 export type VerifyOutcome =
   | { kind: "done"; sendable: number; seg: number; other: number; rejected: number; stalled: number }
   | { kind: "nothing" }
+  | { kind: "waiting"; on: Role; why: string; worstCaseCents?: number }
   | { kind: "parked"; reason: string }
   | { kind: "declined" }
   | { kind: "retry"; error: string }
@@ -184,7 +185,8 @@ export class VerifyStage {
     }
     if (decision.kind === "ask") {
       const outcome = await this.askSpend(run, b, worst);
-      if (outcome !== "approved") return outcome === "declined" ? this.declineBatch(run, table, b) : this.park(run, `spend card for batch ${b.batch} got no answer`, 0);
+      if (outcome === "declined") return this.declineBatch(run, table, b);
+      if (outcome === "waiting") return { kind: "waiting", on: "owner", why: `verify ${b.rows} rows: worst case ${usd(worst)} needs a named approval (D51)`, worstCaseCents: worst };
       approved = worst;
     }
 
@@ -224,37 +226,50 @@ export class VerifyStage {
     return { kind: "done" };
   }
 
-  private async askSpend(run: RunRow, b: BatchRow, worst: number): Promise<"approved" | "declined" | "timeout"> {
-    const { repo, rails, console: slack } = this.d;
-    const spentToday = await repo.spentTodayCents();
-    const card = await slack.ask({
-      run,
-      kind: "spend_approval",
-      audience: "owner",
-      payload: { batch: b.batch, rows: b.rows, worst_case_cents: worst, vendor: "millionverifier+no2bounce" },
-      text: `Spend ask: verify ${b.rows} rows, worst case ${usd(worst)}`,
-      blocks: (cardId) =>
-        spendApprovalCard({
-          cardId,
-          runId: run.run_id,
-          clientTag: run.client_tag,
-          step: "verify",
-          vendor: "millionverifier + no2bounce",
-          action: b.parent_batch ? "verify_split (re-bill)" : "verify",
-          rows: b.rows,
-          worstCaseCents: worst,
-          projectedUseful: null,
-          spentTodayCents: spentToday,
-          dailyCapCents: rails.cfg.dailyCapCents,
-        }),
-      expiresAt: new Date(this.now() + this.d.cfg.cardTimeoutMs),
-    });
-    await repo.setRunStatus(run.run_id, "awaiting_josh", "verify");
-    await repo.setStepWaiting(run.run_id, "verify", worst);
-    const resolved = await slack.awaitCard(card.card_id, { pollMs: Math.min(this.d.cfg.pollMs, 15000), timeoutMs: this.d.cfg.cardTimeoutMs, sleep: this.sleep });
+  /**
+   * The spend card for a batch (D51). One card per batch; the verb returns
+   * `waiting` while it is open. The same verb called with approved_by
+   * resolves the card through the console and gives the step its approval,
+   * and the next run of this stage proceeds on run_steps.approved_cents.
+   */
+  private async askSpend(run: RunRow, b: BatchRow, worst: number): Promise<"approved" | "declined" | "waiting"> {
+    const { repo, rails, console: cards } = this.d;
+    const open = (await repo.openCardsForRun(run.run_id)).find((c) => c.kind === "spend_approval" && c.payload.batch === b.batch);
+    const card =
+      open ??
+      (await (async () => {
+        const spentToday = await repo.spentTodayCents();
+        return cards.ask({
+          run,
+          kind: "spend_approval",
+          audience: "owner",
+          payload: { step: "verify", batch: b.batch, rows: b.rows, worst_case_cents: worst, vendor: "millionverifier+no2bounce" },
+          text: `Spend ask: verify ${b.rows} rows, worst case ${usd(worst)}`,
+          blocks: (cardId) =>
+            spendApprovalCard({
+              cardId,
+              runId: run.run_id,
+              clientTag: run.client_tag,
+              step: "verify",
+              vendor: "millionverifier + no2bounce",
+              action: b.parent_batch ? "verify_split (re-bill)" : "verify",
+              rows: b.rows,
+              worstCaseCents: worst,
+              projectedUseful: null,
+              spentTodayCents: spentToday,
+              dailyCapCents: rails.cfg.dailyCapCents,
+            }),
+          expiresAt: new Date(this.now() + this.d.cfg.cardTimeoutMs),
+        });
+      })());
+    const resolved = await repo.getCard(card.card_id);
+    if (!resolved || resolved.status === "open") {
+      await repo.setRunStatus(run.run_id, "awaiting_josh", "verify");
+      await repo.setStepWaiting(run.run_id, "verify", worst);
+      return "waiting";
+    }
     await repo.setStepRunning(run.run_id, "verify");
     await repo.setRunStatus(run.run_id, "verifying", "verify");
-    if (!resolved) return "timeout";
     if (resolved.resolution === "approve_spend") {
       await repo.approveStep(run.run_id, "verify", worst);
       await rails.record({
@@ -400,7 +415,7 @@ export class VerifyStage {
 
     if (resolved.resolution === "abort") {
       await repo.stallEvent({ run_id: run.run_id, vendor_run_id: b.vendor_run_id, event: "abort", rows: remaining });
-      return this.residue(run, table, b, "aborted from Slack");
+      return this.residue(run, table, b, "aborted by a person");
     }
     if (resolved.resolution === "resume") {
       // A human asked for one more free resume; the runbook takes over again on the next poll.
@@ -543,7 +558,8 @@ export class VerifyStage {
     const mvCents = await rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "verify", vendor: "millionverifier", action: "credits_used", rows: b.rows, credits: obs.mv_credits_used, worstCaseCents: b.worst_case_cents, balanceBefore: null, balanceAfter, vendorJobId: b.vendor_run_id, approvedBy: null });
     const n2bCents = await rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "verify", vendor: "no2bounce", action: "credits_used", rows: b.rows, credits: obs.n2b_credits_used, worstCaseCents: null, balanceBefore: null, balanceAfter: null, vendorJobId: b.vendor_run_id, approvedBy: null });
     if (mvCents + n2bCents > rails.allowanceCents(approved)) {
-      await slack.postOps(`:rotating_light: Verify batch ${b.batch} on run \`${run.run_id.slice(0, 8)}\` billed ${usd(mvCents + n2bCents)} against an approval of ${usd(approved)}. Nothing else submits on this run until Josh looks.`);
+      log.error("verify billed over its approval", { run_id: run.run_id, batch: b.batch, billed_cents: mvCents + n2bCents, approved_cents: approved });
+      await slack.postInThread(run, `Verify batch ${b.batch} billed ${usd(mvCents + n2bCents)} against an approval of ${usd(approved)}. Nothing else submits on this run until Josh looks.`);
       await repo.stallEvent({ run_id: run.run_id, vendor_run_id: b.vendor_run_id, event: "abort", rows: b.rows, detail: { reason: "spend drift", billed_cents: mvCents + n2bCents, approved_cents: approved } });
     }
 

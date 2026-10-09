@@ -4,14 +4,14 @@ These are the skills Josh has built for SalesGlider Growth. Each folder holds a 
 
 No skills are marked stale as of D39. The Sept 10 notes on `parlay-lead-pulls` and `conversational-location` were fixed in this repo: the bad master-dedupe SQL is gone, and conversational-location writes `city_normalized` with a blank on NO_GEOCODE. The merged list (`skills/merged-list`) is the 78-item rulebook; the six pending taps are yes. Positives expire 90 days after the reply and replace the customer-list upload (D37).
 
-**Grok bot (D39):** read `grok-bot-babysitter` before any pull skill. Do not
+**Grok bot (D39, D53):** read `grok-bot-babysitter` and `CANON.md` before any pull skill. Do not
 execute `lead-list-build` or a `*-lead-pulls` skill in Grok chat. Read
-`client_overview` first for a client (D49) or `topup_queue` across clients (D43, D44, D46), then `campaign_history` (D40, D47, D49), then `size_client` or `start_topup`, or hand a CSV URL
+`campaigns` for a client, then `campaign_record` for the campaigns over the bar, count with `count` and `held`, then run the verbs one at a time with a person's name on every spend, or hand a CSV URL
 to LeadPipe. Rows move through `leadpipe` and `supabase-csv-endpoint`.
 
 ## Grok bot and row movement (D39)
 
-* `grok-bot-babysitter` ... Standing orders for Cursor Grok / Slack Cursor on this repo. Allow list / ban list. Infer the job from every campaignintelligence tag (source legs plus `company_detail`, `evidence`, `confidence`, `build_label`, `company_filters`; physical also `maps` / `maps_runs` / `permits` / `geo`). Do not reconstruct the thirteen steps in chat.
+* `grok-bot-babysitter` ... Standing orders for Cursor Grok / Slack Cursor on this repo. The canon, the reads, the verbs, allow list / ban list. Read the record, repeat the legs that fed most of the leads, count, check net new, ask a person, run the verbs. Do not reconstruct the thirteen steps in chat.
 * `leadpipe` ... Store and job runner (Context Saver). `ingest_csv` from a URL, `lp_export` signed URL + count, `lp_sample` ≤10. Counts only. `find_dms_by_title` is ~$0.10/company and is Josh-only.
 * `supabase-csv-endpoint` ... Table → public CSV URL and result CSV back in, via edge function. Rows never pass through chat.
 
@@ -25,7 +25,7 @@ to LeadPipe. Rows move through `leadpipe` and `supabase-csv-endpoint`.
 
 ## Lead pulls per client (these become recipes)
 
-* `parlay-lead-pulls` ... Randy Haba, MSP, IT decision makers. Filter book is the live `it_dm_tickets` lane receipt; the service recipe is `recipes/parlay/it_dm.json`. Suppression is `global-suppression`. Do not delete against `public.leads`.
+* `parlay-lead-pulls` ... Randy Haba, MSP, IT decision makers. Filter book is the live `it_dm_tickets` lane receipt (read it with `campaign_record`). Suppression is `global-suppression`. Do not delete against `public.leads`.
 * `culture-fits-lead-pulls` ... TJ Jackson, MSP owners and C suite. Pool exhaustion reality and corrected getleads parameters.
 * `techevo-lead-pulls` ... Corey Tapper. NE IT DM includes NY/NJ. Florida IT DM is statewide; SFL owners stay metro. Small company COO fallback.
 * `goliath-lead-pulls` ... Dave Ackley, cybersecurity MSSP. Every lane targets the IT decision maker, not the C suite.

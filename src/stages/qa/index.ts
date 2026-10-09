@@ -2,7 +2,7 @@ import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import type { Recipe } from "../../recipes/schema.js";
-import { qaHoldCard, qaSummaryBlocks } from "../../slack/cards.js";
+import { qaHoldCard, qaSummaryBlocks } from "../../console/cards.js";
 import { attempt, columnsOf, finish, statusCounts, type StageDeps, type StageOutcome } from "../common.js";
 
 /**

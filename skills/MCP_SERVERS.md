@@ -13,7 +13,7 @@ The routing rule for which server owns which job is in `leadgen-mcp-routing/SKIL
 
 | Server | URL | Owns |
 |---|---|---|
-| leadtopup | `https://leadtopup-production.up.railway.app/mcp` | One client in one read (`client_overview`), build records, tags and the live pull recipe (`campaign_history`), `#campaign-watchdog` lead-refill queue with the policy gate applied (`topup_queue`), pilot and size one client in one call (`size_client`), Josh's `approval_briefing`, `start_topup`, `run_status`, `abort_run` / `resume_run`, holds, `loads_paused`, lane state. Counts only; no tool returns a row. Not LeadPipe. No login (D41). |
+| leadtopup | `https://leadtopup-production.up.railway.app/mcp` | The canon tools (D53): `canon`, the reads (`campaigns`, `campaign_record`, `sources`, `count`, `held`, `jobs`, `job`, `spend`, `holds`, `loads_paused`) and the verbs (`pull`, `suppress`, `enrich`, `verify`, `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`, `resolve`, `note`). Counts only; no tool returns a row. Nothing starts on its own; a person approves every spend. Not LeadPipe. No login (D41). |
 | LeadPipe (named "Context Saver" in Claude) | `https://leadpipe-production-0df5.up.railway.app/mcp` | Client schemas, `ingest_csv`, `lp_export` signed URLs, `import_smartlead`, `sync_smartlead`, `build_suppression`, job status |
 | Google Maps Scraper | `https://google-maps-mcp-production-88a3.up.railway.app/mcp` | Local business discovery by category and geography, outcome mode v1.8, `estimate_only=true` first |
 | PermitStack | `https://permitstack-mcp-production.up.railway.app/mcp` | Building permits by type, date, geography, contractor; trade plays |

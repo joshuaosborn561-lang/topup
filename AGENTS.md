@@ -13,26 +13,20 @@ For humans and coding agents alike.
 4. **Counts and ids, never rows.** No lead data in logs, Slack, PR
    descriptions or test fixtures beyond the ten-sample rule. Use the logger;
    it redacts.
-5. **Grok bot is the babysitter (D39).** Read `skills/grok-bot-babysitter`
-   first. It starts `size_client` or `start_topup(client_tag, campaign_id)` or a LeadPipe / csv-endpoint job, reads
-   `campaigns` and `campaign_record` (D52), or `client_overview(client_tag)` (D49) or `topup_queue` (D43–D46), then `campaign_history` (D40, D47, D49) for the
-   campaigns it will top up, and with it **every** campaignintelligence tag
-   (`company_source`,
-   `domain_source`, `person_source`, `email_source`, plus
-   `company_detail`, `evidence`, `confidence`, `build_label`,
-   `company_filters` — and on physical, `maps` / `maps_runs` /
-   `permits` / `geo`) as counts only — posts a card, and drops a link.
-   It does not reconstruct the thirteen steps in
-   chat. Lead rows move MCP → Supabase (`source_table` + writeback), edge
-   functions, and LeadPipe (`lp_run ingest_csv`, `lp_export` signed URL,
-   `lp_sample` ≤10). They do not enter Grok bot context. No
-   `export_contacts`, no `get-dataset-items`, no `find_dms_by_title`, no
-   SELECT of emails or names, no child-agent GetLeads fire. Do not set a
-   Grok routine that re-reads lists.
+5. **Grok bot does the reasoning (D39, D53).** The service is the dumb
+   half. Read `skills/grok-bot-babysitter` and `CANON.md`. Grok reads
+   `campaigns` and `campaign_record`, counts with `count` and `held`, and
+   runs the verbs one at a time with a person's name on every spend. Lead
+   rows move MCP → Supabase → LeadPipe → Smartlead. They do not enter Grok
+   bot context. No `export_contacts`, no `get-dataset-items`, no
+   `find_dms_by_title`, no SELECT of emails or names, no child-agent
+   GetLeads fire. Do not set a Grok routine that re-reads lists. Do not
+   add a watch, a cron, a planner, a recipe or a policy gate to this
+   service; that is Grok's job now.
 6. **No vendor calls in tests.** Fake the client and assert on the ledger.
 7. **No secrets in the repo.** Railway variables only; `.env.example` lists names.
-8. **Spend goes through `SpendRails.gate`.** A paid call outside the gate is a
-   bug even if it is cheap.
+8. **Spend goes through `SpendRails.gate`, and a person approves it first.** The
+   auto cap is $0 (D51). A paid call outside the gate is a bug even if it is cheap.
 9. **Smartlead is never started, paused, stopped or deleted from here.**
 10. **When unsure, ask in the PR description.** Do not invent a price, a
     threshold, a recipe or a column.

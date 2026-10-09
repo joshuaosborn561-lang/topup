@@ -1,4 +1,4 @@
-import { getleadsParamsFromFilters } from "../recipes/infer.js";
+import { getleadsParamsFromFilters } from "./filters.js";
 import { EMAIL_TIERS, parseRecipe, type Recipe } from "../recipes/schema.js";
 
 /**

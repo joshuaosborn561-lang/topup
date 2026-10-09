@@ -1,7 +1,7 @@
 import type { Getleads, GetleadsFilters } from "../clients/getleads.js";
 import type { MapsStats } from "../clients/mapsStats.js";
 import type { PermitCounts } from "../clients/permits.js";
-import { getleadsParamsFromFilters } from "../recipes/infer.js";
+import { getleadsParamsFromFilters } from "../jobs/filters.js";
 import type { SpendRails } from "../spend/rails.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
 

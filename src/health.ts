@@ -53,18 +53,17 @@ export const REQUIRED_TOPUP_TABLES = [
  * says `ok: false` rather than crashing when the database is unreachable, so
  * a Supabase blip does not put Railway into a restart loop.
  */
-export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: SpendRails | null; recipes: string[] }): Promise<Record<string, unknown>> {
+export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: SpendRails | null }): Promise<Record<string, unknown>> {
   const base: Record<string, unknown> = {
     service: "leadtopup",
     version: process.env.npm_package_version ?? SERVICE_VERSION,
     ...deployIdentity(),
     mcp: { transport: "streamable-http", path: "/mcp", url: MCP_HTTPS_URL, auth: "none" },
-    phase: "1 (verify + normalize; nothing is staged or imported)",
+    phase: "canon (D53): Grok reads, Grok runs the verbs, a person approves every spend; nothing starts on its own",
     uptime_s: Math.round((Date.now() - startedAt) / 1000),
     replicas: 1,
     supabase_project: ALLOWED_SUPABASE_PROJECT_REF,
     readiness: configReadiness(d.cfg),
-    recipes: d.recipes,
     caps: { auto_spend_usd: d.cfg.AUTO_SPEND_CAP_USD, daily_vendor_usd: d.cfg.DAILY_VENDOR_CAP_USD },
   };
   if (!d.repo) return { ok: false, ...base, db: false, note: "DATABASE_URL not set; nothing else can be reported" };

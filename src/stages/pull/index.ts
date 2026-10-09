@@ -3,12 +3,11 @@ import type { PermitCounts } from "../../clients/permits.js";
 import type { RunRow } from "../../domain/runs.js";
 import { runTargetCampaignIds, withoutSkipped } from "../../recipes/campaigns.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
-import { mapsPermitAsk } from "../../spend/audience.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
-import { spendApprovalCard } from "../../slack/cards.js";
+import { spendApprovalCard } from "../../console/cards.js";
 import { gateUnmet } from "../../spine/gate.js";
-import { campaignReportFromCounts, formatCampaignReport } from "../size/campaignReport.js";
+import { campaignReportFromCounts, formatCampaignReport } from "../report.js";
 import { attempt, finish, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import type { PullAdapter, PullResult } from "./adapter.js";
 import type { PullJob } from "./route.js";
@@ -111,14 +110,15 @@ export class PullStage {
         spentToday,
       );
       if (decision.kind === "blocked") throw new Error(`pull blocked: ${decision.reason}`);
-      const ask = mapsPermitAsk(priced.worst, this.d.rails.cfg.autoCapCents);
+      // D51: anything that costs money waits for a named approval; the auto cap is $0.
+      const ask: "proceed" | "owner" = priced.worst <= 0 ? "proceed" : "owner";
       if (ask !== "proceed" && approved < priced.worst) {
         const open = await this.d.repo.openCardsForRun(run.run_id);
         if (!open.some((card) => card.kind === "spend_approval")) {
           await this.d.console.ask({
             run,
             kind: "spend_approval",
-            audience: ask === "owner" ? "owner" : "operator",
+            audience: "owner",
             payload: {
               step: "pull",
               vendor: priced.vendor,
@@ -141,7 +141,6 @@ export class PullStage {
                 projectedUseful: null,
                 spentTodayCents: spentToday,
                 dailyCapCents: this.d.rails.cfg.dailyCapCents,
-                approveChoice: ask === "owner" ? "approve_spend" : "approve_small_spend",
                 report: formatCampaignReport(campaignReportFromCounts(sizeStep?.counts as unknown as Record<string, unknown>)) || undefined,
               }),
           });

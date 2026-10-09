@@ -4,13 +4,13 @@ import { describe, it } from "node:test";
 import { ALLOWED_SUPABASE_PROJECT_REF, assertSupabaseProject, loadConfig } from "../config.js";
 import { NEVER_SEND_STATUSES, SENDABLE_LEAD_STATUSES } from "../domain/leadStatus.js";
 import { RUN_STATUSES, TERMINAL_RUN_STATUSES } from "../domain/runs.js";
-import { PHASE1_STEPS, PIPELINE_STEPS } from "../orchestrator.js";
+import { VERB_ORDER, VERB_STEPS } from "../jobs/runner.js";
 import { stepForStage } from "../spine/steps.js";
 import { BANNED_ACTIONS, BANNED_VENDORS, PRICES, VENDORS } from "../spend/prices.js";
 
 const root = new URL("../../", import.meta.url);
 
-describe("invariants — the numbers and names the brief fixes", () => {
+describe("invariants — the numbers and names the canon fixes", () => {
   it("D1 — only campaignintelligence; the other two projects are refused at boot", () => {
     assert.equal(ALLOWED_SUPABASE_PROJECT_REF, "azpapwtnrbzywlnxxecz", "D1: ask Josh before pointing this service at another Supabase project");
     assert.throws(
@@ -27,11 +27,11 @@ describe("invariants — the numbers and names the brief fixes", () => {
     assert.doesNotMatch(toml, /numReplicas\s*=\s*(?!1\b)\d+/, "D5: a second replica count appears in railway.toml");
   });
 
-  it("D9 — shipped caps are $5 per step and $25 per day", () => {
+  it("D51 — the shipped auto cap is $0 and the daily backstop is $25", () => {
     const cfg = loadConfig({});
-    assert.equal(cfg.AUTO_SPEND_CAP_USD, 5, "D9: AUTO_SPEND_CAP_USD default is 5. Josh raises caps, code does not.");
+    assert.equal(cfg.AUTO_SPEND_CAP_USD, 0, "D51: AUTO_SPEND_CAP_USD default is 0; every paid call waits for a named approval. Ask Josh.");
     assert.equal(cfg.DAILY_VENDOR_CAP_USD, 25, "D9: DAILY_VENDOR_CAP_USD default is 25.");
-    assert.equal(cfg.SLACK_OPS_CHANNEL, "C0C135EB76H", "D29: the service console is this Slack channel");
+    assert.ok(!("SLACK_BOT_TOKEN" in cfg), "D53: Slack is gone; the console is the card table.");
   });
 
   it("D9 — every paid vendor has a non-zero price and every vendor has a price", () => {
@@ -77,21 +77,16 @@ describe("invariants — the numbers and names the brief fixes", () => {
     }
   });
 
-  it("D29 — the pipeline is steps 1 through 13; puzzle + find_emails sit after suppress", () => {
-    assert.deepEqual(
-      [...PIPELINE_STEPS],
-      ["trigger", "size", "pull", "ingest", "suppress", "puzzle", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"],
-      "D29: adding or reordering a stage is a new decision; append it and update CANON.md",
-    );
+  it("D29/D53 — the verbs walk steps 3 through 12 in order; nothing sizes, triggers or flips", () => {
+    const steps = VERB_ORDER.flatMap((v) => [...VERB_STEPS[v]]);
+    assert.deepEqual(steps, ["pull", "ingest", "suppress", "puzzle", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import"], "D53: adding or reordering a stage is a new decision; append it and update CANON.md");
     let last = 0;
-    for (const s of PIPELINE_STEPS) {
+    for (const s of steps) {
       const n = stepForStage(s)?.n ?? 0;
-      assert.ok(n >= last && n >= 1 && n <= 13, `D28: ${s} is on step ${n}, out of order or outside 1..13`);
+      assert.ok(n >= last && n >= 3 && n <= 12, `D28: ${s} is on step ${n}, out of order or outside 3..12`);
       last = n;
     }
-    assert.equal(stepForStage("trigger")?.n, 1);
-    assert.equal(stepForStage("flip")?.n, 13);
-    assert.deepEqual([...PHASE1_STEPS], ["verify", "normalize"], "D17 (superseded): the Phase 1 pair is history, kept for the record");
+    for (const gone of ["trigger", "size", "flip"]) assert.ok(!steps.includes(gone as never), `D53: ${gone} is not a stage the service runs; Grok reads, a person decides, Josh flips`);
   });
 });
 

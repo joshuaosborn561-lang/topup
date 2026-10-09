@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { liveTargetCampaignIds } from "./campaigns.js";
+import { getleadsParamsFromFilters } from "../jobs/filters.js";
 import { countSlices, geoFenceRef, groupGeoChunks, loadGeoFenceCities, type GeoCity } from "./geoFence.js";
-import { getleadsParamsFromFilters, recipeFromReceipts, type ReceiptStamp } from "./infer.js";
-import { routeSize } from "../stages/pull/route.js";
 
 const PROPERTY_FILTERS = {
   cities: "client_emcor.geo_fence (137 cities, 22 counties, run in 3 chunks by geo_chunk; >45 cities times out)",
@@ -12,28 +10,6 @@ const PROPERTY_FILTERS = {
   job_titles: ["Property Manager", "Asset Manager", "Chief Engineer"],
   email_status: ["VALID"],
 };
-
-function stamp(over: Partial<ReceiptStamp> = {}): ReceiptStamp {
-  return {
-    written_by: "claude",
-    client_tag: "emcor",
-    smartlead_client_id: 55648,
-    lane: "c_healthcare",
-    campaign_ids: [4036508, 4037545, 4036509, 4037548],
-    icp_kind: "linkedin_native",
-    persona: "facilities",
-    company_source: "getleads",
-    company_filters: PROPERTY_FILTERS,
-    email_source: "getleads",
-    email_max_tier: null,
-    how_i_did_it: "getleads on the geo fence, California, titles, VALID. No employee band.",
-    notes: null,
-    segment: null,
-    granularity: "lane",
-    rows_imported: 34,
-    ...over,
-  };
-}
 
 function cities(n: number, chunkOf: (i: number) => string | null): GeoCity[] {
   return Array.from({ length: n }, (_, i) => ({ city: `City ${i}`, chunk: chunkOf(i) }));
@@ -75,39 +51,6 @@ describe("EMCOR geo fence sizing", () => {
     const chunkTotals = [500, 560, 552];
     const tam = slices.reduce((sum, _slice, i) => sum + chunkTotals[i]!, 0);
     assert.equal(tam, 1612);
-  });
-
-  it("sizes every ACTIVE recipe campaign and drops completed and drafted ones", () => {
-    const recipe = recipeFromReceipts({ receipts: [stamp()], smartleadClientId: 55648 });
-    assert.equal(recipe.source.kind, "getleads");
-    for (const id of [4036508, 4037545]) {
-      const route = routeSize(recipe, [id]);
-      assert.equal(route.kind, "getleads");
-      if (route.kind === "getleads") assert.equal(route.source.params.company_size, undefined);
-    }
-    const statuses = new Map<number, string | null>([
-      [4036508, "ACTIVE"],
-      [4037545, "ACTIVE"],
-      [4036509, "COMPLETED"],
-      [4037548, "DRAFTED"],
-    ]);
-    assert.deepEqual(
-      liveTargetCampaignIds(recipe, [4036508, 4036509, 4037548], statuses),
-      [4036508, 4037545],
-    );
-    const education = recipeFromReceipts({
-      receipts: [stamp({ lane: "d_education", campaign_ids: [4037551] })],
-      smartleadClientId: 55648,
-    });
-    assert.deepEqual(liveTargetCampaignIds(education, [4037551], new Map([[4037551, "COMPLETED"]])), []);
-    assert.deepEqual(
-      liveTargetCampaignIds(education, [4037551], new Map([[4037551, "PAUSED"]])),
-      [],
-    );
-    assert.deepEqual(
-      liveTargetCampaignIds(recipe, [4036508], new Map([[4036508, "ARCHIVED"], [4037545, "ACTIVE"], [4036509, "COMPLETED"], [4037548, "DRAFT"]])),
-      [4037545],
-    );
   });
 
   it("loads city and chunk columns from the allowlist", async () => {

@@ -2,7 +2,7 @@ import type { Repo } from "../../db/repo.js";
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { Recipe } from "../../recipes/schema.js";
-import type { SlackConsole } from "../../slack/console.js";
+import type { Console } from "../../console/console.js";
 import { mergeFieldColumn, mergeFieldsToHold } from "../../spine/gate.js";
 import { attempt, type StageOutcome } from "../common.js";
 import { normalizeCompany, type CompanyRefs } from "./company.js";
@@ -80,7 +80,7 @@ export type NormalizeOutcome = StageOutcome;
 export class NormalizeStage {
   constructor(
     private readonly repo: Repo,
-    private readonly console: SlackConsole,
+    private readonly console: Console,
   ) {}
 
   async run(run: RunRow, recipe: Recipe): Promise<NormalizeOutcome> {

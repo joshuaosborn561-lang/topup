@@ -202,9 +202,9 @@ no lead columns ever). The existing lead skills stay as its appendix.
 | Phase | What | Effort |
 |---|---|---|
 | 0 | Stop the app deciding: the watch no longer starts runs; every paid call needs an approval; loads stay paused | done 2026-10-09 |
-| 1 | Ship the canon reads on the existing service, reusing the clients and the spend gate; write the new `CANON.md`; Cayden and Grok start using them | 2 to 3 days |
-| 2 | Turn the stages into verbs on jobs; remove the orchestrator's automatic chaining; receipts written by `write_receipt` | 3 to 5 days |
-| 3 | Delete recipes, plan, the derived policy gates, the watch, the Slack console and cards, the dollar caps, and the guards that lock them; one short CANON; archive DECISIONS as history; version 1.0 | 2 to 3 days |
+| 1 | Ship the canon reads on the existing service, reusing the clients and the spend gate; write the new `CANON.md`; Cayden and Grok start using them | done 2026-10-09 (D52) |
+| 2 | Turn the stages into verbs on jobs; remove the orchestrator's automatic chaining; receipts written by `write_receipt` | done 2026-10-09 (D52) |
+| 3 | Delete recipes, plan, the derived policy gates, the watch, the Slack console and cards, the dollar caps, and the guards that lock them; one short CANON; DECISIONS stays as the ledger; version 1.0 | done 2026-10-09 (D53) |
 | 4 | Data: write the four missing receipts and the eleven missing filter sets with you, drop or fold `campaign_method`, apply or drop migrations 0015 and 0016 (Deep Roots and the fourteen registry rows were mapped on 2026-10-09) | in parallel, needs you for the notes |
 | 5 | Pilot one client end to end with Cayden with loads paused; then lift the pause | 1 day |
 

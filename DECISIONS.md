@@ -72,6 +72,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D50 | Live; registry lane wins over the first recipe; a stored Maps pool is the TAM; a LinkedIn gap no longer parks |
 | D51 | Live; nothing starts on its own, Grok bot starts; every paid call waits for a named approval (auto cap $0); "the TAM for this campaign is exhausted"; Deep Roots mapped; the fourteen Peterson and Insight registry rows mapped |
 | D52 | Live; the reads and the verbs for Grok bot: reads state the rule and no verdict, verbs run one stage on a job, approvals by name through the console, no row or file URL |
+| D53 | Live; the reasoning half is deleted (watch, planner, recipes inference, policy gates, Slack console, old MCP tools); one short canon; the surface is the canon tools only; version 1.0.0 |
 
 ---
 
@@ -1734,3 +1735,56 @@ A job is one campaign at a time. The old `size_client` and `start_topup`
 still infer from a lane; the verbs do not.
 
 **Guard.** `src/guards/d52_reads_verbs.test.ts`. Ask Josh.
+
+## D53 — The dumb half: delete the reasoning, keep the pipeline, one short canon
+
+**Decision.**
+
+1. **Deleted.** The runway watch and its cron, the planner and the sizing
+   step, the recipe inference (receipt → recipe, Parlay, BCP, PowerGRYD,
+   Peterson special cases, file recipes), the derived policy gates and
+   the per-step dollar caps, the Slack console, cards router and daily
+   digest, the trigger and flip stages, and the old MCP tools
+   (`topup_queue`, `client_overview`, `campaign_history`, `size_client`,
+   `approval_briefing`, `start_topup`, `run_status`, `list_runs`,
+   `abort_run`, `resume_run`, `list_holds`, `resolve_hold`, `lane_state`,
+   `lane_note`, `add_client_domains`). Guards D34 to D52 that locked that
+   code are gone with it; the decisions stay in this ledger as history.
+2. **Kept.** The twelve stages from pull to post_import, run one at a time
+   by the verbs on a job; the spend gate and ledger; the card table and
+   the role line (D18), now `src/console` with no poster; the lane event
+   log; the vendor clients; the reads and the verbs (D52).
+3. **The surface is the canon tools only:** `canon`, `campaigns`,
+   `campaign_record`, `sources`, `count`, `held`, `jobs`, `job`, `spend`,
+   `holds`, `loads_paused`, `pull`, `suppress`, `enrich`, `verify`,
+   `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
+   `resolve`, `note`. `CANON.md` is served as the MCP instructions and by
+   `canon`.
+4. **The verify stage no longer blocks on its spend card.** It posts the
+   card and returns `waiting`; the verb with `approved_by` resolves it and
+   the next call proceeds on `run_steps.approved_cents`.
+5. **No client is special-cased in code.** The registry repair retags and
+   sets the lane from receipts for every client the same way. The MSP
+   headcount drop and the same-offer exclusion that only ever applied to
+   one lane are gone; a record that needs them says so in its notes and
+   Grok applies them through the filters it passes.
+6. **Version 1.0.0.** The canon numbers that remain in code are the reply
+   bar (1 per 2,000), the net-new floor (1,000), the rows per job (1 to
+   2,000), the auto cap ($0), the daily backstop ($25) and the never-top-up
+   list.
+
+**Why.** Josh, 2026-10-09: "this app basically needs to be completely
+stripped away and totally rebuilt … there should be no recipes or no
+formulas … Grokbot should be able to figure out how I initially pulled
+the leads … This app is dumb, flat pipeline … a few canon rules like the
+1 to 2,000, the TAM size … a canon for Grokbot." And after Phase 2: "do
+all the steps." The audit counted about 20,400 source lines, roughly
+12,000 of them deciding and 8,000 moving rows. The deciding half made the
+wrong calls for Cayden on 2026-10-09 morning and was the thing to remove.
+
+**Tradeoff.** Nothing tops up a campaign unless Grok or a person calls the
+verbs. A verb that polls a vendor (verify) holds its MCP call open while
+the vendor runs. The old queue and overview are gone; `campaigns` and
+`campaign_record` answer the same questions without a verdict.
+
+**Guard.** `src/guards/d53_canon.test.ts`. Ask Josh.

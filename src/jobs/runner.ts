@@ -2,10 +2,21 @@ import type { Repo } from "../db/repo.js";
 import { presentRun, type RunRow, type Step } from "../domain/runs.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
-import type { Stages } from "../orchestrator.js";
 import { targetCountPatch } from "../recipes/campaigns.js";
 import { parseRecipe, type Recipe } from "../recipes/schema.js";
 import { jobLane, jobRecipe, type JobSpec } from "./recipe.js";
+import type { FindEmailsStage } from "../stages/find_emails/index.js";
+import type { ImportStage } from "../stages/import/index.js";
+import type { IngestStage } from "../stages/ingest/index.js";
+import type { NormalizeStage } from "../stages/normalize/index.js";
+import type { PostImportStage } from "../stages/post_import/index.js";
+import type { PullStage } from "../stages/pull/index.js";
+import type { PuzzleStage } from "../stages/puzzle/index.js";
+import type { QaStage } from "../stages/qa/index.js";
+import type { RouteStage } from "../stages/route/index.js";
+import type { StageStage } from "../stages/stage/index.js";
+import type { SuppressStage } from "../stages/suppress/index.js";
+import type { VerifyStage } from "../stages/verify/verify.js";
 
 const log = logger("jobs");
 
@@ -18,6 +29,22 @@ const log = logger("jobs");
  * approves that card, records who, and runs. import refuses while loads
  * are paused. Rows never leave the server.
  */
+/** The dumb pipeline: twelve stages, each run once by a verb. Nothing sizes, triggers or flips (D53). */
+export interface Stages {
+  pull: PullStage;
+  ingest: IngestStage;
+  suppress: SuppressStage;
+  puzzle: PuzzleStage;
+  findEmails: FindEmailsStage;
+  verify: VerifyStage;
+  normalize: NormalizeStage;
+  qa: QaStage;
+  route: RouteStage;
+  stage: StageStage;
+  import: ImportStage;
+  postImport: PostImportStage;
+}
+
 export type Verb = "pull" | "suppress" | "enrich" | "verify" | "normalize" | "qa" | "stage" | "import";
 
 export const VERB_STEPS: Readonly<Record<Verb, readonly Step[]>> = {
