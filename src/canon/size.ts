@@ -70,7 +70,7 @@ export async function sizeRead(
   }
   const counted = await countMapsPool(db, input.client_tag, input.filters);
   if ("error" in counted) {
-    return { ...base, filters_used: spec, pool: null, net_new: null, note: counted.error };
+    return { ...base, filters_used: input.filters, pool: null, net_new: null, note: counted.error };
   }
   const resolved = await resolveMapsPool(db, input.client_tag, spec);
   const removed =

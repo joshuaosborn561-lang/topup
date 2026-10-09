@@ -39,12 +39,12 @@ export class FindEmailsStage {
       const db = this.d.repo.raw();
       const { rows } = await db.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status = 'needs_email'`, [run.run_id]);
       const need = Number(rows[0]?.n ?? 0);
-      const leftover = await db.query<{ lead_status: string; n: string }>(
+      const queued = await db.query<{ lead_status: string; n: string }>(
         `select lead_status, count(*)::text as n from ${table} where run_id = $1 and lead_status in ('needs_person','needs_domain') group by 1`,
         [run.run_id],
       );
-      const leftoverPerson = Number(leftover.rows.find((r) => r.lead_status === "needs_person")?.n ?? 0);
-      const leftoverDomain = Number(leftover.rows.find((r) => r.lead_status === "needs_domain")?.n ?? 0);
+      const leftoverPerson = Number(queued.rows.find((r) => r.lead_status === "needs_person")?.n ?? 0);
+      const leftoverDomain = Number(queued.rows.find((r) => r.lead_status === "needs_domain")?.n ?? 0);
       if (need === 0 && leftoverPerson + leftoverDomain > 0) {
         const reason = `Find emails will not skip: ${leftoverPerson} rows still need a person and ${leftoverDomain} still need a domain. Puzzle did not finish (D64).`;
         await this.d.repo.failStep(run.run_id, "find_emails", reason, true);

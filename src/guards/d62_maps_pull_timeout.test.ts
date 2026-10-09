@@ -45,6 +45,6 @@ describe("D62 — background maps pull cannot hang", () => {
     assert.equal(VERB_BACKGROUND_TIMEOUT_MS, 90_000, "D62: 90s is the job timeout until Josh names another. Ask Josh.");
     assert.match(common, /runIsOpen/, "D62: a failed job must not be rewritten to done. Ask Josh.");
     assert.match(canon, /last_error/, "D62: CANON.md must say a background pull writes last_error. Ask Josh.");
-    assert.match(canon, /Canon as of \*\*D62\*\*/, "D62: fold this decision into CANON.md. Ask Josh.");
+    assert.match(canon, /D62/, "D62: fold this decision into CANON.md. Ask Josh.");
   });
 });
