@@ -56,8 +56,9 @@ export class IngestStage {
       const table = ingestedTable(run.client_tag);
       const pulled = await this.d.pull.resolve(run, recipe);
       const files = pulled.files.length > 0 ? pulled.files : [];
-      const csvs = files.filter((file) => file.export_url);
-      if (csvs.length === 0) {
+      const csvs = files.filter((file) => file.export_url && !file.export_url.startsWith("stored://"));
+      const stored = files.filter((file) => file.export_url.startsWith("stored://"));
+      if (csvs.length === 0 && stored.length === 0) {
         const counts: Record<string, number> = { rows_exported: pulled.rows_exported, rows_claimed: 0, count_only: 1 };
         for (const file of files) counts[`rows_${file.campaignId}`] = (counts[`rows_${file.campaignId}`] ?? 0) + file.rows_exported;
         return finish(
@@ -72,10 +73,10 @@ export class IngestStage {
 
       const own = await this.d.repo.getStep(run.run_id, "ingest");
       const jobs = parseIngestJobs(own?.vendor_job_id ?? null);
-      const labels = csvs.map((file) => sourceLabel(run, file.campaignId));
+      const labels = [...csvs, ...stored].map((file) => sourceLabel(run, file.campaignId));
       let readTotal = 0;
       let readKnown = true;
-      let reusedExisting = false;
+      let reusedExisting = stored.length > 0;
       for (const file of csvs) {
         const label = sourceLabel(run, file.campaignId);
         let jobId = jobs[label] ?? null;
@@ -117,7 +118,8 @@ export class IngestStage {
         if (status.rows_read === null) readKnown = false;
         else readTotal += status.rows_read;
       }
-      const csvExported = csvs.reduce((sum, file) => sum + file.rows_exported, 0);
+      const csvExported = [...csvs, ...stored].reduce((sum, file) => sum + file.rows_exported, 0);
+      if (stored.length) readTotal += stored.reduce((sum, file) => sum + file.rows_exported, 0);
 
       const cols = await columnsOf(this.d.repo, table);
       const deduped = cols.has("source_label") ? await this.dedupeLanded(table, run.run_id, labels, cols) : 0;

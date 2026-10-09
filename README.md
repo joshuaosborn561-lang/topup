@@ -50,7 +50,7 @@ Reads (counts, ids, labels, notes; the rule stated; no verdict):
 | `campaigns` | Every ACTIVE campaign with sends, positives, rate per 2,000, leads left, `passes_reply_bar`. |
 | `campaign_record` | Every receipt, build row, lead stamp count, registry row and note for one campaign. |
 | `sources` | The source vocabulary. |
-| `count` | A count on getleads (free), AI Ark (paid, needs a name), Maps or permits with the filters you pass. |
+| `count` | A count on getleads (free), AI Ark (paid, needs a name), Maps (stored pool by `plan_id`) or permits with the filters you pass. |
 | `held` | How much of a getleads pool the client already holds, and net new. |
 | `jobs`, `job` | The job log and one job with its steps, report, vendor calls and waiting cards. |
 | `spend` | Today, thirty days, month to date, cards waiting. |
@@ -64,6 +64,7 @@ Verbs (one stage each, counts back):
 |---|---|
 | `pull` | Opens a job and pulls 1 to 2,000 rows from getleads, Maps, permits or a table; ingests them. |
 | `suppress` | The suppression set. Returns raw, dropped by reason, net new. |
+| `icp` | The ICP website gate (our own site fetch, Jev picks a category, DiscoLike on unreadable sites). Flagged rows are suppressed with a reason. Paid; estimate first. |
 | `enrich` | Domains, people, emails through the waterfalls. Paid tiers estimate first. |
 | `verify` | MillionVerifier then No2Bounce. Paid; estimate first. |
 | `normalize` | Names, companies, locations, sports team. |
@@ -93,7 +94,7 @@ CANON.md            the canon (served to Grok)
 DECISIONS.md        the ledger of why (append only)
 src/canon/          the reads
 src/jobs/           the verbs, the job recipe, the filter mapping
-src/stages/         pull ingest suppress puzzle find_emails verify normalize qa route stage import post_import
+src/stages/         pull ingest suppress icp puzzle find_emails verify normalize qa route stage import post_import
 src/console/        cards and the role table (D18)
 src/spend/          SpendRails: the gate, prices, the ledger
 src/mcp/            the surface (server.ts, grok.ts)

@@ -57,15 +57,21 @@ The rules you apply:
 3. `count(client_tag, source, filters)` with those filters. getleads is
    free; `ai_ark` needs `approved_by`. BCP records keep industries per
    campaign under `industries_by_campaign`; pass that campaign's list as
-   `industries`. Every other key stays as stored.
+   `industries`. Every other key stays as stored. Maps keeps `plan_id`
+   and the categories list (D57); it never scopes by ZIP or `client_tag`
+   alone. Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
+   when those exist. Already used is live `public.leads` on the
+   receipt's campaigns.
 4. `held(client_tag, campaign_id, filters, tam)`. If `net_new` < 1,000:
    *the TAM for this campaign is exhausted.* Stop there. If Josh asks for
    options, give each option with its count.
 5. Tell Cayden or Josh: campaign, source, filters, count, net new, rows
    you will pull, worst-case cost. Wait for the yes.
 6. `pull(client_tag, campaign_id, source, filters, max_rows)`. Then
-   `suppress`, `enrich`, `verify`, `normalize`, `qa`, `stage`, each with
-   the `job_id`. Each answer has `next`. `waiting_approval` means name the
+   `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage`, each
+   with the `job_id`. `icp` is the website gate from `icp-website-gate`:
+   it costs about $0.25 per 1,000 domains, needs a name, and reports the
+   label counts; if one label swallows a big share, stop and say so. Each answer has `next`. `waiting_approval` means name the
    worst case to a person and call the same verb with
    `approved_by="Their name"`. `parked` means read `job(job_id)` and fix
    or `abort`. QA holds show in `holds`; clear them with `resolve`.
@@ -90,7 +96,7 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
 `campaign_record`, `sources`, `count`, `held`, `jobs`, `job`, `spend`,
-`leftovers`, `holds`, `loads_paused`, `pull`, `suppress`, `enrich`, `verify`,
+`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `suppress`, `enrich`, `verify`,
 `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
 `resolve`, `note`.
 

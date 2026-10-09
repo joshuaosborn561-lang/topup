@@ -1,4 +1,4 @@
--- D57: the ICP gate is a verb. Every lane table carries the verdict
+-- D58: the ICP gate is a verb. Every lane table carries the verdict
 -- (icp_gate yes/no/unknown, icp_gate_label, icp_gate_at); flagged rows are
 -- suppressed with a reason, never deleted. The per-client Jev variant and
 -- DiscoLike ICP name live in topup.icp_variants, not in code. The service

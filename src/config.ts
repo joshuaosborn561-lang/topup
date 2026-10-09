@@ -57,7 +57,7 @@ const schema = z.object({
   NAME_TO_EMAIL_MCP_URL: z.string().default(""),
   NAME_TO_EMAIL_TOKEN: z.string().default(""),
 
-  /** The ICP gate's edge functions on campaignintelligence (D57). Keys are the functions' own access keys; empty leaves the icp verb parked. */
+  /** The ICP gate's edge functions on campaignintelligence (D58). Keys are the functions' own access keys; empty leaves the icp verb parked. */
   SUPABASE_FUNCTIONS_URL: z.string().default("https://azpapwtnrbzywlnxxecz.supabase.co/functions/v1"),
   ICP_SITE_FETCH_KEY: z.string().default(""),
   ICP_LLM_KEY: z.string().default(""),

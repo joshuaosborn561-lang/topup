@@ -1,4 +1,5 @@
 import { getleadsParamsFromFilters } from "./filters.js";
+import { icpViewOf, mapsPoolFromFilters } from "../canon/mapsPool.js";
 import { MAX_ROWS_PER_JOB } from "../policy/rules.js";
 import { EMAIL_TIERS, parseRecipe, type Recipe } from "../recipes/schema.js";
 
@@ -42,9 +43,19 @@ function sourceFor(spec: JobSpec): Recipe["source"] {
       return { kind: "getleads", params, widening_candidates: [] } as Recipe["source"];
     }
     case "maps": {
-      const categories = strings(f.categories ?? f.maps ?? f.category);
+      const pool = mapsPoolFromFilters(f, spec.client_tag);
+      if ("error" in pool) throw new Error(pool.error);
+      const categories = pool.categories;
       if (categories.length === 0) throw new Error("maps needs categories. Read them off the record's company_filters (maps, categories).");
-      return { kind: "maps", params: { categories, ...(strings(f.states).length ? { states: strings(f.states) } : {}), ...(strings(f.cities).length ? { cities: strings(f.cities) } : {}) } } as Recipe["source"];
+      const icp_view = pool.icp_view ?? icpViewOf(f, spec.client_tag);
+      return {
+        kind: "maps",
+        params: {
+          categories,
+          plan_id: pool.plan_id,
+          ...(icp_view ? { icp_view } : {}),
+        },
+      } as Recipe["source"];
     }
     case "permits": {
       const permit_types = strings(f.permit_types ?? f.permits ?? f.permit_type);

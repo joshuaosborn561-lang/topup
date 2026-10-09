@@ -21,9 +21,13 @@ describe("D52 — job recipe", () => {
   });
 
   it("maps, permits and a table become their sources; physical by default", () => {
-    const maps = jobRecipe({ ...base, source: "maps", filters: { maps: "roofing, hvac", states: ["TX"] } });
+    const maps = jobRecipe({ ...base, source: "maps", filters: { maps: "roofing, hvac", plan_id: "custom-1", icp_filter: "client_bcp.v_lane_e_final" } });
     assert.equal(maps.source.kind, "maps");
-    if (maps.source.kind === "maps") assert.deepEqual(maps.source.params.categories, ["roofing", "hvac"]);
+    if (maps.source.kind === "maps") {
+      assert.deepEqual(maps.source.params.categories, ["roofing", "hvac"]);
+      assert.equal(maps.source.params.plan_id, "custom-1");
+      assert.equal(maps.source.params.icp_view, "v_lane_e_final");
+    }
     assert.equal(maps.routing[0]?.icp.kind, "physical");
     const permits = jobRecipe({ ...base, source: "permits", filters: { permit_types: ["roof"], states: ["TX"] } });
     assert.equal(permits.source.kind, "permits");
@@ -33,7 +37,8 @@ describe("D52 — job recipe", () => {
 
   it("refuses what it cannot build instead of guessing", () => {
     assert.throws(() => jobRecipe({ ...base, filters: { industries: ["Hospitals"] } }), /job_titles/);
-    assert.throws(() => jobRecipe({ ...base, source: "maps", filters: {} }), /categories/);
+    assert.throws(() => jobRecipe({ ...base, source: "maps", filters: {} }), /plan_id/);
+    assert.throws(() => jobRecipe({ ...base, source: "maps", filters: { plan_id: "custom-1" } }), /categories/);
     assert.throws(() => jobRecipe({ ...base, max_rows: 0 }), /max_rows/);
     assert.throws(() => jobRecipe({ ...base, max_rows: 2001 }), /max_rows/, "D53: a job pulls 1 to 2,000 rows");
   });
