@@ -65,7 +65,8 @@ The rules you apply:
    `public.leads` on the receipt's campaigns, emails already in
    `lp.<tag>_ingested_leads`, and this-client prior contact /
    suppression (D64). `size(client_tag, campaign_id, source, filters)`
-   is the free dry-run of that pool plus suppression by reason.
+   is the free dry-run of that pool plus suppression by reason. It
+   returns a `size_id` at once; poll `size(size_id)` (D65).
 4. `held(client_tag, campaign_id, filters, tam)`. If `net_new` < 1,000:
    *the TAM for this campaign is exhausted.* Stop there. If Josh asks for
    options, give each option with its count.

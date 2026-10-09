@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, sizeRead, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps } from "../canon/index.js";
+import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps, type SizeRunner } from "../canon/index.js";
 import type { Repo } from "../db/repo.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import type { Orchestrator } from "../orchestrator.js";
@@ -26,6 +26,7 @@ export interface GrokDeps {
   jobs: JobRunner;
   count: CountDeps;
   held: HeldDeps | null;
+  size: SizeRunner;
   by: string;
 }
 
@@ -92,10 +93,22 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "size",
     {
       description:
-        "Free dry-run of the stored Maps pool: walks the entire pool (plan_id + ICP view, same as count), reports already held, suppression drops by reason, and net new. Opens no job, spends nothing, does not block the lane. Counts only.",
-      inputSchema: { client_tag: snake, campaign_id: z.number().int(), source: z.enum(["getleads", "ai_ark", "maps", "permits"]), filters },
+        "Free dry-run of the stored Maps pool: already held, suppression drops by reason, net new. Returns a size_id at once (status started); poll size(size_id) until done. Opens no job, spends nothing, does not block the lane. Counts only.",
+      inputSchema: {
+        client_tag: snake.optional(),
+        campaign_id: z.number().int().optional(),
+        source: z.enum(["getleads", "ai_ark", "maps", "permits"]).optional(),
+        filters: filters.optional(),
+        size_id: z.string().uuid().optional().describe("Poll a size that already started."),
+      },
     },
-    async ({ client_tag, campaign_id, source, filters: f }) => text(await sizeRead(d.repo.raw(), { client_tag, campaign_id, source, filters: f })),
+    async ({ client_tag, campaign_id, source, filters: f, size_id }) => {
+      if (size_id) return text(await d.size.get(size_id));
+      if (!client_tag || campaign_id == null || !source) {
+        return text({ error: "size needs client_tag, campaign_id, source and filters, or a size_id to poll." });
+      }
+      return text(await d.size.start({ client_tag, campaign_id, source, filters: f ?? {} }));
+    },
   );
 
   server.registerTool(
@@ -260,7 +273,7 @@ function verbDescription(verb: Exclude<Verb, "pull">): string {
     case "icp":
       return "The ICP website gate (skill icp-website-gate): fetch each distinct domain's site with our own edge function (free), let Jev pick a category (about $0.11 per 1,000 sites), ask DiscoLike about the sites we could not read (about $0.0038 each), and write the verdict onto the rows. Only icp_gate = yes moves on; flagged rows are suppressed with a reason and stay in the table. The first call returns the estimate; approved_by runs it. Rows with no domain are left: enrich(job_id) then icp(job_id) again. Needs a label set for the client in topup.icp_variants.";
     case "enrich":
-      return "Fill the gaps on the job's rows: domains through the domain waterfall, people through the people waterfall, emails through the email waterfall up to the job's max tier. Paid tiers return an estimate first; approved_by runs them.";
+      return "Fill the gaps on the job's rows: domains through the domain waterfall, people through the people waterfall, emails through the email waterfall up to the job's max tier. Paid tiers return an estimate first; approved_by runs them (once per step/approver/amount). A step pre-D64 marked done with rows still queued is reopened and run.";
     case "verify":
       return "Verify the job's emails (MillionVerifier, then No2Bounce on the catch-alls). Paid; the first call returns the estimate, approved_by runs it. Returns sendable and reject rate.";
     case "normalize":

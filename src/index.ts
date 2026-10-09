@@ -17,6 +17,7 @@ import { VerifierClient } from "./clients/verifier.js";
 import { assertSupabaseProject, loadConfig } from "./config.js";
 import { Console } from "./console/console.js";
 import { loadClientTags } from "./canon/clients.js";
+import { SizeRunner } from "./canon/size.js";
 import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
 import { buildHealth } from "./health.js";
@@ -199,6 +200,7 @@ async function main(): Promise<void> {
           sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
           now: () => Date.now(),
         },
+        size: new SizeRunner(db),
       },
     }),
   );

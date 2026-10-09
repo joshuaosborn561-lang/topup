@@ -4,11 +4,12 @@ import type { RunRow } from "../../domain/runs.js";
 import type { Recipe } from "../../recipes/schema.js";
 import type { Console } from "../../console/console.js";
 import { mergeFieldColumn, mergeFieldsToHold } from "../../spine/gate.js";
-import { attempt, type StageOutcome } from "../common.js";
+import { attempt, columnsOf, type StageOutcome } from "../common.js";
 import { normalizeCompany, type CompanyRefs } from "./company.js";
 import { cityKey, type CityCoords } from "./geo.js";
 import { conversationalLocation } from "./location.js";
 import { normalizeFirstName } from "./names.js";
+import { isRoleInbox } from "./roleInbox.js";
 import { assignTeam } from "./team.js";
 
 export interface NormalizeRefs extends CompanyRefs {
@@ -22,6 +23,9 @@ export interface LeadInput {
   company_name: string | null;
   city: string | null;
   state: string | null;
+  email?: string | null;
+  /** Maps business name on Lane E (ingest `title`). */
+  title?: string | null;
 }
 
 export interface NormalizedFields {
@@ -40,10 +44,21 @@ export interface NormalizedFields {
  */
 export function normalizeLead(lead: LeadInput, refs: NormalizeRefs, opts: Recipe["normalize"]): NormalizedFields {
   const flags: Record<string, string[]> = {};
-  const name = opts.names_cities ? normalizeFirstName(lead.first_name) : { value: lead.first_name, flags: [] };
-  if (name.flags.length) flags.first_name = name.flags;
-  const company = opts.company ? normalizeCompany(lead.company_name, refs) : { value: lead.company_name, flags: [] };
-  if (company.flags.length) flags.company = company.flags;
+  const roleInbox = isRoleInbox(lead.email);
+  let firstRaw = lead.first_name;
+  if (roleInbox && !(firstRaw ?? "").trim() && opts.first_name_fallback) {
+    firstRaw = opts.first_name_fallback;
+    flags.first_name = ["role_inbox_fallback"];
+  }
+  const name = opts.names_cities ? normalizeFirstName(firstRaw) : { value: firstRaw, flags: flags.first_name ?? [] };
+  if (name.flags.length) flags.first_name = [...(flags.first_name ?? []), ...name.flags.filter((f) => !(flags.first_name ?? []).includes(f))];
+  let companyRaw = lead.company_name;
+  if (roleInbox && !(companyRaw ?? "").trim() && (lead.title ?? "").trim()) {
+    companyRaw = lead.title ?? null;
+    flags.company = ["maps_business_name"];
+  }
+  const company = opts.company ? normalizeCompany(companyRaw, refs) : { value: companyRaw, flags: flags.company ?? [] };
+  if (company.flags.length) flags.company = [...(flags.company ?? []), ...company.flags.filter((f) => !(flags.company ?? []).includes(f))];
   const loc = opts.location
     ? conversationalLocation(lead.city, lead.state, refs.coords)
     : { location: lead.city ?? "", metro: null, city: lead.city, geo: null, source: "city" as const, flags: [] as string[] };
@@ -87,13 +102,19 @@ export class NormalizeStage {
     const table = ingestedTable(run.client_tag);
     return attempt({ repo: this.repo, console: this.console }, run, "normalize", "normalizing", async () => {
       const refs = await loadRefs(this.repo);
+      const cols = await columnsOf(this.repo, table);
+      const emailExpr = cols.has("email") ? "email" : "null::text as email";
+      const titleExpr = cols.has("title") ? "title" : "null::text as title";
       let normalized = 0;
       let flagged = 0;
       const flagTotals: Record<string, number> = {};
       for (;;) {
         const { rows } = await this.repo.raw().query<LeadInput>(
-          `select id::text, first_name, company_name, city, state from ${table}
-           where run_id = $1 and lead_status = 'verified' order by id limit 1000`,
+          `select id::text, first_name, company_name, city, state, ${emailExpr}, ${titleExpr} from ${table}
+           where run_id = $1 and (
+             lead_status = 'verified'
+             or (lead_status = 'qa_hold' and qa_flags ? 'merge_field_empty')
+           ) order by id limit 1000`,
           [run.run_id],
         );
         if (rows.length === 0) break;
@@ -103,10 +124,11 @@ export class NormalizeStage {
             `update ${table} t set
                first_name_n = v.first_name_n, company_n = v.company_n, location = v.location,
                local_sports_team = v.local_sports_team, normalize_flags = v.flags::jsonb,
+               qa_flags = coalesce(t.qa_flags, '{}'::jsonb) - 'merge_field_empty' - 'hold_rule',
                normalized_at = now(), lead_status = 'normalized', status_changed_at = now()
              from unnest($2::uuid[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
                as v(id, first_name_n, company_n, location, local_sports_team, flags)
-             where t.id = v.id and t.run_id = $1 and t.lead_status = 'verified'`,
+             where t.id = v.id and t.run_id = $1 and t.lead_status in ('verified', 'qa_hold')`,
             [
               run.run_id,
               out.map((o) => o.id),

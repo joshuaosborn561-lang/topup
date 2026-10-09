@@ -225,6 +225,12 @@ const normalize = z
       .object({ league: z.enum(["mlb", "nfl", "both"]).default("both"), pro_only: z.boolean().default(false) })
       .nullable()
       .default({ league: "both", pro_only: false }),
+    /**
+     * D65: greeting used when a role-inbox row (info@, office@, …) has no
+     * first name. Null / omitted keeps today's hold. Josh decides the
+     * string; do not invent one.
+     */
+    first_name_fallback: z.string().min(1).max(40).nullable().optional(),
   })
   .strict();
 
