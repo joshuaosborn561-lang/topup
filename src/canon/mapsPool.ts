@@ -1,11 +1,11 @@
 import type { Queryable } from "../db/pool.js";
 
 /**
- * The stored Maps pool (D57, D59). `client_<tag>.maps_raw` scoped by the
+ * The stored Maps pool (D57, D59, D61). `client_<tag>.maps_raw` scoped by the
  * receipt's `plan_id` and categories. An ICP view named on the receipt
- * is applied when it lives in that client schema. Counts only. Never
- * scoped by ZIP or by client_tag alone. Never writes `dl_status`,
- * `sg_exclude`, or `skip_*`.
+ * is applied when it lives in that client schema. Counts only. The copy
+ * into the ingest table is idempotent on email. Never scoped by ZIP or
+ * by client_tag alone. Never writes `dl_status`, `sg_exclude`, or `skip_*`.
  */
 export const MAPS_POOL_NOTE =
   "the stored Maps pool in client_<tag>.maps_raw, scoped by plan_id and categories; a fresh scrape is the Google Maps Scraper MCP";
@@ -276,15 +276,33 @@ export interface MapsPoolCopy {
   run_id: string;
 }
 
+export interface MapsCopyResult {
+  inserted: number;
+  already_held: number;
+}
+
+async function destEmailUnique(db: Queryable, schema: string, table: string): Promise<boolean> {
+  const { rows } = await db.query<{ n: string }>(
+    `select count(*)::text as n from pg_indexes
+      where schemaname = $1 and tablename = $2
+        and indexdef ~* 'unique'
+        and indexdef ~* '\\(email\\)'`,
+    [schema, table],
+  );
+  return Number(rows[0]?.n ?? 0) > 0;
+}
+
 /**
  * Copy up to max_rows from the stored pool into lp.<tag>_ingested_leads.
- * INSERT … SELECT only; no row is returned to the caller. Does not touch
+ * INSERT … SELECT only; no row is returned to the caller. Dedupes the
+ * batch on email and skips emails already in the table (ON CONFLICT DO
+ * NOTHING). Skipped rows count as already_held (D61). Does not touch
  * dl_status, sg_exclude, or skip_* on the pool.
  */
 export async function copyMapsPool(
   db: Queryable & { withRun: <T>(runId: string, fn: (tx: Queryable) => Promise<T>) => Promise<T> },
   input: MapsPoolCopy,
-): Promise<number> {
+): Promise<MapsCopyResult> {
   const spec = mapsPoolFromFilters(input.filters, input.client_tag);
   if ("error" in spec) throw new Error(spec.error);
   const schema = clientSchema(input.client_tag);
@@ -332,12 +350,12 @@ export async function copyMapsPool(
   if (map.length === 0) throw new Error(`${schema}.${sourceName} has no columns the ingest table can take`);
 
   // Companion views (companies ∪ needs_domain) when the named ICP view has them.
-  let fromSql = `${q(schema)}.${q(sourceName)} s`;
+  let fromWhere = `from ${q(schema)}.${q(sourceName)} s where ${where}`;
   if (useCompanions && companions) {
     const { companies, needing } = companions;
     const rawCols = await columnsOf(db, schema, "maps_raw");
     const rawPlan = planClause("m", rawCols, "$1::text");
-    fromSql = `${q(schema)}.${q("maps_raw")} s
+    fromWhere = `from ${q(schema)}.${q("maps_raw")} s
         where s.place_id in (
           select c.place_id from ${q(schema)}.${q(companies)} c
             join ${q(schema)}.${q("maps_raw")} m on m.place_id = c.place_id
@@ -348,23 +366,43 @@ export async function copyMapsPool(
            where true${rawPlan}
         )
         and ${where}`;
-      const sql = `insert into ${q(destSchema)}.${q(destTable)} (${map.map(([d]) => q(d)).join(", ")})
-        select ${map.map(([, expr]) => expr).join(", ")}
-          from ${fromSql}
-         limit ${limitParam}`;
-      return db.withRun(input.run_id, async (tx) => {
-        const result = await tx.query(sql, params);
-        return result.rowCount ?? 0;
-      });
   }
 
-  const sql = `insert into ${q(destSchema)}.${q(destTable)} (${map.map(([d]) => q(d)).join(", ")})
-    select ${map.map(([, expr]) => expr).join(", ")}
-      from ${fromSql}
-     where ${where}
-     limit ${limitParam}`;
+  const destColsSql = map.map(([d]) => q(d)).join(", ");
+  const selectExprs = map.map(([d, expr]) => `${expr} as ${q(d)}`).join(", ");
+  const hasEmail = map.some(([d]) => d === "email");
+  const conflict = hasEmail && (await destEmailUnique(db, destSchema, destTable));
+
+  const sql = hasEmail
+    ? `with windowed as (
+        select ${selectExprs}
+          ${fromWhere}
+         limit ${limitParam}
+      ),
+      deduped as (
+        select distinct on (email) * from windowed order by email nulls last
+      ),
+      ins as (
+        insert into ${q(destSchema)}.${q(destTable)} (${destColsSql})
+        select ${destColsSql} from deduped
+        ${conflict ? "on conflict (email) do nothing" : ""}
+        returning 1
+      )
+      select (select count(*)::text from windowed) as windowed,
+             (select count(*)::text from ins) as inserted`
+    : `insert into ${q(destSchema)}.${q(destTable)} (${destColsSql})
+        select ${map.map(([, expr]) => expr).join(", ")}
+          ${fromWhere}
+         limit ${limitParam}`;
+
   return db.withRun(input.run_id, async (tx) => {
-    const result = await tx.query(sql, params);
-    return result.rowCount ?? 0;
+    const result = await tx.query<{ windowed?: string; inserted?: string }>(sql, params);
+    if (hasEmail) {
+      const windowed = Number(result.rows[0]?.windowed ?? 0);
+      const inserted = Number(result.rows[0]?.inserted ?? 0);
+      return { inserted, already_held: Math.max(0, windowed - inserted) };
+    }
+    const inserted = result.rowCount ?? 0;
+    return { inserted, already_held: 0 };
   });
 }

@@ -120,7 +120,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "pull",
     {
       description:
-        "Open a job for one campaign and run the pull: the source and filters you read off campaign_record, up to max_rows. The first call returns the spend estimate and a card; the same call with approved_by (the name of the person who said yes) runs it. Then suppress, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id. Pass job_id to continue an open job instead of opening one.",
+        "Open a job for one campaign and start the pull in the background: the source and filters you read off campaign_record, up to max_rows. Returns the job_id at once (status started). Poll job(job_id) until pull/ingest finish. A spend estimate still waits for approved_by on a later pull(job_id). Then suppress, icp, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id.",
       inputSchema: {
         client_tag: snake,
         campaign_id: z.number().int(),
@@ -152,10 +152,10 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         if (mappedTier.warning) {
           await d.ledger.event({ client_tag, lane: laneName, run_id: id, event: "legacy_tier", line: mappedTier.warning, actor: d.by }).catch(() => undefined);
         }
-        const pulled = await d.jobs.run(id, "pull", { by: d.by, approved_by: approved_by ?? null });
-        return text(mappedTier.warning ? { ...pulled, warning: mappedTier.warning } : pulled);
+        const begun = await d.jobs.begin(id, "pull", { by: d.by, approved_by: approved_by ?? null });
+        return text(mappedTier.warning ? { ...begun, warning: mappedTier.warning } : begun);
       }
-      return text(await d.jobs.run(id, "pull", { by: d.by, approved_by: approved_by ?? null }));
+      return text(await d.jobs.begin(id, "pull", { by: d.by, approved_by: approved_by ?? null }));
     },
   );
 

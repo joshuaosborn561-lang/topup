@@ -68,7 +68,9 @@ The rules you apply:
    options, give each option with its count.
 5. Tell Cayden or Josh: campaign, source, filters, count, net new, rows
    you will pull, worst-case cost. Wait for the yes.
-6. `pull(client_tag, campaign_id, source, filters, max_rows)`. Then
+6. `pull(client_tag, campaign_id, source, filters, max_rows)`. It returns
+   the `job_id` at once (`status` started). Poll `job(job_id)` until pull
+   is done, then
    `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage`, each
    with the `job_id`. `icp` is the website gate from `icp-website-gate`:
    it costs about $0.25 per 1,000 domains, needs a name, and reports the

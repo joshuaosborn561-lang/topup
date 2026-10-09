@@ -155,4 +155,55 @@ describe("D52 — job runner", () => {
     assert.match(r.why ?? "", /not a job/);
     assert.equal((await j.run("nope", "suppress", { by: "x" })).why, "no such job");
   });
+
+  it("refuses to open a job as the watch (D61)", async () => {
+    const repo = fakeRepo();
+    const j = runner(repo);
+    const watch = await j.open(spec, "the watch");
+    assert.ok(!watch.ok);
+    if (watch.ok) return;
+    assert.match(watch.message, /Nothing starts on its own/);
+    const also = await j.open(spec, "watch");
+    assert.ok(!also.ok);
+  });
+
+  it("begin returns started with the job id before the verb finishes (D61)", async () => {
+    const repo = fakeRepo();
+    let release!: (v: { kind: string; counts: Record<string, number> }) => void;
+    const held = new Promise<{ kind: string; counts: Record<string, number> }>((r) => {
+      release = r;
+    });
+    const stages = {
+      pull: { run: async () => held },
+      ingest: freeStage(repo, "ingest", { inserted: 1 }),
+      suppress: freeStage(repo, "suppress", {}),
+      puzzle: freeStage(repo, "puzzle", {}),
+      findEmails: freeStage(repo, "find_emails", {}),
+      verify: freeStage(repo, "verify", {}),
+      normalize: freeStage(repo, "normalize", {}),
+      qa: freeStage(repo, "qa", {}),
+      route: freeStage(repo, "route", {}),
+      stage: freeStage(repo, "stage", {}),
+      import: freeStage(repo, "import", {}),
+      postImport: freeStage(repo, "post_import", {}),
+    };
+    const j = new JobRunner({
+      repo: repo as never,
+      stages: stages as never,
+      console: { resolveAs: async () => ({ ok: true }) } as never,
+      ledger: { event: async () => undefined } as never,
+      now: () => 1700000000000,
+    });
+    const opened = await j.open(spec, "mcp:operator");
+    assert.ok(opened.ok);
+    if (!opened.ok) return;
+    const started = await j.begin(opened.job_id, "pull", { by: "mcp:operator" });
+    assert.equal(started.status, "started");
+    assert.equal(started.job_id, opened.job_id);
+    assert.match(started.next, /job\(job_id\)/);
+    assert.notEqual(repo.steps.get(`${opened.job_id}/pull`)?.status, "done");
+    release({ kind: "done", counts: { pulled: 2 } });
+    await held;
+    await new Promise((r) => setTimeout(r, 10));
+  });
 });

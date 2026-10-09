@@ -80,6 +80,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D58 | Live; LeadMagic is dropped. Replay maps `email_max_tier=leadmagic` to `aiark` and a LeadMagic person source to the live Find Named Person order; old receipts are not rewritten |
 | D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories are not applied again on that union |
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
+| D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
 
 ---
 
@@ -2020,3 +2021,40 @@ project's 60-connection cap with the live Allo hooks; the limits in the
 skill are the limits in the code.
 
 **Guard.** `src/guards/d60_icp_gate.test.ts`. Ask Josh.
+
+## D61 — Maps pull is idempotent; pull returns a job id; nothing opens as the watch
+
+**Decision.** Three things, one rule.
+
+1. **Idempotent maps insert.** `copyMapsPool` writes `lp.<tag>_ingested_leads`
+   with `DISTINCT ON (email)` inside the batch and `ON CONFLICT (email) DO
+   NOTHING` when that table has a unique email index. Skipped rows (batch
+   dups and emails already in the table) are counted as `already_held`.
+   The pull does not fail on `emcor_ingested_leads_email_uidx`. Counts
+   only; no row comes back.
+2. **Pull returns at once.** `pull` opens the job, returns `job_id` with
+   `status` started, and runs pull then ingest in the background. Poll
+   `job(job_id)`. Grok still calls the verb; nothing chains the next one.
+   A spend card still waits for `approved_by` on a later `pull(job_id)`.
+3. **The watch cannot open a run.** `opened_by` of `watch` / `the watch`,
+   or trigger `runway` / `scheduled`, is refused. Boot does not drive
+   leftover watch runs. The old runway watch is gone from this repo
+   (D53); this stops it if a stale image or a leftover caller tries again.
+
+**Why.** Job `89f5708d` (emcor #4037475, maps, plan `custom-1789679826`)
+failed at pull: `duplicate key value violates unique constraint
+"emcor_ingested_leads_email_uidx"`. The same MCP `pull` also timed out
+waiting for the 2,000-row copy. Separately, run `dc241965` opened today
+with `opened_by=watch`, trigger `runway`, event *"opened by the watch
+(client-wide runway low, still working)"*, then the old size/pull
+pipeline. That violates canon rule 5. `src/watch` is already deleted;
+the live Railway image at 13:19 UTC still opened ~20 watch runs.
+
+**Tradeoff.** A maps pull of 2,000 unique emails that are already in the
+ingest table inserts 0 and reports `already_held` 2000; it does not keep
+scanning for more new ones past `max_rows`. `pull` no longer returns the
+final pull counts on the first call — `job(job_id)` does. Railway cron
+and a second replica cannot be turned off from this repo; they are
+named in the PR.
+
+**Guard.** `src/guards/d61_maps_pull_async_watch.test.ts`. Ask Josh.

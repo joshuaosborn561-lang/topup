@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { countMapsPool, mapsPoolFromFilters, resolveMapsPool } from "./mapsPool.js";
+import { copyMapsPool, countMapsPool, mapsPoolFromFilters, resolveMapsPool } from "./mapsPool.js";
 
 /**
  * D59 — the ICP path must survive a real Postgres bind, not a mock.
@@ -90,6 +90,57 @@ describe("D59 — maps ICP against real Postgres", () => {
       assert.equal(r.pool, 3, "D59: a,b,c on this plan; d is another plan_id");
       assert.equal(r.already_used, 0);
       assert.equal(r.net_new, 3);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("D61 — maps copy is idempotent on email", () => {
+  it("dedupes the batch and skips emails already in the ingest table", async () => {
+    const { db, close } = await pgliteDb();
+    try {
+      await db.exec(`
+        create schema client_t;
+        create schema lp;
+        create table client_t.maps_raw (
+          place_id text, plan_id text, main_category text, name text, email text, domain text
+        );
+        create table lp.t_ingested_leads (
+          id serial primary key,
+          email text,
+          company_name text,
+          company_domain text,
+          industry text,
+          source_label text
+        );
+        create unique index t_ingested_leads_email_uidx on lp.t_ingested_leads (email);
+        insert into lp.t_ingested_leads (email, company_name) values ('held@example.test', 'Old');
+        insert into client_t.maps_raw (place_id, plan_id, main_category, name, email, domain) values
+          ('a', 'custom-1', 'church', 'A', 'held@example.test', 'a.example'),
+          ('b', 'custom-1', 'church', 'B', 'new@example.test', 'b.example'),
+          ('c', 'custom-1', 'church', 'C', 'new@example.test', 'c.example'),
+          ('d', 'custom-1', 'church', 'D', 'fresh@example.test', 'd.example');
+      `);
+      const withRun = async <T>(_id: string, fn: (tx: typeof db) => Promise<T>) => fn(db);
+      const copied = await copyMapsPool({ ...db, withRun } as never, {
+        client_tag: "t",
+        filters: { plan_id: "custom-1", categories: ["church"] },
+        max_rows: 4,
+        source_label: "fixture",
+        run_id: "00000000-0000-0000-0000-000000000001",
+      });
+      assert.equal(copied.inserted, 2, "D61: two new emails insert; the held one and the batch dup do not. Ask Josh.");
+      assert.equal(copied.already_held, 2, "D61: the existing email and the in-batch dup are already_held. Ask Josh.");
+      const again = await copyMapsPool({ ...db, withRun } as never, {
+        client_tag: "t",
+        filters: { plan_id: "custom-1", categories: ["church"] },
+        max_rows: 4,
+        source_label: "fixture-2",
+        run_id: "00000000-0000-0000-0000-000000000002",
+      });
+      assert.equal(again.inserted, 0, "D61: a second copy of the same emails inserts nothing. Ask Josh.");
+      assert.equal(again.already_held, 4);
     } finally {
       await close();
     }
