@@ -76,6 +76,39 @@ export function ingestJobFromResponse(payload: unknown): { job_id: string; statu
   return lpRunJobFromResponse(payload);
 }
 
+/**
+ * `lp_export` now wraps the payload as `{ok, tool, result}` the same way
+ * `lp_run` does (job 46b1c941: keys were `["ok","tool","result"]`). Read
+ * `result.signed_url` / `result.row_count`, and still accept the flat shape.
+ */
+export function lpExportFromResponse(payload: unknown): ExportResult | { error: string } {
+  const root = asRecord(parseJson(payload));
+  const resultRaw = root ? parseJson(root.result) : null;
+  const result = asRecord(resultRaw) ?? root ?? {};
+  const url = firstString(result, ["signed_url", "url"]) ?? (root ? firstString(root, ["signed_url", "url"]) : null);
+  const count = firstNumber(result, ["row_count", "rows"]) ?? (root ? firstNumber(root, ["row_count", "rows"]) : null);
+  if (url && count != null) return { signed_url: url, row_count: count };
+  const message = firstMessage(result) ?? (root ? firstMessage(root) : null);
+  const keys = Object.keys(root ?? {});
+  return { error: message ?? `lp_export returned no signed_url/row_count: ${JSON.stringify(keys)}` };
+}
+
+function firstString(obj: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function firstNumber(obj: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = obj[key];
+    if (value !== undefined && value !== null && value !== "" && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
 function parseJson(value: unknown): unknown {
   if (typeof value !== "string") return value;
   const text = value.trim();
@@ -129,12 +162,9 @@ export class LeadPipeClient implements LeadPipe {
       columns,
       where,
     });
-    const url = (res.signed_url ?? res.url) as string | undefined;
-    const count = Number(res.row_count ?? res.rows ?? NaN);
-    if (!url || !Number.isFinite(count)) {
-      throw new Error(`lp_export returned no signed_url/row_count: ${JSON.stringify(Object.keys(res))}`);
-    }
-    return { signed_url: url, row_count: count };
+    const parsed = lpExportFromResponse(res);
+    if ("error" in parsed) throw new Error(parsed.error);
+    return parsed;
   }
 
   async ingestCsv(clientTag: string, params: IngestCsvParams): Promise<JobStarted> {

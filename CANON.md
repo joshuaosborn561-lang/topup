@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D62** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D64** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -62,14 +62,30 @@ D48).
     those names (D58).
 13. **Maps pull is idempotent, and pull itself is not a long wait.** The
     stored-pool copy into `lp.<tag>_ingested_leads` reads the named ICP
-    view (or `maps_raw`), not the companion-view join. It dedupes the
-    batch on email and skips emails already there (`NOT EXISTS`; `ON
-    CONFLICT` only when a unique email index exists). Skipped rows are
-    `already_held`. The copy runs under a statement timeout. `pull`
-    returns the job id at once and runs in the background; a background
-    verb that throws or outruns the job timeout ends `failed` with
-    `last_error`. `job(job_id)` is the poll (D61, D62).
-14. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+    view (or `maps_raw`), not the companion-view join. It skips emails
+    already in the ingest table *before* `max_rows`, then dedupes the
+    batch on email (`NOT EXISTS`; `ON CONFLICT` only when a unique email
+    index exists). Skipped rows are `already_held`. Successive pulls
+    advance through the pool. The copy runs under a statement timeout.
+    `pull` returns the job id at once and runs in the background; a
+    background verb that throws or outruns the job timeout ends `failed`
+    with `last_error`. `job(job_id)` is the poll (D61, D62, D64).
+14. **A paid step that did not run is not done.** `approved_by` (within
+    the approved amount) records the approval, closes the spend card
+    (and a leftover parked spend card), and runs the paid work. A step
+    that processed 0 of N queued rows reports failed/blocked with
+    `last_error`, not `done`. Downstream `find_emails` does not skip
+    while `needs_person` or `needs_domain` remain. Jev's ICP label is a
+    token from the allowed set, never the raw sentence; unparseable is
+    null + flag. A spend card is re-quoted when the estimate changes and
+    records `actual_cents` on completion. Maps `count` used/net-new is
+    the union of already-live, already-ingested and already-contacted
+    (90-day this client + suppression), each reported. `size` is the
+    free dry-run of that pool plus suppression by reason; it opens no
+    job. `lp_export` reads `result.signed_url` / `result.row_count`. A
+    verify retry uses a recorded approval and does not park on a third
+    failure (D64).
+15. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -83,8 +99,9 @@ bears on stated and no verdict (D52).
 | `campaigns(client_tag?, include_inactive?)` | Every ACTIVE email campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. Cold call campaigns are left off. |
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
-| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; binds are typed; reports pool, already used as live leads on the receipt's campaigns, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
+| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds, and `net_new`. Under 1,000: the TAM for this campaign is exhausted. |
+| `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
 | `spend` | Today, thirty days by vendor, month to date, and every spend card waiting. |
@@ -99,11 +116,11 @@ Nothing chains. The job is one run row for one campaign (D52).
 
 | Verb | Stage(s) | Notes |
 |---|---|---|
-| `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits` or `table`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
+| `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits` or `table`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails *before* `max_rows` (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
 | `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
-| `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; no and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
-| `enrich(job_id, approved_by?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. |
-| `verify(job_id, approved_by?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. |
+| `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
+| `enrich(job_id, approved_by?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval, closes the card, and runs the paid people waterfall. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. |
+| `verify(job_id, approved_by?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry; a third failure does not park. |
 | `normalize(job_id)` | normalize | Names, companies, locations, local sports team. Free. |
 | `qa(job_id)` | qa | Every merge field populated or the row is held. Holds show in `holds`. |
 | `stage(job_id)` | route, stage | Rows routed to the campaign and staged. |
@@ -135,6 +152,8 @@ call next.
    Any other key stays as stored. Maps keeps `plan_id` and the categories
    list; it never scopes by ZIP or `client_tag` alone (D57). Companion
    views that omit `plan_id` join `maps_raw` so `$1::text` is used (D59).
+   Maps used/net-new includes already-ingested and this-client prior
+   contact/suppression (D64). `size` is the free dry-run of that pool.
 4. `held(client_tag, campaign_id, filters, tam)` with that count. If
    `net_new` is under 1,000, say *the TAM for this campaign is exhausted*
    and stop. Do not widen. If Josh wants options, give counts for each.
@@ -181,7 +200,9 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   companion-view join (D62). A maps insert that hits an email already
   in `lp.<tag>_ingested_leads` skips it as `already_held` (D61, D62).
   Never leave a background pull at `running` with empty counts and no
-  `last_error` (D62).
+  `last_error` (D62). Never apply `max_rows` before skipping held maps
+  emails (D64). Never mark a paid step done when it did not run (D64).
+  Never store Jev's raw sentence as an ICP label (D64).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).

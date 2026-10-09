@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps } from "../canon/index.js";
+import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, sizeRead, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps } from "../canon/index.js";
 import type { Repo } from "../db/repo.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import type { Orchestrator } from "../orchestrator.js";
@@ -29,7 +29,7 @@ export interface GrokDeps {
   by: string;
 }
 
-export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "jobs", "job", "spend", "leftovers"] as const;
+export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
 export const GROK_VERBS = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
@@ -86,6 +86,16 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
       return text(await heldRead(d.held, { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
     },
+  );
+
+  server.registerTool(
+    "size",
+    {
+      description:
+        "Free dry-run of the stored Maps pool: walks the entire pool (plan_id + ICP view, same as count), reports already held, suppression drops by reason, and net new. Opens no job, spends nothing, does not block the lane. Counts only.",
+      inputSchema: { client_tag: snake, campaign_id: z.number().int(), source: z.enum(["getleads", "ai_ark", "maps", "permits"]), filters },
+    },
+    async ({ client_tag, campaign_id, source, filters: f }) => text(await sizeRead(d.repo.raw(), { client_tag, campaign_id, source, filters: f })),
   );
 
   server.registerTool(

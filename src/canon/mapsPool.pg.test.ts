@@ -143,7 +143,7 @@ describe("D61 — maps copy is idempotent on email", () => {
         run_id: "00000000-0000-0000-0000-000000000001",
       });
       assert.equal(copied.inserted, 2, "D61: two new emails insert; the held one and the batch dup do not. Ask Josh.");
-      assert.equal(copied.already_held, 2, "D61: the existing email and the in-batch dup are already_held. Ask Josh.");
+      assert.equal(copied.already_held, 1, "D64: already_held is dest∩pool before insert (the one existing email). Ask Josh.");
       const again = await copyMapsPool({ ...db, withRun } as never, {
         client_tag: "t",
         filters: { plan_id: "custom-1", categories: ["church"] },
@@ -152,7 +152,7 @@ describe("D61 — maps copy is idempotent on email", () => {
         run_id: "00000000-0000-0000-0000-000000000002",
       });
       assert.equal(again.inserted, 0, "D61: a second copy of the same emails inserts nothing. Ask Josh.");
-      assert.equal(again.already_held, 4);
+      assert.equal(again.already_held, 3, "D64: dest now holds the three distinct pool emails.");
     } finally {
       await close();
     }
@@ -192,7 +192,7 @@ describe("D62 — maps copy times out and dedupes without a unique index", () =>
         run_id: "00000000-0000-0000-0000-000000000003",
       });
       assert.equal(copied.inserted, 1, "D62: NOT EXISTS skips the held email without a unique index. Ask Josh.");
-      assert.equal(copied.already_held, 2, "D62: held + batch dup are already_held without ON CONFLICT. Ask Josh.");
+      assert.equal(copied.already_held, 1, "D64: dest∩pool before insert is the one held email.");
     } finally {
       await close();
     }
@@ -292,6 +292,44 @@ describe("D62 — maps copy times out and dedupes without a unique index", () =>
         0,
         "D62: a failed copy must roll back. Ask Josh.",
       );
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("D64 — maps pull skips held emails before max_rows", () => {
+  it("a 2-row pull after three held emails still inserts the two new ones", async () => {
+    const { db, close } = await pgliteDb();
+    try {
+      await db.exec(`
+        create schema client_t;
+        create schema lp;
+        create table client_t.maps_raw (
+          place_id text, plan_id text, main_category text, name text, email text, domain text
+        );
+        create table lp.t_ingested_leads (
+          id serial primary key, email text, company_name text, company_domain text, industry text, source_label text
+        );
+        insert into lp.t_ingested_leads (email) values
+          ('held1@example.test'), ('held2@example.test'), ('held3@example.test');
+        insert into client_t.maps_raw (place_id, plan_id, main_category, name, email, domain) values
+          ('a', 'custom-1', 'church', 'A', 'held1@example.test', 'a.example'),
+          ('b', 'custom-1', 'church', 'B', 'held2@example.test', 'b.example'),
+          ('c', 'custom-1', 'church', 'C', 'held3@example.test', 'c.example'),
+          ('d', 'custom-1', 'church', 'D', 'new1@example.test', 'd.example'),
+          ('e', 'custom-1', 'church', 'E', 'new2@example.test', 'e.example');
+      `);
+      const withRun = async <T>(_id: string, fn: (tx: typeof db) => Promise<T>) => withTx(db, fn);
+      const copied = await copyMapsPool({ ...db, withRun } as never, {
+        client_tag: "t",
+        filters: { plan_id: "custom-1", categories: ["church"] },
+        max_rows: 2,
+        source_label: "fixture",
+        run_id: "00000000-0000-0000-0000-000000000064",
+      });
+      assert.equal(copied.inserted, 2, "D64: LIMIT applies after skipping held emails so successive pulls advance. Ask Josh.");
+      assert.equal(copied.already_held, 3);
     } finally {
       await close();
     }

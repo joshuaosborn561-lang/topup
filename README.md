@@ -50,8 +50,9 @@ Reads (counts, ids, labels, notes; the rule stated; no verdict):
 | `campaigns` | Every ACTIVE campaign with sends, positives, rate per 2,000, leads left, `passes_reply_bar`. |
 | `campaign_record` | Every receipt, build row, lead stamp count, registry row and note for one campaign. |
 | `sources` | The source vocabulary. |
-| `count` | A count on getleads (free), AI Ark (paid, needs a name), Maps (stored pool by `plan_id`) or permits with the filters you pass. |
+| `count` | A count on getleads (free), AI Ark (paid, needs a name), Maps (stored pool by `plan_id`; used is live + ingested + contacted) or permits with the filters you pass. |
 | `held` | How much of a getleads pool the client already holds, and net new. |
+| `size` | Free dry-run of the stored Maps pool: already held, suppression by reason, net new. Opens no job. |
 | `jobs`, `job` | The job log and one job with its steps, report, vendor calls and waiting cards. |
 | `spend` | Today, thirty days, month to date, cards waiting. |
 | `leftovers` | Where past pulls left rows that may never have been sent, per client, as counts, with the gap each store still has (domain, person, email, phone) and the step that fills it. |
@@ -62,7 +63,7 @@ Verbs (one stage each, counts back):
 
 | Tool | Runs |
 |---|---|
-| `pull` | Opens a job, returns the `job_id` at once, and pulls 1 to 2,000 rows from getleads, Maps, permits or a table in the background; poll `job(job_id)`. A hang or throw ends failed with `last_error`. Maps copies the named ICP view (not the companion join) and skips emails already in the ingest table. |
+| `pull` | Opens a job, returns the `job_id` at once, and pulls 1 to 2,000 rows from getleads, Maps, permits or a table in the background; poll `job(job_id)`. A hang or throw ends failed with `last_error`. Maps copies the named ICP view (not the companion join) and skips emails already in the ingest table before `max_rows`. |
 | `suppress` | The suppression set. Returns raw, dropped by reason, net new. |
 | `icp` | The ICP website gate (our own site fetch, Jev picks a category, DiscoLike on unreadable sites). Flagged rows are suppressed with a reason. Paid; estimate first. |
 | `enrich` | Domains, people, emails through the waterfalls. Paid tiers estimate first. |

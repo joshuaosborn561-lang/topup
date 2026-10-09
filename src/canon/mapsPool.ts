@@ -29,11 +29,17 @@ export interface MapsPoolSpec {
 
 export interface MapsPoolCount {
   pool: number;
+  already_live: number;
+  already_ingested: number;
+  already_contacted: number;
   already_used: number;
   net_new: number;
   filters_used: Record<string, unknown>;
   relation: string;
 }
+
+/** Recycle window for maps used/contacted, matching suppress on main (D35). Ask Josh if D63's 6 months should replace this. */
+export const MAPS_USED_CONTACT_DAYS = 90;
 
 export function strings(v: unknown): string[] {
   if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -240,14 +246,118 @@ export async function countMapsPool(db: Queryable, clientTag: string, filters: R
   }
   const { rows } = await db.query<{ n: string }>(`select count(*)::text as n from ${resolved.fromSql}${where}`, resolved.params);
   const pool = Number(rows[0]?.n ?? 0);
-  const already_used = await countAlreadyUsed(db, clientTag, spec.plan_id);
+  const used = await countMapsUsedParts(db, clientTag, spec.plan_id, resolved, where);
   return {
     pool,
-    already_used,
-    net_new: Math.max(0, pool - already_used),
+    already_live: used.already_live,
+    already_ingested: used.already_ingested,
+    already_contacted: used.already_contacted,
+    already_used: used.already_used,
+    net_new: Math.max(0, pool - used.already_used),
     filters_used: mapsPoolFiltersUsed(spec),
     relation: spec.icp_view ? `${resolved.schema}.${spec.icp_view}` : `${resolved.schema}.maps_raw`,
   };
+}
+
+export interface MapsUsedParts {
+  already_live: number;
+  already_ingested: number;
+  already_contacted: number;
+  already_used: number;
+}
+
+/**
+ * Used components for a maps pool (D64). Counts only. Union of pool emails
+ * already live on the receipt's campaigns, already in the ingest table, or
+ * already contacted / on public.suppression for this client (90 days).
+ */
+export async function countMapsUsedParts(
+  db: Queryable,
+  clientTag: string,
+  planId: string,
+  resolved: MapsPoolResolved,
+  where: string,
+): Promise<MapsUsedParts> {
+  const liveOnly = await countAlreadyUsed(db, clientTag, planId);
+  const fallback: MapsUsedParts = { already_live: liveOnly, already_ingested: 0, already_contacted: 0, already_used: liveOnly };
+  const destTable = `${clientTag}_ingested_leads`;
+  if (!IDENT.test(destTable)) return fallback;
+  try {
+    const rawCols = await columnsOf(db, resolved.schema, "maps_raw");
+    if (!rawCols.has("email") || !rawCols.has("place_id")) return fallback;
+    const emailExpr = "nullif(btrim(m.email), '')";
+    const joinRaw = `left join ${q(resolved.schema)}.${q("maps_raw")} m on m.place_id = pool.place_id`;
+    const tagParam = `$${resolved.params.length + 1}`;
+    const { rows } = await db.query<{ already_live: string; already_ingested: string; already_contacted: string; already_used: string }>(
+      `with pool_emails as (
+         select distinct lower(${emailExpr}) as e
+           from ${resolved.fromSql}
+           ${joinRaw}
+           ${where}
+       ),
+       emails as (select e from pool_emails where e is not null and position('@' in e) > 0)
+       select
+         (select count(*)::text from emails e where exists (
+            select 1 from public.leads l
+            join public.campaigns c on c.id = l.campaign_id
+            where lower(l.email) = e.e
+              and c.smartlead_campaign_id in (
+                select distinct x::bigint
+                  from topup.pull_receipts r,
+                       unnest(coalesce(r.campaign_ids, '{}'::bigint[])) x
+                 where r.client_tag = ${tagParam}
+                   and r.company_filters->>'plan_id' = $1::text
+              )
+         )) as already_live,
+         (select count(*)::text from emails e where exists (
+            select 1 from ${q("lp")}.${q(destTable)} h where lower(h.email) = e.e
+         )) as already_ingested,
+         (select count(*)::text from emails e where exists (
+            select 1 from public.leads l
+            join public.sends s on s.lead_id = l.id
+            join topup.client_map cm on cm.smartlead_client_id = l.smartlead_client_id
+            where lower(l.email) = e.e and cm.client_tag = ${tagParam}
+              and s.sent and s.sent_at is not null
+              and s.sent_at >= now() - interval '${MAPS_USED_CONTACT_DAYS} days'
+         ) or exists (
+            select 1 from public.suppression s where lower(s.email) = e.e
+         )) as already_contacted,
+         (select count(*)::text from emails e where exists (
+            select 1 from public.leads l
+            join public.campaigns c on c.id = l.campaign_id
+            where lower(l.email) = e.e
+              and c.smartlead_campaign_id in (
+                select distinct x::bigint
+                  from topup.pull_receipts r,
+                       unnest(coalesce(r.campaign_ids, '{}'::bigint[])) x
+                 where r.client_tag = ${tagParam}
+                   and r.company_filters->>'plan_id' = $1::text
+              )
+         ) or exists (
+            select 1 from ${q("lp")}.${q(destTable)} h where lower(h.email) = e.e
+         ) or exists (
+            select 1 from public.leads l
+            join public.sends s on s.lead_id = l.id
+            join topup.client_map cm on cm.smartlead_client_id = l.smartlead_client_id
+            where lower(l.email) = e.e and cm.client_tag = ${tagParam}
+              and s.sent and s.sent_at is not null
+              and s.sent_at >= now() - interval '${MAPS_USED_CONTACT_DAYS} days'
+         ) or exists (
+            select 1 from public.suppression s where lower(s.email) = e.e
+         )) as already_used`,
+      [...resolved.params, clientTag],
+    );
+    const row = rows[0];
+    if (!row) return fallback;
+    return {
+      already_live: Number(row.already_live ?? 0),
+      already_ingested: Number(row.already_ingested ?? 0),
+      already_contacted: Number(row.already_contacted ?? 0),
+      already_used: Number(row.already_used ?? 0),
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 /** Leads already on campaigns named by a receipt that carries this plan_id. Counts only. */
@@ -301,11 +411,12 @@ async function destEmailUnique(db: Queryable, schema: string, table: string): Pr
 /**
  * Copy up to max_rows from the stored pool into lp.<tag>_ingested_leads.
  * INSERT … SELECT only; no row is returned to the caller. Reads the named
- * ICP view (or maps_raw), never the companion-view join (D62). Dedupes
- * the batch on email and skips emails already in the table with NOT EXISTS
- * (ON CONFLICT only when a unique email index exists). Skipped rows count
- * as already_held (D61). The copy transaction has a statement timeout
- * (D62). Does not touch dl_status, sg_exclude, or skip_* on the pool.
+ * ICP view (or maps_raw), never the companion-view join (D62). Skips
+ * emails already in the table *before* LIMIT so successive pulls advance
+ * (D64). Dedupes the batch on email (ON CONFLICT only when a unique email
+ * index exists). already_held is dest∩pool before insert. The copy
+ * transaction has a statement timeout (D62). Does not touch dl_status,
+ * sg_exclude, or skip_* on the pool.
  */
 export async function copyMapsPool(
   db: Queryable & { withRun: <T>(runId: string, fn: (tx: Queryable) => Promise<T>) => Promise<T> },
@@ -361,26 +472,34 @@ export async function copyMapsPool(
   const timeoutMs = Math.max(1, Math.floor(input.statementTimeoutMs ?? MAPS_COPY_STATEMENT_TIMEOUT_MS));
 
   const sql = hasEmail
-    ? `with windowed as (
+    ? `with scoped as (
         select ${selectExprs}
           ${fromWhere}
-         limit ${limitParam}
+      ),
+      already as (
+        select count(distinct s.email)::text as n from scoped s
+         where s.email is not null and exists (
+           select 1 from ${destRef} held where held.email is not distinct from s.email
+         )
+      ),
+      eligible as (
+        select * from scoped s
+         where s.email is null or not exists (
+           select 1 from ${destRef} held where held.email is not distinct from s.email
+         )
       ),
       deduped as (
-        select distinct on (email) * from windowed order by email nulls last
+        select distinct on (email) * from eligible order by email nulls last
+        limit ${limitParam}
       ),
       ins as (
         insert into ${destRef} (${destColsSql})
         select ${destColsSql} from deduped d
-        where d.email is null or not exists (
-          select 1 from ${destRef} held
-           where held.email is not distinct from d.email
-        )
         ${conflict ? "on conflict (email) do nothing" : ""}
         returning 1
       )
-      select (select count(*)::text from windowed) as windowed,
-             (select count(*)::text from ins) as inserted`
+      select (select count(*)::text from ins) as inserted,
+             (select n from already) as already_held`
     : `insert into ${destRef} (${destColsSql})
         select ${map.map(([, expr]) => expr).join(", ")}
           ${fromWhere}
@@ -388,11 +507,11 @@ export async function copyMapsPool(
 
   return db.withRun(input.run_id, async (tx) => {
     await tx.query(`set local statement_timeout = ${timeoutMs}`);
-    const result = await tx.query<{ windowed?: string; inserted?: string }>(sql, params);
+    const result = await tx.query<{ already_held?: string; inserted?: string }>(sql, params);
     if (hasEmail) {
-      const windowed = Number(result.rows[0]?.windowed ?? 0);
       const inserted = Number(result.rows[0]?.inserted ?? 0);
-      return { inserted, already_held: Math.max(0, windowed - inserted) };
+      const already_held = Number(result.rows[0]?.already_held ?? 0);
+      return { inserted, already_held };
     }
     const inserted = result.rowCount ?? 0;
     return { inserted, already_held: 0 };

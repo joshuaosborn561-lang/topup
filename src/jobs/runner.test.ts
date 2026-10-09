@@ -27,7 +27,10 @@ function fakeRepo(opts: { loadsPaused?: boolean } = {}) {
     mergeRunCounts: async (id: string, counts: Record<string, number>) => { const r = runs.get(id)!; r.counts_by_status = { ...r.counts_by_status, ...counts }; },
     beginStep: async (id: string, step: string) => { const k = `${id}/${step}`; const s = steps.get(k) ?? { status: "pending", attempts: 0, approved_cents: 0 }; s.attempts += 1; s.status = "running"; steps.set(k, s); return { ok: true, attempts: s.attempts }; },
     finishStep: async (id: string, step: string) => { const k = `${id}/${step}`; const s = steps.get(k) ?? { status: "pending", attempts: 1, approved_cents: 0 }; s.status = "done"; steps.set(k, s); },
-    getStep: async (id: string, step: string) => { const s = steps.get(`${id}/${step}`); return s ? { step, ...s } : null; },
+    getStep: async (id: string, step: string) => {
+      const s = steps.get(`${id}/${step}`);
+      return s ? { step, worst_case_cents: (s as { worst_case_cents?: number }).worst_case_cents ?? 0, ...s } : null;
+    },
     openCardsForRun: async (id: string) => cards.filter((c) => c.run_id === id && c.status === "open"),
     approveStep: async (id: string, step: string, cents: number) => { const k = `${id}/${step}`; const s = steps.get(k) ?? { status: "pending", attempts: 0, approved_cents: 0 }; s.approved_cents += cents; steps.set(k, s); },
     resolveCard: async (card_id: string, by: string, resolution: string) => { const c = cards.find((x) => x.card_id === card_id)!; c.status = "resolved"; (c as Record<string, unknown>).resolved_by = by; (c as Record<string, unknown>).resolution = resolution; return c; },
@@ -74,6 +77,7 @@ function runner(repo: ReturnType<typeof fakeRepo>) {
     pull: paidStage(repo, "pull", 180, { pulled: 1200 }),
     ingest: freeStage(repo, "ingest", { inserted: 1184, dupes: 16 }),
     suppress: freeStage(repo, "suppress", { raw: 1184, net_new: 900 }),
+    icp: freeStage(repo, "icp", { passed: 0 }),
     puzzle: freeStage(repo, "puzzle", { domains_found: 0 }),
     findEmails: paidStage(repo, "find_emails", 300, { found: 200 }),
     verify: paidStage(repo, "verify", 250, { sendable: 850 }),
@@ -256,5 +260,77 @@ describe("D52 — job runner", () => {
     assert.equal(run.status, "failed", "D62: a hung background pull must close as failed. Ask Josh.");
     assert.match(run.last_error ?? "", /timed out/, "D62: last_error must name the timeout. Ask Josh.");
     assert.equal(repo.steps.get(`${opened.job_id}/pull`)?.status, "failed");
+  });
+
+  it("approved_by closes a parked puzzle spend card and records the amount (D64)", async () => {
+    const repo = fakeRepo();
+    repo.steps.set("pending", { status: "pending", attempts: 0, approved_cents: 0 });
+    const stages = {
+      pull: freeStage(repo, "pull", { pulled: 1 }),
+      ingest: freeStage(repo, "ingest", { inserted: 1 }),
+      suppress: freeStage(repo, "suppress", {}),
+      icp: freeStage(repo, "icp", {}),
+      puzzle: {
+        run: async (run: RunRow) => {
+          const s = repo.steps.get(`${run.run_id}/puzzle`) ?? { status: "pending", attempts: 0, approved_cents: 0 };
+          if ((s.approved_cents ?? 0) < 67) {
+            if (!repo.cards.some((c) => c.run_id === run.run_id && c.status === "open")) {
+              repo.cards.push({
+                card_id: "f19dbfae",
+                run_id: run.run_id,
+                kind: "parked",
+                payload: { step: "puzzle", reason: "over the auto cap, Ask Josh", worst_case_cents: 67 },
+                status: "open",
+                audience: "operator",
+              });
+            }
+            const row = repo.steps.get(`${run.run_id}/puzzle`) ?? { status: "pending", attempts: 1, approved_cents: 0 };
+            (row as { worst_case_cents?: number }).worst_case_cents = 67;
+            repo.steps.set(`${run.run_id}/puzzle`, row);
+            return { kind: "parked", reason: "over the auto cap, Ask Josh" };
+          }
+          await repo.finishStep(run.run_id, "puzzle");
+          return { kind: "done", counts: { people_ran: 1, needs_person: 19 } };
+        },
+      },
+      findEmails: freeStage(repo, "find_emails", { skipped: 0 }),
+      verify: freeStage(repo, "verify", {}),
+      normalize: freeStage(repo, "normalize", {}),
+      qa: freeStage(repo, "qa", {}),
+      route: freeStage(repo, "route", {}),
+      stage: freeStage(repo, "stage", {}),
+      import: freeStage(repo, "import", {}),
+      postImport: freeStage(repo, "post_import", {}),
+    };
+    const console_ = {
+      resolveAs: async (actor: string, _role: string | null, cardId: string, choice: string) => {
+        const c = repo.cards.find((x) => x.card_id === cardId && x.status === "open");
+        if (!c) return { ok: false, reason: "not_open" };
+        c.status = "resolved";
+        (c as Record<string, unknown>).resolved_by = actor;
+        (c as Record<string, unknown>).resolution = choice;
+        return { ok: true };
+      },
+    };
+    const j = new JobRunner({
+      repo: repo as never,
+      stages: stages as never,
+      console: console_ as never,
+      ledger: { event: async (e: { line: string }) => { repo.events.push(e.line); } } as never,
+      now: () => 1700000000000,
+    });
+    const opened = await j.open(spec, "mcp:operator");
+    assert.ok(opened.ok);
+    if (!opened.ok) return;
+    await j.run(opened.job_id, "pull", { by: "x" });
+    await j.run(opened.job_id, "suppress", { by: "x" });
+    await j.run(opened.job_id, "icp", { by: "x" });
+    const first = await j.run(opened.job_id, "enrich", { by: "x" });
+    assert.equal(first.status, "parked");
+    const second = await j.run(opened.job_id, "enrich", { by: "x", approved_by: "Josh" });
+    assert.equal(second.status, "done", "D64: approved_by must run the paid people step, not leave it parked. Ask Josh.");
+    assert.equal(repo.cards[0]?.status, "resolved");
+    assert.equal((repo.cards[0] as Record<string, unknown>).resolution, "approve_spend");
+    assert.ok((repo.steps.get(`${opened.job_id}/puzzle`)?.approved_cents ?? 0) >= 67, "D64: approval is recorded on the step. Ask Josh.");
   });
 });

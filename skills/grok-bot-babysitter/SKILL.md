@@ -61,8 +61,11 @@ The rules you apply:
    and the categories list (D57); it never scopes by ZIP or `client_tag`
    alone. Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
    when those exist. Companions that omit `plan_id` join `maps_raw`
-   so the bind is `$1::text` (D59). Already used is live `public.leads`
-   on the receipt's campaigns.
+   so the bind is `$1::text` (D59). Already used is the union of live
+   `public.leads` on the receipt's campaigns, emails already in
+   `lp.<tag>_ingested_leads`, and this-client prior contact /
+   suppression (D64). `size(client_tag, campaign_id, source, filters)`
+   is the free dry-run of that pool plus suppression by reason.
 4. `held(client_tag, campaign_id, filters, tam)`. If `net_new` < 1,000:
    *the TAM for this campaign is exhausted.* Stop there. If Josh asks for
    options, give each option with its count.
@@ -99,7 +102,7 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 ## Allow list (you may call these)
 
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
-`campaign_record`, `sources`, `count`, `held`, `jobs`, `job`, `spend`,
+`campaign_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
 `leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `suppress`, `enrich`, `verify`,
 `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
 `resolve`, `note`.

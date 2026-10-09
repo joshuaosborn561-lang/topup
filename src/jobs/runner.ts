@@ -247,10 +247,15 @@ export class JobRunner {
     return this.result(jobId, verb, steps[steps.length - 1]!, "done", {}, null, null, null, "every step of this verb was already done", this.nextLine(verb));
   }
 
-  /** Approve the open spend card for a step, by name, and give the step its approval. */
+  /**
+   * Approve the open spend card for a step, by name, and give the step its
+   * approval. A leftover parked card for the same step (the old puzzle
+   * cap-park) is closed the same way so approved_by is not a no-op (D64).
+   */
   private async approve(run: RunRow, step: Step, approvedBy: string, by: string): Promise<string | null> {
-    const cards = (await this.d.repo.openCardsForRun(run.run_id)).filter((c) => c.kind === "spend_approval" && c.payload?.step === step);
-    if (cards.length === 0) return null;
+    const open = await this.d.repo.openCardsForRun(run.run_id);
+    const cards = open.filter((c) => (c.kind === "spend_approval" || c.kind === "parked") && c.payload?.step === step);
+    const stepRow = await this.d.repo.getStep(run.run_id, step);
     let cents = 0;
     for (const card of cards) {
       const worst = Number(card.payload?.worst_case_cents ?? 0);
@@ -261,7 +266,9 @@ export class JobRunner {
       }
       cents += Number.isFinite(worst) ? worst : 0;
     }
+    if (cents <= 0) cents = Number(stepRow?.worst_case_cents ?? 0);
     if (cents > 0) await this.d.repo.approveStep(run.run_id, step, cents);
+    if (cards.length === 0 && cents <= 0) return null;
     await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "approved", line: `${step}: spend of $${(cents / 100).toFixed(2)} approved by ${approvedBy}.`, actor: by }).catch(() => undefined);
     log.info("spend approved", { run_id: run.run_id, step, cents, approved_by: approvedBy, by });
     return approvedBy;

@@ -8,6 +8,7 @@ import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { attempt, columnsOf, finish, park, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql } from "../puzzle/classify.js";
+import { icpLabelSql } from "./parse.js";
 
 /**
  * Step 5.5 — the ICP website gate (D60; skill icp-website-gate). After
@@ -98,15 +99,21 @@ export class IcpStage {
       if (decision.kind === "blocked") throw new Error(`icp blocked: ${decision.reason}`);
       if (worst > 0 && approved < worst) {
         const open = await this.d.repo.openCardsForRun(run.run_id);
-        if (!open.some((card) => card.kind === "spend_approval" && card.payload.step === "icp")) {
+        const existing = open.find((card) => card.kind === "spend_approval" && card.payload.step === "icp");
+        const payload = { step: "icp", vendor: "jev+discolike", action: "icp_gate", rows: domains, worst_case_cents: worst };
+        const blocks = (cardId: string) =>
+          spendApprovalCard({ cardId, runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev + discolike", action: "icp_gate", rows: domains, worstCaseCents: worst, projectedUseful: null, spentTodayCents: spentToday, dailyCapCents: this.d.rails.cfg.dailyCapCents });
+        if (existing) {
+          await this.d.repo.updateCardPayload(existing.card_id, payload);
+          await this.d.repo.setCardBlocks(existing.card_id, blocks(existing.card_id));
+        } else {
           await this.d.console.ask({
             run,
             kind: "spend_approval",
             audience: "owner",
-            payload: { step: "icp", vendor: "jev+discolike", action: "icp_gate", rows: domains, worst_case_cents: worst },
+            payload,
             text: `ICP gate on ${domains} domains: worst case ${usd(worst)} (Jev on every site, DiscoLike on the unreadable tenth).`,
-            blocks: (cardId) =>
-              spendApprovalCard({ cardId, runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev + discolike", action: "icp_gate", rows: domains, worstCaseCents: worst, projectedUseful: null, spentTodayCents: spentToday, dailyCapCents: this.d.rails.cfg.dailyCapCents }),
+            blocks,
           });
         }
         return { kind: "waiting", on: "owner", why: `ICP gate on ${domains} domains needs a named approval for a worst case of ${usd(worst)} (D51)`, worstCaseCents: worst };
@@ -170,10 +177,13 @@ export class IcpStage {
         }
       }
       // 5. The verdict onto the rows; Jev's answer wins over DiscoLike's. Flagged rows are suppressed with a reason, never deleted.
+      const llmCols = await columnsOf(this.d.repo, LLM_RESULTS);
+      const labelSql = icpLabelSql(llmCols.has("answers"));
       const written = await this.d.repo.withRun(run.run_id, async (tx) => {
         const v = await tx.query(
-          `update ${table} t set icp_gate = v.fit, icp_gate_label = v.label, icp_gate_at = now()
-           from (select distinct on (domain) domain, fit, coalesce(reason, model) as label
+          `update ${table} t set icp_gate = v.fit, icp_gate_label = v.label, icp_gate_at = now(),
+             qa_flags = coalesce(t.qa_flags, '{}'::jsonb) || case when v.label is null then jsonb_build_object('icp_label_unparseable', true) else '{}'::jsonb end
+           from (select distinct on (domain) domain, fit, ${labelSql} as label
                    from ${LLM_RESULTS} where model in ($2, '${DISCO_MODEL}') and error is null and fit in ('yes', 'no')
                    order by domain, (model = $2) desc) v
            where t.run_id = $1 and t.lead_status in (${statuses}) and t.icp_gate is null and ${domainSql(cols, "t.")} = v.domain`,
@@ -232,7 +242,7 @@ export class IcpStage {
         (samples.flagged.length ? `\nflagged samples: ${samples.flagged.join("; ")}` : "") +
         (samples.passed.length ? `\npassed samples: ${samples.passed.join("; ")}` : "") +
         `\nIf one label swallows a big share, the label set is wrong: fix it before going further (icp-website-gate).`;
-      return finish(this.d, run, "icp", passed, counts, line);
+      return finish(this.d, run, "icp", passed, counts, line, undefined, counts.cost_cents);
     });
   }
 
