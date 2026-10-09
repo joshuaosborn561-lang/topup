@@ -79,6 +79,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D57 | Live; maps `count` and `pull` read `client_<tag>.maps_raw` scoped by `plan_id` and categories, plus the named ICP view (companion `v_*_companies` ∪ `v_*_needs_domain` when present); already used is live `public.leads` on the receipt's campaigns; never `pipeline_stats` by state/client_tag |
 | D58 | Open on PR #35; LeadMagic is dropped and old receipts replay as aiark. Not shipped on this branch |
 | D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories are not applied again on that union |
+| D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 
 ---
 
@@ -1946,3 +1947,41 @@ Lane E companions would cut the live pool from 18,322 to 8,972. That
 is a second filter the ICP already applied; Josh can ask for it.
 
 **Guard.** `src/guards/d59_maps_icp_binds.test.ts`. Ask Josh.
+
+## D60 — The ICP website gate is a verb
+
+**Decision.** `icp(job_id, approved_by?)` runs after `suppress` and
+before `enrich`, on spine step 5, as the skill `icp-website-gate` says
+(step 5.5 of lead-list-build). It takes the job's distinct domains
+(company_domain, domain, website, or the email's domain), joins them to
+a batch named after the job in `client_salesglider.icp_site_text`, has
+the `icp-site-fetch` edge function read each site (free, up to three
+calls side by side), has `icp-llm` ask Jev for one category per site
+(about $0.11 per 1,000, one call at a time), and has `icp-disco-fallback`
+ask DiscoLike about the sites the fetch could not read (about $0.0038
+each, one task at a time). The worst case is priced from the table (Jev
+on every domain, DiscoLike on a tenth) and waits for a named approval
+(D51). The verdict is written onto the rows as `icp_gate` yes / no /
+unknown with `icp_gate_label` and `icp_gate_at`; no and unknown are
+suppressed with the reason `off_icp` or `icp_unreadable` and stay in the
+table. Rows with no domain are left untouched and counted, so `enrich`
+then `icp` again covers them. The per-client label set lives in
+`topup.icp_variants` (`jev_variant`, `disco_icp`), seeded for
+salesglider, emcor and deep_roots; a client without a row parks with the
+reason. The function keys live in Railway. The lane event line carries
+the label counts and at most ten flagged and four passed domains with
+their label (D2).
+
+**Why.** Josh, 2026-10-09, asked for the new skill to be part of the
+flow. The skill measured about 22% junk on call lists and a category
+pick at 92.7% accuracy; cutting the junk before enrichment saves the
+enrichment money and the send reputation.
+
+**Tradeoff.** The verb holds its MCP call open while the fetch and Jev
+run (about three minutes per 2,000 sites). A client whose buyer is not
+yet a label set cannot be gated until someone writes one in `icp-llm`
+and a row in `topup.icp_variants`. The three functions share the
+project's 60-connection cap with the live Allo hooks; the limits in the
+skill are the limits in the code.
+
+**Guard.** `src/guards/d60_icp_gate.test.ts`. Ask Josh.

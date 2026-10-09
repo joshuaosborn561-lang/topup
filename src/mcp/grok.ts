@@ -29,7 +29,7 @@ export interface GrokDeps {
 }
 
 export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "jobs", "job", "spend", "leftovers"] as const;
-export const GROK_VERBS = ["pull", "suppress", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
+export const GROK_VERBS = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
 const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
@@ -233,6 +233,8 @@ function verbDescription(verb: Exclude<Verb, "pull">): string {
   switch (verb) {
     case "suppress":
       return "Run suppression on the job's rows: the response-based global list, the client's prior contacts, bounces, the public list and the client's own domain list. Returns raw, dropped by reason, net new.";
+    case "icp":
+      return "The ICP website gate (skill icp-website-gate): fetch each distinct domain's site with our own edge function (free), let Jev pick a category (about $0.11 per 1,000 sites), ask DiscoLike about the sites we could not read (about $0.0038 each), and write the verdict onto the rows. Only icp_gate = yes moves on; flagged rows are suppressed with a reason and stay in the table. The first call returns the estimate; approved_by runs it. Rows with no domain are left: enrich(job_id) then icp(job_id) again. Needs a label set for the client in topup.icp_variants.";
     case "enrich":
       return "Fill the gaps on the job's rows: domains through the domain waterfall, people through the people waterfall, emails through the email waterfall up to the job's max tier. Paid tiers return an estimate first; approved_by runs them.";
     case "verify":

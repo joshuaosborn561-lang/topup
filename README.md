@@ -64,6 +64,7 @@ Verbs (one stage each, counts back):
 |---|---|
 | `pull` | Opens a job and pulls 1 to 2,000 rows from getleads, Maps, permits or a table; ingests them. |
 | `suppress` | The suppression set. Returns raw, dropped by reason, net new. |
+| `icp` | The ICP website gate (our own site fetch, Jev picks a category, DiscoLike on unreadable sites). Flagged rows are suppressed with a reason. Paid; estimate first. |
 | `enrich` | Domains, people, emails through the waterfalls. Paid tiers estimate first. |
 | `verify` | MillionVerifier then No2Bounce. Paid; estimate first. |
 | `normalize` | Names, companies, locations, sports team. |
@@ -93,7 +94,7 @@ CANON.md            the canon (served to Grok)
 DECISIONS.md        the ledger of why (append only)
 src/canon/          the reads
 src/jobs/           the verbs, the job recipe, the filter mapping
-src/stages/         pull ingest suppress puzzle find_emails verify normalize qa route stage import post_import
+src/stages/         pull ingest suppress icp puzzle find_emails verify normalize qa route stage import post_import
 src/console/        cards and the role table (D18)
 src/spend/          SpendRails: the gate, prices, the ledger
 src/mcp/            the surface (server.ts, grok.ts)

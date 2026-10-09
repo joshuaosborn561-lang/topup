@@ -11,7 +11,7 @@ export const GROK_SAMPLE_MAX = 10;
 export const CANON_READS = ["canon", "campaigns", "campaign_record", "sources", "count", "held", "jobs", "job", "spend", "leftovers", "holds", "loads_paused"] as const;
 
 /** The verbs (D52). Each runs one or two stages on a job, once, and returns counts. */
-export const CANON_VERBS = ["pull", "suppress", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort", "resolve", "note"] as const;
+export const CANON_VERBS = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort", "resolve", "note"] as const;
 
 /** Every tool on this service's MCP. Nothing else is registered (D53). */
 export const CANON_TOOLS = [...CANON_READS, ...CANON_VERBS] as const;

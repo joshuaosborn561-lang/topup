@@ -69,8 +69,10 @@ The rules you apply:
 5. Tell Cayden or Josh: campaign, source, filters, count, net new, rows
    you will pull, worst-case cost. Wait for the yes.
 6. `pull(client_tag, campaign_id, source, filters, max_rows)`. Then
-   `suppress`, `enrich`, `verify`, `normalize`, `qa`, `stage`, each with
-   the `job_id`. Each answer has `next`. `waiting_approval` means name the
+   `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage`, each
+   with the `job_id`. `icp` is the website gate from `icp-website-gate`:
+   it costs about $0.25 per 1,000 domains, needs a name, and reports the
+   label counts; if one label swallows a big share, stop and say so. Each answer has `next`. `waiting_approval` means name the
    worst case to a person and call the same verb with
    `approved_by="Their name"`. `parked` means read `job(job_id)` and fix
    or `abort`. QA holds show in `holds`; clear them with `resolve`.
@@ -95,7 +97,7 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
 `campaign_record`, `sources`, `count`, `held`, `jobs`, `job`, `spend`,
-`leftovers`, `holds`, `loads_paused`, `pull`, `suppress`, `enrich`, `verify`,
+`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `suppress`, `enrich`, `verify`,
 `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
 `resolve`, `note`.
 

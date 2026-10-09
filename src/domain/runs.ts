@@ -64,6 +64,7 @@ export const STEPS = [
   "pull",
   "ingest",
   "suppress",
+  "icp",
   "puzzle",
   "find_emails",
   "verify",

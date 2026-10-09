@@ -79,7 +79,7 @@ describe("invariants — the numbers and names the canon fixes", () => {
 
   it("D29/D53 — the verbs walk steps 3 through 12 in order; nothing sizes, triggers or flips", () => {
     const steps = VERB_ORDER.flatMap((v) => [...VERB_STEPS[v]]);
-    assert.deepEqual(steps, ["pull", "ingest", "suppress", "puzzle", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import"], "D53: adding or reordering a stage is a new decision; append it and update CANON.md");
+    assert.deepEqual(steps, ["pull", "ingest", "suppress", "icp", "puzzle", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import"], "D53/D60: adding or reordering a stage is a new decision; append it and update CANON.md");
     let last = 0;
     for (const s of steps) {
       const n = stepForStage(s)?.n ?? 0;

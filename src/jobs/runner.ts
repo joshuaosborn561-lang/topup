@@ -6,6 +6,7 @@ import { targetCountPatch } from "../recipes/campaigns.js";
 import { parseRecipe, type Recipe } from "../recipes/schema.js";
 import { jobLane, jobRecipe, type JobSpec } from "./recipe.js";
 import type { FindEmailsStage } from "../stages/find_emails/index.js";
+import type { IcpStage } from "../stages/icp/index.js";
 import type { ImportStage } from "../stages/import/index.js";
 import type { IngestStage } from "../stages/ingest/index.js";
 import type { NormalizeStage } from "../stages/normalize/index.js";
@@ -29,11 +30,12 @@ const log = logger("jobs");
  * approves that card, records who, and runs. import refuses while loads
  * are paused. Rows never leave the server.
  */
-/** The dumb pipeline: twelve stages, each run once by a verb. Nothing sizes, triggers or flips (D53). */
+/** The dumb pipeline: thirteen stages, each run once by a verb. Nothing sizes, triggers or flips (D53). The ICP gate sits between suppress and enrich (D60). */
 export interface Stages {
   pull: PullStage;
   ingest: IngestStage;
   suppress: SuppressStage;
+  icp: IcpStage;
   puzzle: PuzzleStage;
   findEmails: FindEmailsStage;
   verify: VerifyStage;
@@ -45,11 +47,12 @@ export interface Stages {
   postImport: PostImportStage;
 }
 
-export type Verb = "pull" | "suppress" | "enrich" | "verify" | "normalize" | "qa" | "stage" | "import";
+export type Verb = "pull" | "suppress" | "icp" | "enrich" | "verify" | "normalize" | "qa" | "stage" | "import";
 
 export const VERB_STEPS: Readonly<Record<Verb, readonly Step[]>> = {
   pull: ["pull", "ingest"],
   suppress: ["suppress"],
+  icp: ["icp"],
   enrich: ["puzzle", "find_emails"],
   verify: ["verify"],
   normalize: ["normalize"],
@@ -58,7 +61,7 @@ export const VERB_STEPS: Readonly<Record<Verb, readonly Step[]>> = {
   import: ["import", "post_import"],
 };
 
-export const VERB_ORDER: readonly Verb[] = ["pull", "suppress", "enrich", "verify", "normalize", "qa", "stage", "import"];
+export const VERB_ORDER: readonly Verb[] = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import"];
 
 export interface VerbResult {
   job_id: string;
@@ -195,6 +198,8 @@ export class JobRunner {
         return s.ingest.run(run, recipe);
       case "suppress":
         return s.suppress.run(run, recipe);
+      case "icp":
+        return s.icp.run(run, recipe);
       case "puzzle":
         return s.puzzle.run(run, recipe);
       case "find_emails":

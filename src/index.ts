@@ -6,6 +6,7 @@ import { AiArkPreviewClient } from "./clients/aiArkPreview.js";
 import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
 import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
 import { GetleadsClient } from "./clients/getleads.js";
+import { IcpGateClient } from "./clients/icpGate.js";
 import { LeadPipeClient } from "./clients/leadpipe.js";
 import { MapsStatsClient } from "./clients/mapsStats.js";
 import { NameToEmailClient } from "./clients/nameToEmail.js";
@@ -28,6 +29,7 @@ import { loadGeoFenceCities } from "./recipes/geoFence.js";
 import { readersFromEnv } from "./spend/balances.js";
 import { railsConfigFrom, SpendRails } from "./spend/rails.js";
 import { FindEmailsStage } from "./stages/find_emails/index.js";
+import { IcpStage } from "./stages/icp/index.js";
 import { ImportStage } from "./stages/import/index.js";
 import { IngestStage } from "./stages/ingest/index.js";
 import { NormalizeStage } from "./stages/normalize/index.js";
@@ -116,6 +118,7 @@ async function main(): Promise<void> {
   const emailWaterfall = cfg.EMAIL_WATERFALL_MCP_URL ? new EmailWaterfallClient(cfg.EMAIL_WATERFALL_MCP_URL, cfg.EMAIL_WATERFALL_TOKEN) : null;
   const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
   const jobs = { pollMs: cfg.JOB_POLL_SECONDS * 1000, deadMs: cfg.JOB_DEAD_MINUTES * 60_000 };
+  const icpGate = cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY ? new IcpGateClient(cfg.SUPABASE_FUNCTIONS_URL, { fetch: cfg.ICP_SITE_FETCH_KEY, llm: cfg.ICP_LLM_KEY, disco: cfg.ICP_DISCO_KEY }) : null;
   const base = { repo, console: console_ };
 
   const pull = new PullStage({
@@ -130,6 +133,7 @@ async function main(): Promise<void> {
     pull,
     ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
     suppress: new SuppressStage({ ...base, ledger }),
+    icp: new IcpStage({ ...base, rails, gate: icpGate, cfg: { jevModel: cfg.ICP_JEV_MODEL, pollMs: 20_000, deadMs: jobs.deadMs } }),
     puzzle: new PuzzleStage({ ...base, ledger, rails, domain, people, cfg: jobs }),
     findEmails: new FindEmailsStage({ ...base, rails, nameToEmail, emailWaterfall, cfg: jobs }),
     verify: new VerifyStage({

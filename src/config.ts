@@ -57,6 +57,13 @@ const schema = z.object({
   NAME_TO_EMAIL_MCP_URL: z.string().default(""),
   NAME_TO_EMAIL_TOKEN: z.string().default(""),
 
+  /** The ICP gate's edge functions on campaignintelligence (D60). Keys are the functions' own access keys; empty leaves the icp verb parked. */
+  SUPABASE_FUNCTIONS_URL: z.string().default("https://azpapwtnrbzywlnxxecz.supabase.co/functions/v1"),
+  ICP_SITE_FETCH_KEY: z.string().default(""),
+  ICP_LLM_KEY: z.string().default(""),
+  ICP_DISCO_KEY: z.string().default(""),
+  ICP_JEV_MODEL: z.string().default("typesafe/jev-1.13"),
+
   /** Poll cadence and patience for the vendor jobs. */
   JOB_POLL_SECONDS: numberWithDefault(30),
   JOB_DEAD_MINUTES: numberWithDefault(90),
@@ -120,5 +127,6 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     people_waterfall: Boolean(cfg.PEOPLE_WATERFALL_MCP_URL),
     email_waterfall: Boolean(cfg.EMAIL_WATERFALL_MCP_URL),
     name_to_email: Boolean(cfg.NAME_TO_EMAIL_MCP_URL),
+    icp_gate: Boolean(cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY),
   };
 }

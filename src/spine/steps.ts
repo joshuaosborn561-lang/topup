@@ -81,7 +81,7 @@ export const SPINE: readonly SpineStep[] = [
     also: null,
     gate: "report raw, removed by reason, net new. Net new is the number from here on.",
     skill: "global-suppression",
-    pipeline: ["suppress", "puzzle", "find_emails"],
+    pipeline: ["suppress", "icp", "puzzle", "find_emails"],
     card: null,
   },
   {

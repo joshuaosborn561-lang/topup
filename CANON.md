@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D59** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D60** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -46,7 +46,13 @@ D48).
     phone column; any step that finds a phone writes it there; the stage
     carries it to Smartlead's phone_number; nothing drops one. `leftovers`
     shows `need_phone` and says when a store has no phone column (D56).
-11. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+11. **The ICP gate runs before anything paid.** After suppression and
+    before enrich, verify or import, every job's distinct domains go
+    through our own site fetch and Jev's category pick (skill
+    `icp-website-gate`). Only `icp_gate = yes` moves on; flagged rows are
+    suppressed with a reason and stay in the table. A client with no label
+    set in `topup.icp_variants` parks until one is written (D60).
+12. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
     here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -78,6 +84,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 |---|---|---|
 | `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job. `source` is `getleads`, `maps`, `permits` or `table`. `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
 | `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
+| `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; no and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
 | `enrich(job_id, approved_by?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. |
 | `verify(job_id, approved_by?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. |
 | `normalize(job_id)` | normalize | Names, companies, locations, local sports team. Free. |
@@ -89,8 +96,9 @@ Nothing chains. The job is one run row for one campaign (D52).
 | `resolve(card_id, choice)` | — | Resolve a card by id: a QA hold (`accept`, `purge`, `reroute`), a parked job (`resume_run`), `abort`. Spend needs the owner token or `approved_by` on the verb. |
 | `note(client_tag, lane, line, next_intent?)` | — | One line in the lane's event log. No lead data. |
 
-Order: `pull` → `suppress` → `enrich` → `verify` → `normalize` → `qa` →
-`stage` → `import` → `write_receipt`. Each answer says what to call next.
+Order: `pull` → `suppress` → `icp` → `enrich` → `verify` → `normalize` →
+`qa` → `stage` → `import` → `write_receipt`. Each answer says what to
+call next.
 
 ## How to top up a campaign
 
@@ -115,7 +123,9 @@ Order: `pull` → `suppress` → `enrich` → `verify` → `normalize` → `qa` 
    and stop. Do not widen. If Josh wants options, give counts for each.
 5. Tell Cayden or Josh what you will pull and what it will cost. When one
    of them says yes, `pull(...)` with `max_rows` 1 to 2,000.
-6. `suppress`, `enrich`, `verify`, `normalize`, `qa`, `stage` in order.
+6. `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage` in
+   order. After `icp`, read the label counts in `job(job_id)`: if one
+   label swallows a big share, the label set is wrong; say so and stop.
    When a verb returns `waiting_approval`, name the worst case to a person
    and call it again with `approved_by="Their name"`. When a verb parks,
    read `job(job_id)`, fix or `abort`.
