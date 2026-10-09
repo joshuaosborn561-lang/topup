@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { campaignRecord, countSource, heldRead, jobStatus, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps } from "../canon/index.js";
+import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps } from "../canon/index.js";
 import type { Repo } from "../db/repo.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import type { Orchestrator } from "../orchestrator.js";
@@ -28,7 +28,7 @@ export interface GrokDeps {
   by: string;
 }
 
-export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "jobs", "job", "spend"] as const;
+export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "jobs", "job", "spend", "leftovers"] as const;
 export const GROK_VERBS = ["pull", "suppress", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
@@ -103,6 +103,16 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "spend",
     { description: "Spend today, by vendor over thirty days, month to date, and every spend card waiting for a named approval.", inputSchema: {} },
     async () => text(await spendRead(d.repo)),
+  );
+
+  server.registerTool(
+    "leftovers",
+    {
+      description:
+        "Where past pulls left rows that may never have been sent, per client: the LeadPipe lane table by status and source label, the client schema (companies, contacts, leads) with how many carry an email or a domain, the waterfall tables, the people-waterfall statuses, and the scratch tables a pull left behind (estimates). Counts only; reading this moves nothing. Name the store before reusing it.",
+      inputSchema: { client_tag: snake.optional() },
+    },
+    async ({ client_tag }) => text(await leftoversRead(d.repo.raw(), client_tag ?? null)),
   );
 
   server.registerTool(

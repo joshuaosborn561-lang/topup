@@ -35,6 +35,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   jobs: "operator",
   job: "operator",
   spend: "operator",
+  leftovers: "operator",
   holds: "operator",
   loads_paused: "operator",
   pull: "operator",
