@@ -22,7 +22,10 @@ Suppress on this `smartlead_client_id`:
 
 After 6 months the person is eligible again for **this** client. The sending
 inboxes that emailed them stay blocked forever for that person. Route and
-stage carry `excluded_inboxes`. Report `expired_eligible` separately.
+stage carry `excluded_inboxes`. Named seats key on the client POD (A/B):
+route to a campaign on the other POD. Generic seats hold (cannot re-check
+at send). Do not key on the campaign mailbox set. Report
+`expired_eligible` separately.
 
 Do **not** suppress someone merely because another client emailed them, replied
 positively, or unsubscribed. `same_offer_other_client` is not applied.

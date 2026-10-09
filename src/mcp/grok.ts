@@ -246,7 +246,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
 function verbDescription(verb: Exclude<Verb, "pull">): string {
   switch (verb) {
     case "suppress":
-      return "Run suppression on the job's rows. Per client only (D63): this client's prior contacts and positives (6 months), hard bounces forever, the public list if permanent or inside 6 months, the client's domain list. Returns raw, dropped by reason, expired_eligible, net new.";
+      return "Run suppression on the job's rows. Per client only (D63): this client's prior contacts and positives (6 months), hard bounces forever, the public list if permanent or inside 6 months, the client's domain list. Returns raw, dropped by reason, expired_eligible, net new. Named-seat PODs (A/B) and generic seats ride on the row; route to the other POD, hold generics.";
     case "icp":
       return "The ICP website gate (skill icp-website-gate): fetch each distinct domain's site with our own edge function (free), let Jev pick a category (about $0.11 per 1,000 sites), ask DiscoLike about the sites we could not read (about $0.0038 each), and write the verdict onto the rows. Only icp_gate = yes moves on; flagged rows are suppressed with a reason and stay in the table. The first call returns the estimate; approved_by runs it. Rows with no domain are left: enrich(job_id) then icp(job_id) again. Needs a label set for the client in topup.icp_variants.";
     case "enrich":

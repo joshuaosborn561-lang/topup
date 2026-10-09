@@ -47,7 +47,7 @@ Gate: row count equals the export count.
 
 ## Step 5. Suppress and dedupe (code)
 
-What, in one SQL pass, this client only (D63): positive repliers on this client (expire 6 months after the reply); current DNC and wrong person on this client; `public.suppression` if permanent or first_seen inside 6 months; the client's own customer domain list when one exists (an empty list does not halt); hard bounces on this client (forever); anyone this client sent to in the last 6 months (older sends recycle; the sending inboxes stay blocked forever); anyone already in a live campaign of this client. A block for another client never applies. `same_offer_other_client` is not applied. Josh accepts the unsubscribe risk.
+What, in one SQL pass, this client only (D63): positive repliers on this client (expire 6 months after the reply); current DNC and wrong person on this client; `public.suppression` if permanent or first_seen inside 6 months; the client's own customer domain list when one exists (an empty list does not halt); hard bounces on this client (forever); anyone this client sent to in the last 6 months (older sends recycle; named-seat PODs stay blocked, generics hold); anyone already in a live campaign of this client. A block for another client never applies. `same_offer_other_client` is not applied. Josh accepts the unsubscribe risk.
 Skill: `global-suppression`. Never dedupe against all of `public.leads`; that killed 87 percent of a good pull.
 Gate: report raw, removed by reason, `expired_eligible`, net new. Net new is the number from here on.
 

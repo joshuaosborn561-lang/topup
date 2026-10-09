@@ -10,12 +10,14 @@ import { bandSegment, cellLabel, excludedInboxesOf, mailClassSegment, matchRule 
 import { classifyPuzzle } from "./puzzle/classify.js";
 import { pullPlans, routePull, routeSize } from "./pull/route.js";
 import {
-  campaignMailboxSetOk,
+  classifySeats,
   clientPriorContactSql,
   expiredEligibleSql,
   hardBounceSql,
+  otherPod,
   positiveReplySql,
   recycleDays,
+  recycleRouteOk,
 } from "./suppress/recycle.js";
 import { dedupeKeySql } from "./stage/index.js";
 
@@ -193,7 +195,7 @@ describe("D63 — positives expire after 6 months, this client only", () => {
   });
 });
 
-describe("D63 — hard bounce forever; mailbox set; expired-eligible", () => {
+describe("D63 — hard bounce forever; POD route; expired-eligible", () => {
   it("hard bounce SQL has no recycle window", () => {
     const sql = hardBounceSql();
     assert.match(sql, /s\.bounced/);
@@ -207,11 +209,14 @@ describe("D63 — hard bounce forever; mailbox set; expired-eligible", () => {
     assert.match(sql, /smartlead_client_id = \$6/);
   });
 
-  it("campaignMailboxSetOk refuses overlap and an unknown mailbox set", () => {
-    assert.equal(campaignMailboxSetOk([], ["a@x.com"]), true);
-    assert.equal(campaignMailboxSetOk(["a@x.com"], []), false);
-    assert.equal(campaignMailboxSetOk(["a@x.com"], ["b@x.com"]), true);
-    assert.equal(campaignMailboxSetOk(["A@X.com"], ["a@x.com"]), false);
+  it("recycleRouteOk keys named seats on the other POD and holds generics", () => {
+    assert.equal(otherPod("A"), "B");
+    assert.equal(recycleRouteOk({ excluded_inboxes: [], excluded_pods: [], excluded_generic_inboxes: [] }, null), true);
+    assert.equal(recycleRouteOk({ excluded_inboxes: ["a@x.com"], excluded_pods: ["A"], excluded_generic_inboxes: [] }, "B"), true);
+    assert.equal(recycleRouteOk({ excluded_inboxes: ["a@x.com"], excluded_pods: ["A"], excluded_generic_inboxes: [] }, "A"), false);
+    assert.equal(recycleRouteOk({ excluded_inboxes: ["g@x.com"], excluded_pods: [], excluded_generic_inboxes: ["g@x.com"] }, "B"), false);
+    const seats = new Map([["a@x.com", { kind: "named" as const, pod: "A" as const }]]);
+    assert.deepEqual(classifySeats(["a@x.com"], seats).excluded_pods, ["A"]);
   });
 
   it("excludedInboxesOf reads the qa_flags list", () => {

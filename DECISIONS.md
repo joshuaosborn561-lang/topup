@@ -82,7 +82,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 | D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
 | D62 | Live on PR #39 (maps pull timeout); reserved so this ledger stays contiguous |
-| D63 | Live; suppress is per client only; after 6 months a person (including unsubscribes) is eligible again for that client except the sending inboxes, which stay blocked forever; hard bounces stay forever; applied at pull time only; `expired_eligible` is a separate count |
+| D63 | Live; suppress is per client only; after 6 months a person (including unsubscribes) is eligible again for that client except the sending inboxes; named seats key on the other client POD (A/B); generic seats hold; hard bounces stay forever; applied at pull time only; `expired_eligible` is a separate count |
 
 ---
 
@@ -2088,25 +2088,32 @@ ledger contiguous while that PR is open. Ask Josh.
 4. **Pull time only.** Applied inside `suppress`. No cron, no routine
    (canon rule 5).
 5. **`expired_eligible` is a separate count** on the suppress step.
-6. **Route and stage carry `excluded_inboxes`** on the row (`qa_flags`
-   and `leads_staging.excluded_inboxes`). A campaign whose mailbox set
-   overlaps that list is not used. An unknown mailbox set is refused
-   when the list is non-empty.
+6. **Route and stage carry `excluded_inboxes`**, plus the named-seat
+   **client POD (A/B)** and any **generic** seats. Named seats are a
+   static A/B half-split per client: record the excluded inbox's POD
+   and route the lead to a campaign whose current POD is the other
+   half. Campaign mailbox sets are **not** the key — generics get
+   topped up, peeled and rotated, and campaigns swap on-week/off-week
+   PODs (Deliverability, 2026-10-09). An excluded generic seat holds
+   the lead; Smartlead cannot exclude an inbox per lead at send, so
+   it cannot be re-checked. Unclassified inboxes also hold.
 
 `public.sends` has no sender-inbox column (D38: no mailbox mirror).
-Until Josh names the source, `excluded_inboxes` is stamped empty and
-`expired_eligible` still counts. Smartlead cannot exclude inboxes per
-lead on import (see the PR). Never writes `dl_status`, `sg_exclude`,
-or `skip_*`.
+This project has no named-seat POD map. Until Josh names both, the
+lists stamp empty and `expired_eligible` still counts. Never writes
+`dl_status`, `sg_exclude`, or `skip_*`.
 
 **Why.** Josh wants people we already emailed to come back after six
 months for that client, but never from the same inbox, and never to
-carry one client's unsub or bounce onto another.
+carry one client's unsub or bounce onto another. Deliverability said
+the inbox list is kept but routing keys on the other POD for named
+seats.
 
 **Tradeoff.** Cross-client positives no longer suppress (D37
 superseded for scope). DNC / wrong person still block while that
 category is current on this client. Permanent rows on
 `public.suppression` stay. A one-campaign top-up of an expired-eligible
-person will still route there until the inbox list is filled.
+person will still route there until the inbox list and POD map are
+filled. A generic exclusion parks the row.
 
 **Guard.** `src/guards/d63_client_suppress.test.ts`. Ask Josh.

@@ -10,7 +10,7 @@ Josh's rulebook, 2026-09-14. Canon as of D63. The six taps he left pending are y
 ## Every client
 
 1. Only block people on **this client** who replied positively, said don't contact, or said wrong person. Hard bounces on this client stay forever. Positives expire 6 months after the reply (D63). DNC / wrong person block while that category is current on this client.
-2. Don't load anyone this client sent to in the last 6 months. Past 6 months they are eligible again for this client, never from the sending inbox(es) that emailed them (D63). Never put someone in two live campaigns of the same client at once.
+2. Don't load anyone this client sent to in the last 6 months. Past 6 months they are eligible again for this client; named seats route to the other client POD (A/B); generic seats hold (D63). Never put someone in two live campaigns of the same client at once.
 3. A block for one client never applies to another (D63). `same_offer_other_client` is not applied.
 4. Customer domain lists are optional. Do not halt a run for an empty customer list. Permanent `public.suppression` stays; older non-permanent unsubscribes expire (Josh accepts that risk).
 5. Verify everything before Smartlead, whatever the vendor says. Verified means MillionVerifier good, or catch all plus No2Bounce deliverable.

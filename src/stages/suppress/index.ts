@@ -7,7 +7,9 @@ import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js
 import {
   clientPriorContactSql,
   excludedCampaignsSql,
+  excludedGenericInboxesSql,
   excludedInboxesSql,
+  excludedPodsSql,
   expiredEligibleSql,
   hardBounceSql,
   positiveReplySql,
@@ -32,9 +34,11 @@ import {
  *   client_domain         this client's own customer domain list
  *
  * A block for another client never applies. After 6 months the person is
- * eligible again for this client; excluded_inboxes stay on the row.
- * same_offer_other_client is not applied (D63). Empty customer list does
- * not halt. Never writes dl_status, sg_exclude, or skip_*.
+ * eligible again for this client; excluded_inboxes stay on the row, plus
+ * the named-seat POD (A/B) and any generic seats. Route keys on the
+ * other POD for named seats; generic seats hold. same_offer_other_client
+ * is not applied (D63). Empty customer list does not halt. Never writes
+ * dl_status, sg_exclude, or skip_*.
  */
 export interface SuppressDeps extends StageDeps {
   ledger?: LaneLedger;
@@ -108,6 +112,8 @@ export class SuppressStage {
                 set qa_flags = coalesce(t.qa_flags, '{}'::jsonb) || jsonb_build_object(
                   'expired_eligible', true,
                   'excluded_inboxes', ${excludedInboxesSql()},
+                  'excluded_pods', ${excludedPodsSql()},
+                  'excluded_generic_inboxes', ${excludedGenericInboxesSql()},
                   'excluded_campaigns', ${excludedCampaignsSql()}
                 )
                from r
@@ -156,7 +162,7 @@ export class SuppressStage {
         .join(", ");
       const line =
         `Suppress done: raw ${raw} · removed ${suppressed + headcountDropped}${reasons ? ` (${reasons})` : ""}${headcountDropped ? ` · linkedin headcount ${headcountDropped}` : ""} · ${removed.deduped} duplicates within the pull · ${removed.needs_email} with no address · expired-and-eligible ${removed.expired_eligible} · *net new ${removed.net_new}* — the number from here on.` +
-        ` · per client only; prior contact and positives recycle after ${SUPPRESS_RECYCLE_MONTHS} months; hard bounces stay forever; sending inboxes stay blocked.` +
+        ` · per client only; prior contact and positives recycle after ${SUPPRESS_RECYCLE_MONTHS} months; hard bounces stay forever; named-seat PODs stay blocked; generics hold.` +
         (recipe.suppression.exclude_other_live_campaigns ? ` Live campaigns of this client still exclude.` : "") +
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);

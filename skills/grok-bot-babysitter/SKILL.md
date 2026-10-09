@@ -40,8 +40,10 @@ The rules you apply:
 * **Suppress is per client (D63).** A block for one client never applies
   to another. After 6 months a person (including unsubscribes) is eligible
   again for that client; the sending inboxes stay blocked forever; hard
-  bounces stay forever. Applied at pull time only. Report
-  `expired_eligible` separately. Do not invent a cron or a routine.
+  bounces stay forever. Named seats key on the other client POD (A/B).
+  Generic seats hold. Do not key on a campaign's live mailbox set.
+  Applied at pull time only. Report `expired_eligible` separately. Do
+  not invent a cron or a routine.
 
 ## The loop (one campaign at a time)
 

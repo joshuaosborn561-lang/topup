@@ -6,7 +6,9 @@
  * inside suppress at pull time (no cron).
  *
  * public.sends has no sender-inbox column (D38: no mailbox mirror).
- * excluded_inboxes is stamped empty until Josh names the source.
+ * excluded_inboxes / excluded_pods / excluded_generic_inboxes are
+ * stamped empty until Josh names the sender column and the named-seat
+ * A/B map. Campaign mailbox sets are not the routing key.
  */
 
 export const SUPPRESS_RECYCLE_MONTHS = 6;
@@ -153,6 +155,22 @@ export function excludedInboxesSql(): string {
   return `'[]'::jsonb`;
 }
 
+/**
+ * Named-seat PODs (A/B) those inboxes belong to. Empty until Josh names
+ * the sender column and the per-client named-seat split.
+ */
+export function excludedPodsSql(): string {
+  return `'[]'::jsonb`;
+}
+
+/**
+ * Generic seats that emailed this person. Empty until the seat map
+ * exists. A non-empty list holds the lead (cannot enforce at send).
+ */
+export function excludedGenericInboxesSql(): string {
+  return `'[]'::jsonb`;
+}
+
 /** Smartlead campaign ids this client already sent this person from. */
 export function excludedCampaignsSql(): string {
   return `coalesce((
@@ -166,15 +184,62 @@ export function excludedCampaignsSql(): string {
   ), '[]'::jsonb)`;
 }
 
+/** Named seats are a static A/B half-split per client (Deliverability). */
+export type ClientPod = "A" | "B";
+export type SeatKind = "named" | "generic";
+
+export interface ClientSeat {
+  kind: SeatKind;
+  /** Named seats always have a POD. Generics rotate; POD is not the key. */
+  pod: ClientPod | null;
+}
+
+export interface RecycleExclusion {
+  excluded_inboxes: string[];
+  excluded_pods: ClientPod[];
+  excluded_generic_inboxes: string[];
+}
+
+export function otherPod(pod: ClientPod): ClientPod {
+  return pod === "A" ? "B" : "A";
+}
+
+export function classifySeats(inboxes: readonly string[], seats: ReadonlyMap<string, ClientSeat>): RecycleExclusion {
+  const excluded_inboxes = [...new Set(inboxes.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  const pods = new Set<ClientPod>();
+  const generics: string[] = [];
+  for (const inbox of excluded_inboxes) {
+    const seat = seats.get(inbox);
+    if (!seat) continue;
+    if (seat.kind === "generic") generics.push(inbox);
+    else if (seat.pod === "A" || seat.pod === "B") pods.add(seat.pod);
+  }
+  return { excluded_inboxes, excluded_pods: [...pods], excluded_generic_inboxes: generics };
+}
+
 /**
- * A campaign whose mailbox set overlaps the lead's excluded inboxes is
- * refused. An unknown mailbox set is refused when the lead has exclusions
- * (cannot prove the inboxes are absent).
+ * Route a recycled lead. Named-seat exclusion keys on the client POD
+ * (campaign mailbox sets are not stable: generics rotate, campaigns
+ * swap on-week/off-week PODs). A named exclusion goes to a campaign
+ * whose current POD is the other half. A generic exclusion holds —
+ * Smartlead cannot exclude an inbox per lead, so it cannot be
+ * re-checked at send. Unclassified inboxes also hold.
  */
-export function campaignMailboxSetOk(excludedInboxes: readonly string[], campaignMailboxes: readonly string[]): boolean {
-  const blocked = [...new Set(excludedInboxes.map((e) => e.trim().toLowerCase()).filter(Boolean))];
-  if (blocked.length === 0) return true;
-  if (campaignMailboxes.length === 0) return false;
-  const onCampaign = new Set(campaignMailboxes.map((m) => m.trim().toLowerCase()).filter(Boolean));
-  return !blocked.some((inbox) => onCampaign.has(inbox));
+export function recycleRouteOk(excl: RecycleExclusion, campaignPod: ClientPod | null): boolean {
+  const pods = excl.excluded_pods;
+  const generics = excl.excluded_generic_inboxes;
+  const inboxes = excl.excluded_inboxes;
+  if (pods.length === 0 && generics.length === 0 && inboxes.length === 0) return true;
+  if (generics.length > 0) return false;
+  if (inboxes.length > 0 && pods.length === 0) return false;
+  if (pods.length === 0) return true;
+  if (campaignPod === null) return false;
+  return !pods.includes(campaignPod);
+}
+
+export function recycleHoldReason(excl: RecycleExclusion, campaignPod: ClientPod | null): string | null {
+  if (recycleRouteOk(excl, campaignPod)) return null;
+  if (excl.excluded_generic_inboxes.length > 0) return "excluded_generic";
+  if (excl.excluded_inboxes.length > 0 && excl.excluded_pods.length === 0) return "excluded_inbox";
+  return "excluded_pod";
 }

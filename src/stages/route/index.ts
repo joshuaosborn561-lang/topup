@@ -6,7 +6,7 @@ import type { Recipe } from "../../recipes/schema.js";
 import { pendingCampaignCard } from "../../console/cards.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
-import { campaignMailboxSetOk } from "../suppress/recycle.js";
+import { recycleHoldReason, recycleRouteOk, type ClientPod, type RecycleExclusion } from "../suppress/recycle.js";
 
 /**
  * Step 9 — Route to campaigns (skill lead-list-build; skill
@@ -60,11 +60,29 @@ export function matchRule(cell: Cell, routing: Recipe["routing"]): Recipe["routi
   return null;
 }
 
+function stringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+}
+
+function podList(raw: unknown): ClientPod[] {
+  return stringList(raw).map((p) => p.trim().toUpperCase()).filter((p): p is ClientPod => p === "A" || p === "B");
+}
+
 export function excludedInboxesOf(flags: unknown): string[] {
-  if (!flags || typeof flags !== "object") return [];
-  const raw = (flags as { excluded_inboxes?: unknown }).excluded_inboxes;
-  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
-  return [];
+  return recycleExclusionOf(flags).excluded_inboxes;
+}
+
+export function recycleExclusionOf(flags: unknown): RecycleExclusion {
+  if (!flags || typeof flags !== "object") {
+    return { excluded_inboxes: [], excluded_pods: [], excluded_generic_inboxes: [] };
+  }
+  const o = flags as { excluded_inboxes?: unknown; excluded_pods?: unknown; excluded_generic_inboxes?: unknown };
+  return {
+    excluded_inboxes: stringList(o.excluded_inboxes),
+    excluded_pods: podList(o.excluded_pods),
+    excluded_generic_inboxes: stringList(o.excluded_generic_inboxes),
+  };
 }
 
 export function cellLabel(cell: Cell, dims: readonly string[]): string {
@@ -106,13 +124,16 @@ export class RouteStage {
         const stamped = campaignIdFromSourceLabel(r.source_label, targets);
         const rule = stamped ? null : matchRule(cell, recipe.routing);
         const campaign = stamped ?? rule?.campaign_id ?? null;
-        const excluded = excludedInboxesOf(r.qa_flags);
-        if (campaign && campaignMailboxSetOk(excluded, [])) {
+        const excl = recycleExclusionOf(r.qa_flags);
+        // Campaign current POD is unknown here (no seat/POD source yet).
+        // Empty exclusions still route; named/generic exclusions hold.
+        if (campaign && recycleRouteOk(excl, null)) {
           const ids = byCampaign.get(campaign) ?? [];
           ids.push(r.id);
           byCampaign.set(campaign, ids);
         } else {
-          const label = excluded.length ? `excluded_inbox · ${cellLabel(cell, dims)}` : cellLabel(cell, dims);
+          const hold = recycleHoldReason(excl, null);
+          const label = hold ? `${hold} · ${cellLabel(cell, dims)}` : cellLabel(cell, dims);
           const ids = pending.get(label) ?? [];
           ids.push(r.id);
           pending.set(label, ids);

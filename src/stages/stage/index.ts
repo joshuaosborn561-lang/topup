@@ -58,8 +58,10 @@ export class StageStage {
         // D56: a phone the pipeline found rides into staging for the Smartlead import's phone_number.
         ["phone", lane.has("phone") ? "t.phone" : "null"],
         ["phone_type", lane.has("phone_type") ? "t.phone_type" : "null"],
-        // D63: per-lead excluded sending inboxes. Empty until Josh names the sender column.
+        // D63: per-lead excluded inboxes, named-seat PODs, and generic seats.
         ["excluded_inboxes", lane.has("qa_flags") ? `coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(t.qa_flags->'excluded_inboxes', '[]'::jsonb)) x), '{}'::text[])` : "null"],
+        ["excluded_pods", lane.has("qa_flags") ? `coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(t.qa_flags->'excluded_pods', '[]'::jsonb)) x), '{}'::text[])` : "null"],
+        ["excluded_generic_inboxes", lane.has("qa_flags") ? `coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(t.qa_flags->'excluded_generic_inboxes', '[]'::jsonb)) x), '{}'::text[])` : "null"],
         ["vendor", `'${vendor}'`],
         ["imported", "false"],
         ["purge", "false"],
