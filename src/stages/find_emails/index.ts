@@ -7,7 +7,7 @@ import { nameToEmailSendable } from "../../clients/nameToEmail.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
-import { attempt, columnsOf, finish, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, columnsOf, finish, keepPhones, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql } from "../puzzle/classify.js";
 
 /**
@@ -185,6 +185,7 @@ export class FindEmailsStage {
       );
       return r.rowCount ?? 0;
     });
+    await keepPhones(this.d.repo, table, run.run_id, cols); // D56
     return { kind: "ran", resolved };
   }
 

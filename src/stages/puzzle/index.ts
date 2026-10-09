@@ -9,7 +9,7 @@ import { peopleJobState } from "../../clients/peopleWaterfall.js";
 import { recipeAuthorises } from "../../recipes/schema.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
-import { attempt, columnsOf, finish, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, columnsOf, finish, keepPhones, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql, nameSql } from "./classify.js";
 
 /**
@@ -227,6 +227,7 @@ export class PuzzleStage {
       );
       return r.rowCount ?? 0;
     });
+    await keepPhones(this.d.repo, table, run.run_id, cols); // D56: the domain waterfall writes wf_phone too
     return { kind: "ran", resolved };
   }
 
@@ -277,9 +278,14 @@ export class PuzzleStage {
     const cols = await columnsOf(this.d.repo, table);
     const dsql = domainSql(cols);
     const titleOk = contactCols.has("title_match") ? "coalesce(c.title_match, true)" : "true";
+    // D56: a phone the people waterfall found travels with the name.
+    const phoneCols = ["cellphone", "wf_phone", "phone"].filter((c) => contactCols.has(c));
+    const phoneSet = cols.has("phone") && phoneCols.length ? `phone = coalesce(nullif(t.phone, ''), ${phoneCols.map((c) => `nullif(c.${c}, '')`).join(", ")}), ` : "";
+    const typeCols = ["line_type", "wf_phone_type"].filter((c) => contactCols.has(c));
+    const typeSet = cols.has("phone_type") && typeCols.length ? `phone_type = coalesce(nullif(t.phone_type, ''), ${typeCols.map((c) => `nullif(c.${c}, '')`).join(", ")}), ` : "";
     const resolved = await this.d.repo.withRun(run.run_id, async (tx) => {
       const r = await tx.query(
-        `update ${table} t set first_name = c.first_name, last_name = c.last_name, lead_status = 'needs_email', status_changed_at = now()
+        `update ${table} t set first_name = c.first_name, last_name = c.last_name, ${phoneSet}${typeSet}lead_status = 'needs_email', status_changed_at = now()
          from ${contacts} c
          where t.run_id = $1 and t.lead_status = 'needs_person'
            and lower(coalesce(c.domain, '')) = ${dsql}

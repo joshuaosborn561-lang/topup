@@ -26,17 +26,22 @@ function fakeDb() {
         return {
           rows: [
             { table_schema: "lp", table_name: "bcp_ingested_leads", column_name: "email" },
+            { table_schema: "lp", table_name: "bcp_ingested_leads", column_name: "first_name" },
+            { table_schema: "lp", table_name: "bcp_ingested_leads", column_name: "company_domain" },
+            { table_schema: "lp", table_name: "bcp_ingested_leads", column_name: "phone" },
             { table_schema: "lp", table_name: "bcp_ingested_leads", column_name: "lead_status" },
             { table_schema: "lp", table_name: "bcp_ingested_leads", column_name: "source_label" },
             { table_schema: "client_bcp", table_name: "contacts", column_name: "email" },
             { table_schema: "client_bcp", table_name: "contacts", column_name: "domain" },
+            { table_schema: "public", table_name: "bcp_wf_contacts", column_name: "first_name" },
+            { table_schema: "public", table_name: "bcp_wf_contacts", column_name: "domain" },
             { table_schema: "public", table_name: "bcp_wf_contacts", column_name: "wf_email" },
             { table_schema: "public", table_name: "bcp_wf_contacts", column_name: "wf_status" },
           ],
         };
       }
       if (text.includes("from public.wf_people_status")) return { rows: [{ k: "people_unresolved", n: "7" }] };
-      if (text.startsWith("select count(*)::text as n")) return { rows: [{ n: "901", with_email: "880", with_domain: "901" }] };
+      if (text.startsWith("select count(*)::text as n")) return { rows: [{ n: "901", with_email: "880", with_domain: "901", with_phone: "12", need_domain: "0", need_person: "3", need_email: "21", need_phone: "889", complete: "880" }] };
       if (text.includes("group by 1")) return { rows: [{ k: "needs_verify", n: "600" }, { k: "suppressed", n: "301" }] };
       return { rows: [] };
     },
@@ -56,11 +61,18 @@ describe("D55 — leftovers", () => {
     assert.equal(lane.rows, 901);
     assert.equal(lane.exact, true);
     assert.equal(lane.with_email, 880);
+    assert.equal(lane.with_phone, 12);
+    assert.deepEqual({ ...lane.gaps, next: undefined }, { need_domain: 0, need_person: 3, need_email: 21, need_phone: 889, complete: 880, phone_column: true, next: undefined });
+    assert.ok(lane.gaps?.next.need_email?.includes("email_waterfall"), "D55: the gap names the step that fills it");
+    assert.ok(lane.gaps?.next.need_phone?.includes("phone"), "D56: the phone gap is named");
+    assert.equal(lane.gaps?.next.need_domain, undefined, "no gap, no next");
     assert.deepEqual(lane.by_status, { "lead_status=needs_verify": 600, "lead_status=suppressed": 301 });
     assert.ok(lane.by_label && Object.keys(lane.by_label)[0]?.startsWith("source_label="));
     const wf = stores.find((s) => s.kind === "waterfall")!;
     assert.equal(wf.table, "bcp_wf_contacts");
     assert.equal(wf.with_email, 880);
+    assert.equal(wf.gaps?.phone_column, false, "D56: a table with no phone column says so");
+    assert.match(wf.gaps?.next.need_phone ?? "", /no phone column/);
     assert.ok(stores.find((s) => s.kind === "client_schema" && s.table === "contacts"));
     const scratch = stores.find((s) => s.kind === "scratch")!;
     assert.equal(scratch.rows, 12000);

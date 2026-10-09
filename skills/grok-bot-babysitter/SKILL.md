@@ -48,9 +48,12 @@ The rules you apply:
    `how_i_did_it` and `notes`. `sources` tells you what a leg value means
    and how to repeat it. A missing leg or empty filters: ask Josh.
    `leftovers(client_tag)` shows rows earlier pulls left in the stores
-   (lane table, client schema, waterfall tables) as counts. If one holds
-   what the campaign needs, name it to the person who approves instead of
-   pulling again.
+   (lane table, client schema, waterfall tables) as counts, and for each
+   store the obvious gap: `need_domain`, `need_person`, `need_email`,
+   `need_phone`, with `next` naming the step that fills it. If a store
+   holds what the campaign needs, or is one step from it, name it to the
+   person who approves instead of pulling again. Phones are kept
+   everywhere (D56); Josh cold calls now, so say how many rows carry one.
 3. `count(client_tag, source, filters)` with those filters. getleads is
    free; `ai_ark` needs `approved_by`. BCP records keep industries per
    campaign under `industries_by_campaign`; pass that campaign's list as

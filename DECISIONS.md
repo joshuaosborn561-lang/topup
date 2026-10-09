@@ -74,7 +74,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D52 | Live; the reads and the verbs for Grok bot: reads state the rule and no verdict, verbs run one stage on a job, approvals by name through the console, no row or file URL |
 | D53 | Live; the reasoning half is deleted (watch, planner, recipes inference, policy gates, Slack console, old MCP tools); one short canon; the surface is the canon tools only; version 1.0.0 |
 | D54 | Live; a campaign marked as cold call is ignored everywhere (not listed, not read, not pulled); the mark is in the name; a job pulls at most 2,000 rows |
-| D55 | Live; `leftovers` read: where past pulls left rows, per client, as counts (lane table, client schema, waterfall tables, people status, scratch estimates); moves nothing |
+| D55 | Live; `leftovers` read: where past pulls left rows, per client, as counts (lane table, client schema, waterfall tables, people status, scratch estimates); moves nothing; each store shows its gap (domain, person, email, phone) and the step that fills it |
+| D56 | Live; phones are kept: phone / phone_type / wf_phone / wf_phone_type on every lane table, phone on staging, waterfall phones copied, cellphone from the people contacts, ingest maps vendor phone headers, stage carries phone to Smartlead's phone_number; `leftovers` shows need_phone |
 
 ---
 
@@ -1839,3 +1840,37 @@ was for. Exact counts on big tables can be slow; a count that fails
 falls back to the estimate and says so.
 
 **Guard.** `src/guards/d55_leftovers.test.ts`. Ask Josh.
+
+
+## D56 — Phones are kept
+
+**Decision.** A phone found by any step is kept to the end. Migration
+0018 adds `phone`, `phone_type`, `wf_phone` and `wf_phone_type` to every
+`lp.<tag>_ingested_leads` table (through `topup.ensure_lead_columns`,
+so tables LeadPipe provisions later get them at boot) and `phone`,
+`phone_type` to `public.leads_staging`. Ingest passes LeadPipe a header
+map so a vendor's phone column (`mobile_phone` on getleads, `cellphone`,
+`phone`, `phone_number`, `mobile`, `direct_phone`) lands in `phone`, and
+counts `with_phone`. The domain and email waterfalls write `wf_phone`
+and `wf_phone_type`; after each, the service copies them onto `phone`
+and `phone_type` where empty. The people waterfall's `cellphone` and
+`line_type` travel with the name it found. The stage carries `phone` and
+`phone_type` into staging and counts `with_phone`. Nothing blanks a
+phone. `leftovers` reports `with_phone`, `need_phone` and whether a store
+has a phone column at all. Phones stay redacted in logs (D2).
+
+**Why.** Josh, 2026-10-09: "make sure that this thing doesn't throw away
+phone numbers if we find them. Because now that I have cold calling,
+I'll be doing more of that." Before this, no lane table and no staging
+row had a phone column, so every phone a vendor or a waterfall returned
+was dropped at ingest.
+
+**Tradeoff.** Two things are outside this repo and unverified: whether
+LeadPipe's `ingest_csv` honours `column_map` for a header it did not
+already know, and whether the Smartlead server's `start_lead_import`
+passes a staging `phone` to `phone_number`. The first real job shows
+both: `with_phone` on the ingest and stage counts, and the campaign's
+leads in Smartlead. If either is zero while the vendor returned phones,
+that server needs the one-line mapping.
+
+**Guard.** `src/guards/d56_keep_phones.test.ts`. Ask Josh.
