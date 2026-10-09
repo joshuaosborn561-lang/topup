@@ -96,6 +96,18 @@ describe("D59 — maps ICP against real Postgres", () => {
   });
 });
 
+async function withTx<T>(db: Q, fn: (tx: Q) => Promise<T>): Promise<T> {
+  await db.query("begin");
+  try {
+    const out = await fn(db);
+    await db.query("commit");
+    return out;
+  } catch (err) {
+    await db.query("rollback").catch(() => undefined);
+    throw err;
+  }
+}
+
 describe("D61 — maps copy is idempotent on email", () => {
   it("dedupes the batch and skips emails already in the ingest table", async () => {
     const { db, close } = await pgliteDb();
@@ -122,7 +134,7 @@ describe("D61 — maps copy is idempotent on email", () => {
           ('c', 'custom-1', 'church', 'C', 'new@example.test', 'c.example'),
           ('d', 'custom-1', 'church', 'D', 'fresh@example.test', 'd.example');
       `);
-      const withRun = async <T>(_id: string, fn: (tx: typeof db) => Promise<T>) => fn(db);
+      const withRun = async <T>(_id: string, fn: (tx: typeof db) => Promise<T>) => withTx(db, fn);
       const copied = await copyMapsPool({ ...db, withRun } as never, {
         client_tag: "t",
         filters: { plan_id: "custom-1", categories: ["church"] },
@@ -141,6 +153,131 @@ describe("D61 — maps copy is idempotent on email", () => {
       });
       assert.equal(again.inserted, 0, "D61: a second copy of the same emails inserts nothing. Ask Josh.");
       assert.equal(again.already_held, 4);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("D62 — maps copy times out and dedupes without a unique index", () => {
+  it("skips already-held emails when the ingest table has no unique email index", async () => {
+    const { db, close } = await pgliteDb();
+    try {
+      await db.exec(`
+        create schema client_t;
+        create schema lp;
+        create table client_t.maps_raw (
+          place_id text, plan_id text, main_category text, name text, email text, domain text
+        );
+        create table lp.t_ingested_leads (
+          id serial primary key,
+          email text,
+          company_name text,
+          company_domain text,
+          industry text,
+          source_label text
+        );
+        insert into lp.t_ingested_leads (email, company_name) values ('held@example.test', 'Old');
+        insert into client_t.maps_raw (place_id, plan_id, main_category, name, email, domain) values
+          ('a', 'custom-1', 'church', 'A', 'held@example.test', 'a.example'),
+          ('b', 'custom-1', 'church', 'B', 'new@example.test', 'b.example'),
+          ('c', 'custom-1', 'church', 'C', 'new@example.test', 'c.example');
+      `);
+      const withRun = async <T>(_id: string, fn: (tx: typeof db) => Promise<T>) => withTx(db, fn);
+      const copied = await copyMapsPool({ ...db, withRun } as never, {
+        client_tag: "t",
+        filters: { plan_id: "custom-1", categories: ["church"] },
+        max_rows: 3,
+        source_label: "fixture",
+        run_id: "00000000-0000-0000-0000-000000000003",
+      });
+      assert.equal(copied.inserted, 1, "D62: NOT EXISTS skips the held email without a unique index. Ask Josh.");
+      assert.equal(copied.already_held, 2, "D62: held + batch dup are already_held without ON CONFLICT. Ask Josh.");
+    } finally {
+      await close();
+    }
+  });
+
+  it("copies from the named ICP view and never joins companion views", async () => {
+    const { db, close } = await pgliteDb();
+    try {
+      await db.exec(`
+        create schema client_t;
+        create schema lp;
+        create table client_t.maps_raw (
+          place_id text, plan_id text, main_category text, name text, email text, domain text
+        );
+        create view client_t.v_lane_e_final as
+          select *, true as keep_final from client_t.maps_raw;
+        create view client_t.v_lane_e_companies as
+          select place_id from client_t.maps_raw where place_id = 'never-used';
+        create view client_t.v_lane_e_needs_domain as
+          select place_id from client_t.maps_raw where place_id = 'never-used';
+        create table lp.t_ingested_leads (
+          id serial primary key, email text, company_name text, company_domain text, industry text, source_label text
+        );
+        insert into client_t.maps_raw (place_id, plan_id, main_category, name, email, domain) values
+          ('a', 'custom-1', 'church', 'A', 'a@example.test', 'a.example');
+      `);
+      const seen: string[] = [];
+      const wrapped: Q = {
+        query: async (text, values) => {
+          seen.push(text);
+          return db.query(text, values);
+        },
+        exec: db.exec,
+      };
+      const withRun = async <T>(_id: string, fn: (tx: Q) => Promise<T>) => withTx(wrapped, fn);
+      const copied = await copyMapsPool({ ...wrapped, withRun } as never, {
+        client_tag: "t",
+        filters: { plan_id: "custom-1", categories: ["church"], icp_filter: "client_t.v_lane_e_final" },
+        max_rows: 1,
+        source_label: "fixture",
+        run_id: "00000000-0000-0000-0000-000000000004",
+      });
+      assert.equal(copied.inserted, 1, "D62: the named ICP view is the copy source. Ask Josh.");
+      const insertSql = seen.find((s) => /insert into/i.test(s)) ?? "";
+      assert.match(insertSql, /v_lane_e_final/, "D62: copy must read the named view. Ask Josh.");
+      assert.doesNotMatch(insertSql, /v_lane_e_companies|v_lane_e_needs_domain/, "D62: copy must not join companions. Ask Josh.");
+      assert.match(seen.join("\n"), /set local statement_timeout/i, "D62: the copy must set a statement timeout. Ask Josh.");
+    } finally {
+      await close();
+    }
+  });
+
+  it("a hung copy hits statement_timeout and throws (the live hang path)", async () => {
+    const { db, close } = await pgliteDb();
+    try {
+      await db.exec(`
+        create schema client_t;
+        create schema lp;
+        create table client_t.maps_raw (
+          place_id text, plan_id text, main_category text, name text, email text, domain text
+        );
+        create view client_t.v_hang as
+          select place_id, plan_id, main_category, name, email, domain, true as keep_final
+            from client_t.maps_raw
+           where pg_sleep(3) is not null;
+        create table lp.t_ingested_leads (
+          id serial primary key, email text, company_name text, source_label text
+        );
+        insert into client_t.maps_raw (place_id, plan_id, main_category, name, email, domain) values
+          ('a', 'custom-1', 'church', 'A', 'a@example.test', 'a.example');
+      `);
+      const withRun = async <T>(_id: string, fn: (tx: typeof db) => Promise<T>) => withTx(db, fn);
+      await assert.rejects(
+        () =>
+          copyMapsPool({ ...db, withRun } as never, {
+            client_tag: "t",
+            filters: { plan_id: "custom-1", categories: ["church"], icp_view: "v_hang" },
+            max_rows: 1,
+            source_label: "fixture",
+            run_id: "00000000-0000-0000-0000-000000000005",
+            statementTimeoutMs: 200,
+          }),
+        (err: Error) =>
+          /statement timeout|canceling statement|query_canceled|57014/i.test(err.message),
+      );
     } finally {
       await close();
     }

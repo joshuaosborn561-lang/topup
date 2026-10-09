@@ -1,12 +1,16 @@
 import type { Queryable } from "../db/pool.js";
 
 /**
- * The stored Maps pool (D57, D59, D61). `client_<tag>.maps_raw` scoped by the
- * receipt's `plan_id` and categories. An ICP view named on the receipt
- * is applied when it lives in that client schema. Counts only. The copy
- * into the ingest table is idempotent on email. Never scoped by ZIP or
- * by client_tag alone. Never writes `dl_status`, `sg_exclude`, or `skip_*`.
+ * The stored Maps pool (D57, D59, D61, D62). `client_<tag>.maps_raw` scoped
+ * by the receipt's `plan_id` and categories. An ICP view named on the
+ * receipt is applied when it lives in that client schema. Counts may use
+ * companion views; the copy reads the named view or maps_raw, never the
+ * companion join. Idempotent on email. Never scoped by ZIP or by
+ * client_tag alone. Never writes `dl_status`, `sg_exclude`, or `skip_*`.
  */
+
+/** Postgres SET LOCAL on the copy transaction (D62). Ask Josh if 45s is wrong. */
+export const MAPS_COPY_STATEMENT_TIMEOUT_MS = 45_000;
 export const MAPS_POOL_NOTE =
   "the stored Maps pool in client_<tag>.maps_raw, scoped by plan_id and categories; a fresh scrape is the Google Maps Scraper MCP";
 
@@ -274,6 +278,8 @@ export interface MapsPoolCopy {
   max_rows: number;
   source_label: string;
   run_id: string;
+  /** Override for tests. Live default is MAPS_COPY_STATEMENT_TIMEOUT_MS. */
+  statementTimeoutMs?: number;
 }
 
 export interface MapsCopyResult {
@@ -294,10 +300,12 @@ async function destEmailUnique(db: Queryable, schema: string, table: string): Pr
 
 /**
  * Copy up to max_rows from the stored pool into lp.<tag>_ingested_leads.
- * INSERT … SELECT only; no row is returned to the caller. Dedupes the
- * batch on email and skips emails already in the table (ON CONFLICT DO
- * NOTHING). Skipped rows count as already_held (D61). Does not touch
- * dl_status, sg_exclude, or skip_* on the pool.
+ * INSERT … SELECT only; no row is returned to the caller. Reads the named
+ * ICP view (or maps_raw), never the companion-view join (D62). Dedupes
+ * the batch on email and skips emails already in the table with NOT EXISTS
+ * (ON CONFLICT only when a unique email index exists). Skipped rows count
+ * as already_held (D61). The copy transaction has a statement timeout
+ * (D62). Does not touch dl_status, sg_exclude, or skip_* on the pool.
  */
 export async function copyMapsPool(
   db: Queryable & { withRun: <T>(runId: string, fn: (tx: Queryable) => Promise<T>) => Promise<T> },
@@ -318,18 +326,10 @@ export async function copyMapsPool(
   const destCols = await columnsOf(db, destSchema, destTable);
   const cats = spec.categories.map((c) => c.toLowerCase());
   const params: unknown[] = [spec.plan_id];
-  const companions = spec.icp_view
-    ? { companies: `${stemOf(spec.icp_view)}_companies`, needing: `${stemOf(spec.icp_view)}_needs_domain` }
-    : null;
-  const useCompanions = Boolean(
-    companions
-    && (await relationExists(db, schema, companions.companies))
-    && (await relationExists(db, schema, companions.needing)),
-  );
-  const catParam = !useCompanions && cats.length ? `$${params.push(cats)}` : "";
+  const catParam = cats.length ? `$${params.push(cats)}` : "";
   const labelParam = `$${params.push(input.source_label)}`;
   const limitParam = `$${params.push(input.max_rows)}`;
-  const where = `true${planClause("s", srcCols, "$1::text")}${categoryClause("s", srcCols, useCompanions ? [] : cats, catParam)}${!useCompanions && spec.icp_view && sourceName === spec.icp_view ? keepClause("s", srcCols) : ""}`;
+  const where = `true${planClause("s", srcCols, "$1::text")}${categoryClause("s", srcCols, cats, catParam)}${spec.icp_view && sourceName === spec.icp_view ? keepClause("s", srcCols) : ""}`;
 
   const map: Array<[string, string]> = [];
   const pick = (dest: string, ...src: string[]) => {
@@ -349,29 +349,16 @@ export async function copyMapsPool(
   if (destCols.has("source_label")) map.push(["source_label", labelParam]);
   if (map.length === 0) throw new Error(`${schema}.${sourceName} has no columns the ingest table can take`);
 
-  // Companion views (companies ∪ needs_domain) when the named ICP view has them.
-  let fromWhere = `from ${q(schema)}.${q(sourceName)} s where ${where}`;
-  if (useCompanions && companions) {
-    const { companies, needing } = companions;
-    const rawCols = await columnsOf(db, schema, "maps_raw");
-    const rawPlan = planClause("m", rawCols, "$1::text");
-    fromWhere = `from ${q(schema)}.${q("maps_raw")} s
-        where s.place_id in (
-          select c.place_id from ${q(schema)}.${q(companies)} c
-            join ${q(schema)}.${q("maps_raw")} m on m.place_id = c.place_id
-           where true${rawPlan}
-          union
-          select n.place_id from ${q(schema)}.${q(needing)} n
-            join ${q(schema)}.${q("maps_raw")} m on m.place_id = n.place_id
-           where true${rawPlan}
-        )
-        and ${where}`;
-  }
-
+  // Named ICP view or maps_raw only. The companion union is a count path
+  // (D57, D59). That join re-evaluates the regex views and cannot stop at
+  // LIMIT 2000 (job 44fa45d9, D62).
+  const fromWhere = `from ${q(schema)}.${q(sourceName)} s where ${where}`;
+  const destRef = `${q(destSchema)}.${q(destTable)}`;
   const destColsSql = map.map(([d]) => q(d)).join(", ");
   const selectExprs = map.map(([d, expr]) => `${expr} as ${q(d)}`).join(", ");
   const hasEmail = map.some(([d]) => d === "email");
   const conflict = hasEmail && (await destEmailUnique(db, destSchema, destTable));
+  const timeoutMs = Math.max(1, Math.floor(input.statementTimeoutMs ?? MAPS_COPY_STATEMENT_TIMEOUT_MS));
 
   const sql = hasEmail
     ? `with windowed as (
@@ -383,19 +370,24 @@ export async function copyMapsPool(
         select distinct on (email) * from windowed order by email nulls last
       ),
       ins as (
-        insert into ${q(destSchema)}.${q(destTable)} (${destColsSql})
-        select ${destColsSql} from deduped
+        insert into ${destRef} (${destColsSql})
+        select ${destColsSql} from deduped d
+        where d.email is null or not exists (
+          select 1 from ${destRef} held
+           where held.email is not distinct from d.email
+        )
         ${conflict ? "on conflict (email) do nothing" : ""}
         returning 1
       )
       select (select count(*)::text from windowed) as windowed,
              (select count(*)::text from ins) as inserted`
-    : `insert into ${q(destSchema)}.${q(destTable)} (${destColsSql})
+    : `insert into ${destRef} (${destColsSql})
         select ${map.map(([, expr]) => expr).join(", ")}
           ${fromWhere}
          limit ${limitParam}`;
 
   return db.withRun(input.run_id, async (tx) => {
+    await tx.query(`set local statement_timeout = ${timeoutMs}`);
     const result = await tx.query<{ windowed?: string; inserted?: string }>(sql, params);
     if (hasEmail) {
       const windowed = Number(result.rows[0]?.windowed ?? 0);

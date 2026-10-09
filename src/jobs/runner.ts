@@ -1,5 +1,5 @@
 import type { Repo } from "../db/repo.js";
-import { presentRun, type RunRow, type Step } from "../domain/runs.js";
+import { presentRun, runIsOpen, type RunRow, type Step } from "../domain/runs.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
 import { targetCountPatch } from "../recipes/campaigns.js";
@@ -64,6 +64,9 @@ export const VERB_STEPS: Readonly<Record<Verb, readonly Step[]>> = {
 
 export const VERB_ORDER: readonly Verb[] = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import"];
 
+/** How long a background verb may sit before the job is marked failed (D62). Ask Josh if 90s is wrong. */
+export const VERB_BACKGROUND_TIMEOUT_MS = 90_000;
+
 export interface VerbResult {
   job_id: string;
   verb: Verb;
@@ -84,6 +87,8 @@ export interface JobRunnerDeps {
   console: { resolveAs(actor: string, role: "owner" | "operator" | null, cardId: string, choice: string): Promise<{ ok: boolean; message?: string; reason?: string }> };
   ledger?: LaneLedger;
   now?: () => number;
+  /** Override for tests. Live default is VERB_BACKGROUND_TIMEOUT_MS. */
+  backgroundTimeoutMs?: number;
 }
 
 export class JobRunner {
@@ -126,7 +131,8 @@ export class JobRunner {
   /**
    * Start a verb in the background and return the job id at once (D61).
    * Poll job(job_id) for the step. The verb still only runs because Grok
-   * called it; nothing schedules the next one.
+   * called it; nothing schedules the next one. A throw or a timeout writes
+   * last_error and closes the job as failed (D62).
    */
   async begin(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null }): Promise<VerbResult> {
     const first = VERB_STEPS[verb][0]!;
@@ -135,13 +141,55 @@ export class JobRunner {
     const key = `${jobId}:${verb}`;
     if (!this.inFlight.has(key)) {
       this.inFlight.add(key);
-      void this.run(jobId, verb, opts)
-        .catch((err) => {
-          log.error("verb failed in the background", { job_id: jobId, verb, error: (err as Error).message });
-        })
-        .finally(() => this.inFlight.delete(key));
+      void this.runInBackground(jobId, verb, opts).finally(() => this.inFlight.delete(key));
     }
     return this.result(jobId, verb, first, "started", {}, null, null, null, null, `job(job_id) until ${verb} is done, then ${this.nextLine(verb)}`);
+  }
+
+  private async runInBackground(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null }): Promise<void> {
+    const timeoutMs = Math.max(1, Math.floor(this.d.backgroundTimeoutMs ?? VERB_BACKGROUND_TIMEOUT_MS));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`${verb} still running after ${Math.round(timeoutMs / 1000)}s; the background job timed out. Ask Josh.`));
+      }, timeoutMs);
+    });
+    try {
+      await Promise.race([this.run(jobId, verb, opts), deadline]);
+    } catch (err) {
+      await this.recordBackgroundFailure(jobId, verb, err);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** A background verb that throws or times out must not sit at running with empty counts (D62). */
+  private async recordBackgroundFailure(jobId: string, verb: Verb, err: unknown): Promise<void> {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error("verb failed in the background", { job_id: jobId, verb, error: message });
+    try {
+      const run = await this.d.repo.getRun(jobId);
+      if (!run || !runIsOpen(run.status)) return;
+      let step: Step = VERB_STEPS[verb][0]!;
+      for (const s of VERB_STEPS[verb]) {
+        const row = await this.d.repo.getStep(jobId, s);
+        if (row?.status === "running") {
+          step = s;
+          break;
+        }
+        if (row?.status !== "done") {
+          step = s;
+          break;
+        }
+      }
+      await this.d.repo.failStep(jobId, step, message, false);
+      await this.d.repo.setRunStatus(jobId, "failed", step, message);
+      await this.d.ledger
+        ?.event({ client_tag: run.client_tag, lane: run.lane, run_id: jobId, event: "step", line: `${verb}: ${step} failed: ${message.slice(0, 200)}`, actor: "job-timeout" })
+        .catch(() => undefined);
+    } catch (writeErr) {
+      log.error("could not record background failure", { job_id: jobId, verb, error: (writeErr as Error).message });
+    }
   }
 
   /** Run one verb on a job. */

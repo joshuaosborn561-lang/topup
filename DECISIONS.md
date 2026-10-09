@@ -81,6 +81,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories are not applied again on that union |
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 | D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
+| D62 | Live; a background maps pull always ends done or failed with `last_error`; the copy reads the named ICP view (not the companion join), times out, and dedupes with or without a unique email index |
 
 ---
 
@@ -2058,3 +2059,49 @@ and a second replica cannot be turned off from this repo; they are
 named in the PR.
 
 **Guard.** `src/guards/d61_maps_pull_async_watch.test.ts`. Ask Josh.
+
+## D62 — A background maps pull cannot hang
+
+**Decision.** Four things, one rule.
+
+1. **The copy is a short query.** `copyMapsPool` reads the named ICP view
+   (or `maps_raw`) with `plan_id`, `keep_final` when present, and
+   `LIMIT`. It does not join companion `v_*_companies` ∪
+   `v_*_needs_domain` for the insert. Those companions stay on the count
+   path (D57, D59).
+2. **Dedupe works without a unique index.** The batch is `DISTINCT ON
+   (email)`. Emails already in `lp.<tag>_ingested_leads` are skipped with
+   `NOT EXISTS`. `ON CONFLICT (email) DO NOTHING` is added only when a
+   unique email index exists. Skipped rows stay `already_held`.
+3. **The copy has a statement timeout.** The write transaction does
+   `SET LOCAL statement_timeout` to 45 seconds
+   (`MAPS_COPY_STATEMENT_TIMEOUT_MS`). The cancel writes through as an
+   error. Ask Josh if 45s is wrong.
+4. **A background verb always ends.** `JobRunner.begin` no longer only
+   logs. A throw or a 90 second job timeout (`VERB_BACKGROUND_TIMEOUT_MS`)
+   writes `last_error` on the running step, closes the job as `failed`,
+   and leaves a lane event. A job already `failed` is not rewritten to
+   `done`. Ask Josh if 90s is wrong.
+
+**Why.** Job `44fa45d9` (emcor #4037475, plan `custom-1789679826`, ICP
+`v_lane_e_final`, `max_rows` 2000) sat at `pull=running` for 12+ minutes
+with empty counts and no `last_error`. Railway logs went silent after
+`run_opened` and the legacy-tier event. The unique email index on
+`lp.emcor_ingested_leads` exists; `leadtopup_app` has no
+`statement_timeout`; `lock_timeout` is 0. After abort, `pg_stat_activity`
+still showed the windowed CTE as `active` with no `wait_event` — CPU, not
+a lock, not pool exhaustion. EXPLAIN of the companion insert is a
+Parallel Seq Scan of `maps_raw` with the ICP regex evaluated twice, then
+joined back to `maps_raw`; `LIMIT 2000` cannot stop that. `begin()`
+caught errors only to log them, so a hung query left the step running.
+
+**Tradeoff.** Count still uses the companion union (companies ∪ needing
+domain). Copy from the named view with `keep_final` may include more
+place_ids than that union (it is not `DISTINCT ON` domain). A maps pull
+of 2,000 rows that are already held still reports `already_held` 2000
+and does not keep scanning. The 45s / 90s numbers are ours until Josh
+names others. Abort still does not `pg_cancel_backend` an in-flight
+query; the statement timeout is what stops it.
+
+**Guard.** `src/guards/d62_maps_pull_timeout.test.ts` and the PGlite
+cases in `src/canon/mapsPool.pg.test.ts`. Ask Josh.

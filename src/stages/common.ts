@@ -1,5 +1,5 @@
 import type { Repo } from "../db/repo.js";
-import { funnelCounts, MAX_STEP_ATTEMPTS, type Role, type RunRow, type RunStatus, type Step } from "../domain/runs.js";
+import { funnelCounts, MAX_STEP_ATTEMPTS, runIsOpen, type Role, type RunRow, type RunStatus, type Step } from "../domain/runs.js";
 import { logger } from "../lib/log.js";
 import { parkedCard } from "../console/cards.js";
 import type { Console } from "../console/console.js";
@@ -49,9 +49,12 @@ export const realClock: Clock = { now: () => Date.now(), sleep: (ms) => new Prom
  * run the body; a thrown error is one failed attempt, the third parks the run
  * with one card to Cayden. Gate failures and card waits are returned, not thrown.
  */
-async function runWasAborted(repo: Repo, runId: string): Promise<boolean> {
+async function runStopReason(repo: Repo, runId: string): Promise<"aborted" | "closed" | null> {
   const fresh = await repo.getRun(runId);
-  return !fresh || fresh.status === "aborted";
+  if (!fresh) return "aborted";
+  if (fresh.status === "aborted") return "aborted";
+  if (!runIsOpen(fresh.status)) return "closed";
+  return null;
 }
 
 function isAbortError(err: unknown): boolean {
@@ -64,23 +67,40 @@ async function stopAborted(repo: Repo, runId: string): Promise<StageOutcome> {
   return { kind: "stopped" };
 }
 
+/** A job already failed (timeout, last_error written) must not be rewritten to done (D62). */
+async function haltIfStopped(repo: Repo, runId: string): Promise<StageOutcome | null> {
+  const why = await runStopReason(repo, runId);
+  if (why === "aborted") return stopAborted(repo, runId);
+  if (why === "closed") {
+    const fresh = await repo.getRun(runId);
+    await repo.cancelRunningSteps(runId, fresh?.last_error ?? "job already closed");
+    return { kind: "stopped" };
+  }
+  return null;
+}
+
 export async function attempt(d: StageDeps, run: RunRow, stage: Step, status: RunStatus, body: (attempts: number) => Promise<StageOutcome>): Promise<StageOutcome> {
-  if (await runWasAborted(d.repo, run.run_id)) return stopAborted(d.repo, run.run_id);
+  const stopped = await haltIfStopped(d.repo, run.run_id);
+  if (stopped) return stopped;
   const step = await d.repo.beginStep(run.run_id, stage);
-  if (await runWasAborted(d.repo, run.run_id)) return stopAborted(d.repo, run.run_id);
+  const afterBegin = await haltIfStopped(d.repo, run.run_id);
+  if (afterBegin) return afterBegin;
   if (!step.ok) return park(d, run, stage, `${stage} exhausted its ${MAX_STEP_ATTEMPTS} attempts`, step.attempts - 1);
   await d.repo.setRunStatus(run.run_id, status, stage);
-  if (await runWasAborted(d.repo, run.run_id)) return stopAborted(d.repo, run.run_id);
+  const afterStatus = await haltIfStopped(d.repo, run.run_id);
+  if (afterStatus) return afterStatus;
   try {
     const out = await body(step.attempts);
-    if (await runWasAborted(d.repo, run.run_id)) return stopAborted(d.repo, run.run_id);
+    const afterBody = await haltIfStopped(d.repo, run.run_id);
+    if (afterBody) return afterBody;
     if (out.kind === "waiting") {
       await d.repo.setStepWaiting(run.run_id, stage, out.worstCaseCents ?? 0);
       await d.repo.setRunStatus(run.run_id, out.on === "owner" ? "awaiting_josh" : "awaiting_operator", stage);
     }
     return out;
   } catch (err) {
-    if ((await runWasAborted(d.repo, run.run_id)) || isAbortError(err)) return stopAborted(d.repo, run.run_id);
+    const afterErr = await haltIfStopped(d.repo, run.run_id);
+    if (afterErr || isAbortError(err)) return afterErr ?? stopAborted(d.repo, run.run_id);
     const message = (err as Error).message;
     const parked = step.attempts >= MAX_STEP_ATTEMPTS;
     await d.repo.failStep(run.run_id, stage, message, parked);

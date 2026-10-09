@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D61** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D62** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -61,10 +61,14 @@ D48).
     receipt is not rewritten. New recipes and new receipts never write
     those names (D58).
 13. **Maps pull is idempotent, and pull itself is not a long wait.** The
-    stored-pool copy into `lp.<tag>_ingested_leads` dedupes the batch on
-    email and skips emails already there (`ON CONFLICT DO NOTHING`).
-    Skipped rows are `already_held`. `pull` returns the job id at once and
-    runs in the background; `job(job_id)` is the poll (D61).
+    stored-pool copy into `lp.<tag>_ingested_leads` reads the named ICP
+    view (or `maps_raw`), not the companion-view join. It dedupes the
+    batch on email and skips emails already there (`NOT EXISTS`; `ON
+    CONFLICT` only when a unique email index exists). Skipped rows are
+    `already_held`. The copy runs under a statement timeout. `pull`
+    returns the job id at once and runs in the background; a background
+    verb that throws or outruns the job timeout ends `failed` with
+    `last_error`. `job(job_id)` is the poll (D61, D62).
 14. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
@@ -95,7 +99,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 
 | Verb | Stage(s) | Notes |
 |---|---|---|
-| `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. `source` is `getleads`, `maps`, `permits` or `table`. Maps copies into `lp.<tag>_ingested_leads` with a unique email skip (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
+| `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits` or `table`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
 | `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; no and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
 | `enrich(job_id, approved_by?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. |
@@ -136,7 +140,8 @@ call next.
    and stop. Do not widen. If Josh wants options, give counts for each.
 5. Tell Cayden or Josh what you will pull and what it will cost. When one
    of them says yes, `pull(...)` with `max_rows` 1 to 2,000. It returns the
-   `job_id` at once; poll `job(job_id)` until pull is done (D61).
+   `job_id` at once; poll `job(job_id)` until pull is done or failed
+   (D61, D62). If it failed, read `last_error` and stop.
 6. `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage` in
    order. After `icp`, read the label counts in `job(job_id)`: if one
    label swallows a big share, the label set is wrong; say so and stop.
@@ -172,9 +177,11 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
 * Never invent a filter, a price, a threshold or a source the record does
   not carry. Never drop `plan_id` from a maps count or pull, and never
   scope that pool by ZIP or `client_tag` alone (D57). Never send an
-  untyped `$1` on a maps ICP count (D59). A maps insert that hits an
-  email already in `lp.<tag>_ingested_leads` skips it as `already_held`
-  (D61).
+  untyped `$1` on a maps ICP count (D59). Never copy maps through the
+  companion-view join (D62). A maps insert that hits an email already
+  in `lp.<tag>_ingested_leads` skips it as `already_held` (D61, D62).
+  Never leave a background pull at `running` with empty counts and no
+  `last_error` (D62).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).
