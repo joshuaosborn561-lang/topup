@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MIN_NET_NEW } from "../policy/rules.js";
 import { BANNED_ACTIONS, BANNED_VENDORS } from "../spend/prices.js";
+import { isLegacyEmailMaxTier, LIVE_EMAIL_TIERS } from "./legacyLeadmagic.js";
 
 /**
  * Lane recipe (design 3.1). The service can only execute what a recipe says.
@@ -188,12 +189,17 @@ const suppression = z
   })
   .strict();
 
-export const EMAIL_TIERS = ["getleads", "smartlead", "aiark", "leadmagic", "prospeo", "fullenrich"] as const;
+export const EMAIL_TIERS = LIVE_EMAIL_TIERS;
+
+const emailMaxTier = z.preprocess((v) => {
+  if (typeof v === "string" && isLegacyEmailMaxTier(v)) return "aiark";
+  return v;
+}, z.enum(EMAIL_TIERS).default("aiark"));
 
 const emailFinding = z
   .object({
     enabled: z.boolean(),
-    max_tier: z.enum(EMAIL_TIERS).default("aiark"),
+    max_tier: emailMaxTier,
     fullenrich: z.boolean().default(false),
     batch_rows: z.number().int().min(1).max(500).default(200),
     steps: z.array(z.string()).default([]),
@@ -397,7 +403,7 @@ export function recipeAuthorises(recipe: Recipe, step: string, vendor?: string):
       return kinds.has(vendor);
     }
     case "puzzle":
-      return vendor === undefined || vendor === "aiark" || vendor === "apify" || vendor === "getleads" || vendor === "leadmagic" || vendor === "prospeo";
+      return vendor === undefined || vendor === "aiark" || vendor === "aiark_people" || vendor === "apify" || vendor === "getleads" || vendor === "prospeo" || vendor === "prospeo_search";
     case "find_emails": {
       if (!vendor) return true;
       const maxIdx = EMAIL_TIERS.indexOf(recipe.email_finding.max_tier);

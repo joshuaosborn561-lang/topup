@@ -1,6 +1,7 @@
 import { getleadsParamsFromFilters } from "./filters.js";
 import { icpViewOf, mapsPoolFromFilters } from "../canon/mapsPool.js";
 import { MAX_ROWS_PER_JOB } from "../policy/rules.js";
+import { liveEmailMaxTier, mapEmailMaxTier } from "../recipes/legacyLeadmagic.js";
 import { EMAIL_TIERS, parseRecipe, type Recipe } from "../recipes/schema.js";
 
 /**
@@ -23,7 +24,8 @@ export interface JobSpec {
   max_rows: number;
   icp_kind?: "linkedin_native" | "physical";
   persona?: string;
-  email_max_tier?: (typeof EMAIL_TIERS)[number];
+  /** Live ceiling, or a legacy `leadmagic` / `lm` / `lead_magic` alias (D58 maps to aiark). */
+  email_max_tier?: string;
   name_to_email?: boolean;
 }
 
@@ -82,6 +84,14 @@ export function jobRecipeId(spec: Pick<JobSpec, "client_tag" | "campaign_id">, s
 
 export function jobRecipe(spec: JobSpec, stamp = Date.now()): Recipe {
   if (!Number.isInteger(spec.max_rows) || spec.max_rows < 1 || spec.max_rows > MAX_ROWS_PER_JOB) throw new Error(`max_rows must be a whole number from 1 to ${MAX_ROWS_PER_JOB} (D53)`);
+  if (spec.email_max_tier) {
+    const mapped = mapEmailMaxTier(spec.email_max_tier);
+    if (!mapped.tier) {
+      throw new Error(
+        `unknown email_max_tier '${spec.email_max_tier}'. Live: ${EMAIL_TIERS.join(", ")}. leadmagic / lm / lead_magic is a legacy alias for aiark (D58). Ask Josh.`,
+      );
+    }
+  }
   const icp = { kind: spec.icp_kind ?? (spec.source === "getleads" ? "linkedin_native" : "physical"), persona: spec.persona ?? spec.lane };
   const raw: unknown = {
     recipe_id: jobRecipeId(spec, stamp),
@@ -100,7 +110,7 @@ export function jobRecipe(spec: JobSpec, stamp = Date.now()): Recipe {
       same_offer_any_client: true,
       same_gift_any_client: false,
     },
-    email_finding: { enabled: true, max_tier: spec.email_max_tier ?? "leadmagic", fullenrich: false, name_to_email: spec.name_to_email ?? false },
+    email_finding: { enabled: true, max_tier: liveEmailMaxTier(spec.email_max_tier), fullenrich: false, name_to_email: spec.name_to_email ?? false },
     verify: { seg_split: true, reject_rate_norm: null },
     normalize: { names_cities: true, company: true, location: true, sports_team: { league: "both", pro_only: false } },
     qa: [],

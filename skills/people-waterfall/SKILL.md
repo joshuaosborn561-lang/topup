@@ -66,7 +66,7 @@ Run it per client. A vendor strong on DFW GCs can be weak on New England IT.
 
 Free tiers first, always: cache, getleads batch, Smartlead. Those three made 94 percent of every Peterson contact that exists.
 
-Among paid tiers, LeadMagic `employee_finder` is 0.05 credits per employee, roughly 20x cheaper per person than any 1-credit lookup. Pull the whole roster, filter titles in SQL for free. AI Ark is 0.5 credits for a profile without contact info, which is all this resolver needs, and re-exporting a contact already owned is free forever.
+Among paid tiers, LeadMagic `employee_finder` is **dropped (D58)**. Do not call it. The live default order is `site_staff → cache → discolike → prospeo_search → aiark_people`. Prospeo search is 1 credit per page of title-matched people; AI Ark people is 0.5 credits per result, title required, cap 3. A stored LeadMagic person source maps to this order. Do not pull a whole roster and filter titles in SQL.
 
 The service sorts tiers on live rates at job start. Do not hand-order them and do not assume a remembered price.
 

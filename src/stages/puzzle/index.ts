@@ -7,7 +7,8 @@ import { domainJobState } from "../../clients/domainWaterfall.js";
 import type { PeopleWaterfall } from "../../clients/peopleWaterfall.js";
 import { peopleJobState } from "../../clients/peopleWaterfall.js";
 import { recipeAuthorises } from "../../recipes/schema.js";
-import { usd, worstCaseCents } from "../../spend/prices.js";
+import { PEOPLE_DEFAULT_ORDER } from "../../recipes/legacyLeadmagic.js";
+import { peopleWaterfallWorstCaseCents, usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { attempt, columnsOf, finish, keepPhones, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql, nameSql } from "./classify.js";
@@ -100,7 +101,7 @@ export class PuzzleStage {
       const line =
         `Puzzle: ${classified.needs_domain} needed a domain · ${classified.needs_person} needed a person · ${needsEmail} already name+domain, no email · banked ${banked} names` +
         (domainsResolved || peopleResolved ? ` · resolved domain ${domainsResolved} / person ${peopleResolved}` : "") +
-        `. Next is DiscoLike find emails (Name to Email is paused), then Email Waterfall.`;
+        `. People order ${PEOPLE_DEFAULT_ORDER.join(" → ")} (D58). Next is DiscoLike find emails (Name to Email is paused), then Email Waterfall.`;
       return finish(this.d, run, "puzzle", needsEmail + (byStatus.needs_email ?? 0), counts, line);
     });
   }
@@ -233,17 +234,20 @@ export class PuzzleStage {
 
   private async runPeople(run: RunRow, recipe: Recipe, table: string, rows: number): Promise<StageOutcome | { kind: "ran"; resolved: number }> {
     const where = `run_id = '${run.run_id}' and lead_status = 'needs_person'`;
+    // D58: Find Named Person's default is site_staff → cache → discolike →
+    // prospeo_search → aiark_people. Do not send a dropped-vendor filter
+    // or ceiling; the people service no longer has those tiers.
     const quote = await this.d.people!.estimate({ source_table: table, where, client_tag: run.client_tag });
-    const worst = this.d.rails ? worstCaseCents("aiark", "export", rows) : 0;
+    const worst = this.d.rails ? peopleWaterfallWorstCaseCents(rows) : 0;
     if (this.d.rails) {
       const decision = await this.d.rails.gate({
         runId: run.run_id,
         clientTag: run.client_tag,
         step: "puzzle",
-        vendor: "aiark",
+        vendor: "aiark_people",
         action: "export",
         rows,
-        recipeAuthorised: recipeAuthorises(recipe, "puzzle", "aiark"),
+        recipeAuthorised: recipeAuthorises(recipe, "puzzle", "aiark_people") && recipeAuthorises(recipe, "puzzle", "prospeo_search"),
         worstCaseCents: worst,
       });
       if (decision.kind === "blocked") throw new Error(`people waterfall blocked: ${decision.reason}`);

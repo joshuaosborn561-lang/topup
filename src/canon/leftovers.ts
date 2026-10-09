@@ -78,7 +78,7 @@ const PHONE_COLUMNS = ["phone", "cellphone", "wf_phone", "mobile_phone", "phone_
 const NEXT_STEP: Readonly<Record<string, string>> = {
   need_domain: "domain_waterfall (company name plus location to a domain)",
   need_person: "people_waterfall (named people at the domain; writes cellphone and line_type)",
-  need_email: "email_waterfall (getleads, Smartlead, AI Ark, LeadMagic tiers), or name_to_email for a handful",
+  need_email: "email_waterfall (getleads, Smartlead, AI Ark, then Prospeo if the ceiling allows), or name_to_email for a handful",
   need_phone: "email_waterfall on the aiark or fullenrich tier finds phones; the people_waterfall contacts table carries cellphone",
 };
 const LABEL_COLUMNS = ["source_label", "build_label", "run_label", "lane", "source_tool", "source_tier", "source"] as const;

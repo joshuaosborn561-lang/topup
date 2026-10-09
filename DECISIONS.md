@@ -77,7 +77,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D55 | Live; `leftovers` read: where past pulls left rows, per client, as counts (lane table, client schema, waterfall tables, people status, scratch estimates); moves nothing; each store shows its gap (domain, person, email, phone) and the step that fills it |
 | D56 | Live; phones are kept: phone / phone_type / wf_phone / wf_phone_type on every lane table, phone on staging, waterfall phones copied, cellphone from the people contacts, ingest maps vendor phone headers, stage carries phone to Smartlead's phone_number; `leftovers` shows need_phone |
 | D57 | Live; maps `count` and `pull` read `client_<tag>.maps_raw` scoped by `plan_id` and categories, plus the named ICP view (companion `v_*_companies` ∪ `v_*_needs_domain` when present); already used is live `public.leads` on the receipt's campaigns; never `pipeline_stats` by state/client_tag |
-| D58 | Open on PR #35; LeadMagic is dropped and old receipts replay as aiark. Not shipped on this branch |
+| D58 | Live; LeadMagic is dropped. Replay maps `email_max_tier=leadmagic` to `aiark` and a LeadMagic person source to the live Find Named Person order; old receipts are not rewritten |
 | D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories are not applied again on that union |
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 
@@ -1879,7 +1879,6 @@ that server needs the one-line mapping.
 
 **Guard.** `src/guards/d56_keep_phones.test.ts`. Ask Josh.
 
-
 ## D57 — Maps count and pull read the stored pool by plan_id
 
 **Decision.** `count` and `pull` with `source=maps` read the stored pool
@@ -1912,17 +1911,53 @@ receipt's `rows_imported`.
 
 **Guard.** `src/guards/d57_maps_plan_id.test.ts`. Ask Josh.
 
+## D58 — LeadMagic is dropped
 
-## D58 — LeadMagic is dropped; replay old receipts as aiark
+**Decision.** Josh dropped LeadMagic on 2026-10-08. This service never
+calls it, never prices it, and never writes its names on a new recipe or
+a new receipt.
 
-**Decision.** Open PR #35 claims this number: LeadMagic is no longer a
-live vendor; old receipts that say `leadmagic` replay as `aiark`. This
-branch does not ship that. Maps ICP binds are D59.
+1. **Email ceiling.** A stored `email_max_tier` of `leadmagic` (or `lm` /
+   `lead_magic`) is a legacy ceiling: replay as `aiark` (the old spend
+   boundary — stop before Prospeo — minus the dead vendor) and warn.
+   New job recipes default to `aiark`. Zod preprocess maps the old name
+   so a new recipe cannot store it. `find_emails` sends the mapped
+   ceiling to the Email Waterfall.
+2. **People.** The puzzle step calls Find Named Person with no
+   `skip_tiers` and no LeadMagic max_tier. That service's default order
+   is `site_staff → cache → discolike → prospeo_search → aiark_people`.
+   A stored person source of `leadmagic_employee_finder` (and the old
+   aliases) maps to `people_waterfall` plus that order, with a warning.
+   The spend gate uses the Prospeo search and AI Ark people prices from
+   the 2026-10-08 receipt, not the old 5¢ LeadMagic row.
+3. **History stays.** `topup.pull_receipts` and `lead_provenance` and
+   their CHECK constraints still allow the old names. Seven historical
+   receipts hold `email_max_tier='leadmagic'`. They are not rewritten.
+   `campaign_record` shows the stored value and a `legacy_warnings`
+   line. `write_receipt` maps before insert so a new row never stores
+   the old names.
+4. **Live recipe SQL is review-only.** `docs/drop-leadmagic.sql` updates
+   `topup.lane_recipes` for `vasco / signal_warranty_admin_hiring` from
+   `max_tier=leadmagic` to `aiark`. It is not run from this PR, from
+   migrate, or from a deploy. It never touches `dl_status`,
+   `sg_exclude`, or `skip_*`.
+5. **Counts only.** Nothing in this change selects a lead column or
+   writes a lead status.
 
-**Why.** Two PRs took D58 the same day. #35 was first.
+**Why.** The LeadMagic key still authenticates with 0.2 credits. The
+people waterfall's default order still named `leadmagic_employee`; a
+missing key fails the whole job. The only latest receipt that would
+replay `email_max_tier=leadmagic` is vasco `signal_warranty_admin_hiring`.
+The Email Waterfall default `max_tier=leadmagic` also stops before
+Prospeo, so the mapped ceiling is `aiark`, not a wider spend.
 
-**Guard.** `src/guards/d58_drop_leadmagic.test.ts` on PR #35. Ask Josh.
+**Tradeoff.** A replay of an old receipt spends on AI Ark / Prospeo /
+DiscoLike instead of LeadMagic. Coverage is the people service's new
+default, not a guessed substitute for a roster pull. The live vasco
+recipe stays `leadmagic` in the database until someone runs the review
+SQL.
 
+**Guard.** `src/guards/d58_drop_leadmagic.test.ts`. Ask Josh.
 
 ## D59 — Maps ICP binds are typed; companions join maps_raw for plan_id
 

@@ -1,6 +1,6 @@
 ---
 name: hard-to-find-dm-discovery
-description: Find named decision makers and their emails for ICPs whose buyers are largely absent from B2B contact databases... dealership service departments, trades, local operators, franchise multi-location businesses, and similar. Use whenever getleads, LeadMagic, AI Ark, or FullEnrich return zero or wrong-title people at a company, when a client's buyer is a non-desk role, or when Josh says the prospects are not on LinkedIn. Covers the Google-indexed SERP discovery method, the two-stage email resolution that follows it, and the catch-all problem. Every number here was measured on a real 604-rooftop dealership build.
+description: Find named decision makers and their emails for ICPs whose buyers are largely absent from B2B contact databases... dealership service departments, trades, local operators, franchise multi-location businesses, and similar. Use whenever getleads, AI Ark, Prospeo, or FullEnrich return zero or wrong-title people at a company, when a client's buyer is a non-desk role, or when Josh says the prospects are not on LinkedIn. Covers the Google-indexed SERP discovery method, the two-stage email resolution that follows it, and the catch-all problem. Every number here was measured on a real 604-rooftop dealership build. LeadMagic is dropped (D58).
 ---
 
 # Finding DMs who are not in B2B databases
@@ -97,7 +97,7 @@ Email Finder Waterfall, `need='email'`, `max_tier='fullenrich'`.
 
 **This is not redundancy. It recovers exactly the cases permutation structurally cannot.**
 Measured: 4 rows that permutation had returned `not_found` or `catchall` on, **4 of 4 resolved**.
-getleads 0/4, LeadMagic 0/4, FullEnrich 4/4 in a single call.
+getleads 0/4, LeadMagic 0/4 (dropped, D58), FullEnrich 4/4 in a single call.
 
 Why permutation missed all four:
 
@@ -156,8 +156,7 @@ Measured on 368 dealership rooftops:
   review whoever sold them the product, never the operations manager, so the roster is sales by
   construction. Same logic applies to any review-driven directory.
 - **getleads by rooftop domain** — 0 of 8. Matches group domains only.
-- **LeadMagic `find_people_by_role`** — 0 of 7. Matcher too strict, use `search_people` with
-  `titles[]` instead, which hit ~35%.
+- **LeadMagic `find_people_by_role`** — 0 of 7. Dropped (D58). Do not call. Use Find Named Person.
 
 ---
 

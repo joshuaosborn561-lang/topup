@@ -26,6 +26,7 @@ const repo = {
 describe("D52 — campaign_record", () => {
   it("returns receipts newest first with their filters and notes, builds, counts by label and leg, the registry row and the rule, and drops stray lead columns", async () => {
     const r = await campaignRecord(db as never, repo as never, "bcp", 7);
+    assert.ok(!("error" in r), "D52: a live campaign returns a record");
     assert.equal(r.receipts.length, 2);
     assert.equal(r.receipts[0]?.build_label, "b2");
     assert.deepEqual(r.receipts[1]?.company_filters, { job_titles: ["CIO"] });
@@ -40,5 +41,7 @@ describe("D52 — campaign_record", () => {
     const text = JSON.stringify(r);
     assert.ok(!text.includes("@") && !text.includes("Jane"), "D2/D52: stray lead columns never reach the record");
     assert.match(r.how_to_read, /Repeat the legs that fed most of the leads/);
+    assert.ok(r.legacy_warnings.some((w) => /email_max_tier=leadmagic/.test(w)), "D58: a stored leadmagic ceiling is a warning, not a rewrite");
+    assert.equal(r.receipts[0]?.email_max_tier, "leadmagic", "D58: the stored receipt is not rewritten");
   });
 });

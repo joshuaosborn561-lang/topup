@@ -1,6 +1,6 @@
 ---
 name: leadgen-mcp-routing
-description: Decide which MCP or connector to use for a lead-gen job, based on measured hit rates and cost per useful output rather than guessing. Use whenever Josh asks to find companies, find decision makers, find or verify emails, size a TAM, or asks which tool to use for a lead-gen step. Starts by deciding whether the ICP is LinkedIn-native (route getleads, AI Ark, LeadMagic, Prospeo, FullEnrich) or physical (route Google Maps Scraper plus PermitStack), and says to ask Josh when it is neither. Covers Google Maps Scraper, PermitStack, getleads, AI Ark, LeadMagic, Prospeo, FullEnrich, Apify, LeadPipe, MillionVerifier, and No2Bounce. Especially important for hard ICPs where the buyer has little online presence, like contractors, dealership service departments, trades, and local operators.
+description: Decide which MCP or connector to use for a lead-gen job, based on measured hit rates and cost per useful output rather than guessing. Use whenever Josh asks to find companies, find decision makers, find or verify emails, size a TAM, or asks which tool to use for a lead-gen step. Starts by deciding whether the ICP is LinkedIn-native (route getleads, AI Ark, Prospeo, FullEnrich) or physical (route Google Maps Scraper plus PermitStack), and says to ask Josh when it is neither. Covers Google Maps Scraper, PermitStack, getleads, AI Ark, Prospeo, FullEnrich, Apify, LeadPipe, MillionVerifier, and No2Bounce. LeadMagic is dropped (D58). Especially important for hard ICPs where the buyer has little online presence, like contractors, dealership service departments, trades, and local operators.
 ---
 
 # Lead-gen MCP routing
@@ -26,7 +26,7 @@ credits get burned on a database that structurally cannot hold the buyer.
 **LinkedIn-native** means the buyer maintains a professional profile as a normal part of the job:
 IT and security leadership, staffing and PE, MSP owners, SaaS and OEM sellers, CS and renewals,
 corporate functions generally, and most desk roles at 50+ employee companies.
-→ Route to **getleads → AI Ark → LeadMagic → Prospeo → FullEnrich**, and use AI Ark for TAM sizing
+→ Route to **getleads → AI Ark → Prospeo → FullEnrich**, and use AI Ark for TAM sizing
 and department-size filtering. The rest of this skill describes that path.
 
 **Not LinkedIn-native** means the buyer is an operator whose business exists physically rather than
@@ -117,8 +117,8 @@ dealership rooftops:
 | Team page / site crawl | 0 of 368. Staff pages are gutted or JS-rendered |
 | getleads by domain | 0 of 8. Matches group domains only, never individual rooftops |
 | getleads by domain, LinkedIn-native ICP | 23 of 144 mortgage shops at owner titles, free. See below |
-| LeadMagic `find_people_by_role` | 0 of 7. Matcher too strict, do not use |
-| LeadMagic `search_people` with `titles[]` | ~35%, 1 to 3 credits, free on miss. **Best paid option** |
+| LeadMagic `find_people_by_role` (dropped, D58) | 0 of 7. Matcher too strict. Do not call. |
+| LeadMagic `search_people` (dropped, D58) | Was ~35%. Do not call. Use Find Named Person `prospeo_search` then `aiark_people`. |
 | AI Ark via waterfall | 80% found a body, but only 12 to 20% had the right title |
 | FullEnrich `search_people` by domain | ~5% |
 | FullEnrich `search_people` by title plus geography | **Best free option.** Discovery costs 0 credits |
@@ -145,7 +145,7 @@ across a tri-state area for 309 credits.
 ```
 site:linkedin.com/in "{Company Name}" ("Service Director" OR "Service Manager" OR "Fixed Operations Director" OR "Warranty Administrator")
 ```
-This found a Service & Parts Director at a store where getleads, LeadMagic and FullEnrich all
+This found a Service & Parts Director at a store where getleads, the old LeadMagic tier (dropped, D58) and FullEnrich all
 returned zero. Google indexes public profiles that the paid databases have not crawled.
 
 The actor returns `personalInfo.jobTitle` and `personalInfo.companyName` parsed out. **You must
@@ -192,11 +192,9 @@ Measured on the same 302-person dealership list: pre-Hunter build spent **$3.05 
 produced 4 valids plus 65 catchall_pattern candidates for $0.004** in server cost. No2Bounce then
 confirmed over half of that candidate class deliverable (see stage 4).
 
-**Escalation for what the finder misses: Email Waterfall.** Tier order is now
-**getleads → AI Ark → LeadMagic → Prospeo → FullEnrich last**. Prospeo was added 2026-08-14.
-LeadMagic's email tier is demoted; keep the LeadMagic MCP connected for discovery tooling
-(`search_people`, `employee_finder`, account intel), and cut its email tier only if measured
-incremental yield behind Prospeo collapses.
+**Escalation for what the finder misses: Email Waterfall.** Tier order is
+**getleads → Smartlead → AI Ark → Prospeo → FullEnrich last**. LeadMagic is dropped (D58).
+A stored `max_tier=leadmagic` maps to `aiark`. Do not call the LeadMagic MCP.
 
 **The waterfall service is client-generic as of 2026-08-14.** `enrich_waterfall` auto-ensures any
 snake_case `client_tag` and writes to isolated `public.{tag}_wf_companies` /
@@ -277,7 +275,7 @@ before running rather than trying to scope inside the job.
 | FullEnrich title search | free, export 0.25 credit per row |
 | Apify Google SERP | ~$0.02 at 25% precision |
 | Name to Email Finder with Hunter | pennies per run plus 1 Hunter credit per new domain, cached forever |
-| LeadMagic `search_people` | ~2 credits per rooftop |
+| LeadMagic `search_people` (dropped, D58) | do not call; use Find Named Person |
 | FullEnrich email enrichment | ~1 credit per email found |
 | LeadPipe `find_dms_by_title` | ~$0.10 |
 | Full verification waterfall | ~$0.02 to $0.03 per head, 79% sendable measured |
@@ -375,4 +373,4 @@ so a TAM count is 1 credit. Prospeo can also filter department size but costs ro
 
 **Vendors that can filter department headcount:** AI Ark (API, cheapest), Prospeo (API, per-domain),
 Apollo (API, but paywalled off the free plan entirely), LinkedIn Sales Navigator (UI only).
-getleads and LeadMagic cannot do it at all.
+getleads cannot do it at all. LeadMagic is dropped (D58).

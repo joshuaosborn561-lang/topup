@@ -8,6 +8,7 @@ import { JOB_SOURCES, type JobSpec } from "../jobs/recipe.js";
 import { VERB_ORDER, type JobRunner, type Verb } from "../jobs/runner.js";
 import { loadClientMap } from "../canon/clients.js";
 import { registryRows } from "../canon/registry.js";
+import { LEGACY_EMAIL_MAX_TIER_ALIASES, mapEmailMaxTier, mapPersonSource } from "../recipes/legacyLeadmagic.js";
 import { EMAIL_TIERS } from "../recipes/schema.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
@@ -127,7 +128,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         filters,
         max_rows: z.number().int().min(1).max(MAX_ROWS_PER_JOB).describe(`1 to ${MAX_ROWS_PER_JOB} rows per job.`),
         lane: snake.optional().describe("Defaults to the campaign's registry lane."),
-        email_max_tier: z.enum(EMAIL_TIERS).optional(),
+        email_max_tier: z.enum([...EMAIL_TIERS, ...LEGACY_EMAIL_MAX_TIER_ALIASES]).optional().describe("Live ceiling, or a stored leadmagic / lm / lead_magic alias which maps to aiark (D58)."),
         name_to_email: z.boolean().optional(),
         icp_kind: z.enum(["linkedin_native", "physical"]).optional(),
         approved_by: z.string().optional(),
@@ -143,10 +144,16 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         const name = (await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null)) ?? registry.find((r) => r.campaign_id === campaign_id)?.campaign_name ?? null;
         if (isColdCall(name)) return text({ error: `#${campaign_id} ${name} is marked as cold call; the service ignores it (D54). Ask Josh.` });
         const laneName = lane ?? registry.find((r) => r.campaign_id === campaign_id)?.lane ?? "grok";
-        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(email_max_tier ? { email_max_tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
+        const mappedTier = mapEmailMaxTier(email_max_tier);
+        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(mappedTier.tier ? { email_max_tier: mappedTier.tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
         const opened = await d.jobs.open(spec, d.by);
         if (!opened.ok) return text({ error: opened.message });
         id = opened.job_id;
+        if (mappedTier.warning) {
+          await d.ledger.event({ client_tag, lane: laneName, run_id: id, event: "legacy_tier", line: mappedTier.warning, actor: d.by }).catch(() => undefined);
+        }
+        const pulled = await d.jobs.run(id, "pull", { by: d.by, approved_by: approved_by ?? null });
+        return text(mappedTier.warning ? { ...pulled, warning: mappedTier.warning } : pulled);
       }
       return text(await d.jobs.run(id, "pull", { by: d.by, approved_by: approved_by ?? null }));
     },
@@ -188,6 +195,13 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       const run = await d.repo.getRun(input.job_id);
       if (!run) return text({ error: "no such job" });
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === run.client_tag);
+      const person = mapPersonSource(input.person_source);
+      const emailTier = mapEmailMaxTier(input.email_max_tier);
+      if (!person.source) return text({ error: "person_source is required." });
+      if (input.email_max_tier && !emailTier.tier && !emailTier.legacy) {
+        return text({ error: `unknown email_max_tier '${input.email_max_tier}'. Live: ${EMAIL_TIERS.join(", ")}. leadmagic maps to aiark (D58).` });
+      }
+      const warnings = [person.warning, emailTier.warning].filter((w): w is string => Boolean(w));
       const receipt_id = await d.repo.insertPullReceipt({
         written_by: d.by,
         client_tag: run.client_tag,
@@ -199,9 +213,9 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         company_source: input.company_source,
         company_filters: input.company_filters,
         domain_source: input.domain_source,
-        person_source: input.person_source,
+        person_source: person.source,
         email_source: input.email_source,
-        email_max_tier: input.email_max_tier ?? null,
+        email_max_tier: emailTier.tier,
         rows_found: input.rows_found ?? null,
         rows_imported: input.rows_imported ?? null,
         tam_count: input.tam_count ?? null,
@@ -215,7 +229,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         granularity: "build",
       });
       await d.ledger.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "receipt", line: `Receipt ${receipt_id.slice(0, 8)} written by ${d.by}: ${input.how_i_did_it.slice(0, 160)}`, actor: d.by }).catch(() => undefined);
-      return text({ ok: true, receipt_id, job_id: run.run_id });
+      return text({ ok: true, receipt_id, job_id: run.run_id, person_source: person.source, email_max_tier: emailTier.tier, ...(warnings.length ? { warning: warnings.join(" ") } : {}) });
     },
   );
 

@@ -1,6 +1,6 @@
 ---
 name: unresolved-name-routing
-description: Never discard a discovered decision maker just because the email is missing. Whenever any discovery source (AI Ark, SERP, getleads, LeadMagic, Maps, waterfall, manual) returns a NAME with no email or an invalid email, bank it in public.name_bank and route it through the resolution ladder... Name to Email, then Email Finder Waterfall in person-to-email mode, then the hard-to-find methods, then the phone lane. Use whenever names come back emailless, when Josh says route the misses, work the name bank, or resolve the no-email names, and at the end of ANY discovery run before declaring it complete.
+description: Never discard a discovered decision maker just because the email is missing. Whenever any discovery source (AI Ark, SERP, getleads, Prospeo, Maps, waterfall, manual) returns a NAME with no email or an invalid email, bank it in public.name_bank and route it through the resolution ladder... Name to Email, then Email Finder Waterfall in person-to-email mode, then the hard-to-find methods, then the phone lane. Use whenever names come back emailless, when Josh says route the misses, work the name bank, or resolve the no-email names, and at the end of ANY discovery run before declaring it complete. LeadMagic is dropped (D58).
 ---
 
 # Unresolved name routing
@@ -29,9 +29,9 @@ wf_contacts table so the targets view picks them up.
 2. **Email Finder Waterfall** enrich_waterfall with rows of
    {first_name, last_name, domain}, need=email. This is PERSON-TO-EMAIL mode, the
    thing the waterfall is actually good at... never feed it bare domains for this.
-   It cascades getleads, AI Ark, LeadMagic, Prospeo, FullEnrich internally.
-3. **LeadMagic linkedin_to_email bulk** for any banked row that has a linkedin_url
-   (submit_detected_bulk_job, 1 credit per hit, free on miss). Then the
+   It cascades getleads, Smartlead, AI Ark, Prospeo, FullEnrich internally. LeadMagic is dropped (D58).
+3. **Email Waterfall with `linkedin_url`** for any banked row that has one
+   (getleads → AI Ark export_single by URL → Prospeo). Then the
    current-employer audit from serp-dm-discovery: keep only hits whose email domain
    matches the target domain.
 4. **hard-to-find-dm-discovery methods** for what remains: permutation against the

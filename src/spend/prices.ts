@@ -13,8 +13,9 @@ export const VENDORS = [
   "millionverifier",
   "no2bounce",
   "aiark",
-  "leadmagic",
+  "aiark_people",
   "prospeo",
+  "prospeo_search",
   "fullenrich",
   "apify",
   "getleads",
@@ -56,17 +57,23 @@ export const PRICES: Readonly<Record<Vendor, VendorPrice>> = {
     creditsPerRow: 1.5,
     source: "email_waterfall CREDIT_PER_ATTEMPT aiark=1.5 (email+phone); price conservative",
   },
-  leadmagic: {
+  aiark_people: {
     kind: "paid",
-    unitCents: 5,
-    creditsPerRow: 1,
-    source: "conservative; 1,183 credits vanished in minutes on 2026-09-10 — confirm plan price",
+    unitCents: 1,
+    creditsPerRow: 1.5,
+    source: "D58: Find Named Person aiark_people; Josh $220/60k = $0.003667/cr; 0.5 cr/result × size 3; Oct 8 receipt",
   },
   prospeo: {
     kind: "paid",
     unitCents: 3,
     creditsPerRow: 1,
     source: "conservative — confirm plan price",
+  },
+  prospeo_search: {
+    kind: "paid",
+    unitCents: 2,
+    creditsPerRow: 1,
+    source: "D58: Find Named Person prospeo_search; Josh Growth yearly $888/60k = $0.0148/cr; 1 cr/page, worst 1 cr/domain; Oct 8 receipt",
   },
   fullenrich: {
     kind: "paid",
@@ -150,4 +157,9 @@ export function actualCents(vendor: string, credits: number): number {
 
 export function usd(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+/** Worst case for Find Named Person: both paid people tiers can run (D58). */
+export function peopleWaterfallWorstCaseCents(rows: number): number {
+  return worstCaseCents("prospeo_search", "export", rows) + worstCaseCents("aiark_people", "export", rows);
 }

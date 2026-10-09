@@ -4,8 +4,9 @@ import type { EmailWaterfall } from "../../clients/emailWaterfall.js";
 import { emailJobState } from "../../clients/emailWaterfall.js";
 import type { NameToEmail } from "../../clients/nameToEmail.js";
 import { nameToEmailSendable } from "../../clients/nameToEmail.js";
+import { liveEmailMaxTier } from "../../recipes/legacyLeadmagic.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
-import { usd, worstCaseCents } from "../../spend/prices.js";
+import { usd, worstCaseCents, type Vendor } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { attempt, columnsOf, finish, keepPhones, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql } from "../puzzle/classify.js";
@@ -130,12 +131,13 @@ export class FindEmailsStage {
 
   private async runWaterfall(run: RunRow, recipe: Recipe, table: string, rows: number): Promise<StageOutcome | { kind: "ran"; resolved: number }> {
     const where = `run_id = '${run.run_id}' and lead_status = 'needs_email'`;
-    const maxTier = recipe.email_finding.max_tier;
+    const maxTier = liveEmailMaxTier(recipe.email_finding.max_tier);
     if (!recipeAuthorises(recipe, "find_emails", maxTier === "fullenrich" ? "fullenrich" : maxTier === "aiark" ? "aiark" : maxTier)) {
       throw new Error(`the recipe does not authorise email finding at max_tier ${maxTier}`);
     }
     const quote = await this.d.emailWaterfall!.estimate({ client_tag: run.client_tag, source_table: table, where, max_tier: maxTier, need: "email" });
-    const vendor = maxTier === "getleads" || maxTier === "smartlead" ? maxTier : maxTier === "aiark" ? "aiark" : maxTier === "leadmagic" ? "leadmagic" : maxTier === "prospeo" ? "prospeo" : "aiark";
+    const vendor: Vendor =
+      maxTier === "getleads" || maxTier === "smartlead" || maxTier === "aiark" || maxTier === "prospeo" || maxTier === "fullenrich" ? maxTier : "aiark";
     const worst = this.d.rails ? worstCaseCents(vendor, "export", rows) : 0;
     if (this.d.rails) {
       const decision = await this.d.rails.gate({
