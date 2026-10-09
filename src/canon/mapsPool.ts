@@ -452,7 +452,7 @@ export async function copyMapsPool(
   pick("last_name", "last_name");
   pick("email", "email");
   pick("title", "title", "owner_title");
-  pick("company_name", "company", "name");
+  pick("company_name", "company", "name", "title");
   pick("company_domain", "domain");
   pick("city", "city");
   pick("state", "state");

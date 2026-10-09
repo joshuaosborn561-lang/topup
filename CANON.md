@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D64** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D65** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -85,7 +85,19 @@ D48).
     job. `lp_export` reads `result.signed_url` / `result.row_count`. A
     verify retry uses a recorded approval and does not park on a third
     failure (D64).
-15. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+15. **Job 46b1c941 follow-up.** `size` returns a `size_id` at once and
+    is polled with `size(size_id)`; the suppress pass is one aggregate
+    JOIN, not a per-email EXISTS. A named approval is idempotent per
+    step / approver / amount (a second tap of $1.40 stays $1.40). A QA
+    hold count is distinct rows of this job, never the lane table and
+    never multiplied by empty merge fields. A step pre-D64 marked
+    `done` with rows still queued for it, or with 0 of N processed, is
+    reopened, run, and its leftover parked card closed. Lane E
+    role-inbox rows (`info@`, `office@`, …) take company from the Maps
+    business name; a first-name/greeting fallback is a recipe key
+    (`first_name_fallback`) whose default is unchanged — Josh decides
+    the string (D65).
+16. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -101,7 +113,7 @@ bears on stated and no verdict (D52).
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
 | `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds, and `net_new`. Under 1,000: the TAM for this campaign is exhausted. |
-| `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Opens no job, spends nothing, does not block the lane. Counts only. |
+| `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
 | `spend` | Today, thirty days by vendor, month to date, and every spend card waiting. |
@@ -119,10 +131,10 @@ Nothing chains. The job is one run row for one campaign (D52).
 | `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits` or `table`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails *before* `max_rows` (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
 | `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
-| `enrich(job_id, approved_by?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval, closes the card, and runs the paid people waterfall. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. |
-| `verify(job_id, approved_by?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry; a third failure does not park. |
-| `normalize(job_id)` | normalize | Names, companies, locations, local sports team. Free. |
-| `qa(job_id)` | qa | Every merge field populated or the row is held. Holds show in `holds`. |
+| `enrich(job_id, approved_by?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). |
+| `verify(job_id, approved_by?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry and is not added again. A third failure does not park. |
+| `normalize(job_id)` | normalize | Names, companies, locations, local sports team. Free. Role-inbox Maps rows take company from the business name; `first_name_fallback` is optional and off by default. Re-runs this job's merge-field holds. |
+| `qa(job_id)` | qa | Every merge field populated or the row is held. Hold counts are this job only. Holds show in `holds`. |
 | `stage(job_id)` | route, stage | Rows routed to the campaign and staged. |
 | `import(job_id, approved_by?)` | import, post_import | Through LeadPipe into Smartlead. Refuses while `loads_paused`. Never sets ACTIVE. |
 | `write_receipt(job_id, company_source, …, how_i_did_it)` | — | The receipt the next top-up reads. The four legs, `company_filters`, the note. |
@@ -153,7 +165,8 @@ call next.
    list; it never scopes by ZIP or `client_tag` alone (D57). Companion
    views that omit `plan_id` join `maps_raw` so `$1::text` is used (D59).
    Maps used/net-new includes already-ingested and this-client prior
-   contact/suppression (D64). `size` is the free dry-run of that pool.
+   contact/suppression (D64). `size` is the free dry-run of that pool; it
+   returns a `size_id` at once — poll `size(size_id)` (D65).
 4. `held(client_tag, campaign_id, filters, tam)` with that count. If
    `net_new` is under 1,000, say *the TAM for this campaign is exhausted*
    and stop. Do not widen. If Josh wants options, give counts for each.
@@ -202,7 +215,13 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   Never leave a background pull at `running` with empty counts and no
   `last_error` (D62). Never apply `max_rows` before skipping held maps
   emails (D64). Never mark a paid step done when it did not run (D64).
-  Never store Jev's raw sentence as an ICP label (D64).
+  Never store Jev's raw sentence as an ICP label (D64). Never add the
+  same approval twice (D65). Never count a QA hold across the lane
+  table or by empty-field array length (D65). Never refuse enrich when
+  a step was marked done with rows still queued (D65). Never hold a
+  Lane E role-inbox for a missing company when the Maps name is there
+  (D65). Never invent a greeting; `first_name_fallback` stays off
+  until Josh sets it (D65).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).

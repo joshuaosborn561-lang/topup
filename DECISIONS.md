@@ -84,6 +84,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D62 | Live; a background maps pull always ends done or failed with `last_error`; the copy reads the named ICP view (not the companion join), times out, and dedupes with or without a unique email index |
 | D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). That PR writes the live D63 text. This stub keeps the ledger contiguous so D64 can ship off main |
 | D64 | Live; job 46b1c941: enrich approval runs the paid people step; a step that did not run is not done; ICP labels are tokens; spend cards re-quote and record actuals; maps used/net-new includes ingested + contacted; lp_export reads the wrapped payload; verify retry uses the recorded approval and does not park; `size` is the free dry-run; maps pull skips held emails before max_rows |
+| D65 | Live; job 46b1c941 after #42: size is async + aggregate SQL; approval is idempotent per step/approver/amount; QA hold count is this job; a false done with queued rows is reopened; Lane E role-inbox company from Maps name; first_name_fallback defaults off |
 
 ---
 
@@ -2187,3 +2188,64 @@ Pull of 2,000 now prefers unseen emails; `already_held` is the
 pre-insert dest∩pool count, not `windowed - inserted`.
 
 **Guard.** `src/guards/d64_enrich_icp_count.test.ts`. Ask Josh.
+
+## D65 — Job 46b1c941 after #42: size, approve, QA count, reopen, Lane E
+
+**Decision.** Five things, one rule, from the same EMCOR job after D64
+shipped (`da77102`).
+
+1. **`size` is async and the suppress pass is one aggregate JOIN.** The
+   MCP call returns a `size_id` at once (`status` started). Poll
+   `size(size_id)`. Opens no job, spends nothing, does not block the
+   lane. The suppress-by-reason SQL LEFT JOINs the positive / DNC /
+   wrong-person / list / bounce / prior-contact / offer sets and
+   `count(*)`s. It does not run a correlated EXISTS per pool email.
+   The query has a 45s statement timeout
+   (`SIZE_STATEMENT_TIMEOUT_MS`). Ask Josh if 45s is wrong. A restart
+   loses an in-flight size — call `size` again.
+2. **Approval is idempotent per step / approver / amount.**
+   `approveStep` stores `greatest(approved_cents, this amount)`. A
+   second `approved_by` of the same person and the same cents does not
+   add and does not write a second lane event. Two Josh taps of $1.40
+   stay $1.40, not $2.80.
+3. **A QA hold count is this job.** Groups are `run_id = $1` and
+   `lead_status = 'qa_hold'`. The count is distinct rows of the job,
+   never the lane table and never multiplied by the
+   `merge_field_empty` array (147 rows × 4 empty fields was 588 on
+   card `419e7169`).
+4. **A pre-D64 false `done` can be reopened.** If a step is `done` but
+   rows are still queued for it (`needs_person` / `needs_domain` on
+   puzzle, `needs_email` on find_emails, merge-field `qa_hold` on
+   normalize), or it is `done` with 0 of N processed, the verb resets
+   the step, closes its leftover parked card, and runs. Job
+   `46b1c941` may call `enrich` again for the 19 `needs_person` rows
+   and close parked card `f19dbfae`.
+5. **Lane E role-inbox.** `info@`, `office@` and the listed locals take
+   company from the Maps business name (`title` on the ingest row;
+   maps copy also picks `title` for `company_name` when `company` /
+   `name` are absent). First-name / greeting fallback is
+   `recipe.normalize.first_name_fallback`. Default is unset: the hold
+   for a missing first name is unchanged. Josh decides the string.
+   Normalize re-processes this job's `qa_hold` rows that carry
+   `merge_field_empty`.
+
+**Why.** After #42: `size` for EMCOR Lane E (~18k pool, 404 ZIPs × 25
+categories) hit the ~60s MCP limit on the correlated EXISTS walk.
+Two `verify(approved_by='Josh')` calls added $1.40 + $1.40 on the
+step (`approveStep` was `approved_cents + $3`). QA card `419e7169`
+said 588 leads on a 147-row job because `holdGroups` joined
+laterally to `merge_field_empty` and `count(*)`d the explosion.
+`enrich` refused with *every step already done* while 19 rows sat at
+`needs_person` and parked card `f19dbfae` stayed open — pre-D64
+puzzle had finished as done. Normalize held all 147 for empty
+`first_name_n` + `company_n`: Maps business name landed in `title`,
+not `company_name`, and role inboxes have no person.
+
+**Tradeoff.** Size results live in the one replica's memory; a
+restart loses an in-flight `size_id`. The greeting is not filled
+until Josh sets `first_name_fallback`. Reopening a false done still
+needs Grok to call the verb; nothing starts on its own. Ask Josh
+if the role-inbox local set should grow, or if size should persist
+to a table.
+
+**Guard.** `src/guards/d65_emcor_job_fixes.test.ts`. Ask Josh.

@@ -458,10 +458,18 @@ export class Repo {
     ]);
   }
 
-  async approveStep(runId: string, step: Step, approvedCents: number): Promise<void> {
+  /**
+   * Record an approval on the step. Idempotent per step/amount (D65): a
+   * second tap of the same cents does not add. The larger of the stored
+   * amount and this one wins. Approver is the named person on the verb.
+   */
+  async approveStep(runId: string, step: Step, approvedCents: number, approvedBy?: string | null): Promise<void> {
     await this.db.query(
-      `update topup.run_steps set approved_cents = coalesce(approved_cents,0) + $3 where run_id = $1 and step = $2`,
-      [runId, step, approvedCents],
+      `update topup.run_steps
+          set approved_cents = greatest(coalesce(approved_cents, 0), $3),
+              counts = counts || jsonb_build_object('approved_by', coalesce($4::text, counts->>'approved_by'))
+        where run_id = $1 and step = $2`,
+      [runId, step, approvedCents, approvedBy ?? null],
     );
   }
 

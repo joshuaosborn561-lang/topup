@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { normalizeCompany } from "./company.js";
 import { cityKey, geocode, haversineMiles, type CityCoords } from "./geo.js";
 import { normalizeLead, type NormalizeRefs } from "./index.js";
+import { isRoleInbox } from "./roleInbox.js";
 import { conversationalLocation, metroFor } from "./location.js";
 import { normalizeCity, normalizeFirstName, normalizeState } from "./names.js";
 import { assignTeam, assignTeamForLeague } from "./team.js";
@@ -269,5 +270,25 @@ describe("normalizeLead — step 7 for one row", () => {
     assert.equal(out.company_n, "ACME INC");
     assert.equal(out.local_sports_team, null);
     assert.equal(out.gift_tier, "airpods");
+  });
+  it("Lane E role-inbox: company from the Maps business name; greeting fallback is off by default (D65)", () => {
+    assert.equal(isRoleInbox("info@example.com"), true);
+    assert.equal(isRoleInbox("office@example.com"), true);
+    assert.equal(isRoleInbox("jane@example.com"), false);
+    const held = normalizeLead(
+      { id: "1", first_name: null, company_name: null, city: "Oakland", state: "CA", email: "info@example.com", title: "Bay Area Electric" },
+      refs,
+      { names_cities: true, company: true, location: false, sports_team: null },
+    );
+    assert.equal(held.first_name_n, null, "D65: default greeting is unchanged (hold). Ask Josh.");
+    assert.equal(held.company_n, "Bay Area Electric");
+    assert.ok(held.flags.company?.includes("maps_business_name"));
+    const greeted = normalizeLead(
+      { id: "1", first_name: null, company_name: null, city: "Oakland", state: "CA", email: "office@example.com", title: "Bay Area Electric" },
+      refs,
+      { names_cities: true, company: true, location: false, sports_team: null, first_name_fallback: "there" },
+    );
+    assert.equal(greeted.first_name_n, "There");
+    assert.ok(greeted.flags.first_name?.includes("role_inbox_fallback"));
   });
 });

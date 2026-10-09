@@ -1,9 +1,11 @@
+import { ingestedTable } from "../db/pool.js";
 import type { Repo } from "../db/repo.js";
 import { presentRun, runIsOpen, type RunRow, type Step } from "../domain/runs.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
 import { targetCountPatch } from "../recipes/campaigns.js";
 import { parseRecipe, type Recipe } from "../recipes/schema.js";
+import { statusCounts } from "../stages/common.js";
 import { jobLane, jobRecipe, type JobSpec } from "./recipe.js";
 import { isSelfStart, isWatchActor } from "./selfStart.js";
 import type { FindEmailsStage } from "../stages/find_emails/index.js";
@@ -63,6 +65,39 @@ export const VERB_STEPS: Readonly<Record<Verb, readonly Step[]>> = {
 };
 
 export const VERB_ORDER: readonly Verb[] = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import"];
+
+/** Statuses that mean a step still has work queued for it (D65). */
+export const STEP_QUEUE_STATUSES: Readonly<Record<string, readonly string[]>> = {
+  puzzle: ["needs_person", "needs_domain"],
+  find_emails: ["needs_email"],
+  normalize: ["qa_hold"],
+};
+
+/**
+ * Pre-D64 code marked a step done when it did not run, or processed 0 of N.
+ * Reopen when rows are still queued for that step, or useful_output is 0 of N
+ * (D65). Ask Josh.
+ */
+export function shouldReopenStep(input: {
+  step: string;
+  status: string;
+  useful_output: number | null;
+  counts: Record<string, number>;
+  queued: Record<string, number>;
+}): boolean {
+  if (input.status !== "done") return false;
+  const keys = STEP_QUEUE_STATUSES[input.step];
+  if (!keys) return false;
+  const queuedN = keys.reduce((a, k) => a + (input.queued[k] ?? 0), 0);
+  if (input.step === "normalize") {
+    const held = (input.counts.held ?? 0) + (input.counts.held_merge_field ?? 0);
+    return queuedN > 0 && held > 0;
+  }
+  if (queuedN > 0) return true;
+  const claimed = keys.reduce((a, k) => a + (input.counts[k] ?? 0), 0);
+  const processed = input.useful_output ?? input.counts.people_ran ?? input.counts.people_resolved ?? input.counts.domain_ran ?? 0;
+  return claimed > 0 && processed === 0;
+}
 
 /** How long a background verb may sit before the job is marked failed (D62). Ask Josh if 90s is wrong. */
 export const VERB_BACKGROUND_TIMEOUT_MS = 90_000;
@@ -211,7 +246,14 @@ export class JobRunner {
     let approver: string | null = null;
     for (const step of steps) {
       const already = await this.d.repo.getStep(jobId, step);
-      if (already?.status === "done") continue;
+      if (already?.status === "done") {
+        const queued = await this.queuedFor(run);
+        if (shouldReopenStep({ step, status: already.status, useful_output: already.useful_output, counts: numbers(already.counts), queued })) {
+          await this.reopen(run, step, opts.by);
+        } else {
+          continue;
+        }
+      }
       if (opts.approved_by) approver = (await this.approve(run, step, opts.approved_by, opts.by)) ?? approver;
       let outcome = await this.runStage(step, run, recipe);
       // A name given before the estimate existed: the stage has now posted its card; approve it and run once more.
@@ -256,6 +298,8 @@ export class JobRunner {
     const open = await this.d.repo.openCardsForRun(run.run_id);
     const cards = open.filter((c) => (c.kind === "spend_approval" || c.kind === "parked") && c.payload?.step === step);
     const stepRow = await this.d.repo.getStep(run.run_id, step);
+    const prior = Number(stepRow?.approved_cents ?? 0);
+    const priorBy = typeof stepRow?.counts?.approved_by === "string" ? String(stepRow.counts.approved_by) : null;
     let cents = 0;
     for (const card of cards) {
       const worst = Number(card.payload?.worst_case_cents ?? 0);
@@ -267,11 +311,38 @@ export class JobRunner {
       cents += Number.isFinite(worst) ? worst : 0;
     }
     if (cents <= 0) cents = Number(stepRow?.worst_case_cents ?? 0);
-    if (cents > 0) await this.d.repo.approveStep(run.run_id, step, cents);
+    if (cents > 0) await this.d.repo.approveStep(run.run_id, step, cents, approvedBy);
     if (cards.length === 0 && cents <= 0) return null;
+    const same = prior >= cents && cents > 0 && (!priorBy || priorBy === approvedBy);
+    if (same) {
+      log.info("spend approval already recorded", { run_id: run.run_id, step, cents, approved_by: approvedBy, by });
+      return approvedBy;
+    }
     await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "approved", line: `${step}: spend of $${(cents / 100).toFixed(2)} approved by ${approvedBy}.`, actor: by }).catch(() => undefined);
     log.info("spend approved", { run_id: run.run_id, step, cents, approved_by: approvedBy, by });
     return approvedBy;
+  }
+
+  /** Reopen a step that was marked done with work still queued (D65). Closes its leftover parked card. */
+  private async reopen(run: RunRow, step: Step, by: string): Promise<void> {
+    await this.d.repo.resetStep(run.run_id, step);
+    const open = await this.d.repo.openCardsForRun(run.run_id);
+    for (const card of open.filter((c) => (c.kind === "parked" || c.kind === "spend_approval") && c.payload?.step === step)) {
+      const choice = card.kind === "parked" ? "resume_run" : "approve_spend";
+      await this.d.console.resolveAs(`${by} reopen`, card.kind === "parked" ? "operator" : "owner", card.card_id, choice).catch(() => ({ ok: false }));
+    }
+    await this.d.ledger
+      ?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "step", line: `${step}: reopened; pre-D64 marked it done with work still queued.`, actor: by })
+      .catch(() => undefined);
+    log.info("step reopened", { run_id: run.run_id, step, by });
+  }
+
+  private async queuedFor(run: RunRow): Promise<Record<string, number>> {
+    try {
+      return await statusCounts(this.d.repo, ingestedTable(run.client_tag), run.run_id);
+    } catch {
+      return {};
+    }
   }
 
   private async runStage(step: Step, run: RunRow, recipe: Recipe): Promise<{ kind: string }> {
@@ -317,8 +388,12 @@ export class JobRunner {
   }
 
   private result(job_id: string, verb: Verb, step: Step, status: VerbResult["status"], counts: Record<string, number>, worst: number | null, card: string | null, approved_by: string | null, why: string | null, next: string): VerbResult {
-    const numbers: Record<string, number> = {};
-    for (const [k, v] of Object.entries(counts)) if (typeof v === "number" && Number.isFinite(v)) numbers[k] = v;
-    return { job_id, verb, step, status, counts: numbers, worst_case_cents: worst, card_id: card, approved_by, why, next };
+    return { job_id, verb, step, status, counts: numbers(counts), worst_case_cents: worst, card_id: card, approved_by, why, next };
   }
+}
+
+function numbers(v: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (typeof x === "number" && Number.isFinite(x)) out[k] = x;
+  return out;
 }

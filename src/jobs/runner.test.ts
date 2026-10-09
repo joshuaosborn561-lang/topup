@@ -1,19 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { RunRow } from "../domain/runs.js";
-import { JobRunner, VERB_STEPS } from "./runner.js";
+import { JobRunner, shouldReopenStep, VERB_STEPS } from "./runner.js";
 
 /** D52 — a job runs one verb at a time; money waits for a name; import waits for the switch. Ask Josh. */
 
 function fakeRepo(opts: { loadsPaused?: boolean } = {}) {
   const runs = new Map<string, RunRow>();
-  const steps = new Map<string, { status: string; attempts: number; approved_cents: number }>();
+  const steps = new Map<string, { status: string; attempts: number; approved_cents: number; useful_output?: number | null; counts?: Record<string, number> }>();
   const cards: Array<{ card_id: string; run_id: string; kind: string; payload: Record<string, unknown>; status: string; audience: string }> = [];
   const recipes = new Map<string, unknown>();
   const events: string[] = [];
+  const queued: Array<{ lead_status: string; n: string }> = [];
   let n = 0;
   const repo = {
-    runs, steps, cards, recipes, events,
+    runs, steps, cards, recipes, events, queued,
     upsertRecipe: async (r: { recipe_id: string; body: unknown }) => { recipes.set(r.recipe_id, r.body); },
     getRecipe: async (id: string) => (recipes.has(id) ? { recipe_id: id, body: recipes.get(id), owner_approved_at: null } : null),
     openRun: async (input: { recipe_id: string; client_tag: string; lane: string; campaign_id: number | null; trigger: string; opened_by: string | null }) => {
@@ -29,10 +30,30 @@ function fakeRepo(opts: { loadsPaused?: boolean } = {}) {
     finishStep: async (id: string, step: string) => { const k = `${id}/${step}`; const s = steps.get(k) ?? { status: "pending", attempts: 1, approved_cents: 0 }; s.status = "done"; steps.set(k, s); },
     getStep: async (id: string, step: string) => {
       const s = steps.get(`${id}/${step}`);
-      return s ? { step, worst_case_cents: (s as { worst_case_cents?: number }).worst_case_cents ?? 0, ...s } : null;
+      return s ? { step, worst_case_cents: (s as { worst_case_cents?: number }).worst_case_cents ?? 0, useful_output: s.useful_output ?? null, counts: s.counts ?? {}, ...s } : null;
     },
     openCardsForRun: async (id: string) => cards.filter((c) => c.run_id === id && c.status === "open"),
-    approveStep: async (id: string, step: string, cents: number) => { const k = `${id}/${step}`; const s = steps.get(k) ?? { status: "pending", attempts: 0, approved_cents: 0 }; s.approved_cents += cents; steps.set(k, s); },
+    approveStep: async (id: string, step: string, cents: number, approvedBy?: string) => {
+      const k = `${id}/${step}`;
+      const s = steps.get(k) ?? { status: "pending", attempts: 0, approved_cents: 0, counts: {} };
+      s.approved_cents = Math.max(s.approved_cents ?? 0, cents);
+      s.counts = { ...(s.counts ?? {}), ...(approvedBy ? { approved_by: approvedBy as unknown as number } : {}) };
+      if (approvedBy) (s.counts as Record<string, unknown>).approved_by = approvedBy;
+      steps.set(k, s);
+    },
+    resetStep: async (id: string, step: string) => {
+      const k = `${id}/${step}`;
+      const s = steps.get(k) ?? { status: "pending", attempts: 0, approved_cents: 0 };
+      s.status = "pending";
+      s.attempts = 0;
+      steps.set(k, s);
+    },
+    raw: () => ({
+      query: async (sql: string) => {
+        if (sql.includes("lead_status") && sql.includes("group by 1")) return { rows: queued };
+        return { rows: [] };
+      },
+    }),
     resolveCard: async (card_id: string, by: string, resolution: string) => { const c = cards.find((x) => x.card_id === card_id)!; c.status = "resolved"; (c as Record<string, unknown>).resolved_by = by; (c as Record<string, unknown>).resolution = resolution; return c; },
     loadsPaused: async () => opts.loadsPaused ?? true,
     failStep: async (id: string, step: string, error: string) => {
@@ -332,5 +353,96 @@ describe("D52 — job runner", () => {
     assert.equal(repo.cards[0]?.status, "resolved");
     assert.equal((repo.cards[0] as Record<string, unknown>).resolution, "approve_spend");
     assert.ok((repo.steps.get(`${opened.job_id}/puzzle`)?.approved_cents ?? 0) >= 67, "D64: approval is recorded on the step. Ask Josh.");
+  });
+
+  it("a second approve of the same step/approver/amount does not add (D65)", async () => {
+    const repo = fakeRepo();
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator");
+    if (!opened.ok) assert.fail(opened.message);
+    await j.run(opened.job_id, "pull", { by: "x", approved_by: "Josh" });
+    await j.run(opened.job_id, "verify", { by: "x", approved_by: "Josh" });
+    const row = repo.steps.get(`${opened.job_id}/verify`);
+    assert.equal(row?.approved_cents, 250, "D65: first approve is $2.50. Ask Josh.");
+    row!.status = "pending";
+    (row as { worst_case_cents?: number }).worst_case_cents = 250;
+    row!.counts = { ...(row!.counts ?? {}), approved_by: "Josh" as unknown as number };
+    (row!.counts as Record<string, unknown>).approved_by = "Josh";
+    await j.run(opened.job_id, "verify", { by: "x", approved_by: "Josh" });
+    assert.equal(repo.steps.get(`${opened.job_id}/verify`)?.approved_cents, 250, "D65: a second Josh $2.50 tap does not become $5.00. Ask Josh.");
+    const approvedLines = repo.events.filter((l) => /verify: spend of \$2\.50 approved by Josh/.test(l));
+    assert.equal(approvedLines.length, 1, "D65: the approval event is written once. Ask Josh.");
+  });
+
+  it("reopens a step marked done with rows still queued and closes its parked card (D65)", async () => {
+    const repo = fakeRepo();
+    repo.queued.push({ lead_status: "needs_person", n: "19" });
+    const stages = {
+      pull: freeStage(repo, "pull", { pulled: 1 }),
+      ingest: freeStage(repo, "ingest", { inserted: 1 }),
+      suppress: freeStage(repo, "suppress", {}),
+      icp: freeStage(repo, "icp", {}),
+      puzzle: {
+        run: async (run: { run_id: string }) => {
+          const s = repo.steps.get(`${run.run_id}/puzzle`);
+          if (s?.status === "done") return { kind: "done", counts: { people_ran: 0 } };
+          await repo.finishStep(run.run_id, "puzzle");
+          repo.queued.length = 0;
+          return { kind: "done", counts: { people_ran: 1, needs_person: 19 } };
+        },
+      },
+      findEmails: freeStage(repo, "find_emails", { found: 0 }),
+      verify: freeStage(repo, "verify", {}),
+      normalize: freeStage(repo, "normalize", {}),
+      qa: freeStage(repo, "qa", {}),
+      route: freeStage(repo, "route", {}),
+      stage: freeStage(repo, "stage", {}),
+      import: freeStage(repo, "import", {}),
+      postImport: freeStage(repo, "post_import", {}),
+    };
+    const console_ = {
+      resolveAs: async (_actor: string, _role: string | null, cardId: string, choice: string) => {
+        const c = repo.cards.find((x) => x.card_id === cardId && x.status === "open");
+        if (!c) return { ok: false, reason: "not_open" };
+        c.status = "resolved";
+        (c as Record<string, unknown>).resolution = choice;
+        return { ok: true };
+      },
+    };
+    const j = new JobRunner({
+      repo: repo as never,
+      stages: stages as never,
+      console: console_ as never,
+      ledger: { event: async (e: { line: string }) => { repo.events.push(e.line); } } as never,
+      now: () => 1700000000000,
+    });
+    const opened = await j.open(spec, "mcp:operator");
+    assert.ok(opened.ok);
+    if (!opened.ok) return;
+    await j.run(opened.job_id, "pull", { by: "x" });
+    repo.steps.set(`${opened.job_id}/puzzle`, { status: "done", attempts: 2, approved_cents: 67, useful_output: 0, counts: { people_ran: 0, needs_person: 19 } });
+    repo.steps.set(`${opened.job_id}/find_emails`, { status: "done", attempts: 1, approved_cents: 0, useful_output: 0, counts: { email_finding_skipped: 1 } });
+    repo.cards.push({
+      card_id: "f19dbfae",
+      run_id: opened.job_id,
+      kind: "parked",
+      payload: { step: "puzzle", reason: "over the auto cap", worst_case_cents: 67 },
+      status: "open",
+      audience: "operator",
+    });
+    const again = await j.run(opened.job_id, "enrich", { by: "x", approved_by: "Josh" });
+    assert.equal(again.status, "done", "D65: enrich must reopen a falsely-done puzzle and run. Ask Josh.");
+    assert.equal(repo.cards[0]?.status, "resolved", "D65: leftover parked card closes. Ask Josh.");
+    assert.ok(repo.events.some((l) => /reopened/.test(l)));
+  });
+});
+
+describe("D65 — shouldReopenStep", () => {
+  it("reopens done+queued or 0 of N, and leaves a clean done step alone", () => {
+    assert.equal(shouldReopenStep({ step: "puzzle", status: "done", useful_output: 0, counts: { needs_person: 19, people_ran: 0 }, queued: { needs_person: 19 } }), true);
+    assert.equal(shouldReopenStep({ step: "puzzle", status: "done", useful_output: 0, counts: { needs_person: 19, people_ran: 0 }, queued: {} }), true);
+    assert.equal(shouldReopenStep({ step: "puzzle", status: "done", useful_output: 19, counts: { needs_person: 19, people_ran: 1 }, queued: {} }), false);
+    assert.equal(shouldReopenStep({ step: "normalize", status: "done", useful_output: 0, counts: { held: 147 }, queued: { qa_hold: 147 } }), true);
+    assert.equal(shouldReopenStep({ step: "verify", status: "done", useful_output: 147, counts: {}, queued: {} }), false);
   });
 });
