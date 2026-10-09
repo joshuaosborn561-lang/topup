@@ -37,7 +37,7 @@ describe("the spine — D24", () => {
     assert.match(SPINE[0].gate, /signs off on the segment before anything is pulled/);
     assert.match(SPINE[1].gate, /useful floor/);
     assert.match(SPINE[2].gate, /titles audited, spend within the approved ceiling/);
-    assert.match(SPINE[4].gate, /raw, removed by reason, net new/);
+    assert.match(SPINE[4].gate, /raw, removed by reason, `expired_eligible`, net new/);
     assert.match(SPINE[5].gate, /sendable count and reject rate reported/);
     assert.match(SPINE[6].gate, /every merge field the copy uses is populated or the row is held/);
     assert.match(SPINE[10].gate, /counts match on every campaign/);

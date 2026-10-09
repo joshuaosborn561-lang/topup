@@ -79,7 +79,7 @@ export const SPINE: readonly SpineStep[] = [
     title: "Suppress and dedupe",
     owner: "code",
     also: null,
-    gate: "report raw, removed by reason, net new. Net new is the number from here on.",
+    gate: "report raw, removed by reason, `expired_eligible`, net new. Net new is the number from here on.",
     skill: "global-suppression",
     pipeline: ["suppress", "icp", "puzzle", "find_emails"],
     card: null,
