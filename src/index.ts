@@ -21,6 +21,7 @@ import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
 import { buildHealth } from "./health.js";
 import { JobRunner, type Stages } from "./jobs/runner.js";
+import { isSelfStart } from "./jobs/selfStart.js";
 import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { mcpRouter } from "./mcp/server.js";
@@ -210,8 +211,17 @@ async function main(): Promise<void> {
     return [];
   });
   if (closedAborts.length) log.info("closed runs whose abort had already resolved", { runs: closedAborts.map((r) => `${r.client_tag}/${r.lane}`) });
+  const closedWatch = await repo.closeWatchRestartsAfterAbort().catch((err) => {
+    log.warn("close watch restarts failed", { error: (err as Error).message });
+    return [];
+  });
+  if (closedWatch.length) log.info("closed empty watch restarts after abort (D61)", { runs: closedWatch.map((r) => `${r.client_tag}/${r.lane}`) });
   const open = await repo.openRuns();
-  log.info("open runs wait for their next verb; nothing is driven on boot (D51)", { count: open.length });
+  const leftoverWatch = open.filter((r) => isSelfStart(r.opened_by, r.trigger));
+  if (leftoverWatch.length) {
+    log.warn("open runs were opened by the watch; nothing will drive them (D61)", { count: leftoverWatch.length });
+  }
+  log.info("open runs wait for their next verb; nothing is driven on boot (D51, D61)", { count: open.length });
 
   const shutdown = async (signal: string) => {
     log.info("shutting down", { signal });

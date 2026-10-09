@@ -5,6 +5,7 @@ import { logger } from "../lib/log.js";
 import { targetCountPatch } from "../recipes/campaigns.js";
 import { parseRecipe, type Recipe } from "../recipes/schema.js";
 import { jobLane, jobRecipe, type JobSpec } from "./recipe.js";
+import { isSelfStart, isWatchActor } from "./selfStart.js";
 import type { FindEmailsStage } from "../stages/find_emails/index.js";
 import type { IcpStage } from "../stages/icp/index.js";
 import type { ImportStage } from "../stages/import/index.js";
@@ -67,7 +68,7 @@ export interface VerbResult {
   job_id: string;
   verb: Verb;
   step: Step;
-  status: "done" | "nothing" | "waiting_approval" | "parked" | "retry" | "gate" | "declined" | "stopped" | "refused";
+  status: "started" | "done" | "nothing" | "waiting_approval" | "parked" | "retry" | "gate" | "declined" | "stopped" | "refused";
   counts: Record<string, number>;
   worst_case_cents: number | null;
   card_id: string | null;
@@ -86,10 +87,15 @@ export interface JobRunnerDeps {
 }
 
 export class JobRunner {
+  private readonly inFlight = new Set<string>();
+
   constructor(private readonly d: JobRunnerDeps) {}
 
   /** Open a job: a run row, its job recipe, the target campaign. Nothing runs yet. */
   async open(spec: JobSpec, by: string): Promise<{ ok: true; job_id: string; recipe_id: string; lane: string } | { ok: false; message: string }> {
+    if (isWatchActor(by) || isSelfStart(by, "manual")) {
+      return { ok: false, message: "Nothing starts on its own (D51, D61). The watch is gone; Grok calls pull. Ask Josh." };
+    }
     let recipe: Recipe;
     const stamp = (this.d.now ?? Date.now)();
     try {
@@ -101,6 +107,9 @@ export class JobRunner {
     await this.d.repo.upsertRecipe({ recipe_id: recipe.recipe_id, client_tag: recipe.client_tag, lane: jobLane(spec, stamp), version: 1, body: recipe, owner_approved_at: recipe.owner_approved_at ?? null });
     const opened = await this.d.repo.openRun({ recipe_id: recipe.recipe_id, client_tag: spec.client_tag, lane: spec.lane, campaign_id: spec.campaign_id, trigger: "manual", opened_by: by });
     if (!opened.ok) {
+      if (opened.reason === "self_start") {
+        return { ok: false, message: "Nothing starts on its own (D51, D61). The watch is gone; Grok calls pull. Ask Josh." };
+      }
       const existing = await this.d.repo.openRunFor(spec.client_tag, spec.lane);
       return { ok: false, message: existing ? `A job is already open for ${spec.client_tag}/${spec.lane}: ${existing.run_id}. Finish it with the next verb, or abort it.` : `The database refused a second open job for ${spec.client_tag}/${spec.lane} or campaign #${spec.campaign_id}.` };
     }
@@ -112,6 +121,27 @@ export class JobRunner {
       ?.event({ client_tag: spec.client_tag, lane: spec.lane, run_id: runId, event: "run_opened", line: `Job ${runId.slice(0, 8)} opened by ${by} for #${spec.campaign_id}: ${spec.source} with ${Object.keys(spec.filters).length} filter keys, up to ${spec.max_rows} rows.`, next_intent: "pull(job_id) when a person has approved the spend.", actor: by })
       .catch(() => undefined);
     return { ok: true, job_id: runId, recipe_id: recipe.recipe_id, lane: spec.lane };
+  }
+
+  /**
+   * Start a verb in the background and return the job id at once (D61).
+   * Poll job(job_id) for the step. The verb still only runs because Grok
+   * called it; nothing schedules the next one.
+   */
+  async begin(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null }): Promise<VerbResult> {
+    const first = VERB_STEPS[verb][0]!;
+    const run = await this.d.repo.getRun(jobId);
+    if (!run) return this.result(jobId, verb, first, "refused", {}, null, null, null, "no such job", "jobs() lists them");
+    const key = `${jobId}:${verb}`;
+    if (!this.inFlight.has(key)) {
+      this.inFlight.add(key);
+      void this.run(jobId, verb, opts)
+        .catch((err) => {
+          log.error("verb failed in the background", { job_id: jobId, verb, error: (err as Error).message });
+        })
+        .finally(() => this.inFlight.delete(key));
+    }
+    return this.result(jobId, verb, first, "started", {}, null, null, null, null, `job(job_id) until ${verb} is done, then ${this.nextLine(verb)}`);
   }
 
   /** Run one verb on a job. */

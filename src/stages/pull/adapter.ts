@@ -22,6 +22,8 @@ export interface PullResult {
   rows_exported: number;
   cap_reason: string | null;
   cap_message: string | null;
+  /** Emails skipped as already in the ingest table or duplicated in the batch (D61). */
+  already_held?: number;
 }
 
 export interface PullAdapter {

@@ -37,6 +37,7 @@ export interface PullFile {
   cap_reason: string | null;
   cap_message: string | null;
   count_only: boolean;
+  already_held?: number;
 }
 
 export interface ResolvedPull extends PullResult {
@@ -210,13 +211,16 @@ export class PullStage {
           cap_reason: result.cap_reason,
           cap_message: result.cap_message,
           count_only: result.export_url.length === 0,
+          already_held: result.already_held ?? 0,
         });
       }
 
       const rowsExported = files.reduce((sum, file) => sum + file.rows_exported, 0);
+      const alreadyHeld = files.reduce((sum, file) => sum + (file.already_held ?? 0), 0);
       const counts: Record<string, number> = {
         plan_rows: priced.rows,
         rows_exported: rowsExported,
+        already_held: alreadyHeld,
         campaigns: new Set(files.map((file) => file.campaignId)).size,
       };
       for (const file of files) {
@@ -264,6 +268,7 @@ export class PullStage {
         cap_reason: verdict.value.cap_reason,
         cap_message: verdict.value.cap_message,
         count_only: verdict.value.export_url.length === 0,
+        already_held: verdict.value.already_held ?? 0,
       });
     }
     const first = files[0]!;

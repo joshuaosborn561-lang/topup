@@ -4,6 +4,7 @@ const log = logger("repo");
 import type { Db, Queryable } from "./pool.js";
 import type { Role, RunRow, RunStepRow, RunStatus, Step } from "../domain/runs.js";
 import { MAX_STEP_ATTEMPTS } from "../domain/runs.js";
+import { isSelfStart } from "../jobs/selfStart.js";
 
 /** How a client's leads are found: on LinkedIn (getleads, AI Ark) or by place (Maps, permits). The registry says; the default is LinkedIn. */
 export type IcpKind = "linkedin_native" | "non_linkedin";
@@ -67,7 +68,10 @@ export class Repo {
     campaign_id: number | null;
     trigger: RunRow["trigger"];
     opened_by: string | null;
-  }): Promise<{ ok: true; run: RunRow } | { ok: false; reason: "already_open" }> {
+  }): Promise<{ ok: true; run: RunRow } | { ok: false; reason: "already_open" | "self_start" }> {
+    if (isSelfStart(input.opened_by, input.trigger)) {
+      return { ok: false, reason: "self_start" };
+    }
     try {
       const { rows } = await this.db.query<RunRow>(
         `insert into topup.runs (recipe_id, client_tag, lane, campaign_id, trigger, opened_by)

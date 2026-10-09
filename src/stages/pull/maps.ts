@@ -30,7 +30,7 @@ export class MapsPull implements PullAdapter {
     if (source?.kind !== "maps") throw new Error("MapsPull needs a maps source");
     if (!source.params.plan_id) throw new Error("maps needs plan_id. Receipts scope the stored pool by plan_id, never by ZIP or client_tag alone. Ask Josh.");
     const campaignId = run.campaign_id;
-    const rows = await copyMapsPool(this.db, {
+    const copied = await copyMapsPool(this.db, {
       client_tag: run.client_tag,
       filters: {
         plan_id: source.params.plan_id,
@@ -41,15 +41,21 @@ export class MapsPull implements PullAdapter {
       source_label: sourceLabel(run, campaignId ?? undefined),
       run_id: run.run_id,
     });
-    return { handle: `maps-pool:${rows}`, worstCaseCents: 0 };
+    return { handle: `maps-pool:${copied.inserted}:${copied.already_held}`, worstCaseCents: 0 };
   }
 
   async check(handle: string): Promise<PollVerdict<PullResult>> {
-    const matched = /^maps-pool:(\d+)$/.exec(handle);
+    const matched = /^maps-pool:(\d+)(?::(\d+))?$/.exec(handle);
     if (!matched) return { state: "failed", error: `maps pool handle ${handle} is not a count` };
     return {
       state: "done",
-      value: { export_url: MAPS_STORED_URL, rows_exported: Number(matched[1]), cap_reason: null, cap_message: null },
+      value: {
+        export_url: MAPS_STORED_URL,
+        rows_exported: Number(matched[1]),
+        cap_reason: null,
+        cap_message: null,
+        already_held: Number(matched[2] ?? 0),
+      },
     };
   }
 }
