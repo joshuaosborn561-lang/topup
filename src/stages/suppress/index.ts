@@ -4,7 +4,6 @@ import { INTERESTED_CATEGORY_IDS } from "../../domain/working.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import type { Recipe } from "../../recipes/schema.js";
 import { gateUnmet } from "../../spine/gate.js";
-import { linkedinHeadcountColumn, sameOfferExcludedClients } from "../../recipes/powergryd.js";
 import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
 import { clientPriorContactSql, positiveReplySql, recycleDays } from "./recycle.js";
 
@@ -74,7 +73,7 @@ export class SuppressStage {
       const { rows: rawRows } = await db.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status = 'ingested'`, [run.run_id]);
       const raw = Number(rawRows[0]?.n ?? 0);
 
-      const headcountDropped = await this.dropOutsideHeadcount(run.run_id, recipe, table);
+      const headcountDropped = 0;
       const removed = await this.d.repo.withRun(run.run_id, async (tx) => {
         const reasonSql = this.reasonCase(recipe, t, offerKeys.length > 0, domainCount > 0);
         const { rows } = await tx.query<{ reason: string; n: string }>(
@@ -95,7 +94,7 @@ export class SuppressStage {
              returning j.reason
            )
            select reason, count(*)::text as n from hit group by reason`,
-          [run.run_id, INTERESTED_CATEGORY_IDS, DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, recipe.smartlead_client_id, clientCampaigns, offerKeys, run.client_tag, days, sameOfferExcludedClients(recipe)],
+          [run.run_id, INTERESTED_CATEGORY_IDS, DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, recipe.smartlead_client_id, clientCampaigns, offerKeys, run.client_tag, days, [] as string[]],
         );
         const byReason: Record<string, number> = Object.fromEntries(SUPPRESS_REASONS.map((r) => [r, 0]));
         for (const r of rows) byReason[r.reason] = Number(r.n);
@@ -142,23 +141,6 @@ export class SuppressStage {
         `; positives expire ${days} days after the reply; DNC and wrong person stay forever.` +
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);
-    });
-  }
-
-  /** 11 to 200 is the count band. Rows that name a LinkedIn profile count outside 20 to 100 are dropped. */
-  private async dropOutsideHeadcount(runId: string, recipe: Recipe, table: string): Promise<number> {
-    if (recipe.client_tag !== "powergryd" || recipe.lane !== "msp_owners") return 0;
-    const cols = await columnsOf(this.d.repo, table).catch(() => new Set<string>());
-    const column = linkedinHeadcountColumn(cols);
-    if (!column) return 0;
-    return this.d.repo.withRun(runId, async (tx) => {
-      const flag = cols.has("qa_flags") ? ", qa_flags = coalesce(qa_flags, '{}'::jsonb) || '{\"suppressed_reason\":\"linkedin_headcount\"}'::jsonb" : "";
-      const { rowCount } = await tx.query(
-        `update ${table} set lead_status = 'suppressed'${flag}, status_changed_at = now()
-         where run_id = $1 and lead_status = 'ingested' and ${column} is not null and (${column} < 20 or ${column} > 100)`,
-        [runId],
-      );
-      return rowCount ?? 0;
     });
   }
 

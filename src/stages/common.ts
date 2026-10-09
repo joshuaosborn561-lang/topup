@@ -1,9 +1,9 @@
 import type { Repo } from "../db/repo.js";
 import { funnelCounts, MAX_STEP_ATTEMPTS, type Role, type RunRow, type RunStatus, type Step } from "../domain/runs.js";
 import { logger } from "../lib/log.js";
-import { parkedCard } from "../slack/cards.js";
-import type { SlackConsole } from "../slack/console.js";
-import { campaignReportFromCounts, formatCampaignReport, type CampaignReportEntry } from "./size/campaignReport.js";
+import { parkedCard } from "../console/cards.js";
+import type { Console } from "../console/console.js";
+import { campaignReportFromCounts, formatCampaignReport, type CampaignReportEntry } from "./report.js";
 import type { GateUnmet } from "../spine/gate.js";
 
 const log = logger("stage");
@@ -33,7 +33,7 @@ export type StageOutcome =
 
 export interface StageDeps {
   repo: Repo;
-  console: SlackConsole;
+  console: Console;
 }
 
 export interface Clock {

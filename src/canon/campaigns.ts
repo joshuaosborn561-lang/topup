@@ -1,9 +1,9 @@
 import { campaignPerformance } from "../builds/load.js";
 import type { Queryable } from "../db/pool.js";
 import { assessCampaign, campaignIdsForClient, campaignSnapshots } from "../ledger/health.js";
-import { loadClientMap } from "../mcp/recipe.js";
+import { loadClientMap } from "./clients.js";
 import { isNeverTopUp, ratePer2000, REPLY_BAR_PER_2000 } from "../policy/rules.js";
-import { registryRows } from "../recipes/registry.js";
+import { registryRows } from "./registry.js";
 
 /**
  * Every campaign, with the numbers Grok picks on (D52): lifetime sends and

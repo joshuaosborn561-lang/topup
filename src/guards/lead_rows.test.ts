@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { LEAD_FIELD_KEYS, redact } from "../lib/log.js";
 import { maskEmail, MCP_TOOL_ROLE, SAMPLE_ROWS_MAX } from "../mcp/server.js";
-import { qaHoldCard } from "../slack/cards.js";
+import { qaHoldCard } from "../console/cards.js";
 
 /**
- * D2 — no lead rows in chat, Slack, or logs beyond ten sample rows on a card.
+ * D2 — no lead rows in chat, cards or logs beyond ten sample values on a card.
  * Ask Josh before loosening any of this; the answer has been no every time.
  */
 describe("D2 — lead rows never leave the database", () => {

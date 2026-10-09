@@ -1,194 +1,49 @@
+import type { Console } from "./console/console.js";
 import { ingestedTable } from "./db/pool.js";
 import type { Repo } from "./db/repo.js";
 import { orderCounts, presentRun, runIsOpen, type Role, type RunRow, type Step } from "./domain/runs.js";
+import type { Stages } from "./jobs/runner.js";
 import type { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
-import { resolveTargetCampaignIds, targetCountPatch } from "./recipes/campaigns.js";
-import { shapeBcpRecipe } from "./recipes/bcp.js";
-import { shapeMspOwnersRecipe } from "./recipes/powergryd.js";
-import { applyIcpSources, buildsFromRows } from "./recipes/icpSource.js";
-import { resolveRecipeForStart } from "./recipes/resolve.js";
-import { parlayLaneFileSuperseded, shapeParlayRecipe } from "./recipes/parlay.js";
-import { routingFromRegistry, registryRows } from "./recipes/registry.js";
-import { trimToOwningClient } from "./recipes/trim.js";
-import { campaignReportFromCounts, formatCampaignReport, isPausedLabel } from "./stages/size/campaignReport.js";
-import { haltBeforeStep, parkIngestReason, resolveStopAfter, type StopAfter } from "./runs/halt.js";
-import { resumeEffect } from "./runs/resume.js";
-import { parseRecipe, type Recipe } from "./recipes/schema.js";
-import { gateCard } from "./slack/cards.js";
-import type { SlackConsole } from "./slack/console.js";
-import type { GateUnmet } from "./spine/gate.js";
-import { stepForStage, stepLabel } from "./spine/steps.js";
-import type { TapListener } from "./slack/http.js";
-import { park, type StageOutcome } from "./stages/common.js";
-import type { FlipStage } from "./stages/flip/index.js";
-import type { FindEmailsStage } from "./stages/find_emails/index.js";
-import type { PuzzleStage } from "./stages/puzzle/index.js";
-import type { TriggerStage } from "./stages/trigger/index.js";
-import type { ImportStage } from "./stages/import/index.js";
-import type { IngestStage } from "./stages/ingest/index.js";
-import type { NormalizeOutcome, NormalizeStage } from "./stages/normalize/index.js";
-import type { PostImportStage } from "./stages/post_import/index.js";
-import type { PullStage } from "./stages/pull/index.js";
-import type { QaStage } from "./stages/qa/index.js";
-import type { RouteStage } from "./stages/route/index.js";
-import type { SizeStage } from "./stages/size/index.js";
-import type { StageStage } from "./stages/stage/index.js";
-import type { SuppressStage } from "./stages/suppress/index.js";
-import type { VerifyOutcome, VerifyStage } from "./stages/verify/verify.js";
+import { campaignReportFromCounts, type CampaignReportEntry } from "./stages/report.js";
+import { stepLabel } from "./spine/steps.js";
 
 const log = logger("orchestrator");
 
-/**
- * The stages a run walks, in spine order: steps 1 through 13 of
- * skills/lead-list-build (D29). Puzzle + find_emails run after suppress so
- * we do not pay to enrich a suppressed person. Step 1 reuses the saved
- * recipe when the ICP is already signed off; step 13 reminds Josh to flip
- * ACTIVE and never does it.
- */
-export const PIPELINE_STEPS: readonly Step[] = ["trigger", "size", "pull", "ingest", "suppress", "puzzle", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import", "flip"];
-
-/** Kept for the invariants guard; the Phase 1 build ran only these two. */
-export const PHASE1_STEPS: readonly Step[] = ["verify", "normalize"];
-
-export interface Stages {
-  trigger: TriggerStage;
-  size: SizeStage;
-  pull: PullStage;
-  ingest: IngestStage;
-  suppress: SuppressStage;
-  puzzle: PuzzleStage;
-  findEmails: FindEmailsStage;
-  verify: VerifyStage;
-  normalize: NormalizeStage;
-  qa: QaStage;
-  route: RouteStage;
-  stage: StageStage;
-  import: ImportStage;
-  postImport: PostImportStage;
-  flip: FlipStage;
-}
-
-type AnyOutcome = StageOutcome | VerifyOutcome | NormalizeOutcome;
-
-export interface StartInput {
-  clientTag: string;
-  /** Optional when campaignId is set — inferred from pull_receipts (D45). */
-  lane?: string;
+export interface ResolvedCard {
+  card_id: string;
+  kind: string;
+  run_id: string | null;
+  choice: string;
   by: string;
-  trigger: RunRow["trigger"];
-  /** Default true. The watch sets false when it is about to post a not-working card. */
-  drive?: boolean;
-  /** The watch names why it opened a run without driving it. */
-  hold?: "not_working";
-  /** Campaigns this run sizes/pulls. Omitted = every campaign the recipe names. */
-  campaignIds?: number[];
-  /** Optional lead count the operator asked for. Recorded on the run; size still recounts. */
-  requestedCount?: number;
-  smartleadClientId?: number;
-  /** Size only. Same as stopAfter "size". */
-  dryRun?: boolean;
-  /** pilot scores a sample and does not size TAM. size closes after the count. pull parks before ingest. */
-  stopAfter?: StopAfter | null;
 }
 
-export type StartResult = { ok: true; run: RunRow } | { ok: false; message: string };
+export interface Hold {
+  card_id: string;
+  kind: string;
+  audience: Role;
+  run_id: string | null;
+  client_tag: string | null;
+  age_minutes: number;
+  summary: string;
+  campaign_report: CampaignReportEntry[];
+}
 
+/**
+ * What is left of the orchestrator (D53): the effect of a resolved card on
+ * its run, abort, resume, and the open holds. It never drives a run. A job
+ * moves when Grok calls the next verb, and nothing opens on its own (D51).
+ */
 export class Orchestrator {
-  /** Runs this process is currently driving. One replica, so a Set is enough. */
-  private readonly active = new Set<string>();
-  private readonly retryDelayMs: number;
-  private readonly sleep: (ms: number) => Promise<void>;
-
   constructor(
     private readonly d: {
       repo: Repo;
-      console: SlackConsole;
+      console: Console;
       stages: Stages;
-      /** The lane ledger; every stage change and outcome is written to it as it happens. */
       ledger?: LaneLedger;
-      /** Pause between a failed step attempt and the next (default 30s). */
-      retryDelayMs?: number;
-      sleep?: (ms: number) => Promise<void>;
-      /** File recipes on disk. A cell here wins over a receipt that did not name its lists. */
-      fileRecipes?: Recipe[];
     },
-  ) {
-    this.retryDelayMs = d.retryDelayMs ?? 30_000;
-    this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-  }
+  ) {}
 
-  /** `/topup` or MCP start_topup. File recipe wins; otherwise infer from pull_receipts (D45). */
-  async startTopup(input: StartInput): Promise<StartResult> {
-    const resolved = await resolveRecipeForStart(this.d.repo, {
-      clientTag: input.clientTag,
-      lane: input.lane,
-      campaignId: input.campaignIds?.[0] ?? null,
-      smartleadClientId: input.smartleadClientId,
-    });
-    if (!resolved.ok) return { ok: false, message: resolved.message };
-    const recipe = resolved.recipe;
-    const targets = resolveTargetCampaignIds(recipe, input.campaignIds);
-    if (!targets.ok) return { ok: false, message: targets.message };
-    if (recipe.client_tag === "bcp" && recipe.lane === "pe_firms") {
-      return { ok: false, message: "bcp.pe_firms is retired. It had no positive replies from PE partners." };
-    }
-    if (await this.lanePaused(recipe.client_tag, recipe.lane, targets.ids)) {
-      return { ok: false, message: `${recipe.client_tag}/${recipe.lane} is paused. It does not start.` };
-    }
-    const opened = await this.d.repo.openRun({
-      recipe_id: recipe.recipe_id,
-      client_tag: recipe.client_tag,
-      lane: recipe.lane,
-      campaign_id: targets.ids.length === 1 ? targets.ids[0]! : null,
-      trigger: input.trigger,
-      opened_by: input.by,
-    });
-    if (!opened.ok) {
-      const existing = await this.d.repo.openRunFor(recipe.client_tag, recipe.lane);
-      return {
-        ok: false,
-        message: existing
-          ? `A run is already open for ${recipe.client_tag}/${recipe.lane}: \`${existing.run_id.slice(0, 8)}\` (${existing.status}). One open run per lane; finish or abort it first.`
-          : `The database refused a second open run for ${recipe.client_tag}/${recipe.lane}.`,
-      };
-    }
-    if (targets.ids.length) await this.d.repo.mergeRunCounts(opened.run.run_id, targetCountPatch(targets.ids));
-    if (input.requestedCount && input.requestedCount > 0) {
-      await this.d.repo.mergeRunCounts(opened.run.run_id, { requested_leads: Math.floor(input.requestedCount) });
-    }
-    const stopAfter = resolveStopAfter(input);
-    if (stopAfter === "pilot") await this.d.repo.mergeRunCounts(opened.run.run_id, { stop_after_pilot: 1 });
-    if (stopAfter === "size") await this.d.repo.mergeRunCounts(opened.run.run_id, { stop_after_size: 1 });
-    if (stopAfter === "pull") await this.d.repo.mergeRunCounts(opened.run.run_id, { stop_after_pull: 1 });
-    const headline =
-      input.hold === "not_working"
-        ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch stopped: a campaign is low and not working. This needs Josh.`
-        : input.trigger === "runway"
-          ? `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · the watch started it: client-wide runway is low and still working.`
-          : `Top-up run \`${opened.run.run_id.slice(0, 8)}\` — ${recipe.client_tag} / ${recipe.lane} · started by <@${input.by}> (${input.trigger})`;
-    const run = await this.d.console.openRunThread(opened.run, headline);
-    await this.ledger((l) =>
-      l.event({
-        client_tag: run.client_tag,
-        lane: run.lane,
-        run_id: run.run_id,
-        event: "run_opened",
-        line:
-          input.hold === "not_working"
-            ? `Run ${run.run_id.slice(0, 8)} opened by the watch and waiting on Josh: not working.`
-            : input.trigger === "runway"
-              ? `Run ${run.run_id.slice(0, 8)} opened by the watch (client-wide runway low, still working).`
-              : `Run ${run.run_id.slice(0, 8)} opened (${input.trigger}).`,
-        next_intent: input.hold === "not_working" ? "Waiting for Top up anyway or Leave it." : `Run ${PIPELINE_STEPS.join(", ")}; then the receipt.`,
-        actor: input.by,
-      }),
-    );
-    if (input.drive !== false) void this.drive(run.run_id);
-    return { ok: true, run };
-  }
-
-  /** Ledger writes never break a run: a failed write is logged and the run goes on. */
   private async ledger(fn: (l: LaneLedger) => Promise<unknown>): Promise<void> {
     if (!this.d.ledger) return;
     try {
@@ -198,410 +53,55 @@ export class Orchestrator {
     }
   }
 
-  /** Re-enter every open run after a restart. Runs waiting on a card simply keep waiting. */
-  async resumeOpenRuns(): Promise<number> {
-    const open = await this.d.repo.openRuns();
-    for (const run of open) void this.drive(run.run_id);
-    return open.length;
-  }
-
-  /**
-   * Drive a run forward until it finishes, parks, or waits on a card.
-   * Idempotent: a second call while the run is active is a no-op, and a call
-   * while a card is open logs and returns (the tap will call again).
-   */
-  async drive(runId: string): Promise<void> {
-    // D52: a job opened by Grok runs one verb at a time; the orchestrator never chains it.
-    const row = await this.d.repo.getRun(runId);
-    if (row && Number(row.counts_by_status?.grok_job) === 1) {
-      log.info("job run is driven by its verbs, not by the orchestrator", { run_id: runId });
-      return;
-    }
-    if (this.active.has(runId)) return;
-    this.active.add(runId);
-    try {
-      const run = await this.d.repo.getRun(runId);
-      if (!run) return;
-      const cards = await this.d.repo.openCardsForRun(runId);
-      if (cards.length > 0) {
-        log.info("run waits on a card", { run_id: runId, cards: cards.map((c) => c.kind) });
-        return;
-      }
-      await this.pipeline(run);
-    } catch (err) {
-      log.error("drive failed", { run_id: runId, error: (err as Error).message });
-      await this.d.repo.setRunStatus(runId, "awaiting_operator", undefined, (err as Error).message).catch(() => undefined);
-    } finally {
-      this.active.delete(runId);
-    }
-  }
-
-  private async pipeline(initial: RunRow): Promise<void> {
-    const rec = await this.d.repo.getRecipe(initial.recipe_id);
-    if (!rec) throw new Error(`recipe ${initial.recipe_id} is not in topup.lane_recipes`);
-    await this.d.repo.repairCampaignRegistry().catch((err) => log.warn("registry repair failed", { error: (err as Error).message }));
-    let loaded = parseRecipe(rec.body);
-    if (loaded.recipe_id.endsWith(".v0") || parlayLaneFileSuperseded(loaded)) {
-      const again = await resolveRecipeForStart(this.d.repo, {
-        clientTag: loaded.client_tag,
-        lane: loaded.lane,
-        smartleadClientId: loaded.smartlead_client_id,
-      }).catch(() => null);
-      if (again && again.ok) loaded = again.recipe;
-    }
-    const registry = await this.d.repo.campaignRegistry(loaded.client_tag).catch(() => [] as Record<string, unknown>[]);
-    const rebuilt = routingFromRegistry(loaded, registryRows(registry));
-    if (rebuilt.routing.length !== loaded.routing.length || rebuilt.routing.some((rule, i) => rule.campaign_id !== loaded.routing[i]?.campaign_id)) {
-      await this.d.repo.upsertRecipe({
-        recipe_id: rebuilt.recipe_id,
-        client_tag: rebuilt.client_tag,
-        lane: rebuilt.lane,
-        version: Number(/\.v(\d+)$/.exec(rebuilt.recipe_id)?.[1] ?? 0),
-        body: rebuilt,
-        owner_approved_at: rec.owner_approved_at,
-      });
-    }
-    const trimmed = await trimToOwningClient(this.d.repo, rebuilt);
-    const buildRows = await this.d.repo
-      .campaignBuilds(
-        trimmed.recipe.client_tag,
-        trimmed.recipe.routing.map((rule) => rule.campaign_id),
-      )
-      .catch((err) => {
-        log.warn("campaign builds unavailable", { error: (err as Error).message });
-        return [] as Record<string, unknown>[];
-      });
-    const applied = applyIcpSources(trimmed.recipe, this.d.fileRecipes ?? [], buildsFromRows(buildRows));
-    const recipe = shapeParlayRecipe(shapeMspOwnersRecipe(shapeBcpRecipe(applied.recipe)));
-    if (applied.missing.length || Object.keys(applied.used).length) {
-      log.info("icp source", { run_id: initial.run_id, used: applied.used, missing: applied.missing });
-    }
-    if (trimmed.dropped.length) {
-      log.info("trimmed foreign campaigns from saved recipe", { recipe_id: rec.recipe_id, dropped: trimmed.dropped });
-      await this.d.repo.upsertRecipe({
-        recipe_id: rec.recipe_id,
-        client_tag: recipe.client_tag,
-        lane: recipe.lane,
-        version: Number(/\.v(\d+)$/.exec(rec.recipe_id)?.[1] ?? 0),
-        body: recipe,
-        owner_approved_at: rec.owner_approved_at,
-      });
-    }
-
-    for (const [i, step] of PIPELINE_STEPS.entries()) {
-      const halted = await this.haltBefore(initial.run_id, step);
-      if (halted) return;
-      const after = PIPELINE_STEPS[i + 1];
-      for (;;) {
-        const run = (await this.d.repo.getRun(initial.run_id))!;
-        if (run.status === "aborted") return;
-        const stepRow = await this.d.repo.getStep(run.run_id, step);
-        if (stepRow?.status === "done") break;
-        await this.ledger((l) => l.setStepForStage(run.client_tag, run.lane, step, { run_id: run.run_id, next_intent: after ? `Then ${stepLabel(stepForStage(after)?.n ?? null)} (${after}).` : "Then close with a receipt." }));
-        const outcome = await this.runStage(step, run, recipe);
-        if (outcome.kind === "stopped") return;
-        if (outcome.kind === "gate") {
-          await this.haltAtGate(run, step, outcome);
-          return;
-        }
-        if (outcome.kind === "waiting") {
-          await this.ledger((l) =>
-            l.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "waiting", line: `${stepLabel(stepForStage(step)?.n ?? null)} (${step}) waits on ${outcome.on === "owner" ? "Josh" : "Cayden"}: ${outcome.why}`, next_intent: "Waiting for the card; the tap re-enters the step.", actor: "service" }),
-          );
-          return;
-        }
-        if (outcome.kind === "retry") {
-          log.warn("step retrying", { run_id: run.run_id, step, error: outcome.error, in_ms: this.retryDelayMs });
-          await this.ledger((l) =>
-            l.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "retry", line: `${step} failed: ${outcome.error.slice(0, 160)}`, next_intent: `Retry ${step} in ${Math.round(this.retryDelayMs / 1000)}s.`, actor: "service" }),
-          );
-          await this.sleep(this.retryDelayMs);
-          if ((await this.d.repo.getRun(run.run_id))?.status === "aborted") return;
-          continue;
-        }
-        if (outcome.kind === "parked" || outcome.kind === "declined") {
-          const fresh = (await this.d.repo.getRun(run.run_id))!;
-          const at = stepLabel(stepForStage(step)?.n ?? null);
-          if (outcome.kind === "parked") {
-            await this.ledger((l) =>
-              l.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "parked", line: `Parked at ${at} (${step}): ${(fresh.last_error ?? "").slice(0, 160)}`, next_intent: "Waiting for Resume or Abort on the parked card.", actor: "service" }),
-            );
-          } else {
-            await this.ledger((l) => l.setStep(run.client_tag, run.lane, null, { run_id: null, line: `Run ${run.run_id.slice(0, 8)} closed ${fresh.status} at ${at} (${step}).`, next_intent: "Nothing queued." }));
-          }
-          return;
-        }
-        break;
-      }
-    }
-
-    const run = (await this.d.repo.getRun(initial.run_id))!;
-    await this.d.repo.setRunStatus(run.run_id, "done", "flip");
-    const closed = (await this.d.repo.getRun(run.run_id))!;
-    await this.closeWithReceipt(closed, await this.receiptNote(closed), "Step 13 is in Josh's hands: flip ACTIVE and watch day one. The watch will start the next fill when a campaign is low and still working.");
-  }
-
-  private async runStage(step: Step, run: RunRow, recipe: Recipe): Promise<AnyOutcome> {
-    const s = this.d.stages;
-    switch (step) {
-      case "trigger":
-        return s.trigger.run(run, recipe);
-      case "size":
-        return s.size.run(run, recipe);
-      case "pull":
-        return s.pull.run(run, recipe);
-      case "ingest":
-        return s.ingest.run(run, recipe);
-      case "suppress":
-        return s.suppress.run(run, recipe);
-      case "puzzle":
-        return s.puzzle.run(run, recipe);
-      case "find_emails":
-        return s.findEmails.run(run, recipe);
-      case "verify":
-        return s.verify.run(run, recipe);
-      case "normalize":
-        return s.normalize.run(run, recipe);
-      case "qa":
-        return s.qa.run(run, recipe);
-      case "route":
-        return s.route.run(run, recipe);
-      case "stage":
-        return s.stage.run(run, recipe);
-      case "import":
-        return s.import.run(run, recipe);
-      case "post_import":
-        return s.postImport.run(run, recipe);
-      case "flip":
-        return s.flip.run(run, recipe);
-      default:
-        throw new Error(`no stage for step ${step as string}`);
-    }
-  }
-
-  /**
-   * The step 12 gate's receipt line: campaign, imported, runway before and
-   * after, "ready for ACTIVE" — from the import and post_import step counts.
-   * Spend by vendor and holds are on the receipt card itself.
-   */
-  private async receiptNote(run: RunRow): Promise<string> {
-    const [imp, post] = await Promise.all([this.d.repo.getStep(run.run_id, "import"), this.d.repo.getStep(run.run_id, "post_import")]);
-    const ids = new Set<string>();
-    for (const k of Object.keys(imp?.counts ?? {})) {
-      const m = /^imported_(\d+)$/.exec(k);
-      if (m) ids.add(m[1]);
-    }
-    if (ids.size === 0) return "No campaign received leads on this run.";
-    const days = (v: number | undefined) => (v === undefined ? "n/a" : `${(Number(v) / 10).toFixed(1)}d`);
-    const lines = [...ids].sort().map((id) => {
-      const ready = post?.counts[`ready_${id}`] === 1;
-      return `#${id}: imported ${imp?.counts[`imported_${id}`] ?? 0} · runway ${days(imp?.counts[`runway_before_${id}_x10`])} → ${days(post?.counts[`runway_after_${id}_x10`])} · ${ready ? "ready for ACTIVE" : "not ready (see step 12)"}`;
-    });
-    return `${lines.join("\n")}\nJosh flips ACTIVE by hand; the service never does.`;
-  }
-
-  /**
-   * A spine gate failed (D24). The run halts at the step, the ledger records
-   * why, and exactly one card posts: a second halt at the same step with a
-   * card already open posts nothing more.
-   */
-  private async haltAtGate(run: RunRow, stage: Step, g: GateUnmet): Promise<void> {
-    await this.d.repo.setRunStatus(run.run_id, "awaiting_josh", stage, `${g.gate}: ${g.why}`);
-    await this.ledger((l) => l.gateUnmet(run.client_tag, run.lane, g.step, g.why, { run_id: run.run_id, waiting_on: "owner", next_intent: "Waiting for Resume or Abort on the gate card." }));
-    const open = (await this.d.repo.openCardsForRun(run.run_id)).some((c) => c.kind === "gate" && c.payload.step === stage);
-    if (open) return;
-    const sizeStep = await this.d.repo.getStep(run.run_id, "size").catch(() => null);
-    const reportRows = campaignReportFromCounts(sizeStep?.counts as unknown as Record<string, unknown>);
-    const report = formatCampaignReport(reportRows);
-    await this.d.console.ask({
-      run,
-      kind: "gate",
-      audience: "owner",
-      payload: { step: stage, spine_step: g.step, gate: g.gate, reason: g.why, counts: g.counts, campaign_report: reportRows },
-      text: `${stepLabel(g.step)} gate unmet — ${g.gate}: ${g.why}`,
-      blocks: (cardId) => gateCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane, stepLabel: stepLabel(g.step), gate: g.gate, why: g.why, counts: g.counts, report: report || undefined }),
-    });
-  }
-
-  /** A paused campaign name or lane does not open, including when the watch asks. */
-  private async lanePaused(clientTag: string, lane: string, campaignIds: number[]): Promise<boolean> {
-    if (isPausedLabel(lane)) return true;
-    const rows = await this.d.repo.campaignRegistry(clientTag).catch(() => [] as Record<string, unknown>[]);
-    return rows.some((row) => campaignIds.includes(Number(row.campaign_id)) && isPausedLabel(row.campaign_name == null ? "" : String(row.campaign_name)));
-  }
-
-  /** The receipt is the last gate: nothing is done until it posts, and it is the last event on the lane. */
-  private async closeWithReceipt(closed: RunRow, note: string, nextIntent: string): Promise<void> {
-    const shown = presentRun(closed);
-    const [sizeStep, pullStep] = await Promise.all([
-      this.d.repo.getStep(closed.run_id, "size").catch(() => null),
-      this.d.repo.getStep(closed.run_id, "pull").catch(() => null),
-    ]);
-    const report = formatCampaignReport(
-      campaignReportFromCounts((pullStep?.counts ?? sizeStep?.counts) as unknown as Record<string, unknown>),
-    );
-    const fullNote = report ? `${note}\n${report}`.slice(0, 3500) : note;
-    await this.d.console.receipt(shown, fullNote);
-    const counts = orderCounts(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts";
-    await this.ledger((l) => l.setStep(shown.client_tag, shown.lane, null, { run_id: null, line: `Run ${shown.run_id.slice(0, 8)} closed ${shown.status}.`, next_intent: nextIntent }));
-    await this.ledger((l) => l.event({ client_tag: shown.client_tag, lane: shown.lane, run_id: shown.run_id, event: "receipt", line: `Receipt: ${shown.status} · ${counts} · ${fullNote}`, next_intent: nextIntent, actor: "service" }));
-  }
-
-  /**
-   * Size-only closes before pull. A counted pull, and every run while loads
-   * are paused, parks before ingest. Watch opens go through this same loop.
-   */
-  private async haltBefore(runId: string, step: Step): Promise<boolean> {
-    const run = await this.d.repo.getRun(runId);
-    if (!run || run.status === "aborted") return true;
-    const paused = await this.d.repo.loadsPaused().catch((err) => {
-      log.error("loads_paused unreadable", { error: (err as Error).message });
-      return false;
-    });
-    const halt = haltBeforeStep(step, run.counts_by_status ?? {}, paused);
-    if (halt === "sized") {
-      await this.closeSized(run);
-      return true;
-    }
-    if (halt === "park_ingest") {
-      const reason = parkIngestReason(run.counts_by_status ?? {}, paused);
-      if (run.counts_by_status?.stop_after_pull === 1) await this.d.repo.mergeRunCounts(run.run_id, { stop_after_pull: 0 });
-      await park(
-        { repo: this.d.repo, console: this.d.console },
-        run,
-        "ingest",
-        reason,
-        0,
+  /** A card was resolved through the console (D18). Apply what the choice means to the run, then stop: the next verb moves it. */
+  async applyResolution(card: ResolvedCard): Promise<{ effect: string }> {
+    const run = card.run_id ? await this.d.repo.getRun(card.run_id) : null;
+    if (run) {
+      await this.ledger((l) =>
+        l.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "card_resolved", line: `${card.kind} card: ${card.choice} by ${card.by}.`, actor: card.by, detail: { card_id: card.card_id } }),
       );
-      return true;
     }
-    return false;
-  }
-
-  /** Trigger and size already ran. Close without a pull, an export, or an approval card. */
-  private async closeSized(run: RunRow): Promise<void> {
-    await this.d.repo.ensureCore08().catch((err) => log.error("sized status ensure failed", { error: (err as Error).message }));
-    const terminal = await this.d.repo.sizedIsTerminal().catch(() => false);
-    await this.d.repo.mergeRunCounts(run.run_id, { sized: 1 });
-    await this.d.repo.setRunStatus(run.run_id, terminal ? "sized" : "done", "size");
-    const closed = (await this.d.repo.getRun(run.run_id))!;
-    await this.closeWithReceipt(
-      closed,
-      run.counts_by_status?.stop_after_pilot === 1
-        ? "Pilot only. TAM was not sized. No pull, no ingest. Nothing was loaded."
-        : "Sized only. No pull, no export, no ingest. Nothing was loaded.",
-      "Nothing queued. A full top-up is a new run.",
-    );
-  }
-
-  /** What a resolved card should set in motion. Shared by Slack taps and MCP resolve_hold. */
-  readonly onTap: TapListener = async (card) => {
-    const runId = card.run_id;
-    if (runId) {
-      const run = await this.d.repo.getRun(runId);
-      if (run) {
-        await this.ledger((l) =>
-          l.event({ client_tag: run.client_tag, lane: run.lane, run_id: runId, event: "card_resolved", line: `${card.kind} card: ${card.choice} by ${card.by}.`, actor: card.by, detail: { card_id: card.card_id } }),
-        );
-      }
-    }
-    const effect = resumeEffect(card.choice, card.kind);
-    if (effect === "reset_parked") {
-      if (!runId) return;
-      const run = await this.d.repo.getRun(runId);
-      if (!run) return;
-      const step = (card.kind === "parked" || card.kind === "gate" ? await this.parkedStep(card.card_id) : null) ?? run.current_step;
-      if (step) await this.d.repo.resetStep(runId, step);
-      await this.d.repo.setRunStatus(runId, "open", step ?? undefined);
-      void this.drive(runId);
-      return;
-    }
-    if (effect === "topup_anyway") {
-      if (!runId) return;
-      const run = await this.d.repo.getRun(runId);
-      if (run) {
-        await this.d.repo.setRunStatus(runId, "open", "trigger");
-        await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh chose to top up anyway.`, runId));
-        await this.d.console.postInThread(run, `Top up anyway by <@${card.by}>: the watch will run the lane even though the reply rate is under the bar.`);
-      }
-      void this.drive(runId);
-      return;
-    }
-    if (effect === "continue" && (card.choice === "approve_spend" || card.choice === "approve_small_spend")) {
-      if (!runId) return;
-      const run = await this.d.repo.getRun(runId);
-      const full = await this.d.repo.getCard(card.card_id);
-      const step = (typeof full?.payload.step === "string" ? (full.payload.step as Step) : null) ?? run?.current_step ?? null;
-      const cents = Number(full?.payload.worst_case_cents ?? 0);
-      if (run && step) {
-        await this.d.repo.approveStep(runId, step, cents);
-        await this.d.repo.setRunStatus(runId, "open", step);
-      }
-      void this.drive(runId);
-      return;
-    }
-    if (effect === "continue") {
-      if (runId) void this.drive(runId);
-      return;
-    }
+    if (!run) return { effect: "no run on this card" };
     switch (card.choice) {
-      // step 5: the list was added (or Josh said go without); step 9: Josh said continue without the pending cells
-      case "list_added":
-      case "no_list": {
-        if (card.choice === "no_list" && runId) {
-          const run = await this.d.repo.getRun(runId);
-          if (run) await this.d.repo.confirmClientDomainListEmpty(run.client_tag, card.by);
-        }
+      case "approve_spend": {
+        const full = await this.d.repo.getCard(card.card_id);
+        const step = (typeof full?.payload.step === "string" ? (full.payload.step as Step) : null) ?? run.current_step ?? null;
+        const cents = Number(full?.payload.worst_case_cents ?? 0);
+        if (!step) return { effect: "no step on the card" };
+        await this.d.repo.approveStep(run.run_id, step, cents);
+        await this.d.repo.setRunStatus(run.run_id, "open", step);
+        return { effect: `${step} approved for $${(cents / 100).toFixed(2)} by ${card.by}; the same verb runs it` };
       }
-      // fall through: list added (or Josh confirmed none) and step 9 continue
-      case "continue_without":
-        // The waiting stage either sees the resolution in-process or, after a
-        // restart, is re-entered here.
-        if (runId) void this.drive(runId);
-        return;
+      case "decline_spend":
+        return { effect: "declined; the verb closes the job as declined when it runs" };
       case "accept":
       case "purge":
       case "reroute": {
-        // step 8: every row still held under the card's rule takes the choice, then the run goes on
-        if (!runId) return;
-        const run = await this.d.repo.getRun(runId);
         const full = await this.d.repo.getCard(card.card_id);
-        if (!run || !full || full.kind !== "qa_hold") return;
+        if (!full || full.kind !== "qa_hold") return { effect: "not a QA hold" };
         const n = await this.d.stages.qa.applyTap(run, full.payload, card.choice, card.by);
-        await this.d.console.postInThread(run, `QA ${card.choice} on \`${String(full.payload.rule_id)}\` by <@${card.by}>: ${n} leads.`);
-        void this.drive(runId);
-        return;
+        await this.d.console.postInThread(run, `QA ${card.choice} on ${String(full.payload.rule_id)} by ${card.by}: ${n} leads.`);
+        return { effect: `${n} held leads: ${card.choice}; qa(job_id) again` };
+      }
+      case "resume":
+      case "resume_run": {
+        const r = await this.resumeRun(run.run_id, card.by);
+        return { effect: r.ok ? `${r.step ?? "the current step"} has its attempts back; run its verb again` : r.message };
       }
       case "abort": {
-        if (!runId) return;
-        if (card.kind === "stall") return; // the verify stage handles abort of a batch itself
-        await this.abortRun(runId, card.by);
-        return;
+        if (card.kind === "stall") return { effect: "the verify stage handles abort of a batch itself" };
+        const r = await this.abortRun(run.run_id, card.by);
+        return { effect: r.ok ? `aborted; ${r.released} rows released` : r.message };
       }
-      case "leave_it": {
-        if (!runId) return;
-        await this.d.repo.setRunStatus(runId, "not_working", undefined, `left alone by ${card.by}`);
-        const run = await this.d.repo.getRun(runId);
-        if (run) {
-          await this.ledger((l) => l.unblock(run.client_tag, run.lane, `Josh left it: not working, no top-up.`, runId));
-          await this.closeWithReceipt(run, `Left alone by <@${card.by}>: the campaign is not working and nothing was topped up.`, "The watch will stay quiet on this lane until the rate recovers or /working is flipped on.");
-        }
-        return;
-      }
-      case "decline_spend":
-        // The verify stage returns the rows to needs_verify and closes the run as declined.
-        if (runId) void this.drive(runId);
-        return;
       default:
-        log.info("card resolved with no side effect in this build", { card_id: card.card_id, kind: card.kind, choice: card.choice });
+        return { effect: `${card.choice} recorded; nothing else changes` };
     }
-  };
+  }
 
   /**
-   * Abort any open run, not only a parked one (D48). Running steps are
-   * cancelled, claimed rows go back to the queue, open cards on the run are
-   * resolved as aborted through the console, and the receipt posts. A step
-   * mid-vendor-call sees the aborted status at its next check and stops.
+   * Abort any open run or job. Running steps are cancelled, claimed rows go
+   * back to the queue, open cards on the run are resolved as aborted through
+   * the console, and the receipt is written to the ledger.
    */
   async abortRun(runId: string, by: string): Promise<{ ok: true; run: RunRow; released: number } | { ok: false; message: string }> {
     const run = await this.d.repo.getRun(runId);
@@ -619,23 +119,25 @@ export class Orchestrator {
     return { ok: true, run: closed, released };
   }
 
-  /**
-   * Resume a run that is waiting on a human or exhausted its retries (D48):
-   * the step it stopped on gets its attempts back and the run is driven
-   * again. A closed run is not resumed; a new top-up is a new run.
-   */
+  /** Give a parked or waiting step its attempts back and mark the run open. Nothing runs until the next verb. */
   async resumeRun(runId: string, by: string): Promise<{ ok: true; run: RunRow; step: Step | null } | { ok: false; message: string }> {
     const run = await this.d.repo.getRun(runId);
     if (!run) return { ok: false, message: "no such run" };
     const shown = presentRun(run);
-    if (!runIsOpen(shown.status)) return { ok: false, message: `run ${runId.slice(0, 8)} is ${shown.status}; a closed run is not resumed. Start a new one.` };
-    if (this.active.has(runId)) return { ok: false, message: `run ${runId.slice(0, 8)} is being driven right now` };
+    if (!runIsOpen(shown.status)) return { ok: false, message: `run ${runId.slice(0, 8)} is ${shown.status}; a closed run is not resumed. Open a new job.` };
     const step = run.current_step;
     if (step) await this.d.repo.resetStep(runId, step);
     await this.d.repo.setRunStatus(runId, "open", step ?? undefined);
     await this.ledger((l) => l.event({ client_tag: run.client_tag, lane: run.lane, run_id: runId, event: "card_resolved", line: `Resumed at ${step ?? "the current step"} by ${by}.`, actor: by }));
-    void this.drive(runId);
     return { ok: true, run: (await this.d.repo.getRun(runId))!, step };
+  }
+
+  /** The receipt is the last event on the lane. */
+  private async closeWithReceipt(closed: RunRow, note: string, nextIntent: string): Promise<void> {
+    const shown = presentRun(closed);
+    const counts = orderCounts(closed.counts_by_status).map(([k, v]) => `${k} ${v}`).join(", ") || "no counts";
+    await this.ledger((l) => l.setStep(shown.client_tag, shown.lane, null, { run_id: null, line: `Run ${shown.run_id.slice(0, 8)} closed ${shown.status}.`, next_intent: nextIntent }));
+    await this.ledger((l) => l.event({ client_tag: shown.client_tag, lane: shown.lane, run_id: shown.run_id, event: "receipt", line: `Receipt: ${shown.status} · ${counts} · ${note}`, next_intent: nextIntent, actor: "service" }));
   }
 
   /**
@@ -654,29 +156,23 @@ export class Orchestrator {
         return rowCount ?? 0;
       });
     } catch (err) {
-      // A client with no ingest table (Peterson) has nothing claimed to release.
+      // A client with no ingest table has nothing claimed to release.
       const e = err as { code?: string; message?: string };
       if (e.code === "42P01" || /does not exist/i.test(e.message ?? "")) return 0;
       throw err;
     }
   }
 
-  private async parkedStep(cardId: string): Promise<Step | null> {
-    const card = await this.d.repo.getCard(cardId);
-    const step = card?.payload.step;
-    return typeof step === "string" ? (step as Step) : null;
-  }
-
-  /** For /holds and list_holds: open cards with the run they belong to. */
-  async holds(clientTag?: string): Promise<Array<{ card_id: string; kind: string; audience: Role; run_id: string | null; client_tag: string | null; age_minutes: number; summary: string; campaign_report: ReturnType<typeof campaignReportFromCounts> }>> {
+  /** Open cards with the run they belong to. */
+  async holds(clientTag?: string): Promise<Hold[]> {
     const cards = await this.d.repo.openCards(undefined, clientTag);
-    const out = [];
+    const out: Hold[] = [];
     for (const c of cards) {
       const run = c.run_id ? await this.d.repo.getRun(c.run_id) : null;
       const campaign_report = Array.isArray(c.payload.campaign_report)
         ? campaignReportFromCounts({ campaign_report: c.payload.campaign_report })
         : run
-          ? campaignReportFromCounts((await this.d.repo.getStep(run.run_id, "size"))?.counts as unknown as Record<string, unknown>)
+          ? campaignReportFromCounts((await this.d.repo.getStep(run.run_id, "pull"))?.counts as unknown as Record<string, unknown>)
           : [];
       out.push({
         card_id: c.card_id,
@@ -693,7 +189,6 @@ export class Orchestrator {
   }
 }
 
-
 function summarize(kind: string, payload: Record<string, unknown>): string {
   switch (kind) {
     case "spend_approval":
@@ -706,10 +201,8 @@ function summarize(kind: string, payload: Record<string, unknown>): string {
       return `${stepLabel(Number(payload.spine_step))} gate unmet — ${payload.gate}: ${String(payload.reason ?? "").slice(0, 120)}`;
     case "qa_hold":
       return `QA hold ${payload.rule_id}: ${payload.count} leads`;
-    case "client_domain_list":
-      return `step 5 needs ${payload.client_tag}'s customer domain list (MCP add_client_domains)`;
     case "pending_campaign":
-      return `step 9: ${payload.pending} leads match no campaign in the recipe`;
+      return `${payload.pending} leads match no campaign on the job`;
     default:
       return kind;
   }

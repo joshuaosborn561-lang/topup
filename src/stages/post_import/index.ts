@@ -1,7 +1,7 @@
 import type { Smartlead } from "../../clients/smartlead.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { Recipe } from "../../recipes/schema.js";
-import { preLaunchBlocks } from "../../slack/cards.js";
+import { preLaunchBlocks } from "../../console/cards.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { STAGING_TABLE } from "../stage/index.js";

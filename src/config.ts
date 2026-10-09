@@ -10,47 +10,12 @@ import { DAILY_VENDOR_CAP_USD, OPERATOR_SPEND_CAP_USD } from "./policy/rules.js"
 /** The only Supabase project this service may write to (D6). */
 export const ALLOWED_SUPABASE_PROJECT_REF = "azpapwtnrbzywlnxxecz";
 
-/** Campaigns that are never topped up live in the policy layer (D46). Re-exported for the callers that grew up here. */
-export { NEVER_TOPUP_CAMPAIGN_IDS, isNeverTopUp as neverTopUp } from "./policy/rules.js";
-
-const csvIds = z
-  .string()
-  .default("")
-  .transform((s) =>
-    s
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean),
-  );
-
-const jsonMap = z
-  .string()
-  .default("{}")
-  .transform((s, ctx) => {
-    try {
-      const v = JSON.parse(s);
-      if (v && typeof v === "object" && !Array.isArray(v)) {
-        return v as Record<string, string>;
-      }
-    } catch {
-      /* fall through */
-    }
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expected a JSON object" });
-    return z.NEVER;
-  });
-
 const numberWithDefault = (d: number) =>
   z
     .string()
     .optional()
     .transform((s) => (s === undefined || s === "" ? d : Number(s)))
     .pipe(z.number().finite());
-
-const bool = (d: boolean) =>
-  z
-    .string()
-    .optional()
-    .transform((s) => (s === undefined || s === "" ? d : /^(1|true|yes)$/i.test(s)));
 
 const schema = z.object({
   PORT: numberWithDefault(3000),
@@ -61,13 +26,7 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().default(""),
   DATABASE_URL: z.string().default(""),
 
-  SLACK_BOT_TOKEN: z.string().default(""),
-  SLACK_SIGNING_SECRET: z.string().default(""),
-  SLACK_OPS_CHANNEL: z.string().default("C0C135EB76H"),
-  SLACK_CLIENT_CHANNELS: jsonMap,
-  SLACK_OWNER_USER_IDS: csvIds,
-  SLACK_OPERATOR_USER_IDS: csvIds,
-
+  /** D41: no login. The owner token elevates a caller to owner; operator is the default. */
   MCP_OWNER_TOKEN: z.string().default(""),
   MCP_OPERATOR_TOKEN: z.string().default(""),
 
@@ -75,26 +34,20 @@ const schema = z.object({
   LEADPIPE_TOKEN: z.string().default(""),
   VERIFIER_BASE_URL: z.string().default(""),
   WIZARD_HEALTH_URL: z.string().default(""),
-  /** getleads hosted MCP (steps 2 and 3). The token is whatever getleads issues for a service; see docs/servers.md §11. */
+  /** getleads hosted MCP. The token is whatever getleads issues for a service; see docs/servers.md §11. */
   GETLEADS_MCP_URL: z.string().default(""),
   GETLEADS_TOKEN: z.string().default(""),
-  /** AI Ark People Preview. Empty means a LinkedIn size reports single_source and does not park. */
+  /** AI Ark People Preview. Empty means count(source="ai_ark") says so instead of counting. */
   AI_ARK_TOKEN: z.string().default(""),
   AI_ARK_PREVIEW_URL: z.string().default("https://api.ai-ark.com/api/developer-portal/v1/people/preview"),
-  /** Smartlead server on Railway (steps 11 and 12). It has no inbound auth today; the token slot is for when it does. */
+  /** Smartlead server on Railway (import, post-import). It has no inbound auth today; the token slot is for when it does. */
   SMARTLEAD_MCP_URL: z.string().default(""),
   SMARTLEAD_TOKEN: z.string().default(""),
-  /**
-   * Maps size counter. `pipeline_stats` only. Unset uses the public MCP.
-   * An empty string leaves the counter off.
-   */
+  /** Maps counter. `pipeline_stats` only. Unset uses the public MCP. An empty string leaves the counter off. */
   MAPS_MCP_URL: z.string().default("https://google-maps-mcp-production-88a3.up.railway.app/mcp"),
-  /**
-   * Permit size counter. `metrics_monthly` only. Unset uses the public MCP.
-   * An empty string leaves the counter off.
-   */
+  /** Permit counter. `metrics_monthly` only. Unset uses the public MCP. An empty string leaves the counter off. */
   PERMITSTACK_MCP_URL: z.string().default("https://permitstack-mcp-production.up.railway.app/mcp"),
-  /** Puzzle + email enrichment (skills domain-waterfall, people-waterfall, unresolved-name-routing). Empty = park when a row needs that piece. */
+  /** Puzzle + email enrichment. Empty = park when a row needs that piece. */
   DOMAIN_WATERFALL_MCP_URL: z.string().default(""),
   DOMAIN_WATERFALL_TOKEN: z.string().default(""),
   PEOPLE_WATERFALL_MCP_URL: z.string().default(""),
@@ -104,10 +57,11 @@ const schema = z.object({
   NAME_TO_EMAIL_MCP_URL: z.string().default(""),
   NAME_TO_EMAIL_TOKEN: z.string().default(""),
 
-  /** Poll cadence and patience for the vendor jobs in steps 3, 4 and 11. */
+  /** Poll cadence and patience for the vendor jobs. */
   JOB_POLL_SECONDS: numberWithDefault(30),
   JOB_DEAD_MINUTES: numberWithDefault(90),
 
+  /** D51: zero. Every paid call waits for a named approval. The daily cap is a backstop. */
   AUTO_SPEND_CAP_USD: numberWithDefault(OPERATOR_SPEND_CAP_USD),
   DAILY_VENDOR_CAP_USD: numberWithDefault(DAILY_VENDOR_CAP_USD),
   SPEND_CARD_TIMEOUT_MINUTES: numberWithDefault(24 * 60),
@@ -117,12 +71,6 @@ const schema = z.object({
   VERIFY_STALL_MINUTES: numberWithDefault(12),
   VERIFY_MIN_SPLIT_ROWS: numberWithDefault(50),
   VERIFY_DEAD_MINUTES: numberWithDefault(6 * 60),
-
-  STEP_RETRY_SECONDS: numberWithDefault(30),
-  WATCH_CRON: z.string().default("0 */6 * * *"),
-  /** Daily digest in the ops channel; 13:00 UTC is 8am Central. Only lanes that changed are named. */
-  DIGEST_CRON: z.string().default("0 13 * * *"),
-  DRY_RUN: bool(false),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -149,9 +97,7 @@ export function assertSupabaseProject(cfg: Config): void {
     );
   }
   if (cfg.SUPABASE_URL && !cfg.SUPABASE_URL.includes(ALLOWED_SUPABASE_PROJECT_REF)) {
-    throw new Error(
-      `SUPABASE_URL does not point at ${ALLOWED_SUPABASE_PROJECT_REF}. Refusing to boot.`,
-    );
+    throw new Error(`SUPABASE_URL does not point at ${ALLOWED_SUPABASE_PROJECT_REF}. Refusing to boot.`);
   }
 }
 
@@ -160,9 +106,8 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
   return {
     supabase: Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_SERVICE_ROLE_KEY),
     database_url: Boolean(cfg.DATABASE_URL),
-    slack: Boolean(cfg.SLACK_BOT_TOKEN && cfg.SLACK_SIGNING_SECRET),
-    slack_roles: cfg.SLACK_OWNER_USER_IDS.length > 0,
     mcp: true,
+    owner_token: Boolean(cfg.MCP_OWNER_TOKEN),
     leadpipe: Boolean(cfg.LEADPIPE_MCP_URL),
     verifier: Boolean(cfg.VERIFIER_BASE_URL),
     wizard: Boolean(cfg.WIZARD_HEALTH_URL),

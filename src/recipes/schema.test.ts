@@ -1,13 +1,46 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { GETLEADS_BANDS, parseRecipe, recipeAuthorises } from "./schema.js";
 
 /** D7, D8, D13 — a bad recipe fails the suite instead of shredding a pull or spending. */
 
+/** A base recipe shaped like the first lane recipe this service shipped. A fixture, not a lead row. */
 async function parlay(): Promise<Record<string, unknown>> {
-  return JSON.parse(await readFile(new URL("../../recipes/parlay/it_dm.json", import.meta.url), "utf8"));
+  return structuredClone(BASE);
 }
+
+const BASE: Record<string, unknown> = {
+  recipe_id: "parlay.it_dm.v3",
+  client_tag: "parlay",
+  lane: "it_dm",
+  smartlead_client_id: 418274,
+  supabase_project: "azpapwtnrbzywlnxxecz",
+  owner_approved_at: null,
+  source: {
+    kind: "getleads",
+    params: { job_titles: ["IT Director", "CIO", "IT Manager"], company_size: ["11 to 50", "51 to 200"], countries: ["United States"], max_per_company: 3 },
+    widening_candidates: [{ company_size: ["201 to 500"] }, { add_titles: ["COO", "Director of Operations"] }],
+  },
+  suppression: { response_based: true, client_prior_contacts: true, bounced_any_client: true, public_suppression: true, client_domain_blocklist: true, same_offer_any_client: true, same_gift_any_client: false },
+  email_finding: { enabled: false, max_tier: "aiark", fullenrich: false, batch_rows: 200 },
+  verify: { seg_split: true, reject_rate_norm: null },
+  normalize: { names_cities: true, company: true, location: true, sports_team: { league: "both", pro_only: false } },
+  qa: ["junk_titles", "retail_school_purge", "regulated_gift_hold", "nonprofit_to_eos", "company_name_acronym_hold"],
+  segments: { band: ["11_50", "51_200"], mail_class: ["SEG", "OTHER"], gift: ["team", "airpods"] },
+  routing: [
+    { when: { gift: "airpods", band: "11_50" }, campaign_id: 3929973, icp: { kind: "linkedin_native", persona: "it_dm" } },
+    { when: { gift: "airpods", band: "51_200" }, campaign_id: 3929974, icp: { kind: "linkedin_native", persona: "it_dm" } },
+    { when: { band: "11_50", mail_class: "OTHER" }, campaign_id: 3847839, icp: { kind: "linkedin_native", persona: "it_dm" } },
+    { when: { band: "11_50", mail_class: "SEG" }, campaign_id: 3847846, icp: { kind: "linkedin_native", persona: "it_dm" } },
+    { when: { band: "51_200", mail_class: "OTHER" }, campaign_id: 3847837, icp: { kind: "linkedin_native", persona: "it_dm" } },
+    { when: { band: "51_200", mail_class: "SEG" }, campaign_id: 3847844, icp: { kind: "linkedin_native", persona: "it_dm" } },
+  ],
+  required_fields: ["first_name_n", "company_n", "location", "local_sports_team", "job_title", "company_size", "vertical"],
+  runway: { floor_days: 7, target_days: 30, max_per_run: 10000 },
+  working: { interested_per_2000_sends: 1, variant_min_sends: 1000 },
+  spend: { auto_cap_usd: 0 },
+  owner_approvals: ["icp_change", "new_campaign", "spend_over_cap", "copy"],
+};
 
 function withPath(base: Record<string, unknown>, path: string[], value: unknown): Record<string, unknown> {
   const copy = structuredClone(base);
@@ -18,7 +51,7 @@ function withPath(base: Record<string, unknown>, path: string[], value: unknown)
 }
 
 describe("recipe schema", () => {
-  it("the shipped Parlay recipe validates", async () => {
+  it("a base lane recipe validates", async () => {
     const r = parseRecipe(await parlay());
     assert.equal(r.recipe_id, "parlay.it_dm.v3");
     assert.equal(r.email_finding.fullenrich, false);
@@ -75,7 +108,7 @@ describe("recipe schema", () => {
   it("D9 — a recipe may lower the auto cap, never raise it", async () => {
     const base = await parlay();
     assert.throws(() => parseRecipe(withPath(base, ["spend", "auto_cap_usd"], 6)), /never raise/);
-    assert.doesNotThrow(() => parseRecipe(withPath(base, ["spend", "auto_cap_usd"], 2)));
+    assert.doesNotThrow(() => parseRecipe(withPath(base, ["spend", "auto_cap_usd"], 0)));
   });
 
   it("routing cells must come from declared segments; required fields must be produced", async () => {

@@ -3,7 +3,7 @@ import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import { recipeCampaignIds } from "../../recipes/campaigns.js";
 import type { Recipe } from "../../recipes/schema.js";
-import { pendingCampaignCard } from "../../slack/cards.js";
+import { pendingCampaignCard } from "../../console/cards.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
 

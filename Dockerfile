@@ -7,7 +7,7 @@ RUN npm ci || npm install
 
 COPY tsconfig.json ./
 COPY src ./src
-COPY recipes ./recipes
+COPY CANON.md ./CANON.md
 COPY supabase ./supabase
 COPY scripts ./scripts
 RUN npm run build && npm prune --omit=dev

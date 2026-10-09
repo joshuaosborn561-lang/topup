@@ -1,25 +1,15 @@
 import type { Queryable } from "../db/pool.js";
 import { INTERESTED_CATEGORY_IDS } from "../domain/working.js";
-import { ratePer2000 } from "../policy/index.js";
-import { buildRecordsFromRows, strategyLine, type BuildRecord } from "./record.js";
-import { campaignMethodTags, missingTags, provenanceCounts, type CampaignMethodTags, type ProvenanceCount } from "./tags.js";
-import { chooseBuildForCampaign, type CampaignPerformance, type ChosenBuild } from "./choose.js";
+import { ratePer2000 } from "../policy/rules.js";
 
-/**
- * Build records and campaign performance from the database (D47). Counts
- * and method text only. The rows the builds fed never leave Postgres.
- */
-export interface BuildSource {
-  campaignBuilds(clientTag: string, campaignIds: number[]): Promise<Record<string, unknown>[]>;
+/** Lifetime sends and positive replies per campaign, from the Smartlead mirror. The reply bar is measured on this. */
+export interface CampaignPerformance {
+  campaign_id: number;
+  sends: number;
+  positives: number;
+  per_2000: number;
 }
 
-export async function loadBuildRecords(repo: BuildSource, clientTag: string, campaignIds: readonly number[]): Promise<BuildRecord[]> {
-  if (campaignIds.length === 0) return [];
-  const rows = await repo.campaignBuilds(clientTag, [...campaignIds]).catch(() => [] as Record<string, unknown>[]);
-  return buildRecordsFromRows(rows, clientTag);
-}
-
-/** Lifetime sends and interested replies per campaign, from the Smartlead mirror. The reply bar is measured on this. */
 export async function campaignPerformance(db: Queryable, campaignIds: readonly number[]): Promise<Map<number, CampaignPerformance>> {
   const out = new Map<number, CampaignPerformance>();
   if (campaignIds.length === 0) return out;
@@ -40,43 +30,4 @@ export async function campaignPerformance(db: Queryable, campaignIds: readonly n
     out.set(Number(r.id), { campaign_id: Number(r.id), sends, positives, per_2000: Math.round(ratePer2000(sends, positives) * 100) / 100 });
   }
   return out;
-}
-
-export interface CampaignHistory {
-  campaign_id: number;
-  client_tag: string;
-  performance: CampaignPerformance;
-  chosen: ChosenBuild;
-  strategy: string;
-  builds: Array<Omit<BuildRecord, "method_note"> & { method_note: string | null }>;
-  cannot_reconstruct: boolean;
-  /** The campaignintelligence tags as counts and method names (D49). Never a lead row. */
-  tags: { method: CampaignMethodTags | null; missing: string[]; provenance: ProvenanceCount[] };
-}
-
-/** What `campaign_history` returns: the record, the choice and the strategy. Never a lead row. */
-export async function campaignHistory(deps: { db: Queryable; repo: BuildSource }, clientTag: string, campaignId: number, recipeId = "the saved recipe"): Promise<CampaignHistory> {
-  const [builds, perf, methods] = await Promise.all([
-    loadBuildRecords(deps.repo, clientTag, [campaignId]),
-    campaignPerformance(deps.db, [campaignId]),
-    campaignMethodTags(deps.db, [campaignId]),
-  ]);
-  const chosen = chooseBuildForCampaign(campaignId, builds);
-  const method = methods.get(campaignId) ?? null;
-  const physical = chosen.candidates.some((b) => b.icp_kind === "physical");
-  const provenance = await provenanceCounts(
-    deps.db,
-    clientTag,
-    chosen.candidates.map((b) => b.build_label).filter((l): l is string => typeof l === "string"),
-  );
-  return {
-    campaign_id: campaignId,
-    client_tag: clientTag,
-    performance: perf.get(campaignId) ?? { campaign_id: campaignId, sends: 0, positives: 0, per_2000: 0 },
-    chosen,
-    strategy: strategyLine(chosen.build, recipeId),
-    builds: chosen.candidates,
-    cannot_reconstruct: !chosen.repeatable,
-    tags: { method, missing: missingTags(method ?? undefined, physical), provenance },
-  };
 }

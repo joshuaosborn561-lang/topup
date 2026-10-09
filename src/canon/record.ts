@@ -1,7 +1,7 @@
 import { campaignPerformance, provenanceCounts, type ProvenanceCount } from "../builds/index.js";
 import type { Queryable } from "../db/pool.js";
 import { isNeverTopUp, ratePer2000 } from "../policy/rules.js";
-import { registryRows, type RegistryCampaign } from "../recipes/registry.js";
+import { registryRows, type RegistryCampaign } from "./registry.js";
 import { describeSources, type SourceLine } from "./sources.js";
 
 /**

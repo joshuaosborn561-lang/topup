@@ -33,7 +33,6 @@ describe("health — D34 required tables", () => {
         missingTopupTables: async () => ["topup.qa_rules", "topup.campaign_registry"],
       } as never,
       rails: null,
-      recipes: ["parlay.it_dm.v3"],
     });
     assert.equal(body.ok, false);
     assert.deepEqual(body.missing_tables, ["topup.qa_rules", "topup.campaign_registry"]);

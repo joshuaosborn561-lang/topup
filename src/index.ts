@@ -1,74 +1,68 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import cron from "node-cron";
+import { AiArkPreviewClient } from "./clients/aiArkPreview.js";
 import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
 import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
-import { AiArkPreviewClient } from "./clients/aiArkPreview.js";
 import { GetleadsClient } from "./clients/getleads.js";
-import { MapsStatsClient } from "./clients/mapsStats.js";
-import { PermitCountsClient } from "./clients/permits.js";
 import { LeadPipeClient } from "./clients/leadpipe.js";
+import { MapsStatsClient } from "./clients/mapsStats.js";
 import { NameToEmailClient } from "./clients/nameToEmail.js";
 import { PeopleWaterfallClient } from "./clients/peopleWaterfall.js";
+import { PermitCountsClient } from "./clients/permits.js";
 import { SmartleadClient } from "./clients/smartlead.js";
 import { VerifierClient } from "./clients/verifier.js";
-import { buildCommands } from "./commands.js";
 import { assertSupabaseProject, loadConfig } from "./config.js";
+import { Console } from "./console/console.js";
+import { loadClientTags } from "./canon/clients.js";
 import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
 import { buildHealth } from "./health.js";
-import { runDigest } from "./ledger/digest.js";
+import { JobRunner, type Stages } from "./jobs/runner.js";
 import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
-import { loadClientMap, loadClientTags } from "./mcp/recipe.js";
-import { dedupeAliasLanes } from "./recipes/dedupe.js";
-import { loadGeoFenceCities } from "./recipes/geoFence.js";
-import { mergeRecipes } from "./recipes/infer.js";
-import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { mcpRouter } from "./mcp/server.js";
-import { Orchestrator, type Stages } from "./orchestrator.js";
-import { JobRunner } from "./jobs/runner.js";
-import { VendorCallLog } from "./plan/vendorLog.js";
-import { Overlap, SIZE_ACROSS_CLIENTS, SIZE_WITHIN_CLIENT } from "./lib/concurrency.js";
-import { loadRecipeFiles, syncRecipes } from "./recipes/load.js";
-import { SlackPoster } from "./slack/client.js";
-import { SlackConsole } from "./slack/console.js";
-import { slackRouter } from "./slack/http.js";
-import { Roles } from "./slack/roles.js";
+import { Orchestrator } from "./orchestrator.js";
+import { loadGeoFenceCities } from "./recipes/geoFence.js";
 import { readersFromEnv } from "./spend/balances.js";
 import { railsConfigFrom, SpendRails } from "./spend/rails.js";
-import { FlipStage } from "./stages/flip/index.js";
 import { FindEmailsStage } from "./stages/find_emails/index.js";
-import { PuzzleStage } from "./stages/puzzle/index.js";
-import { TriggerStage } from "./stages/trigger/index.js";
 import { ImportStage } from "./stages/import/index.js";
 import { IngestStage } from "./stages/ingest/index.js";
 import { NormalizeStage } from "./stages/normalize/index.js";
 import { PostImportStage } from "./stages/post_import/index.js";
 import { GetleadsPull } from "./stages/pull/getleads.js";
+import { PullStage } from "./stages/pull/index.js";
 import { MapsPull } from "./stages/pull/maps.js";
 import { PermitsPull } from "./stages/pull/permits.js";
-import { PullStage } from "./stages/pull/index.js";
+import { PuzzleStage } from "./stages/puzzle/index.js";
 import { QaStage } from "./stages/qa/index.js";
 import { RouteStage } from "./stages/route/index.js";
-import { SizeStage } from "./stages/size/index.js";
 import { StageStage } from "./stages/stage/index.js";
 import { SuppressStage } from "./stages/suppress/index.js";
 import { VerifyStage } from "./stages/verify/verify.js";
-import { RunwayWatch } from "./watch/index.js";
 
 const log = logger("boot");
+
+/** The canon, served to Grok as the MCP instructions and by the `canon` read (D53). */
+function readCanon(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  for (const p of [path.resolve(here, "..", "CANON.md"), path.resolve(here, "..", "..", "CANON.md")]) {
+    try {
+      return readFileSync(p, "utf8");
+    } catch {
+      /* next candidate */
+    }
+  }
+  log.warn("CANON.md not found next to the build; the canon read answers with a pointer");
+  return "CANON.md is not on this image. Read it in the repository joshuaosborn561-lang/topup.";
+}
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
   assertSupabaseProject(cfg);
-
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const recipesRoot = path.resolve(here, "..", "recipes");
-  // Recipes are validated before anything else; a bad recipe fails the deploy.
-  const recipeFiles = await loadRecipeFiles(recipesRoot);
-  log.info("recipes validated", { ids: recipeFiles.map((r) => r.recipe_id) });
+  const canon = readCanon();
 
   const app = express();
   app.disable("x-powered-by");
@@ -79,7 +73,7 @@ async function main(): Promise<void> {
   // /health is mounted first and answers even while the rest is still coming up.
   app.get("/health", async (_req, res) => {
     try {
-      const body = await buildHealth({ cfg, repo, rails, recipes: recipeFiles.map((r) => r.recipe_id) });
+      const body = await buildHealth({ cfg, repo, rails });
       const missing = Array.isArray((body as { missing_tables?: unknown }).missing_tables);
       res.status(missing ? 503 : 200).json(body);
     } catch (err) {
@@ -87,7 +81,7 @@ async function main(): Promise<void> {
     }
   });
   app.get("/", (_req, res) => {
-    res.type("text/plain").send("leadtopup: see /health · MCP POST /mcp (HTTPS Streamable HTTP)");
+    res.type("text/plain").send("leadtopup: see /health · MCP POST /mcp (HTTPS Streamable HTTP) · the canon is CANON.md");
   });
 
   const server = app.listen(cfg.PORT, () => log.info("listening", { port: cfg.PORT }));
@@ -105,12 +99,11 @@ async function main(): Promise<void> {
   const locks = await repo.installLeadLocks();
   await repo.ensureCore08().catch((err) => log.error(`sized status ensure failed: ${(err as Error).message}`));
   await repo.ensureIcpKind().catch((err) => log.error(`icp kind ensure failed: ${(err as Error).message}`));
-  const synced = await syncRecipes(repo, recipesRoot);
-  log.info("database ready", { lead_tables_locked: locks, recipes_synced: synced });
+  log.info("database ready", { lead_tables_locked: locks });
 
-  const roles = new Roles(cfg.SLACK_OWNER_USER_IDS, cfg.SLACK_OPERATOR_USER_IDS);
-  const poster = new SlackPoster(cfg.SLACK_BOT_TOKEN);
-  const console_ = new SlackConsole(repo, poster, roles, { opsChannel: cfg.SLACK_OPS_CHANNEL, clientChannels: cfg.SLACK_CLIENT_CHANNELS });
+  const console_ = new Console(repo);
+  const ledger = new LaneLedger(db);
+  console_.attachLedger(ledger);
 
   const leadpipe = new LeadPipeClient(cfg.LEADPIPE_MCP_URL, cfg.LEADPIPE_TOKEN);
   const getleads = new GetleadsClient(cfg.GETLEADS_MCP_URL, cfg.GETLEADS_TOKEN);
@@ -118,28 +111,13 @@ async function main(): Promise<void> {
   const maps = cfg.MAPS_MCP_URL ? new MapsStatsClient(cfg.MAPS_MCP_URL) : null;
   const permitCounts = cfg.PERMITSTACK_MCP_URL ? new PermitCountsClient(cfg.PERMITSTACK_MCP_URL) : null;
   const smartlead = new SmartleadClient(cfg.SMARTLEAD_MCP_URL, cfg.SMARTLEAD_TOKEN);
+  const domain = cfg.DOMAIN_WATERFALL_MCP_URL ? new DomainWaterfallClient(cfg.DOMAIN_WATERFALL_MCP_URL, cfg.DOMAIN_WATERFALL_TOKEN) : null;
+  const people = cfg.PEOPLE_WATERFALL_MCP_URL ? new PeopleWaterfallClient(cfg.PEOPLE_WATERFALL_MCP_URL, cfg.PEOPLE_WATERFALL_TOKEN) : null;
+  const emailWaterfall = cfg.EMAIL_WATERFALL_MCP_URL ? new EmailWaterfallClient(cfg.EMAIL_WATERFALL_MCP_URL, cfg.EMAIL_WATERFALL_TOKEN) : null;
+  const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
   const jobs = { pollMs: cfg.JOB_POLL_SECONDS * 1000, deadMs: cfg.JOB_DEAD_MINUTES * 60_000 };
-  const verify = new VerifyStage({
-    repo,
-    rails,
-    console: console_,
-    leadpipe,
-    verifier: new VerifierClient(cfg.VERIFIER_BASE_URL),
-    cfg: {
-      pollMs: cfg.VERIFY_POLL_SECONDS * 1000,
-      cardTimeoutMs: cfg.SPEND_CARD_TIMEOUT_MINUTES * 60_000,
-      runbook: {
-        stallPercent: cfg.VERIFY_STALL_PERCENT,
-        stallMinutes: cfg.VERIFY_STALL_MINUTES,
-        minSplitRows: cfg.VERIFY_MIN_SPLIT_ROWS,
-        deadMinutes: cfg.VERIFY_DEAD_MINUTES,
-      },
-    },
-  });
-  const normalize = new NormalizeStage(repo, console_);
-  const ledger = new LaneLedger(db);
-  console_.attachLedger(ledger);
   const base = { repo, console: console_ };
+
   const pull = new PullStage({
     ...base,
     rails,
@@ -148,50 +126,37 @@ async function main(): Promise<void> {
     permits: permitCounts,
     cfg: jobs,
   });
-  const domain = cfg.DOMAIN_WATERFALL_MCP_URL ? new DomainWaterfallClient(cfg.DOMAIN_WATERFALL_MCP_URL, cfg.DOMAIN_WATERFALL_TOKEN) : null;
-  const people = cfg.PEOPLE_WATERFALL_MCP_URL ? new PeopleWaterfallClient(cfg.PEOPLE_WATERFALL_MCP_URL, cfg.PEOPLE_WATERFALL_TOKEN) : null;
-  const emailWaterfall = cfg.EMAIL_WATERFALL_MCP_URL ? new EmailWaterfallClient(cfg.EMAIL_WATERFALL_MCP_URL, cfg.EMAIL_WATERFALL_TOKEN) : null;
-  const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
   const stages: Stages = {
-    trigger: new TriggerStage(base),
-    size: new SizeStage({ ...base, getleads, rails, maps, permits: permitCounts, aiArk }),
     pull,
     ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
     suppress: new SuppressStage({ ...base, ledger }),
     puzzle: new PuzzleStage({ ...base, ledger, rails, domain, people, cfg: jobs }),
     findEmails: new FindEmailsStage({ ...base, rails, nameToEmail, emailWaterfall, cfg: jobs }),
-    verify,
-    normalize,
+    verify: new VerifyStage({
+      repo,
+      rails,
+      console: console_,
+      leadpipe,
+      verifier: new VerifierClient(cfg.VERIFIER_BASE_URL),
+      cfg: {
+        pollMs: cfg.VERIFY_POLL_SECONDS * 1000,
+        cardTimeoutMs: cfg.SPEND_CARD_TIMEOUT_MINUTES * 60_000,
+        runbook: {
+          stallPercent: cfg.VERIFY_STALL_PERCENT,
+          stallMinutes: cfg.VERIFY_STALL_MINUTES,
+          minSplitRows: cfg.VERIFY_MIN_SPLIT_ROWS,
+          deadMinutes: cfg.VERIFY_DEAD_MINUTES,
+        },
+      },
+    }),
+    normalize: new NormalizeStage(repo, console_),
     qa: new QaStage({ ...base, ledger }),
     route: new RouteStage({ ...base, ledger }),
     stage: new StageStage(base),
     import: new ImportStage({ ...base, smartlead, rails, cfg: jobs }),
     postImport: new PostImportStage({ ...base, smartlead, rails }),
-    flip: new FlipStage(base),
-};
-  const orchestrator = new Orchestrator({
-    repo,
-    console: console_,
-    ledger,
-    fileRecipes: recipeFiles,
-    retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000,
-    stages,
-  });
-
-  if (cfg.SLACK_SIGNING_SECRET) {
-    app.use(
-      "/slack",
-      slackRouter({
-        signingSecret: cfg.SLACK_SIGNING_SECRET,
-        roles,
-        console: console_,
-        commands: buildCommands({ repo, orchestrator, ledger }),
-        onTap: orchestrator.onTap,
-      }),
-    );
-  } else {
-    log.warn("SLACK_SIGNING_SECRET is not set; /slack is not mounted");
-  }
+  };
+  const orchestrator = new Orchestrator({ repo, console: console_, ledger, stages });
 
   const clientTags = await loadClientTags(db).catch((err) => {
     log.warn("client_map tags unavailable at boot", { error: (err as Error).message });
@@ -199,24 +164,7 @@ async function main(): Promise<void> {
   });
   log.info("client_map tags", { count: clientTags.length });
   await repo.repairCampaignRegistry().catch((err) => log.warn("registry repair at boot failed", { error: (err as Error).message }));
-  const clientMap = await loadClientMap(db).catch(() => []);
-  const inferred: typeof recipeFiles = [];
-  try {
-    const lanes = await repo.listReceiptLanes();
-    for (const row of lanes) {
-      const sl = clientMap.find((c) => c.client_tag === row.client_tag)?.smartlead_client_id;
-      const got = await resolveRecipeForStart(repo, {
-        clientTag: row.client_tag,
-        lane: row.lane,
-        smartleadClientId: sl ?? null,
-      });
-      if (got.ok) inferred.push(got.recipe);
-    }
-  } catch (err) {
-    log.warn("receipt inference at boot failed", { error: (err as Error).message });
-  }
-  const recipes = dedupeAliasLanes(mergeRecipes(recipeFiles, inferred));
-  log.info("recipes ready", { files: recipeFiles.length, inferred: inferred.length, merged: recipes.length });
+
   app.use(
     "/mcp",
     mcpRouter({
@@ -227,23 +175,17 @@ async function main(): Promise<void> {
       ownerToken: cfg.MCP_OWNER_TOKEN,
       operatorToken: cfg.MCP_OPERATOR_TOKEN,
       clientTags,
-      recipes,
+      canon,
       grok: {
         repo,
         ledger,
         orchestrator,
         jobs: new JobRunner({ repo, stages, console: console_, ledger }),
         count: { getleads, aiArk, maps, permits: permitCounts, rails },
-        measure: {
+        held: {
           db,
           getleads,
-          aiArk,
-          maps,
-          permits: permitCounts,
           rails,
-          loadGeo: (ref) => loadGeoFenceCities(db, ref),
-          log: new VendorCallLog(),
-          overlap: new Overlap(SIZE_WITHIN_CLIENT, SIZE_ACROSS_CLIENTS),
           fetchText: async (url: string) => {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`export could not be read: HTTP ${res.status}`);
@@ -264,48 +206,8 @@ async function main(): Promise<void> {
     return [];
   });
   if (closedAborts.length) log.info("closed runs whose abort had already resolved", { runs: closedAborts.map((r) => `${r.client_tag}/${r.lane}`) });
-  const closedRestarts = await repo.closeWatchRestartsAfterAbort().catch((err) => {
-    log.warn("close watch restarts after abort failed", { error: (err as Error).message });
-    return [];
-  });
-  if (closedRestarts.length) log.info("closed empty watch restarts after an abort", { runs: closedRestarts.map((r) => `${r.client_tag}/${r.lane}`) });
-  const resumed = await orchestrator.resumeOpenRuns();
-  log.info("open runs re-entered", { count: resumed });
-
-  const watch = new RunwayWatch({
-    db,
-    repo,
-    orchestrator,
-    console: console_,
-    recipes,
-    dryRun: cfg.DRY_RUN,
-    ledger,
-  });
-  // Look once on boot so a deploy does not wait for the next cron hour.
-  try {
-    await watch.tick();
-  } catch (err) {
-    log.error("watch tick on boot failed", { error: (err as Error).message });
-  }
-  cron.schedule(cfg.WATCH_CRON, async () => {
-    try {
-      const gone = await repo!.expireCards();
-      if (gone.length) log.info("expired cards", { count: gone.length });
-      await orchestrator.resumeOpenRuns();
-      await watch.tick();
-    } catch (err) {
-      log.error("watch tick failed", { error: (err as Error).message });
-    }
-  });
-
-  // The daily digest names only lanes whose state changed or whose health crossed a line.
-  cron.schedule(cfg.DIGEST_CRON, async () => {
-    try {
-      await runDigest({ ledger, console: console_ });
-    } catch (err) {
-      log.error("digest failed", { error: (err as Error).message });
-    }
-  });
+  const open = await repo.openRuns();
+  log.info("open runs wait for their next verb; nothing is driven on boot (D51)", { count: open.length });
 
   const shutdown = async (signal: string) => {
     log.info("shutting down", { signal });

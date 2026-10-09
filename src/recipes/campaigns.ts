@@ -1,6 +1,4 @@
-import { neverTopUp } from "../config.js";
-import { NON_TARGET_CAMPAIGN_STATUSES } from "../policy/index.js";
-import { PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, parlayCampaignRetired } from "./parlay.js";
+import { isNeverTopUp as neverTopUp, NON_TARGET_CAMPAIGN_STATUSES } from "../policy/rules.js";
 import { GETLEADS_BANDS, type GetleadsSource, type Recipe, type RoutingRule, type Source } from "./schema.js";
 
 /**
@@ -113,7 +111,7 @@ export function idsFromTargetCounts(counts?: Record<string, number>): number[] {
 
 function ownedTargets(recipe: Recipe, ids: readonly number[]): number[] {
   const allowed = new Set(recipeCampaignIds(recipe));
-  return ids.filter((id) => allowed.has(id) && !neverTopUp(id) && !parlayCampaignRetired(id));
+  return ids.filter((id) => allowed.has(id) && !neverTopUp(id));
 }
 
 /** Smartlead statuses that are not topped up (policy, D46). STOPPED stays. A blank status stays. */
@@ -244,18 +242,11 @@ export function resolveTargetCampaignIds(
   recipe: Recipe,
   requested?: number[],
 ): { ok: true; ids: number[] } | { ok: false; message: string } {
-  const all = recipeCampaignIds(recipe).filter((id) => !parlayCampaignRetired(id));
+  const all = recipeCampaignIds(recipe);
   const requestedIds = [...new Set(requested ?? [])];
-  const retired = requestedIds.filter((id) => parlayCampaignRetired(id));
-  const unique = requestedIds.filter((id) => !neverTopUp(id) && !parlayCampaignRetired(id));
-  if (retired.length && unique.length === 0) {
-    return {
-      ok: false,
-      message: `Campaign(s) ${retired.map((id) => `#${id}`).join(", ")} are retired. Parlay top ups use campaigns ${PARLAY_REFRESH_FIRST} to ${PARLAY_REFRESH_LAST}.`,
-    };
-  }
-  if ((requested ?? []).some((id) => neverTopUp(id)) && unique.length === 0) {
-    return { ok: false, message: `Campaign(s) ${(requested ?? []).map((id) => `#${id}`).join(", ")} are never topped up.` };
+  const unique = requestedIds.filter((id) => !neverTopUp(id));
+  if (requestedIds.some((id) => neverTopUp(id)) && unique.length === 0) {
+    return { ok: false, message: `Campaign(s) ${requestedIds.map((id) => `#${id}`).join(", ")} are never topped up.` };
   }
   if (unique.length === 0) return { ok: true, ids: all.filter((id) => !neverTopUp(id)) };
   const unknown = unique.filter((id) => !all.includes(id));

@@ -1,12 +1,16 @@
 import { logger } from "../lib/log.js";
-import { icpKindForClient, type IcpKind } from "../stages/size/tamSource.js";
-import { PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, PARLAY_REFRESH_KNOWN, PARLAY_RETIRED_CAMPAIGN_IDS } from "../recipes/parlay.js";
 
 const log = logger("repo");
-import { PETERSON_LANES, petersonLaneCaseSql } from "../recipes/registry.js";
 import type { Db, Queryable } from "./pool.js";
 import type { Role, RunRow, RunStepRow, RunStatus, Step } from "../domain/runs.js";
 import { MAX_STEP_ATTEMPTS } from "../domain/runs.js";
+
+/** How a client's leads are found: on LinkedIn (getleads, AI Ark) or by place (Maps, permits). The registry says; the default is LinkedIn. */
+export type IcpKind = "linkedin_native" | "non_linkedin";
+
+export function icpKindOf(registryKind: string | null | undefined): IcpKind {
+  return registryKind === "non_linkedin" ? "non_linkedin" : "linkedin_native";
+}
 
 export interface CardRow {
   card_id: string;
@@ -781,7 +785,6 @@ export class Repo {
     } catch {
       /* an older database has no campaign_registry; receipts still name a lane */
     }
-    if (clientTag === "peterson" && PETERSON_LANES[campaignId]) return PETERSON_LANES[campaignId];
     const { rows } = await this.db.query<{ lane: string }>(
       `select lane from topup.pull_receipts
         where client_tag = $1 and $2 = any(campaign_ids)
@@ -862,9 +865,9 @@ export class Repo {
           limit 1`,
         [clientTag],
       );
-      return icpKindForClient(clientTag, rows[0]?.icp_kind ?? null);
+      return icpKindOf(rows[0]?.icp_kind ?? null);
     } catch {
-      return icpKindForClient(clientTag, null);
+      return icpKindOf(null);
     }
   }
 
@@ -889,9 +892,8 @@ export class Repo {
 
   /**
    * Retag registry rows from public.campaigns and topup.client_map, then
-   * set the lane from the latest lane receipt for that client. Peterson
-   * 3798227–3798231 leave "schools" for their own lanes last, so a receipt
-   * that still says schools does not win.
+   * set the lane from the latest lane receipt for that client. No client
+   * is special-cased here (D53).
    */
   async repairCampaignRegistry(): Promise<void> {
     await this.db.query(
@@ -922,83 +924,6 @@ export class Repo {
         where cr.campaign_id = sub.campaign_id
           and cr.lane is distinct from sub.lane`,
     );
-    await this.syncParlayRegistry();
-    const { caseSql, idsSql } = petersonLaneCaseSql();
-    await this.db.query(
-      `update topup.campaign_registry
-          set lane = case campaign_id ${caseSql} end,
-              updated_at = now()
-        where campaign_id in (${idsSql})
-          and lane is distinct from case campaign_id ${caseSql} end`,
-    );
-  }
-
-  /**
-   * Retire the pre-Sept-29 Parlay campaigns and register 4049046–4049064.
-   * Known lanes win over an older receipt. A campaign in the range with no
-   * known lane takes the latest pull receipt that names it.
-   */
-  async syncParlayRegistry(): Promise<void> {
-    const retired = [...PARLAY_RETIRED_CAMPAIGN_IDS];
-    await this.db.query(
-      `insert into topup.campaign_registry (campaign_id, client_tag, smartlead_client_id, status, recipe_id, updated_at)
-       select x.id, 'parlay', cm.smartlead_client_id, 'retired', null, now()
-         from unnest($1::bigint[]) as x(id)
-         join topup.client_map cm on cm.client_tag = 'parlay'
-       on conflict (campaign_id) do update set
-         status = 'retired',
-         recipe_id = null,
-         client_tag = 'parlay',
-         updated_at = now()`,
-      [retired],
-    );
-    await this.db.query(
-      `insert into topup.campaign_registry (campaign_id, campaign_name, client_tag, smartlead_client_id, lane, status, updated_at)
-       select c.smartlead_campaign_id, c.name, 'parlay', c.smartlead_client_id, null, coalesce(c.status, 'ACTIVE'), now()
-         from public.campaigns c
-         join topup.client_map cm on cm.smartlead_client_id = c.smartlead_client_id and cm.client_tag = 'parlay'
-        where c.smartlead_campaign_id between $1 and $2
-       on conflict (campaign_id) do nothing`,
-      [PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST],
-    );
-    const known = PARLAY_REFRESH_KNOWN;
-    await this.db.query(
-      `insert into topup.campaign_registry (campaign_id, campaign_name, client_tag, smartlead_client_id, lane, status, updated_at)
-       select x.id, coalesce(c.name, x.name), 'parlay', cm.smartlead_client_id, x.lane, coalesce(c.status, 'ACTIVE'), now()
-         from unnest($1::bigint[], $2::text[], $3::text[]) as x(id, lane, name)
-         join topup.client_map cm on cm.client_tag = 'parlay'
-         left join public.campaigns c on c.smartlead_campaign_id = x.id
-       on conflict (campaign_id) do update set
-         lane = excluded.lane,
-         client_tag = 'parlay',
-         smartlead_client_id = coalesce(topup.campaign_registry.smartlead_client_id, excluded.smartlead_client_id),
-         campaign_name = coalesce(topup.campaign_registry.campaign_name, excluded.campaign_name),
-         status = case when topup.campaign_registry.status = 'retired' then excluded.status else coalesce(excluded.status, topup.campaign_registry.status) end,
-         updated_at = now()`,
-      [known.map((row) => row.campaign_id), known.map((row) => row.lane), known.map((row) => row.campaign_name)],
-    );
-    await this.db.query(
-      `insert into topup.campaign_registry (campaign_id, campaign_name, client_tag, smartlead_client_id, lane, status, updated_at)
-       select distinct on (cid)
-              cid, c.name, 'parlay', cm.smartlead_client_id, r.lane, coalesce(c.status, 'ACTIVE'), now()
-         from topup.pull_receipts r
-         cross join lateral unnest(r.campaign_ids) as cid
-         join topup.client_map cm on cm.client_tag = 'parlay'
-         left join public.campaigns c on c.smartlead_campaign_id = cid
-        where r.client_tag = 'parlay'
-          and cid between $1 and $2
-          and r.lane is not null
-          and r.lane <> all($3::text[])
-        order by cid, (r.granularity = 'lane') desc, r.written_at desc
-       on conflict (campaign_id) do update set
-         lane = coalesce(topup.campaign_registry.lane, excluded.lane),
-         campaign_name = coalesce(topup.campaign_registry.campaign_name, excluded.campaign_name),
-         client_tag = 'parlay',
-         smartlead_client_id = coalesce(topup.campaign_registry.smartlead_client_id, excluded.smartlead_client_id),
-         updated_at = now()
-       where topup.campaign_registry.lane is null`,
-      [PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, ["it_dm_legacy_sports", "it_dm_tickets", "it_dm_airpods", "adjacent_dm"]],
-    );
   }
 
   /** Keep the registry in step with the recipe so `/working` has a row to flip. Never overwrites the override, the client, or the lane. */
@@ -1012,13 +937,6 @@ export class Repo {
     status: string | null;
   }>): Promise<void> {
     for (const r of rows) {
-      if ((PARLAY_RETIRED_CAMPAIGN_IDS as readonly number[]).includes(r.campaign_id)) {
-        await this.db.query(
-          `update topup.campaign_registry set status = 'retired', recipe_id = null, updated_at = now() where campaign_id = $1`,
-          [r.campaign_id],
-        );
-        continue;
-      }
       await this.db.query(
         `insert into topup.campaign_registry (campaign_id, campaign_name, client_tag, smartlead_client_id, lane, recipe_id, status, updated_at)
          values ($1,$2,$3,$4,$5,$6,$7, now())

@@ -1,14 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { campaignRecord, countSource, heldRead, jobStatus, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps } from "../canon/index.js";
+import { campaignRecord, countSource, heldRead, jobStatus, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps } from "../canon/index.js";
 import type { Repo } from "../db/repo.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import type { Orchestrator } from "../orchestrator.js";
-import type { MeasureDeps } from "../plan/measure.js";
 import { JOB_SOURCES, type JobSpec } from "../jobs/recipe.js";
 import { VERB_ORDER, type JobRunner, type Verb } from "../jobs/runner.js";
-import { loadClientMap } from "./recipe.js";
-import { registryRows } from "../recipes/registry.js";
+import { loadClientMap } from "../canon/clients.js";
+import { registryRows } from "../canon/registry.js";
 import { EMAIL_TIERS } from "../recipes/schema.js";
 
 /**
@@ -23,7 +22,7 @@ export interface GrokDeps {
   orchestrator: Pick<Orchestrator, "abortRun">;
   jobs: JobRunner;
   count: CountDeps;
-  measure: MeasureDeps | null;
+  held: HeldDeps | null;
   by: string;
 }
 
@@ -79,10 +78,10 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       inputSchema: { client_tag: snake, campaign_id: z.number().int(), filters, tam: z.number().int().min(0), days: z.number().int().min(1).max(365).optional() },
     },
     async ({ client_tag, campaign_id, filters: f, tam, days }) => {
-      if (!d.measure) return text({ error: "held is not available: the service has no getleads client configured." });
+      if (!d.held) return text({ error: "held is not available: the service has no getleads client configured." });
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
       if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
-      return text(await heldRead(d.measure, { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
+      return text(await heldRead(d.held, { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
     },
   );
 
