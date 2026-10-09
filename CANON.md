@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D54** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D55** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -61,6 +61,7 @@ bears on stated and no verdict (D52).
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
 | `spend` | Today, thirty days by vendor, month to date, and every spend card waiting. |
+| `leftovers(client_tag?)` | Where past pulls left rows that may never have been sent: the LeadPipe lane table by status and label, the client schema (companies, contacts, leads) with email and domain counts, the waterfall tables, the people-waterfall statuses, the scratch tables (estimates). Counts only; reading it moves nothing. |
 | `holds(client_tag?)` | Open cards: spend asks with the worst case, parked jobs, QA holds, stalls. |
 | `loads_paused(paused?, by?)` | The global switch. While on, `import` refuses. Only a person flips it. |
 
@@ -96,7 +97,9 @@ Order: `pull` → `suppress` → `enrich` → `verify` → `normalize` → `qa` 
    came from: the receipt or build with the most `rows_imported`, and the
    `leads_by_leg` counts. Those four legs and that `company_filters` are
    the method. Read `how_i_did_it` and `notes`. A missing leg or an empty
-   `company_filters` is a question for Josh, not a guess.
+   `company_filters` is a question for Josh, not a guess. `leftovers(client_tag)`
+   shows rows earlier pulls left in the stores; name the store to the person
+   who approves before reusing one.
 3. `count(client_tag, source, filters)` with the filters from that record.
    getleads is free. BCP-style records keep industries per campaign under
    `industries_by_campaign`; pass that campaign's list as `industries`.

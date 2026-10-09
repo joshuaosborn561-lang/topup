@@ -53,6 +53,7 @@ Reads (counts, ids, labels, notes; the rule stated; no verdict):
 | `held` | How much of a getleads pool the client already holds, and net new. |
 | `jobs`, `job` | The job log and one job with its steps, report, vendor calls and waiting cards. |
 | `spend` | Today, thirty days, month to date, cards waiting. |
+| `leftovers` | Where past pulls left rows that may never have been sent, per client, as counts. |
 | `holds` | Open cards. |
 | `loads_paused` | The global switch. |
 

@@ -74,6 +74,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D52 | Live; the reads and the verbs for Grok bot: reads state the rule and no verdict, verbs run one stage on a job, approvals by name through the console, no row or file URL |
 | D53 | Live; the reasoning half is deleted (watch, planner, recipes inference, policy gates, Slack console, old MCP tools); one short canon; the surface is the canon tools only; version 1.0.0 |
 | D54 | Live; a campaign marked as cold call is ignored everywhere (not listed, not read, not pulled); the mark is in the name; a job pulls at most 2,000 rows |
+| D55 | Live; `leftovers` read: where past pulls left rows, per client, as counts (lane table, client schema, waterfall tables, people status, scratch estimates); moves nothing |
 
 ---
 
@@ -1810,3 +1811,31 @@ as cold call." The two stale goliath runs were aborted the same day.
 Rename it or ask Josh for a narrower mark.
 
 **Guard.** `src/guards/d54_cold_call.test.ts`. Ask Josh.
+
+
+## D55 — Leftovers: where past pulls left rows, as counts
+
+**Decision.** A read, `leftovers(client_tag?)`, lists for each client the
+stores where an earlier pull left rows that may never have been sent:
+the LeadPipe lane table (`lp.<tag>_ingested_leads`) by `lead_status` and
+`source_label`; the client schema (`client_<tag>.companies`, `.contacts`,
+`.leads`) with how many rows carry an email or a domain and the first
+status column grouped; the waterfall tables in `public`
+(`<tag>…_wf_companies`, `_wf_contacts`, and the older `<tag>_contacts`);
+the people-waterfall statuses in `public.wf_people_status`; and the
+scratch tables under `lp.<tag>_*`, by planner estimate, the largest
+twenty-five. Counts only. No value is selected, no vendor is called,
+nothing is moved. PermitStack lists (another project), the Maps scraper's
+own store, and getleads and AI Ark (no store) are named as not reachable.
+
+**Why.** Josh, 2026-10-09: "sometimes I have extra leads sitting in there
+… I would love to have all that noted so that Grokbot understands." The
+method is already in the receipts' notes (137 of 138 on active
+campaigns); what was missing was where the rows are.
+
+**Tradeoff.** A table name is the only signal of what a scratch table
+holds. The read reports it with its size; the receipt notes say what it
+was for. Exact counts on big tables can be slow; a count that fails
+falls back to the estimate and says so.
+
+**Guard.** `src/guards/d55_leftovers.test.ts`. Ask Josh.
