@@ -24,6 +24,7 @@ repo. `DECISIONS.md` is the ledger of why.
 * Return a lead row or a file URL from any tool.
 * Set a Smartlead campaign ACTIVE, or pause, stop, edit or delete one.
 * Touch a campaign marked as cold call. It is not listed, read or pulled (D54).
+* Drop a phone. Every table it writes carries one; the stage passes it to Smartlead (D56).
 
 ## Running it
 
@@ -53,7 +54,7 @@ Reads (counts, ids, labels, notes; the rule stated; no verdict):
 | `held` | How much of a getleads pool the client already holds, and net new. |
 | `jobs`, `job` | The job log and one job with its steps, report, vendor calls and waiting cards. |
 | `spend` | Today, thirty days, month to date, cards waiting. |
-| `leftovers` | Where past pulls left rows that may never have been sent, per client, as counts. |
+| `leftovers` | Where past pulls left rows that may never have been sent, per client, as counts, with the gap each store still has (domain, person, email, phone) and the step that fills it. |
 | `holds` | Open cards. |
 | `loads_paused` | The global switch. |
 

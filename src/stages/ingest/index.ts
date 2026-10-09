@@ -85,10 +85,13 @@ export class IngestStage {
           continue;
         }
         if (!jobId) {
+          // D56: the lane table keeps phones; tell LeadPipe which vendor headers carry one.
+          const laneCols = await columnsOf(this.d.repo, table);
           const started = await this.d.leadpipe.ingestCsv(run.client_tag, {
             urls: file.export_url.split("\n").map((url) => url.trim()).filter(Boolean),
             source_label: label,
             dedupe_key: "email",
+            ...(laneCols.has("phone") ? { column_map: PHONE_HEADER_MAP } : {}),
           });
           jobId = started.job_id;
           jobs[label] = jobId;
@@ -194,10 +197,13 @@ export class IngestStage {
 
   private async landedCounts(table: string, runId: string, cols: Set<string>): Promise<Record<string, number>> {
     const want = ["city", "state", "industry", "employee_range"].filter((c) => cols.has(c));
-    if (want.length === 0) return {};
-    const sel = want.map((c) => `count(*) filter (where coalesce(${c}::text, '') = '')::text as "${c}"`).join(", ");
-    const { rows } = await this.d.repo.raw().query<Record<string, string>>(`select ${sel} from ${table} where run_id = $1`, [runId]);
-    return Object.fromEntries(want.map((c) => [`null_${c}`, Number(rows[0]?.[c] ?? 0)]));
+    const sel = want.map((c) => `count(*) filter (where coalesce(${c}::text, '') = '')::text as "${c}"`);
+    if (cols.has("phone")) sel.push(`count(*) filter (where coalesce(phone, '') <> '')::text as "with_phone"`);
+    if (sel.length === 0) return {};
+    const { rows } = await this.d.repo.raw().query<Record<string, string>>(`select ${sel.join(", ")} from ${table} where run_id = $1`, [runId]);
+    const out: Record<string, number> = Object.fromEntries(want.map((c) => [`null_${c}`, Number(rows[0]?.[c] ?? 0)]));
+    if (cols.has("phone")) out.with_phone = Number(rows[0]?.with_phone ?? 0); // D56
+    return out;
   }
 
   /** Step 3 gate, "titles audited": flag rows whose title matches none of the recipe's titles. Counts only. */
@@ -214,6 +220,9 @@ export class IngestStage {
     });
   }
 }
+
+/** Vendor CSV headers that carry a phone, mapped onto the lane table's phone column (D56). getleads exports mobile_phone. */
+export const PHONE_HEADER_MAP: Readonly<Record<string, string>> = { mobile_phone: "phone", cellphone: "phone", phone: "phone", phone_number: "phone", mobile: "phone", direct_phone: "phone", wf_phone: "phone" };
 
 function parseIngestJobs(raw: string | null): Record<string, string> {
   if (!raw) return {};

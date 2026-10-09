@@ -164,3 +164,34 @@ export async function columnsOf(repo: Repo, table: string): Promise<Set<string>>
   const { rows } = await repo.raw().query<{ column_name: string }>(`select column_name from information_schema.columns where table_schema = $1 and table_name = $2`, [schema, name]);
   return new Set(rows.map((r) => r.column_name));
 }
+
+/** The phone columns the service keeps on every lane table (D56), and the ones the waterfalls write back. */
+export const PHONE_COLUMN = "phone";
+export const PHONE_TYPE_COLUMN = "phone_type";
+
+/**
+ * D56: a phone found by any step is kept. Copy the waterfalls' writeback
+ * (wf_phone / wf_phone_type) onto phone / phone_type for every row of the
+ * run that has no phone yet. Returns how many rows gained a phone.
+ */
+export async function keepPhones(repo: Repo, table: string, runId: string, cols?: Set<string>): Promise<number> {
+  const have = cols ?? (await columnsOf(repo, table));
+  if (!have.has(PHONE_COLUMN) || !have.has("wf_phone")) return 0;
+  const typeSet = have.has(PHONE_TYPE_COLUMN) && have.has("wf_phone_type") ? `, ${PHONE_TYPE_COLUMN} = coalesce(nullif(${PHONE_TYPE_COLUMN}, ''), nullif(wf_phone_type, ''))` : "";
+  const { rowCount } = await repo.withRun(runId, (tx) =>
+    tx.query(
+      `update ${table} set ${PHONE_COLUMN} = nullif(wf_phone, '')${typeSet}
+       where run_id = $1 and coalesce(${PHONE_COLUMN}, '') = '' and coalesce(wf_phone, '') <> ''`,
+      [runId],
+    ),
+  );
+  return rowCount ?? 0;
+}
+
+/** Rows of a run that carry a phone. Zero when the table has no phone column. */
+export async function phoneCount(repo: Repo, table: string, runId: string, cols?: Set<string>): Promise<number> {
+  const have = cols ?? (await columnsOf(repo, table));
+  if (!have.has(PHONE_COLUMN)) return 0;
+  const { rows } = await repo.raw().query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and coalesce(${PHONE_COLUMN}, '') <> ''`, [runId]);
+  return Number(rows[0]?.n ?? 0);
+}

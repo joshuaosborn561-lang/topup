@@ -10,6 +10,27 @@ import { loadClientMap } from "./clients.js";
  */
 export type StoreKind = "leadpipe_lane" | "client_schema" | "waterfall" | "people_status" | "scratch";
 
+/**
+ * The obvious gap (D55): what the rows have and what they still need, as
+ * counts. `need_*` is the number of rows one step away from usable; `next`
+ * names that step in the source vocabulary.
+ */
+export interface StoreGaps {
+  /** A person's name but no company domain. */
+  need_domain?: number;
+  /** A company domain but no person's name. */
+  need_person?: number;
+  /** A person's name but no email. */
+  need_email?: number;
+  /** A person (name or email) but no phone. */
+  need_phone?: number;
+  /** Name, domain and email all present. */
+  complete?: number;
+  /** False when the table has no column that could hold a phone (D56). */
+  phone_column: boolean;
+  next: Record<string, string>;
+}
+
 export interface StoreLine {
   schema: string;
   table: string;
@@ -19,6 +40,8 @@ export interface StoreLine {
   exact: boolean;
   with_email?: number;
   with_domain?: number;
+  with_phone?: number;
+  gaps?: StoreGaps;
   by_status?: Record<string, number>;
   by_label?: Record<string, number>;
 }
@@ -37,7 +60,7 @@ export interface LeftoversRead {
 }
 
 export const LEFTOVERS_RULE =
-  "Counts only, never rows. A store here is where a past pull left rows that may not have been sent. Reading this moves nothing. Before reusing a store, read campaign_record for the campaign it fed and name the store to the person who approves the pull.";
+  "Counts only, never rows. A store here is where a past pull left rows that may not have been sent. gaps says what the rows still need (a domain, a person, an email, a phone) and next names the step that fills it. Reading this moves nothing. Before reusing a store, read campaign_record for the campaign it fed and name the store to the person who approves the pull.";
 
 export const NOT_REACHABLE = [
   "PermitStack and parcel lists live on project kemvxzhcxvynmoutwdrh; ask the Permit & Parcel MCP for counts. Cold call lists are ignored (D54).",
@@ -49,6 +72,15 @@ const IDENT = /^[a-z][a-z0-9_]*$/;
 const STATUS_COLUMNS = ["lead_status", "status", "dl_status", "wf_status", "wf_email_status", "wf_domain_status", "dm_lookup_status", "email_status", "sg_exclude", "suppressed", "imported", "in_icp"] as const;
 const EMAIL_COLUMNS = ["email", "wf_email", "candidate_email", "shovels_email"] as const;
 const DOMAIN_COLUMNS = ["domain", "wf_domain", "company_domain", "website"] as const;
+const NAME_COLUMNS = ["first_name", "last_name", "full_name", "owner_name", "dm_name", "shovels_name"] as const;
+const PHONE_COLUMNS = ["phone", "cellphone", "wf_phone", "mobile_phone", "phone_number", "mobile"] as const;
+/** What fills each gap, in the words of the `sources` vocabulary. */
+const NEXT_STEP: Readonly<Record<string, string>> = {
+  need_domain: "domain_waterfall (company name plus location to a domain)",
+  need_person: "people_waterfall (named people at the domain; writes cellphone and line_type)",
+  need_email: "email_waterfall (getleads, Smartlead, AI Ark, LeadMagic tiers), or name_to_email for a handful",
+  need_phone: "email_waterfall on the aiark or fullenrich tier finds phones; the people_waterfall contacts table carries cellphone",
+};
 const LABEL_COLUMNS = ["source_label", "build_label", "run_label", "lane", "source_tool", "source_tier", "source"] as const;
 const SCRATCH_SHOWN = 25;
 
@@ -108,17 +140,41 @@ async function countStore(db: Queryable, f: Found, kind: StoreKind): Promise<Sto
   const domain = DOMAIN_COLUMNS.find((c) => f.columns.has(c));
   const status = STATUS_COLUMNS.find((c) => f.columns.has(c));
   const label = LABEL_COLUMNS.find((c) => f.columns.has(c));
+  const names = NAME_COLUMNS.filter((c) => f.columns.has(c));
+  const phones = PHONE_COLUMNS.filter((c) => f.columns.has(c));
   const rel = `${q(f.schema)}.${q(f.table)}`;
   const line: StoreLine = { schema: f.schema, table: f.table, kind, rows: f.estimate, exact: false };
+  // "has a value" predicates; never the values themselves.
+  const has = (cols: readonly string[]) => (cols.length ? `(${cols.map((c) => `coalesce(${q(c)}::text, '') <> ''`).join(" or ")})` : null);
+  const hasName = has(names);
+  const hasEmail = email ? has([email]) : null;
+  const hasDomain = domain ? has([domain]) : null;
+  const hasPhone = has(phones);
   try {
     const selects = [`count(*)::text as n`];
-    if (email) selects.push(`count(*) filter (where ${q(email)} is not null and ${q(email)}::text <> '')::text as with_email`);
-    if (domain) selects.push(`count(*) filter (where ${q(domain)} is not null and ${q(domain)}::text <> '')::text as with_domain`);
-    const { rows } = await db.query<{ n: string; with_email?: string; with_domain?: string }>(`select ${selects.join(", ")} from ${rel}`);
-    line.rows = Number(rows[0]?.n ?? 0);
+    if (hasEmail) selects.push(`count(*) filter (where ${hasEmail})::text as with_email`);
+    if (hasDomain) selects.push(`count(*) filter (where ${hasDomain})::text as with_domain`);
+    if (hasPhone) selects.push(`count(*) filter (where ${hasPhone})::text as with_phone`);
+    if (hasName && hasDomain) selects.push(`count(*) filter (where ${hasName} and not ${hasDomain})::text as need_domain`, `count(*) filter (where ${hasDomain} and not ${hasName})::text as need_person`);
+    if (hasName && hasEmail) selects.push(`count(*) filter (where ${hasName} and not ${hasEmail})::text as need_email`);
+    if (hasName || hasEmail) selects.push(`count(*) filter (where (${[hasName, hasEmail].filter(Boolean).join(" or ")})${hasPhone ? ` and not ${hasPhone}` : ""})::text as need_phone`);
+    if (hasName && hasDomain && hasEmail) selects.push(`count(*) filter (where ${hasName} and ${hasDomain} and ${hasEmail})::text as complete`);
+    const { rows } = await db.query<Record<string, string | undefined>>(`select ${selects.join(", ")} from ${rel}`);
+    const r = rows[0] ?? {};
+    line.rows = Number(r.n ?? 0);
     line.exact = true;
-    if (email) line.with_email = Number(rows[0]?.with_email ?? 0);
-    if (domain) line.with_domain = Number(rows[0]?.with_domain ?? 0);
+    if (hasEmail) line.with_email = Number(r.with_email ?? 0);
+    if (hasDomain) line.with_domain = Number(r.with_domain ?? 0);
+    if (hasPhone) line.with_phone = Number(r.with_phone ?? 0);
+    if (hasName || hasEmail) {
+      const gaps: StoreGaps = { phone_column: phones.length > 0, next: {} };
+      for (const k of ["need_domain", "need_person", "need_email", "need_phone", "complete"] as const) {
+        if (r[k] !== undefined) gaps[k] = Number(r[k]);
+      }
+      for (const k of ["need_domain", "need_person", "need_email", "need_phone"] as const) if ((gaps[k] ?? 0) > 0) gaps.next[k] = NEXT_STEP[k]!;
+      if (!gaps.phone_column) gaps.next.need_phone = `this table has no phone column; a phone found for these rows has nowhere to land here (D56)`;
+      line.gaps = gaps;
+    }
     if (status) {
       const { rows: st } = await db.query<{ k: string | null; n: string }>(`select ${q(status)}::text as k, count(*)::text as n from ${rel} group by 1 order by 2 desc limit 12`);
       line.by_status = Object.fromEntries(st.map((r) => [`${status}=${r.k ?? "null"}`, Number(r.n)]));

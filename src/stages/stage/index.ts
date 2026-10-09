@@ -55,6 +55,9 @@ export class StageStage {
         ["vertical", lane.has("vertical") ? "t.vertical" : "null"],
         ["first_name_n", lane.has("first_name_n") ? "t.first_name_n" : "null"],
         ["company_n", lane.has("company_n") ? "t.company_n" : "null"],
+        // D56: a phone the pipeline found rides into staging for the Smartlead import's phone_number.
+        ["phone", lane.has("phone") ? "t.phone" : "null"],
+        ["phone_type", lane.has("phone_type") ? "t.phone_type" : "null"],
         ["vendor", `'${vendor}'`],
         ["imported", "false"],
         ["purge", "false"],
@@ -96,7 +99,8 @@ export class StageStage {
 
       const { rows: perCampaign } = await db.query<{ campaign: string; n: string }>(`select campaign_id::text as campaign, count(*)::text as n from ${STAGING_TABLE} where run_id = $1 group by 1 order by 1`, [run.run_id]);
       const stagedTotal = perCampaign.reduce((a, r) => a + Number(r.n), 0);
-      const counts: Record<string, number> = { staged: stagedTotal, staged_this_pass: result.staged, staging_conflicts: result.left, ...Object.fromEntries(perCampaign.map((r) => [`staged_${r.campaign}`, Number(r.n)])) };
+      const withPhone = staging.has("phone") ? Number((await db.query<{ n: string }>(`select count(*)::text as n from ${STAGING_TABLE} where run_id = $1 and coalesce(phone, '') <> ''`, [run.run_id])).rows[0]?.n ?? 0) : 0;
+      const counts: Record<string, number> = { staged: stagedTotal, staged_this_pass: result.staged, staging_conflicts: result.left, with_phone: withPhone, ...Object.fromEntries(perCampaign.map((r) => [`staged_${r.campaign}`, Number(r.n)])) };
       if (result.left > 0) {
         return gateUnmet("stage", `${result.left} routed rows have no staging row for this run: their (campaign, email) key is already in ${STAGING_TABLE} from an earlier load. Routed ${stagedTotal + result.left}, staged ${stagedTotal}.`, counts);
       }

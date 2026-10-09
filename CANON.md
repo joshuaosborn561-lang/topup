@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D55** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D56** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -42,7 +42,11 @@ D48).
 9. **Only campaignintelligence** (`azpapwtnrbzywlnxxecz`). Secrets live in
    Railway. Smartlead is never started, paused, stopped or deleted from
    here (D1, D3, D5, D6).
-10. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+10. **Phones are kept.** Every lane table and the staging table carry a
+    phone column; any step that finds a phone writes it there; the stage
+    carries it to Smartlead's phone_number; nothing drops one. `leftovers`
+    shows `need_phone` and says when a store has no phone column (D56).
+11. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
     here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -61,7 +65,7 @@ bears on stated and no verdict (D52).
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
 | `spend` | Today, thirty days by vendor, month to date, and every spend card waiting. |
-| `leftovers(client_tag?)` | Where past pulls left rows that may never have been sent: the LeadPipe lane table by status and label, the client schema (companies, contacts, leads) with email and domain counts, the waterfall tables, the people-waterfall statuses, the scratch tables (estimates). Counts only; reading it moves nothing. |
+| `leftovers(client_tag?)` | Where past pulls left rows that may never have been sent: the LeadPipe lane table by status and label, the client schema (companies, contacts, leads), the waterfall tables, the people-waterfall statuses, the scratch tables (estimates). Each store says how many rows have an email, a domain and a phone, and `gaps` says what the rest still need (`need_domain`, `need_person`, `need_email`, `need_phone`) with `next` naming the step that fills it. Counts only; reading it moves nothing. |
 | `holds(client_tag?)` | Open cards: spend asks with the worst case, parked jobs, QA holds, stalls. |
 | `loads_paused(paused?, by?)` | The global switch. While on, `import` refuses. Only a person flips it. |
 
