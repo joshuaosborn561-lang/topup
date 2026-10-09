@@ -4,8 +4,8 @@ import { countMapsPool, mapsPoolFromFilters, resolveMapsPool } from "./mapsPool.
 
 /**
  * D58 — the ICP path must survive a real Postgres bind, not a mock.
- * PGlite is Postgres. A skipped live check runs when DATABASE_URL points
- * at campaignintelligence.
+ * PGlite is Postgres. The live emcor count is a read-only check in the PR,
+ * not a test (D4: tests do not construct Db).
  */
 
 type Q = {
@@ -92,27 +92,6 @@ describe("D58 — maps ICP against real Postgres", () => {
       assert.equal(r.net_new, 3);
     } finally {
       await close();
-    }
-  });
-
-  it("read-only emcor Lane E ICP count when DATABASE_URL is campaignintelligence", async () => {
-    const url = process.env.DATABASE_URL ?? "";
-    if (!url.includes("azpapwtnrbzywlnxxecz")) return;
-    const { Db } = await import("../db/pool.js");
-    const db = new Db(url);
-    try {
-      const r = await db.readOnly((tx) =>
-        countMapsPool(tx, "emcor", {
-          plan_id: "custom-1789679826",
-          icp_filter: "client_emcor.v_lane_e_final",
-          categories: ["church"],
-        }),
-      );
-      assert.ok(!("error" in r), "D58: live ICP count must not fail. Ask Josh.");
-      if ("error" in r) return;
-      assert.equal(r.pool, 18322, "D58: Lane E companion union ∩ plan_id. Ask Josh.");
-    } finally {
-      await db.end();
     }
   });
 });
