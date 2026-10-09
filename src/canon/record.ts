@@ -1,6 +1,7 @@
 import { campaignPerformance, provenanceCounts, type ProvenanceCount } from "../builds/index.js";
 import type { Queryable } from "../db/pool.js";
-import { isNeverTopUp, ratePer2000 } from "../policy/rules.js";
+import { campaignNameBySmartleadId } from "../ledger/health.js";
+import { isColdCall, isNeverTopUp, ratePer2000 } from "../policy/rules.js";
 import { registryRows, type RegistryCampaign } from "./registry.js";
 import { describeSources, type SourceLine } from "./sources.js";
 
@@ -86,13 +87,17 @@ export async function leadsByLeg(db: Queryable, clientTag: string, buildLabels: 
   }
 }
 
-export async function campaignRecord(db: Queryable, repo: RecordRepo, clientTag: string, campaignId: number): Promise<CampaignRecord> {
-  const [receiptRows, buildRows, registry, perf] = await Promise.all([
+export async function campaignRecord(db: Queryable, repo: RecordRepo, clientTag: string, campaignId: number): Promise<CampaignRecord | { error: string }> {
+  const [receiptRows, buildRows, registry, perf, mirrorName] = await Promise.all([
     repo.listPullReceipts({ clientTag, campaignId }).catch(() => [] as Record<string, unknown>[]),
     repo.campaignBuilds(clientTag, [campaignId]).catch(() => [] as Record<string, unknown>[]),
     repo.campaignRegistry(clientTag).catch(() => [] as Record<string, unknown>[]),
     campaignPerformance(db, [campaignId]).catch(() => new Map()),
+    campaignNameBySmartleadId(db, campaignId).catch(() => null),
   ]);
+  const regRow = registryRows(registry).find((r) => r.campaign_id === campaignId) ?? null;
+  const name = mirrorName ?? regRow?.campaign_name ?? null;
+  if (isColdCall(name)) return { error: `#${campaignId} ${name} is marked as cold call; the service ignores it (D54). Ask Josh.` };
   const receipts = receiptRows.map((r) => pick(r, RECEIPT_KEYS)).sort((a, b) => String(b.written_at ?? "").localeCompare(String(a.written_at ?? "")));
   const builds = buildRows.map((r) => pick(r, BUILD_KEYS));
   const labels = [...receipts, ...builds].map((r) => r.build_label).filter((l): l is string => typeof l === "string" && l.length > 0);
@@ -101,11 +106,10 @@ export async function campaignRecord(db: Queryable, repo: RecordRepo, clientTag:
   const rate = Math.round(ratePer2000(p.sends, p.positives) * 100) / 100;
   const legs = (k: string) => [...receipts, ...builds, ...byLeg].map((r) => (r as Record<string, unknown>)[k] as string | null | undefined);
   const notes = [...new Set(receipts.flatMap((r) => [r.how_i_did_it, r.notes]).filter((n): n is string => typeof n === "string" && n.trim().length > 0))];
-  const regRow = registryRows(registry).find((r) => r.campaign_id === campaignId) ?? null;
   return {
     client_tag: clientTag,
     campaign_id: campaignId,
-    never_top_up: isNeverTopUp(campaignId, regRow?.campaign_name ?? null),
+    never_top_up: isNeverTopUp(campaignId, name),
     registry: regRow,
     performance: { sends: p.sends, positives: p.positives, rate_per_2000: rate, passes_reply_bar: p.positives >= 1 && rate >= 1 },
     receipts,

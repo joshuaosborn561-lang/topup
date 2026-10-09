@@ -25,6 +25,14 @@ export const NEVER_TOPUP_NAME_PATTERNS: readonly RegExp[] = [/cayden calls/i, /g
 export const ACTIVE_CAMPAIGN_STATUS = "ACTIVE";
 export const NON_TARGET_CAMPAIGN_STATUSES: readonly string[] = ["COMPLETED", "DRAFTED", "DRAFT", "PAUSED", "ARCHIVED"];
 
+/** Campaigns marked as cold call are not email campaigns; the service ignores them everywhere (D54). The mark is in the name. */
+export const COLD_CALL_NAME_PATTERNS: readonly RegExp[] = [/cold[ _-]?call/i, /\bcalls?\b/i, /post[ _-]?call/i, /\bcalling\b/i, /\bdialer\b/i];
+
+export function isColdCall(name: string | null | undefined): boolean {
+  const label = name?.trim() ?? "";
+  return label.length > 0 && COLD_CALL_NAME_PATTERNS.some((re) => re.test(label));
+}
+
 /** One place to ask. Every refusal names it. */
 export const ASK = "Ask Josh.";
 

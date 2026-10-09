@@ -34,7 +34,9 @@ The rules you apply:
 * **1 to 2,000 rows per job.**
 * **A person approves every spend before it runs.** Name them.
 * **Nothing starts on its own.** You call the next verb or nothing moves.
-* **Josh flips ACTIVE.** Never SG Gabe Calls, SG Nurture or Cayden Calls.
+* **Josh flips ACTIVE.** Never SG Nurture. Cold call campaigns (Gabe Calls,
+  Cayden Calls, Cold Call, Post-call) are ignored: the service leaves them
+  off `campaigns` and refuses `pull` on them.
 
 ## The loop (one campaign at a time)
 

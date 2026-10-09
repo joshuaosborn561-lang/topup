@@ -1,4 +1,5 @@
 import { getleadsParamsFromFilters } from "./filters.js";
+import { MAX_ROWS_PER_JOB } from "../policy/rules.js";
 import { EMAIL_TIERS, parseRecipe, type Recipe } from "../recipes/schema.js";
 
 /**
@@ -69,7 +70,7 @@ export function jobRecipeId(spec: Pick<JobSpec, "client_tag" | "campaign_id">, s
 }
 
 export function jobRecipe(spec: JobSpec, stamp = Date.now()): Recipe {
-  if (!Number.isInteger(spec.max_rows) || spec.max_rows < 1) throw new Error("max_rows must be a whole number of at least 1");
+  if (!Number.isInteger(spec.max_rows) || spec.max_rows < 1 || spec.max_rows > MAX_ROWS_PER_JOB) throw new Error(`max_rows must be a whole number from 1 to ${MAX_ROWS_PER_JOB} (D53)`);
   const icp = { kind: spec.icp_kind ?? (spec.source === "getleads" ? "linkedin_native" : "physical"), persona: spec.persona ?? spec.lane };
   const raw: unknown = {
     recipe_id: jobRecipeId(spec, stamp),
