@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D50** (2026-10-09). One page of current truth. When a new
+Canon as of **D51** (2026-10-09). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -113,7 +113,7 @@ that still has runway is not refilled.
 
 1. Done: ledger, `/where`, digest, verify → normalize (D17).
 2. **This build:** a getleads lane end to end, steps 2 → 12 (D26), and the
-   runway watch that starts a run on its own (D27; since D50 it observes and Grok bot starts).
+   runway watch that starts a run on its own (D27; since D51 it observes and Grok bot starts).
 3. Physical lane cascade with the **yield card** and the **pilot of ~100**;
    nothing scales without the second tap (D21). Peterson roof owners first.
 4. Vendor server fixes and attribution.
@@ -151,7 +151,7 @@ file recipe is the override when one exists.
 
 ## What this build runs (D26, D27, D28, D38)
 
-The **watch** observes; Grok bot is the start (D50). Every six hours (and once on boot) it
+The **watch** observes; Grok bot is the start (D51). Every six hours (and once on boot) it
 reads the Smartlead mirror for every recipe, campaign by campaign. The
 needy signal is that campaign's own runway under `runway.floor_days`
 (empty or low). Client-wide rem / capacity (D38, D45) stays on the board
@@ -263,7 +263,7 @@ The stages:
     day one. The service never starts, pauses, or stops a campaign. Then the
     run closes as `done` with the **receipt** (the funnel plus one line per
     campaign). The watch flags the next fill when the **client** is under
-    the runway floor and still working (D38); Grok bot starts it (D50).
+    the runway floor and still working (D38); Grok bot starts it (D51).
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
 open cards, open runs and which integrations are configured. It is
@@ -271,7 +271,7 @@ open cards, open runs and which integrations are configured. It is
 
 ## Money (D9)
 
-- Auto cap **$0** on the service since D50: every paid call asks with the
+- Auto cap **$0** on the service since D51: every paid call asks with the
   worst case in dollars and waits for a named approval, under $5 Cayden,
   $5 or above Josh. Daily backstop **$25** across vendors.
 - Worst case comes from `src/spend/prices.ts` × batch size. Never a
@@ -291,7 +291,7 @@ open cards, open runs and which integrations are configured. It is
   taps never spend and never change a recipe; the reply is "This needs Josh."
   Step 5 does not wait on a customer-domain-list card (D37). The
   heading stays `(code)`.
-- Commands: `/where`, `/topup` (Grok bot or Cayden starts; the watch observes, D50), `/holds`, `/runs`, `/working` (owner),
+- Commands: `/where`, `/topup` (Grok bot or Cayden starts; the watch observes, D51), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains the 90-day global positive list).
 - `/mcp` is Streamable HTTP over HTTPS at
   `https://leadtopup-production.up.railway.app/mcp` (D40, D41, D48). **No
@@ -316,7 +316,7 @@ open cards, open runs and which integrations are configured. It is
   `#campaign-watchdog` posts (empty, low, nearly-done 90%), ranked
   empty-first then shortest runway, each with the recipe count
   summary, `sends_last_14d`, and the working bar. It includes camps
-  the client-wide watch would skip (D38 judges; nothing auto-starts, D50).
+  the client-wide watch would skip (D38 judges; nothing auto-starts, D51).
   Cayden's flow is `client_overview` for the client, or `topup_queue`
   across clients (gates already applied) → `campaign_history` for each
   campaign to top up → `size_client` (pilot and size, one call per
@@ -397,8 +397,13 @@ filter is never sized from titles alone; a pilot (200–300 vendor rows)
 must score 80% or more on every dimension it can score, a missing export
 column is "not scored"; a pool more than 20× the build it repeats or above
 a known market cap (about 40,000 MSPs) is a suspect filter; a non-LinkedIn
-ICP sizes only from its stored pool; two LinkedIn-native counts more than
-10% apart are a mismatch; and under **1,000 net new** is `tam_filled`.
+ICP sizes only from its stored pool, and a pool that cannot be read is
+`tam_source_missing`, never a filled market at TAM 0 (D50); two
+LinkedIn-native counts within 10% agree, a gap of 10% to 25% uses the
+lower count (`mismatch_minor`), and a gap over 25% uses the AI Ark count
+only when a 250-row pilot passes 80% on title and industry
+(`ai_ark_wider`), otherwise the getleads count (`getleads_only`); neither
+gap parks (D50); and under **1,000 net new** is `tam_filled`.
 Spend: free proceeds, under $5 is Cayden, $5 or above is Josh, and over
 the $25 day is Josh too. Parking is per campaign, never per run: a
 campaign that fails is skipped with its reason and the rest continue.
@@ -455,7 +460,18 @@ chosen build and tags, plus open runs and the loads switch, counts only.
 The step 2 gate is the policy's floor: at least 1,000 net new per
 campaign, else the TAM for this campaign is exhausted (D46).
 
-## Nothing starts on its own; spend is approved first (D50)
+## The lane on the registry, the stored pool, and a count gap (D50)
+
+`size_client` and `start_topup` open the lane `campaign_registry` names
+for that campaign. The first recipe whose routing mentions the id does
+not win, and an id on no lane is reported without a run on another lane.
+Campaigns that share one stored Maps or permits pool split `plan_rows` so
+the sum does not exceed `tam_left`. Abort returns rows left in
+`verifying`, `claimed`, `reserved`, or `pulling` and reports how many.
+A LinkedIn count gap is resolved as the policy says above. Both filter
+sets and both counts stay on the campaign line. Ask Josh.
+
+## Nothing starts on its own; spend is approved first (D51)
 
 Grok bot is the reasoning layer and this service is the pipeline. The
 watch reads the mirror and judges every lane, and logs what it would have
@@ -465,7 +481,7 @@ spend card (`list_holds`, `resolve_hold`); a free call proceeds. Under
 1,000 leads available the line reads "the TAM for this campaign is
 exhausted". `deep_roots` is a client in `topup.client_map`.
 
-## Never (D1–D6, D8, D13, D14, D39, D48, D50)
+## Never (D1–D6, D8, D13, D14, D39, D48, D51)
 
 - Never write to a Supabase project other than `azpapwtnrbzywlnxxecz`.
 - Never hardcode a secret. Never call a vendor in a test.
@@ -482,7 +498,7 @@ exhausted". `deep_roots` is a client in `topup.client_map`.
 - Never trust "processed" or a zero-verdict resume as a verification.
 - Never run more than one replica.
 - Never add an MCP tool that returns a lead row or a file URL (D48).
-- Never open a run from the watch, and never spend before a named approval (D50).
+- Never open a run from the watch, and never spend before a named approval (D51).
 - Never pull lead rows into Grok bot context. No export payloads, no
   CSV paste, no child-agent GetLeads fire into chat, no walk of the
   thirteen-step skill in that context. Counts, ids, and a link only

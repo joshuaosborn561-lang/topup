@@ -4,6 +4,7 @@ import type { GetleadsFilters } from "../clients/getleads.js";
 import { Overlap } from "../lib/concurrency.js";
 import { parseRecipe } from "../recipes/schema.js";
 import { NO_CACHE, type PoolCacheHit, type PoolCacheReader } from "./cache.js";
+import { sampleAiArkPilot } from "./measure.js";
 import { planSize, type PlannerDeps } from "./planner.js";
 import { VendorCallLog } from "./vendorLog.js";
 
@@ -62,7 +63,14 @@ interface Fake {
   badPilotFor: string[] | null;
 }
 
-function deps(opts: { fake: Fake; aiArk?: ((f: GetleadsFilters) => number) | null; totals?: Record<string, number>; cache?: PoolCacheReader; performance?: Record<number, [number, number]> }): PlannerDeps {
+function deps(opts: {
+  fake: Fake;
+  aiArk?: ((f: GetleadsFilters) => number) | null;
+  totals?: Record<string, number>;
+  cache?: PoolCacheReader;
+  performance?: Record<number, [number, number]>;
+  preview?: (f: GetleadsFilters, page: number, size: number) => Promise<{ total_matching: number; rows: Array<{ title: string; industry: string; description: string; company_size: string; employees: number | null; country: string; state: string; city: string }> }>;
+}): PlannerDeps {
   const { fake } = opts;
   const totals = opts.totals ?? { [HEALTH[0]!]: 5000, [TRUCKS[0]!]: 3000 };
   const log = new VendorCallLog(() => 1000);
@@ -93,7 +101,10 @@ function deps(opts: { fake: Fake; aiArk?: ((f: GetleadsFilters) => number) | nul
   return {
     db: db as never,
     getleads: getleads as never,
-    aiArk: opts.aiArk === undefined || opts.aiArk === null ? null : { count: async (f) => ({ total_matching: opts.aiArk!(f) }) },
+    aiArk:
+      opts.aiArk === undefined || opts.aiArk === null
+        ? null
+        : { count: async (f) => ({ total_matching: opts.aiArk!(f) }), ...(opts.preview ? { preview: opts.preview } : {}) },
     maps: null,
     permits: null,
     rails: { gate: async () => ({ kind: "proceed", worstCaseCents: 5, reason: "under cap" }), record: async () => 0 } as never,
@@ -167,18 +178,98 @@ describe("D48 — the size planner", () => {
     assert.ok(calls.some((c) => c.vendor === "getleads" && c.ok));
   });
 
-  it("agrees within 10%, and parks only the mismatched pool's campaigns", async () => {
+  it("agrees within 10%, and a wider gap keeps the getleads count when the AI Ark pilot was not scored", async () => {
     const fake: Fake = { counts: [], exports: [], held: 0, badPilotFor: null };
     const plan = await planSize(deps({ fake, aiArk: (f) => (f.industries?.[0] === HEALTH[0] ? 5200 : 1000) }), run, recipe(), [11, 12, 13]);
     assert.equal(plan.counts.ai_ark_called, 1);
     const ok = plan.report.find((r) => r.campaign_id === 11)!;
     assert.equal(ok.tam_check, "ok");
     assert.equal(ok.ai_ark_count, 5200);
-    const bad = plan.report.find((r) => r.campaign_id === 13)!;
-    assert.equal(bad.gate, "tam_mismatch");
-    assert.equal(bad.getleads_count, 3000);
-    assert.equal(bad.ai_ark_count, 1000);
-    assert.deepEqual(plan.qualifying, [11, 12]);
+    assert.equal(ok.gate, "ok");
+    const wide = plan.report.find((r) => r.campaign_id === 13)!;
+    assert.equal(wide.tam_check, "getleads_only");
+    assert.equal(wide.gate, "ok");
+    assert.equal(wide.tam_total, 3000);
+    assert.equal(wide.getleads_count, 3000);
+    assert.equal(wide.ai_ark_count, 1000);
+    assert.ok(wide.getleads_filters);
+    assert.ok(wide.ai_ark_filters);
+    assert.deepEqual(plan.qualifying, [11, 12, 13]);
+  });
+
+  it("a gap of 10% to 25% uses the lower count and does not park", async () => {
+    const fake: Fake = { counts: [], exports: [], held: 0, badPilotFor: null };
+    const plan = await planSize(deps({ fake, totals: { [HEALTH[0]!]: 1262 }, aiArk: () => 1466 }), run, recipe(), [11]);
+    const row = plan.report.find((r) => r.campaign_id === 11)!;
+    assert.equal(row.tam_check, "mismatch_minor");
+    assert.equal(row.tam_total, 1262);
+    assert.equal(row.gate, "ok");
+    assert.equal(row.ai_ark_pilot, undefined);
+  });
+
+  it("a gap over 25% uses the AI Ark count when title and industry both clear 80%", async () => {
+    const fake: Fake = { counts: [], exports: [], held: 0, badPilotFor: null };
+    const person = {
+      title: "CIO",
+      industry: TRUCKS[0]!,
+      description: "freight",
+      company_size: "51 to 200",
+      employees: 80,
+      country: "United States",
+      state: "Texas",
+      city: "Dallas",
+    };
+    let pages = 0;
+    const plan = await planSize(
+      deps({
+        fake,
+        aiArk: (f) => (f.industries?.[0] === HEALTH[0] ? 5200 : 1000),
+        preview: async () => {
+          pages += 1;
+          return { total_matching: 1000, rows: Array.from({ length: pages === 3 ? 50 : 100 }, () => person) };
+        },
+      }),
+      run,
+      recipe(),
+      [13],
+    );
+    const row = plan.report.find((r) => r.campaign_id === 13)!;
+    assert.equal(pages, 3);
+    assert.equal(row.tam_check, "ai_ark_wider");
+    assert.equal(row.tam_total, 1000);
+    assert.equal(row.gate, "ok");
+    assert.ok((row.ai_ark_pilot?.title_match ?? 0) >= 80);
+    assert.ok((row.ai_ark_pilot?.industry_match ?? 0) >= 80);
+    assert.equal(row.pilot?.gate, "ok", "the getleads pilot still gates the pool");
+  });
+
+  it("scores the AI Ark pilot through the client method, not a detached function", async () => {
+    class Client {
+      async count() {
+        return { total_matching: 1 };
+      }
+      async preview(_f: GetleadsFilters, _page: number, _size: number) {
+        return this.page();
+      }
+      page() {
+        return {
+          total_matching: 1,
+          rows: [{ title: "CIO", industry: "Hospitals", description: "", company_size: "51 to 200", employees: 80, country: "United States", state: "Texas", city: "Dallas" }],
+        };
+      }
+    }
+    const rows = await sampleAiArkPilot(
+      {
+        aiArk: new Client(),
+        rails: { gate: async () => ({ kind: "proceed", worstCaseCents: 9, reason: "ok" }), record: async () => 0 },
+        log: new VendorCallLog(() => 1),
+        overlap: new Overlap(2, 4),
+      } as never,
+      { runId: run.run_id, clientTag: "acme" },
+      { job_titles: ["CIO"], countries: ["United States"] },
+    );
+    assert.equal(rows?.length, 3);
+    assert.equal(rows?.[0]?.title, "CIO");
   });
 
   it("a pool with under 1,000 net new is TAM filled per campaign; nothing to pull closes the run as sized", async () => {
@@ -250,5 +341,180 @@ describe("D48 — the size planner", () => {
     assert.match(full.briefing, /Loads are paused/);
     assert.equal(full.briefing.includes("@"), false);
     assert.equal(JSON.stringify(full.extra).includes("@example.test"), false, "the overlap sample never reaches the step");
+  });
+
+  it("an AI Ark pilot under 80% keeps the getleads count and does not park the pool", async () => {
+    const fake: Fake = { counts: [], exports: [], held: 0, badPilotFor: null };
+    const nurse = {
+      title: "Nurse",
+      industry: "Hospitals and Health Care",
+      description: "clinic",
+      company_size: "51 to 200",
+      employees: 80,
+      country: "United States",
+      state: "Texas",
+      city: "Dallas",
+    };
+    const plan = await planSize(
+      deps({
+        fake,
+        aiArk: () => 1000,
+        preview: async () => ({ total_matching: 1000, rows: Array.from({ length: 100 }, () => nurse) }),
+      }),
+      run,
+      recipe(),
+      [13],
+    );
+    const row = plan.report.find((r) => r.campaign_id === 13)!;
+    assert.equal(row.tam_check, "getleads_only");
+    assert.equal(row.tam_total, 3000);
+    assert.equal(row.gate, "ok");
+    assert.notEqual(row.gate, "pilot_mismatch");
+  });
+});
+
+const POOL_2178 = "Google Maps, 2,178 businesses";
+const SMALL_OPS = "Google Maps Scraper, 404 ZIPs x 25 categories, 13,438 with a domain plus 4,885 needing one.";
+
+function physicalRecipe(lane: string, ids: number[]) {
+  return parseRecipe({
+    recipe_id: `peterson.${lane}.v1`,
+    client_tag: "peterson",
+    lane,
+    smartlead_client_id: 77,
+    supabase_project: "azpapwtnrbzywlnxxecz",
+    source: { kind: "maps", params: { categories: ["general contractor"] } },
+    suppression: { response_based: true, same_offer_any_client: true },
+    email_finding: { enabled: false },
+    verify: { seg_split: true },
+    normalize: {},
+    segments: { slot: ids.map(String) },
+    routing: ids.map((id) => ({ when: { slot: String(id) }, campaign_id: id, icp: { kind: "physical", persona: "gc_partner" } })),
+    runway: { floor_days: 7, target_days: 30, max_per_run: 10000 },
+    working: { interested_per_2000_sends: 1, variant_min_sends: 1000 },
+    spend: { auto_cap_usd: 5 },
+  });
+}
+
+describe("D50 — stored pools and a count gap", () => {
+  it("two campaigns on one stored pool never plan more rows than tam_left", async () => {
+    const fake: Fake = { counts: [], exports: [], held: 0, badPilotFor: null };
+    let live = 0;
+    const base = deps({ fake });
+    const ids = [3798227, 3798228];
+    const plan = await planSize(
+      {
+        ...base,
+        maps: { scopedBusinesses: async () => { live += 1; return 0; } } as never,
+        clientIcpKind: async () => "non_linkedin",
+        campaignBuilds: async () => ids.map((id) => ({ smartlead_campaign_id: id, company_source: "maps", method: POOL_2178 })),
+        performance: async () => new Map(ids.map((id) => [id, { campaign_id: id, sends: 4000, positives: 6, per_2000: 3 }])),
+      },
+      { ...run, client_tag: "peterson", lane: "c1_general_contractors" },
+      physicalRecipe("c1_general_contractors", ids),
+      ids,
+    );
+    assert.equal(live, 0, "a stored pool is not recounted live");
+    const rows = ids.map((id) => plan.report.find((r) => r.campaign_id === id)!);
+    for (const row of rows) {
+      assert.equal(row.tam_total, 2178);
+      assert.equal(row.pool_rows, 2178);
+    }
+    const planned = rows.reduce((sum, row) => sum + row.to_add, 0);
+    assert.ok(planned <= 2178, `plan_rows ${planned} exceeded the shared pool`);
+    assert.ok(planned > 0);
+  });
+
+  it("EMCOR Small Ops sizes from the stored Maps pool, not a live count of 0", async () => {
+    const fake: Fake = { counts: [], exports: [], held: 0, badPilotFor: null };
+    let live = 0;
+    const base = deps({ fake });
+    const id = 4037475;
+    const plan = await planSize(
+      {
+        ...base,
+        maps: { scopedBusinesses: async () => { live += 1; return 0; } } as never,
+        clientIcpKind: async () => "non_linkedin",
+        campaignBuilds: async () => [{ smartlead_campaign_id: id, company_source: "maps", method: SMALL_OPS, rows_imported: 715, build_label: "emcor_lane_e_site_role_20260928" }],
+        performance: async () => new Map([[id, { campaign_id: id, sends: 4000, positives: 6, per_2000: 3 }]]),
+      },
+      { ...run, client_tag: "emcor", lane: "e_small_ops" },
+      physicalRecipe("e_small_ops", [id]),
+      [id],
+    );
+    const row = plan.report.find((r) => r.campaign_id === id)!;
+    assert.equal(live, 0);
+    assert.equal(row.tam_total, 18323 - 715);
+    assert.equal(row.pool_rows, 18323);
+    assert.equal(row.already_contacted, 715);
+    assert.equal(row.gate, "ok");
+    assert.match(row.tam_source ?? "", /Google Maps/);
+    assert.notEqual(row.gate, "tam_filled");
+  });
+
+  it("a missing stored pool is tam_source_missing, not a filled market at 0", async () => {
+    const fake: Fake = { counts: [], exports: [], held: 0, badPilotFor: null };
+    const base = deps({ fake });
+    const id = 4036499;
+    const plan = await planSize(
+      {
+        ...base,
+        clientIcpKind: async () => "non_linkedin",
+        campaignBuilds: async () => [{ smartlead_campaign_id: id, company_source: "getleads", method: "getleads geo fence, TAM 1,612" }],
+        performance: async () => new Map([[id, { campaign_id: id, sends: 4000, positives: 6, per_2000: 3 }]]),
+      },
+      { ...run, client_tag: "emcor", lane: "a_property" },
+      physicalRecipe("a_property", [id]),
+      [id],
+    );
+    const row = plan.report.find((r) => r.campaign_id === id)!;
+    assert.equal(row.gate, "tam_source_missing");
+    assert.equal(row.tam_total, null);
+    assert.equal(row.to_add, 0);
+  });
+
+  it("a campaign with no repeatable query still reports the imported yield", async () => {
+    const fake: Fake = { counts: [], exports: [], held: 0, badPilotFor: null };
+    const base = deps({ fake });
+    const ids = [4005226, 4005228];
+    const empty = parseRecipe({
+      recipe_id: "powergryd.vciso.v0",
+      client_tag: "powergryd",
+      lane: "vciso",
+      smartlead_client_id: 77,
+      supabase_project: "azpapwtnrbzywlnxxecz",
+      source: { kind: "mixed", note: "receipt did not name its lists", parts: [] },
+      suppression: { response_based: true, same_offer_any_client: true },
+      email_finding: { enabled: false },
+      verify: { seg_split: true },
+      normalize: {},
+      segments: { slot: ids.map(String) },
+      routing: ids.map((id) => ({ when: { slot: String(id) }, campaign_id: id, icp: { kind: "linkedin_native", persona: "vciso" } })),
+      runway: { floor_days: 7, target_days: 30, max_per_run: 10000 },
+      working: { interested_per_2000_sends: 1, variant_min_sends: 1000 },
+      spend: { auto_cap_usd: 5 },
+    });
+    const plan = await planSize(
+      {
+        ...base,
+        campaignBuilds: async () => [
+          { smartlead_campaign_id: 4005226, build_label: "powergryd_vciso_lane_20260922", rows_imported: 1138, company_source: "getleads" },
+          { smartlead_campaign_id: 4005226, build_label: "powergryd_name_bank_20260922", rows_imported: 316, company_source: "getleads" },
+          { smartlead_campaign_id: 4005228, build_label: "powergryd_vciso_lane_20260922", rows_imported: 1138, company_source: "getleads" },
+          { smartlead_campaign_id: 4005228, build_label: "powergryd_name_bank_20260922", rows_imported: 316, company_source: "getleads" },
+        ],
+        performance: async () => new Map(ids.map((id) => [id, { campaign_id: id, sends: 4000, positives: 6, per_2000: 3 }])),
+      },
+      { ...run, client_tag: "powergryd", lane: "vciso" },
+      empty,
+      ids,
+    );
+    for (const id of ids) {
+      const row = plan.report.find((r) => r.campaign_id === id)!;
+      assert.equal(row.tam_total, 1138 + 316, `#${id}`);
+      assert.match(row.tam_source ?? "", /powergryd_vciso_lane_20260922/);
+      assert.match(row.tam_source ?? "", /powergryd_name_bank_20260922/);
+      assert.match(row.strategy, /powergryd_name_bank_20260922/);
+    }
   });
 });

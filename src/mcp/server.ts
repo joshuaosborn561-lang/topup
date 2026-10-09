@@ -155,7 +155,7 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     "size_client",
     {
       description:
-        "Pilot and size one client in one call. Opens a size-only run per lane (every lane the recipes name, or the lanes or campaign_ids given), concurrently; waits up to wait_seconds; returns each lane's one-line-per-campaign report with the policy gate and reason, and Josh's approval briefing. pilot=true scores the 250-row sample and does not size. Nothing is pulled or loaded. Counts only.",
+        "Pilot and size one client in one call. Opens a size-only run per lane. campaign_ids route to the lane campaign_registry names; an id on no lane is reported and does not open another lane. With no campaign_ids, every recipe lane is sized. Waits up to wait_seconds and returns each lane's one-line-per-campaign report with the policy gate and reason, and Josh's approval briefing. pilot=true scores the 250-row sample and does not size. Nothing is pulled or loaded. Counts only.",
       inputSchema: {
         client_tag: recipeClient,
         lanes: z.array(snake).optional(),
@@ -166,7 +166,26 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
     },
     async ({ client_tag, lanes, campaign_ids, pilot, wait_seconds }) => {
       if (!allowed("size_client")) return refused();
-      return text(await sizeClient({ repo: d.repo, orchestrator: d.orchestrator, recipes: d.recipes }, { clientTag: client_tag, lanes, campaignIds: campaign_ids, pilot, waitSeconds: wait_seconds, by }));
+      return text(
+        await sizeClient(
+          {
+            repo: d.repo,
+            orchestrator: d.orchestrator,
+            recipes: d.recipes,
+            registryLanes: async (tag) => {
+              const rows = await d.repo.campaignRegistry(tag).catch(() => [] as Record<string, unknown>[]);
+              const map = new Map<number, string>();
+              for (const row of rows) {
+                const id = Number(row.campaign_id);
+                const lane = row.lane == null ? "" : String(row.lane).trim();
+                if (Number.isInteger(id) && id > 0 && lane) map.set(id, lane);
+              }
+              return map;
+            },
+          },
+          { clientTag: client_tag, lanes, campaignIds: campaign_ids, pilot, waitSeconds: wait_seconds, by },
+        ),
+      );
     },
   );
 

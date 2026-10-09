@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { GetleadsFilters } from "./getleads.js";
-import { AI_ARK_TOKEN_MISSING, AiArkPreviewClient, peoplePreviewBody } from "./aiArkPreview.js";
+import { AI_ARK_TOKEN_MISSING, AiArkPreviewClient, peoplePreviewBody, previewPeople } from "./aiArkPreview.js";
 
 const titles = {
   job_titles: ["CIO", "Director of IT"],
@@ -92,5 +92,21 @@ describe("AI Ark People Preview", () => {
       () => client.count({ job_titles: ["Owner"], countries: ["United States"] } as GetleadsFilters),
       (err: Error) => /HTTP 401.*unauthorized/.test(err.message) && !err.message.includes("person-row"),
     );
+  });
+
+  it("maps a preview page to scorer fields and drops the email", () => {
+    const rows = previewPeople([
+      {
+        title: "CIO",
+        email: "hidden-person@example.test",
+        company: { industry: "Hospitals and Health Care", description: "a clinic", employeeSize: "51 to 200", employees: 80 },
+        location: { country: "United States", state: "Texas", city: "Dallas" },
+      },
+    ]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.title, "CIO");
+    assert.equal(rows[0]?.industry, "Hospitals and Health Care");
+    assert.equal(JSON.stringify(rows).includes("hidden-person@example.test"), false);
+    assert.equal("email" in (rows[0] ?? {}), false);
   });
 });

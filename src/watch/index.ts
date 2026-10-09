@@ -113,7 +113,7 @@ export class RunwayWatch {
         note: "D38 under-2 mock: filters / net-new / $ are a size step, not invented here. Paid spend still needs Josh.",
       });
     }
-    // D50: nothing starts on its own. The watch observes and says what it
+    // D51: nothing starts on its own. The watch observes and says what it
     // would have started; Grok bot starts runs, after a person approves.
     const recipeSummary = await recipeSummariesForWatch(this.d.db, recipe.client_tag, decision.campaigns).catch(() => null);
     log.info("would start", {
@@ -122,7 +122,7 @@ export class RunwayWatch {
       campaigns: decision.campaigns,
       why: decision.why,
       last_pull_counts: recipeSummary,
-      note: "D50: the watch does not start runs; Grok bot starts them with size_client or start_topup",
+      note: "D51: the watch does not start runs; Grok bot starts them with size_client or start_topup",
     });
     return "go";
   }

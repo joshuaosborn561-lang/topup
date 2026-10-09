@@ -642,7 +642,7 @@ export class Orchestrator {
       return await this.d.repo.withRun(run.run_id, async (tx) => {
         const { rowCount } = await tx.query(
           `update ${table} set lead_status = 'needs_verify', run_id = null, verify_batch = null, status_changed_at = now()
-           where run_id = $1 and lead_status = 'verifying'`,
+           where run_id = $1 and lead_status in ('verifying', 'claimed', 'reserved', 'pulling')`,
           [run.run_id],
         );
         return rowCount ?? 0;

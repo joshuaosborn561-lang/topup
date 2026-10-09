@@ -46,7 +46,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D24 | Live |
 | D25 | Live |
 | D26 | Live; pipeline order and find_emails-before-ingest superseded by D29 |
-| D27 | Live; superseded for starting by D50 (the watch observes); per-campaign needy as the start signal superseded by D38; the not-working card removed by D46 |
+| D27 | Live; superseded for starting by D51 (the watch observes); per-campaign needy as the start signal superseded by D38; the not-working card removed by D46 |
 | D28 | Live; pipeline list superseded by D29 |
 | D29 | Live; recipe-level ICP superseded by D30; empty-list-proceeds superseded by D34; 90-day send window restored by D35 |
 | D30 | Live |
@@ -57,7 +57,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
 | D36 | Live |
 | D37 | Live |
-| D38 | Live; n/a-as-healthy and inbox-only days superseded by D45; superseded for starting by D50 (the watch observes) |
+| D38 | Live; n/a-as-healthy and inbox-only days superseded by D45; superseded for starting by D51 (the watch observes) |
 | D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context; receipt inference is D45 |
 | D40 | Live; live pull recipe MCP on this service, not LeadPipe; the three tools are folded into `campaign_history` by D48; watch Slack includes the count summary |
 | D41 | Live; HTTPS MCP needs no login; unauthenticated callers get the operator set |
@@ -69,7 +69,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D47 | Live; build records are the memory |
 | D48 | Live; the planner, the caches, the vendor-call log, lifecycle tools, the fifteen-tool surface, Slack optional; `client_overview` is the sixteenth tool by D49 |
 | D49 | Live; starts read the registry and the build tags for every client; `client_overview` and the `tags` block for the babysitter; the step 2 gate is the 1,000 floor |
-| D50 | Live; nothing starts on its own, Grok bot starts; every paid call waits for a named approval (auto cap $0); "the TAM for this campaign is exhausted"; Deep Roots mapped; the fourteen Peterson and Insight registry rows mapped |
+| D50 | Live; registry lane wins over the first recipe; a stored Maps pool is the TAM; a LinkedIn gap no longer parks |
+| D51 | Live; nothing starts on its own, Grok bot starts; every paid call waits for a named approval (auto cap $0); "the TAM for this campaign is exhausted"; Deep Roots mapped; the fourteen Peterson and Insight registry rows mapped |
 
 ---
 
@@ -1613,7 +1614,54 @@ more than D48.
 
 **Guard.** `src/guards/d49_tags_overview.test.ts`. Ask Josh.
 
-## D50 — Nothing starts on its own, and every paid call is approved first
+## D50 — The registry lane, the stored pool, and a count gap that does not park
+
+**Decision.** Three sizing rules, from the 2026-10-09 briefs.
+
+1. **The lane is the one `campaign_registry` names.** `size_client`
+   with `campaign_ids`, and `start_topup` with a campaign and no lane,
+   open that lane. The first in-memory recipe whose routing mentions the
+   id does not win. An id on no lane is said so, and no run opens on
+   another lane. Every requested campaign is on a report line.
+   Campaigns that share one stored pool split `plan_rows` so the sum
+   does not exceed `tam_left`.
+2. **A non-LinkedIn ICP sizes from the stored Maps or permits pool on
+   the build, including when the route kind is maps or permits.** A
+   pool that cannot be read is `tam_source_missing`. TAM 0 is not a
+   filled market unless the pool was actually read. Abort releases rows
+   left in `verifying`, `claimed`, `reserved`, or `pulling` and reports
+   the count. The campaign line carries `tam_source`, `pool_rows`,
+   `already_held`, and `already_contacted`.
+3. **A LinkedIn count gap does not park.** Within 10% the counts agree.
+   From 10% to 25% the TAM is the lower count (`mismatch_minor`). Over
+   25%, a 250-row AI Ark pilot that passes 80% on title and industry
+   makes the TAM the AI Ark count (`ai_ark_wider`) and the extra people
+   are that side's; otherwise the TAM stays the getleads count
+   (`getleads_only`). `reason` stays null. Both counts and both filter
+   sets are on the line. BCP compares the IT-only pair, then adds the
+   COO fallback of the side that won. People Preview is one credit per
+   page. The page is dropped.
+
+**Why.** On 2026-10-09, `size_client` opened the first recipe that
+mentioned a campaign: PowerGRYD 4005226 went to `msp_sec_leads`,
+4005228 to `name_bank`, TechEvo 3730560 to `govt_sub`, and Peterson C2
+and C3 to `c1_general_contractors`. `topup_queue` already showed the
+registry lanes. The same day EMCOR E Small Ops, which had sized at
+about 17,600 from a stored Maps pool of 18,323, sized to 0 and parked
+`tam_filled` after one live maps call. LinkedIn lanes parked
+`tam_mismatch` whenever getleads and AI Ark differed by more than 10%,
+including PowerGRYD MSP Owners at 1,262 versus 1,466.
+
+**Tradeoff.** A gap over 25% can spend a few People Preview credits to
+score 250 rows before the TAM is chosen. A registry row on the wrong
+lane still routes there. A stored yield is reported when the vendor
+query cannot be repeated; it does not invent titles.
+
+**Guard.** `src/plan/planner.test.ts`, `src/mcp/sizeClient.test.ts`,
+`src/policy/campaign.test.ts`, `src/guards/d50_lane_pool_gap.test.ts`.
+Ask Josh.
+
+## D51 — Nothing starts on its own, and every paid call is approved first
 
 **Decision.**
 
@@ -1646,4 +1694,4 @@ size run stops on a five-cent AI Ark call until someone taps. D27 and D38
 are superseded for starting; their judgement still shows in `topup_queue`
 and `client_overview`.
 
-**Guard.** `src/guards/d50_grok_starts.test.ts`. Ask Josh.
+**Guard.** `src/guards/d51_grok_starts.test.ts`. Ask Josh.

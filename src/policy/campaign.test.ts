@@ -69,6 +69,11 @@ describe("D46 — one policy layer, one verdict per campaign", () => {
     assert.equal(evaluateCampaign({ ...sized, tam_check: "tam_source_missing" }).gate, "tam_source_missing");
     assert.equal(evaluateCampaign({ ...sized, tam_check: "tam_mismatch" }).gate, "tam_mismatch");
     assert.equal(evaluateCampaign({ ...sized, tam_check: "single_source" }).gate, "ok", "a missing second count is not a mismatch");
+    assert.equal(evaluateCampaign({ ...sized, tam_total: 1262, tam_left: 1026, tam_check: "mismatch_minor" }).gate, "ok");
+    assert.equal(evaluateCampaign({ ...sized, tam_check: "ai_ark_wider" }).gate, "ok");
+    assert.equal(evaluateCampaign({ ...sized, tam_check: "getleads_only" }).gate, "ok");
+    assert.equal(evaluateCampaign({ ...sized, tam_total: 0, tam_left: 0, tam_check: null }).gate, "tam_source_missing");
+    assert.equal(evaluateCampaign({ ...sized, tam_total: 0, tam_left: 0, tam_check: "ok" }).gate, "tam_filled");
     assert.equal(evaluateCampaign({ ...sized, tam_left: MIN_NET_NEW - 1 }).gate, "tam_filled");
     assert.equal(evaluateCampaign({ ...sized, tam_left: MIN_NET_NEW }).gate, "ok");
     const ok = evaluateCampaign({ ...sized, tam_check: "ok", pilot: { gate: "ok", failed: [], rows_scored: 250 } });

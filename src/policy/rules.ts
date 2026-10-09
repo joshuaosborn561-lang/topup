@@ -29,6 +29,8 @@ export const MSP_MARKET_FLOOR = 1_000;
 
 /** LinkedIn-native TAM: getleads and AI Ark agree when within 10% of the larger count. */
 export const LINKEDIN_TAM_WITHIN = 0.1;
+/** Above 10% and at most this, the TAM is the lower count (D50). Wider than this, the AI Ark pilot decides. */
+export const LINKEDIN_GAP_MINOR = 0.25;
 
 /** Spend: the operator's own approval limit, the daily vendor backstop, owner-only approvals (D9, D45). */
 export const OPERATOR_SPEND_CAP_USD = 5;
@@ -132,6 +134,12 @@ export function isSuspectFilter(tamTotal: number, rowsFound: number | null, mark
 export function countsAgree(a: number, b: number): boolean {
   const hi = Math.max(a, b);
   return hi === 0 ? true : Math.abs(a - b) / hi <= LINKEDIN_TAM_WITHIN;
+}
+
+/** |a − b| / larger. Zero when both are zero. */
+export function countGap(a: number, b: number): number {
+  const hi = Math.max(a, b);
+  return hi === 0 ? 0 : Math.abs(a - b) / hi;
 }
 
 export function ratePer2000(sends: number, positives: number): number {
