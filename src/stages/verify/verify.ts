@@ -87,7 +87,18 @@ export class VerifyStage {
   async run(run: RunRow, recipe: Recipe): Promise<VerifyOutcome> {
     const { repo } = this.d;
     const table = ingestedTable(run.client_tag);
-    const step = await repo.beginStep(run.run_id, "verify");
+    // D64: a recorded approval must survive a retry. The 3-attempt park
+    // burned job 46b1c941 after two lp_export shape failures; reset so
+    // verify(job_id) resumes on approved_cents instead of parking.
+    const prior = await repo.getStep(run.run_id, "verify");
+    if (prior && (prior.approved_cents ?? 0) > 0 && (prior.attempts >= MAX_STEP_ATTEMPTS || prior.status === "failed" || prior.status === "parked")) {
+      await repo.resetStep(run.run_id, "verify");
+    }
+    let step = await repo.beginStep(run.run_id, "verify");
+    if (!step.ok && (prior?.approved_cents ?? 0) > 0) {
+      await repo.resetStep(run.run_id, "verify");
+      step = await repo.beginStep(run.run_id, "verify");
+    }
     if (!step.ok) return this.park(run, `verify failed ${step.attempts - 1} times`, step.attempts - 1);
     await repo.setRunStatus(run.run_id, "verifying", "verify");
 
@@ -118,7 +129,8 @@ export class VerifyStage {
       return this.finish(run, recipe, table);
     } catch (err) {
       const message = (err as Error).message;
-      const parked = step.attempts >= MAX_STEP_ATTEMPTS;
+      const approved = (await repo.getStep(run.run_id, "verify"))?.approved_cents ?? prior?.approved_cents ?? 0;
+      const parked = step.attempts >= MAX_STEP_ATTEMPTS && approved <= 0;
       await repo.failStep(run.run_id, "verify", message, parked);
       log.error("verify step failed", { run_id: run.run_id, attempt: step.attempts, parked, error: message });
       if (parked) return this.park(run, message, step.attempts);

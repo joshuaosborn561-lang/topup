@@ -6,3 +6,4 @@ export * from "./mapsPool.js";
 export * from "./held.js";
 export * from "./jobs.js";
 export * from "./leftovers.js";
+export * from "./size.js";

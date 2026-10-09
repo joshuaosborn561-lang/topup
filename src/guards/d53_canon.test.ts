@@ -8,7 +8,8 @@ import { SERVICE_VERSION } from "../version.js";
 
 /**
  * D53 — the service is the dumb half. Grok reads, Grok runs the verbs, a
- * person approves every spend, Josh flips ACTIVE. Nothing here sizes,
+ * person approves every spend, Josh flips ACTIVE. The old size_client
+ * planner is gone; `size` is a free dry-run read (D64). Nothing here
  * plans, watches, infers a recipe or posts to Slack. Ask Josh before any
  * of that comes back.
  */

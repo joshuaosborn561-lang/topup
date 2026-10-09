@@ -8,7 +8,7 @@
 export const GROK_SAMPLE_MAX = 10;
 
 /** The reads (D52). Each returns counts, ids, labels and the written notes, with the rule stated. */
-export const CANON_READS = ["canon", "campaigns", "campaign_record", "sources", "count", "held", "jobs", "job", "spend", "leftovers", "holds", "loads_paused"] as const;
+export const CANON_READS = ["canon", "campaigns", "campaign_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers", "holds", "loads_paused"] as const;
 
 /** The verbs (D52). Each runs one or two stages on a job, once, and returns counts. */
 export const CANON_VERBS = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort", "resolve", "note"] as const;

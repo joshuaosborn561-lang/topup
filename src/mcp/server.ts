@@ -32,6 +32,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   sources: "operator",
   count: "operator",
   held: "operator",
+  size: "operator",
   jobs: "operator",
   job: "operator",
   spend: "operator",

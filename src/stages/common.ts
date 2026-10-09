@@ -140,10 +140,15 @@ export async function finish(
   counts: Record<string, number>,
   line: string,
   report?: readonly CampaignReportEntry[],
+  actualCents?: number,
 ): Promise<StageOutcome> {
   const stored: Record<string, unknown> = { ...counts };
   if (report && report.length) stored.campaign_report = report;
-  await d.repo.finishStep(run.run_id, stage, { useful_output: useful, counts: stored });
+  await d.repo.finishStep(run.run_id, stage, {
+    useful_output: useful,
+    counts: stored,
+    ...(actualCents != null && Number.isFinite(actualCents) ? { actual_cents: Math.max(0, Math.round(actualCents)) } : {}),
+  });
   await d.repo.mergeRunCounts(run.run_id, funnelCounts(counts));
   const reportLine = report && report.length ? `\n${formatCampaignReport(report)}` : "";
   await d.console.postInThread(run, `${line}${reportLine}`.slice(0, 3500));

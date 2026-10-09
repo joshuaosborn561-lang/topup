@@ -391,7 +391,7 @@ export class Repo {
     },
   ): Promise<void> {
     await this.db.query(
-      `update topup.run_steps set status = 'done', finished_at = now(),
+      `update topup.run_steps set status = 'done', finished_at = now(), last_error = null,
          vendor_job_id = coalesce($3, vendor_job_id),
          actual_cents = coalesce($4, actual_cents),
          useful_output = coalesce($5, useful_output),
@@ -548,6 +548,14 @@ export class Repo {
     await this.db.query(`update topup.cards set payload = payload || jsonb_build_object('blocks', $2::jsonb) where card_id = $1`, [
       cardId,
       JSON.stringify(blocks),
+    ]);
+  }
+
+  /** Re-quote an open card: merge the new estimate into payload (D64). */
+  async updateCardPayload(cardId: string, payload: Record<string, unknown>): Promise<void> {
+    await this.db.query(`update topup.cards set payload = payload || $2::jsonb where card_id = $1 and status = 'open'`, [
+      cardId,
+      JSON.stringify(payload),
     ]);
   }
 

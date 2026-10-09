@@ -82,6 +82,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 | D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
 | D62 | Live; a background maps pull always ends done or failed with `last_error`; the copy reads the named ICP view (not the companion join), times out, and dedupes with or without a unique email index |
+| D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). That PR writes the live D63 text. This stub keeps the ledger contiguous so D64 can ship off main |
+| D64 | Live; job 46b1c941: enrich approval runs the paid people step; a step that did not run is not done; ICP labels are tokens; spend cards re-quote and record actuals; maps used/net-new includes ingested + contacted; lp_export reads the wrapped payload; verify retry uses the recorded approval and does not park; `size` is the free dry-run; maps pull skips held emails before max_rows |
 
 ---
 
@@ -2105,3 +2107,83 @@ query; the statement timeout is what stops it.
 
 **Guard.** `src/guards/d62_maps_pull_timeout.test.ts` and the PGlite
 cases in `src/canon/mapsPool.pg.test.ts`. Ask Josh.
+
+## D63 — Suppression recycle and POD inbox exclusion (reserved)
+
+**Decision.** Reserved for PR #40 (`cursor/suppress-client-inbox-a879`).
+That PR owns D63 (client-only suppress, 6-month recycle, POD inbox
+exclusion). This stub exists so D64 can land on a branch off main
+without a gap in the ledger. Do not implement D63 here.
+
+**Why.** #40 is open and unmerged. Meta requires contiguous numbers.
+
+**Tradeoff.** Two D63 headers will collide if #40 merges without
+replacing this stub. #40 should take this number; this PR does not
+ship suppress behaviour.
+
+**Guard.** None on this branch. Ask Josh.
+
+## D64 — Job 46b1c941: approve, label, used, export, size, pull
+
+**Decision.** Seven things, one rule, from job `46b1c941` (emcor maps
+#4037475).
+
+1. **`approved_by` runs the paid step.** Puzzle waits as
+   `spend_approval`, not a parked card. The gate sees `approvedCents`.
+   `approved_by` records the amount, closes the spend card and any
+   leftover parked card for that step, and runs Find Named Person. The
+   queue is what is on the table now, not only this attempt's updates
+   from `needs_email`. A step that did not run, or processed 0 of N
+   queued rows, is failed/blocked with `last_error`, never `done`.
+   `find_emails` does not skip while `needs_person` or `needs_domain`
+   remain.
+2. **ICP labels are tokens.** Jev's `answers.category.choice` (then
+   `reason` if it is a snake_case token `/^[a-z][a-z0-9_]{2,80}$/`) is
+   the label. An unparseable sentence is `null` plus
+   `icp_label_unparseable`. Never the raw sentence, never slugged.
+3. **The spend card follows the estimate.** A re-quote updates the open
+   card's `rows` and `worst_case_cents`. Completion writes
+   `actual_cents`. A successful finish clears `last_error`.
+4. **Maps used is a union.** `count` reports `already_live` (receipt
+   campaigns), `already_ingested` (`lp.<tag>_ingested_leads`),
+   `already_contacted` (this-client sends in 90 days +
+   `public.suppression`), `already_used` as the distinct union, and
+   `net_new`. Counts only. 90 days matches suppress on main; ask Josh
+   if D63's six months should replace it.
+5. **`lp_export` unwraps `{ok, tool, result}`.** Read
+   `result.signed_url` / `result.row_count`; still accept the flat
+   shape. A recorded verify approval is reused on retry. A third
+   verify failure does not park the job when that approval is on the
+   step; `verify(job_id)` resumes.
+6. **`size(client_tag, campaign_id, source, filters)`** is a free
+   dry-run read. It walks the entire maps pool the way `count` does,
+   reports already held, suppression drops by reason, and net new.
+   Opens no job, spends nothing, does not block the lane. Counts only.
+7. **Maps pull skips held emails before `max_rows`.** Successive pulls
+   advance through the pool instead of re-windowing the same already-held
+   slice.
+
+**Why.** Job `46b1c941`: `enrich(approved_by='Josh')` for a $0.67 Find
+Named Person estimate marked puzzle done on attempt 2 with 0 people /
+0 domains, never recorded the approval, left `last_error` 'over the
+auto cap, Ask Josh', left parked card `f19dbfae` open, and skipped
+`find_emails` while 19 rows sat at `needs_person`. Cap check ran
+without `approvedCents`; classify only looked at `needs_email`;
+`finish()` reported done. ICP stored Jev's raw sentence on 24 rows
+(`coalesce(reason, model)`). The ICP spend card kept $0.41 after the
+estimate fell to $0.17; `actual_cents` stayed unset (about 13¢). Maps
+count said 12,305 net new; a 2,000 pull gave 815 new and 333 survived
+suppression (473 already contacted) because used ignored ingested and
+this-client prior contact, and `LIMIT` ran before the held skip.
+Verify failed twice on `lp_export returned no signed_url/row_count:
+["ok","tool","result"]` with Josh's $1.40 already on the step.
+
+**Tradeoff.** Maps used components need `maps_raw.email`; without it
+the count falls back to live campaign leads only. `size` is maps-only;
+getleads still uses `count` + `held`. Verify with a recorded approval
+never parks on attempt cap — a broken vendor can retry indefinitely
+until someone aborts. Ask Josh if that should be a card instead.
+Pull of 2,000 now prefers unseen emails; `already_held` is the
+pre-insert dest∩pool count, not `windowed - inserted`.
+
+**Guard.** `src/guards/d64_enrich_icp_count.test.ts`. Ask Josh.
