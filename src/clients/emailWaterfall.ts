@@ -3,7 +3,8 @@ import { McpHttpClient } from "./mcpHttp.js";
 /**
  * Email Finder Waterfall (docs/servers.md §7). Name plus company or domain →
  * work email. Table source + writeback only — never inline rows. Cascade is
- * getleads → Smartlead → AI Ark → LeadMagic → Prospeo → FullEnrich last.
+ * getleads → Smartlead → AI Ark → Prospeo → FullEnrich last.
+ * A stored max_tier of leadmagic maps to aiark before the call (D58).
  */
 export interface EmailQuote {
   rows: number;

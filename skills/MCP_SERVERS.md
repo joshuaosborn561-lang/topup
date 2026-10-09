@@ -20,7 +20,7 @@ The routing rule for which server owns which job is in `leadgen-mcp-routing/SKIL
 | Permits/GCs | `https://workspace-production-4702.up.railway.app/mcp` | DFW commercial parcels and cached Shovels GC contractors, Texas and Florida officer matching, calling lists |
 | Domain Finder Waterfall | `https://domain-waterfall-production.up.railway.app/mcp` | Company name plus location to domain, `resolve_domain` on a source table, receipt tests |
 | Find Named Person | `https://people-waterfall-production.up.railway.app/mcp` | Company to named decision maker, `resolve_people` on a source table |
-| Email Finder Waterfall | `https://email-waterfall-production-021b.up.railway.app/mcp` | Name plus company or domain to work email, cascades AI Ark then LeadMagic then FullEnrich, `enrich_waterfall` with `source_table`, `writeback`, `max_tier`, `estimate_only` |
+| Email Finder Waterfall | `https://email-waterfall-production-021b.up.railway.app/mcp` | Name plus company or domain to work email, cascades getleads → Smartlead → AI Ark → Prospeo → FullEnrich, `enrich_waterfall` with `source_table`, `writeback`, `max_tier`, `estimate_only`. A stored `max_tier=leadmagic` maps to `aiark` (D58). |
 | Name to Email Finder | `https://finder-production-e298.up.railway.app` | Josh's own first attempt at name plus domain to email, runs before any paid vendor |
 | Email Verifier Progression | `https://verifyfall-production.up.railway.app/mcp` | MillionVerifier then No2Bounce, `start_verification` from a file URL, status, resume, sendable and rejected exports |
 | Smartlead server | `https://workspace-production-9629.up.railway.app/mcp` | Campaign reads and writes, `stage_leads_from_url`, `start_lead_import`, `start_lead_purge`, settings, schedule, mailboxes, analytics, raw `smartlead_request` |
@@ -34,7 +34,7 @@ Property owners and parcels: the parcel records live in Supabase project `kemvxz
 |---|---|---|
 | getleads | `https://app.getleads.io/api/mcp` | Primary contact database, unlimited plan, free. Band labels only, every email status (omit `email_status`; D35 item 15), industries with commas break |
 | AI Ark | `https://api.ai-ark.com/v1/mcp` | People discovery tier, paid. Returns first person at a domain not by title. Reverse email endpoint 404s |
-| LeadMagic | `https://mcp.leadmagic.io/mcp` | Enrichment tier, paid. Bulk `employee_finder` then SQL title filter then `work_email_finder` is 9x cheaper than `search_people`. `detect_job_change` bills on every call, banned |
+| LeadMagic | — | **Dropped (D58).** Do not call. `detect_job_change` stays banned. Old receipts that name it replay as `aiark` / Find Named Person's live order. |
 | Prospeo | `https://mcp.prospeo.io` | Cheaper name and company enrichment, paid |
 | FullEnrich | `https://mcp.fullenrich.com/mcp` | Last tier, expensive, off in every recipe unless Josh stamps it on |
 | DiscoLike | `https://api.discolike.com/v1/mcp` | Firmographic lookalikes and company counts, mostly free counts |

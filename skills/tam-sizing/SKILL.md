@@ -1,6 +1,6 @@
 ---
 name: tam-sizing
-description: Size the addressable universe before building any lead list, so the build is scoped to a real number instead of running until a vendor stops returning rows. Use whenever Josh asks how many are out there, how big is the TAM, how many can we get, whether a pool is exhausted, or asks to build or extend a list for any client or lane. Runs first, before getleads, AI Ark, LeadMagic, Prospeo, DiscoLike, Maps, PermitStack or any DM or domain discovery. Covers the free and near-free count endpoints, the lookalike counters, the partition check that proves a filter actually binds, and the rule that two independent vendors must agree before a number is trusted.
+description: Size the addressable universe before building any lead list, so the build is scoped to a real number instead of running until a vendor stops returning rows. Use whenever Josh asks how many are out there, how big is the TAM, how many can we get, whether a pool is exhausted, or asks to build or extend a list for any client or lane. Runs first, before getleads, AI Ark, Prospeo, DiscoLike, Maps, PermitStack or any DM or domain discovery. Covers the free and near-free count endpoints, the lookalike counters, the partition check that proves a filter actually binds, and the rule that two independent vendors must agree before a number is trusted. LeadMagic is dropped (D58).
 ---
 
 # TAM sizing
@@ -137,8 +137,7 @@ Prospeo for flagging domains you already hold.
   the department filter. Not usable for sizing without a paid seat.
 - **LinkedIn Sales Navigator** ... has the best department filter in existence, UI only, no export.
   Fine if Josh wants to eyeball a number himself; useless for automation.
-- **LeadMagic** ... `search_people` is 1 credit per person. Never use it to count. `search_companies`
-  advertises TAM building but bills per company returned, so it is a builder, not a counter.
+- **LeadMagic** ... dropped (D58). Do not count with it and do not call it. Use getleads `count_contacts` and AI Ark preview.
 
 ---
 

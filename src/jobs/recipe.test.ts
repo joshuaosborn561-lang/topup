@@ -16,7 +16,7 @@ describe("D52 — job recipe", () => {
     assert.equal(r.routing[0]?.icp.kind, "linkedin_native");
     assert.equal(r.runway.max_per_run, 1200);
     assert.equal(r.spend.auto_cap_usd, 0);
-    assert.equal(r.email_finding.max_tier, "leadmagic");
+    assert.equal(r.email_finding.max_tier, "aiark", "D58: the default email ceiling is aiark, not leadmagic");
     assert.equal(r.suppression.response_based, true);
   });
 

@@ -3,6 +3,7 @@ import type { Queryable } from "../db/pool.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { isColdCall, isNeverTopUp, ratePer2000 } from "../policy/rules.js";
 import { registryRows, type RegistryCampaign } from "./registry.js";
+import { legacyReplayWarnings } from "../recipes/legacyLeadmagic.js";
 import { describeSources, type SourceLine } from "./sources.js";
 
 /**
@@ -38,12 +39,14 @@ export interface CampaignRecord {
   leads_by_label: ProvenanceCount[];
   leads_by_leg: LegCount[];
   sources: { lines: SourceLine[]; unknown: Array<{ leg: string; value: string }> };
+  /** D58: how to replay a stored LeadMagic name. The receipts themselves are unchanged. */
+  legacy_warnings: string[];
   notes: string[];
   how_to_read: string;
 }
 
 export const HOW_TO_READ =
-  "receipts are what was written at pull time, newest first; builds are the same facts joined to the campaign; leads_by_leg counts the stamped lead rows by where their company, domain, person and email came from. Repeat the legs that fed most of the leads, with the company_filters of the receipt that earned the replies. A missing leg or an empty company_filters is a question for Josh, not a guess.";
+  "receipts are what was written at pull time, newest first; builds are the same facts joined to the campaign; leads_by_leg counts the stamped lead rows by where their company, domain, person and email came from. Repeat the legs that fed most of the leads, with the company_filters of the receipt that earned the replies. A missing leg or an empty company_filters is a question for Josh, not a guess. A stored email_max_tier of leadmagic replays as aiark; a stored LeadMagic person source replays as people_waterfall with the live Find Named Person order. The stored row is not rewritten (D58).";
 
 const RECEIPT_KEYS = [
   "written_by", "written_at", "lane", "campaign_ids", "icp_kind", "persona", "granularity", "build_label",
@@ -117,6 +120,7 @@ export async function campaignRecord(db: Queryable, repo: RecordRepo, clientTag:
     leads_by_label: byLabel,
     leads_by_leg: byLeg,
     sources: describeSources({ company: legs("company_source"), domain: legs("domain_source"), person: legs("person_source"), email: legs("email_source") }),
+    legacy_warnings: legacyReplayWarnings([...receipts, ...builds]),
     notes,
     how_to_read: HOW_TO_READ,
   };

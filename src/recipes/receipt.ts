@@ -38,10 +38,12 @@ export const PERSON_SOURCES = [
   "people_waterfall",
   "serp",
   "hard_to_find",
+  /** Legacy read-only (D58). 0 live rows today; keep so old receipts parse. New writes map to people_waterfall. */
   "leadmagic_employee_finder",
   "none",
 ] as const;
 export const EMAIL_SOURCES = ["already", "getleads", "discolike", "name_to_email", "email_waterfall", "none"] as const;
+/** Receipt CHECK still allows `leadmagic`. New writes map it to `aiark` (D58). */
 export const EMAIL_TIERS = ["getleads", "smartlead", "aiark", "leadmagic", "prospeo", "fullenrich"] as const;
 
 /** Latest receipt from the Sept 12 backfill. Its rows_found is the old export, tam_count is blank. */

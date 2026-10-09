@@ -1,6 +1,6 @@
 ---
 name: serp-dm-discovery
-description: Find decision makers at companies invisible to B2B databases (getleads, AI Ark, LeadMagic) using Google-indexed LinkedIn profiles via the Apify MCP google-search-scraper actor, then resolve emails. Use whenever vendor discovery has been exhausted on a company list, when Josh says serp it, run the serp lanes, or find the people on Google, or when a tool-mention search is wanted (people whose profiles name the vendor, e.g. Carbon Black or SentinelOne). Encodes the fire-all-batches-in-parallel rule so runs never execute one at a time, the two query styles, the strict company-match filter, and the current-employer audit that catches stale profiles. Measured Aug 2026 on the Goliath displacement build.
+description: Find decision makers at companies invisible to B2B databases (getleads, AI Ark, Prospeo) using Google-indexed LinkedIn profiles via the Apify MCP google-search-scraper actor, then resolve emails. Use whenever vendor discovery has been exhausted on a company list, when Josh says serp it, run the serp lanes, or find the people on Google, or when a tool-mention search is wanted (people whose profiles name the vendor, e.g. Carbon Black or SentinelOne). Encodes the fire-all-batches-in-parallel rule so runs never execute one at a time, the two query styles, the strict company-match filter, and the current-employer audit that catches stale profiles. Measured Aug 2026 on the Goliath displacement build. LeadMagic is dropped (D58).
 ---
 
 # SERP DM discovery
@@ -11,7 +11,7 @@ apify/google-search-scraper), both measured on the Goliath displacement build Au
 
 ## When to reach for this
 
-- Vendor waterfall (getleads, AI Ark, LeadMagic) already ran on the list and coverage is
+- Vendor waterfall (getleads, AI Ark, Prospeo) already ran on the list and coverage is
   still short. SERP recovered 15 to 30 percent of companies the entire vendor stack missed.
 - The buyer is identifiable by a TOOL, not a title... "whose profile says Carbon Black"
   finds the admin who feels the renewal regardless of what their card reads.
@@ -60,24 +60,23 @@ name tokens.
 
 1. Name to Email Finder start_run with {first_name, last_name, domain} objects... cheapest,
    run first, $1 max_cost per ~50 people.
-2. LeadMagic linkedin_to_email bulk (submit_detected_bulk_job, enrichment linkedin_to_email,
-   rows of {profile_url, company_name}) on ALL kept profiles including borderline ones...
-   1 credit per hit, free on miss, and it rescues real people the strict filter dropped.
+2. Email Waterfall `/enrich-one` or `enrich_waterfall` with `linkedin_url` (getleads →
+   AI Ark export_single by URL → Prospeo). LeadMagic `linkedin_to_email` is dropped (D58).
 
 ## The current-employer audit (non-negotiable)
 
-LeadMagic resolves the PERSON, and stale profiles resolve to their CURRENT employer
-somewhere else. On the Goliath build, 26 raw hits contained 12 fakes: a Strava query
+A vendor that resolves the PERSON (not the seat) will return whoever they work for now.
+On the Goliath build, 26 raw hits contained 12 fakes: a Strava query
 returned @docusign.com, a Nexxen query returned @bioreference.com, one hit was literally
 retired, plus wrong-company name collisions (Brazilian Arteris, wrong Loop, wrong ATC).
 KEEP ONLY hits whose email domain matches the target company domain. Cross-vendor
-agreement (Name to Email and LeadMagic returning the same address) is high-confidence
+agreement (Name to Email and the Email Waterfall returning the same address) is high-confidence
 catch-all evidence.
 
 ## Measured yields (Goliath, Aug 2026)
 
 - Style A: 94 companies searched, 14 confirmed emails at 13 companies after full audit.
 - Style B: 110 companies, 24 vendor-mention profiles at 19 companies pre-resolution.
-- Cost: ~$0.42 per 94-company batch plus ~130 LeadMagic credits per 54 profiles.
+- Cost: ~$0.42 per 94-company batch plus Email Waterfall credits on the kept profiles (the Aug 2026 number was ~130 LeadMagic credits; that vendor is dropped, D58).
 - Everything the SERP lanes still miss goes to phone outreach with names as openers,
   per hard-to-find-dm-discovery.

@@ -3,7 +3,9 @@ import { McpHttpClient } from "./mcpHttp.js";
 /**
  * Find Named Person / People Waterfall (docs/servers.md §6). Company → named
  * people. Table source only. Always pass an explicit approve_cost_usd — the
- * server default is -1 (no ceiling).
+ * server default is -1 (no ceiling). Do not send a dropped-vendor filter
+ * or ceiling; the live default is site_staff → cache → discolike →
+ * prospeo_search → aiark_people (D58).
  */
 export interface PeopleQuote {
   rows: number;

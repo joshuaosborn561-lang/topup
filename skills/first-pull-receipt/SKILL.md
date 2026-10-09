@@ -28,8 +28,8 @@ Classify the typical row you produced. There is no `other`. A receipt that would
 
 1. Companies: `getleads` | `maps` | `permits` | `maps_and_permits` | `parcels` | `ai_ark` | `table` | `serp_tool_mention` | `theirstack_tech_signal` | `linkedin_engagers` | `linkedin_import` | `web_visitor_pixel` | `job_posting_signal` | `public_records`. If the companies came from a signal, name the signal and put the query shape, vendor or technology list, creator roster, or job title terms in `company_filters` so the service can rerun it.
 2. Domain: `already` | `getleads` | `maps` | `domain_waterfall` | `theirstack` | `none`
-3. Person: `already` | `getleads` | `ai_ark` | `people_waterfall` | `serp` | `hard_to_find` | `leadmagic_employee_finder` | `none`
-4. Email: `already` | `getleads` | `discolike` | `name_to_email` | `email_waterfall` | `none`. If a waterfall ran, `email_max_tier` is the last tier allowed (`aiark`, `leadmagic`, `fullenrich`). Do not list a waterfall you did not run. No FullEnrich `email_max_tier` unless Josh stamped it. Name to Email is paused (D36 item 71).
+3. Person: `already` | `getleads` | `ai_ark` | `people_waterfall` | `serp` | `hard_to_find` | `none`. `leadmagic_employee_finder` is **legacy, read-only** (D58): old rows may still hold it; replay as `people_waterfall` with Find Named Person's default order `site_staff → cache → discolike → prospeo_search → aiark_people`. Do not write it on a new receipt.
+4. Email: `already` | `getleads` | `discolike` | `name_to_email` | `email_waterfall` | `none`. If a waterfall ran, `email_max_tier` is the last tier allowed (`aiark`, `prospeo`, `fullenrich`). A stored `leadmagic` ceiling is legacy and maps to `aiark` (D58). Do not write `leadmagic`. Do not list a waterfall you did not run. No FullEnrich `email_max_tier` unless Josh stamped it. Name to Email is paused (D36 item 71).
 
 getleads exports are usually person plus email from getleads, domain already there. Peterson style physical lanes are usually Maps plus permits, then Domain Waterfall, then Find Named Person, then DiscoLike find emails or the email waterfall.
 

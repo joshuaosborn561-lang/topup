@@ -52,7 +52,14 @@ D48).
     `icp-website-gate`). Only `icp_gate = yes` moves on; flagged rows are
     suppressed with a reason and stay in the table. A client with no label
     set in `topup.icp_variants` parks until one is written (D60).
-12. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+12. **LeadMagic is dropped.** A stored `email_max_tier=leadmagic` (or
+    `lm` / `lead_magic`) is a legacy ceiling: replay as `aiark`. A stored
+    LeadMagic person source (`leadmagic_employee_finder` and the old
+    aliases) replays as Find Named Person's default order `site_staff →
+    cache → discolike → prospeo_search → aiark_people`. The stored
+    receipt is not rewritten. New recipes and new receipts never write
+    those names (D58).
+13. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
     here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -141,8 +148,11 @@ call next.
 (`serp_tool_mention`, `theirstack_tech_signal`, `job_posting_signal`,
 `linkedin_engagers`, `web_visitor_pixel`). `domain_source`: `already`,
 `domain_waterfall`, `site_scrape`. `person_source`: `getleads`,
-`people_waterfall`, `site_staff`, `serp`. `email_source`: `getleads`,
-`email_waterfall`, `name_to_email`, `site_scrape`, `already`. `sources`
+`people_waterfall`, `site_staff`, `serp`. A stored
+`leadmagic_employee_finder` is legacy and maps to `people_waterfall`
+(D58). `email_source`: `getleads`,
+`email_waterfall`, `name_to_email`, `site_scrape`, `already`. A stored
+`email_max_tier=leadmagic` maps to `aiark`. `sources`
 has the full lines. A value not in the vocabulary is unknown; ask Josh.
 
 ## Never
@@ -158,7 +168,7 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   untyped `$1` on a maps ICP count (D59).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
-  paused.
+  paused. Never call LeadMagic (D58).
 * Never start, pause, stop, edit or delete a Smartlead campaign. The
   service never sets a campaign ACTIVE.
 
