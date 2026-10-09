@@ -79,4 +79,25 @@ describe("D57 — maps stored pool", () => {
       assert.doesNotMatch(q, /select\s+(?!count)[^`]*\b(email|first_name|last_name|phone|linkedin_url)\b/i, `D2/D57: ${q.slice(0, 80)}`);
     }
   });
+
+  it("companions without plan_id still keep plan_id via a maps_raw join", async () => {
+    const db = fakeDb({
+      pool: 18322,
+      used: 6017,
+      columns: {
+        maps_raw: ["place_id", "plan_id", "main_category"],
+        v_lane_e_final: ["place_id", "plan_id", "main_category", "keep_final"],
+        v_lane_e_companies: ["place_id", "main_category"],
+        v_lane_e_needs_domain: ["place_id", "main_category"],
+      },
+    });
+    const r = await countMapsPool(db as never, "emcor", laneE);
+    assert.ok(!("error" in r));
+    if ("error" in r) return;
+    const poolSql = db.seen.filter((q) => q.includes("union")).join("\n");
+    assert.match(poolSql, /maps_raw/, "D58: companions without plan_id join maps_raw");
+    assert.match(poolSql, /\$1::text/, "D58: the plan_id bind is typed");
+    assert.doesNotMatch(poolSql, /\$2/, "D58: $2 must not appear without a typed $1");
+    assert.equal(r.already_used, 6017);
+  });
 });
