@@ -211,6 +211,12 @@ export class Orchestrator {
    * while a card is open logs and returns (the tap will call again).
    */
   async drive(runId: string): Promise<void> {
+    // D52: a job opened by Grok runs one verb at a time; the orchestrator never chains it.
+    const row = await this.d.repo.getRun(runId);
+    if (row && Number(row.counts_by_status?.grok_job) === 1) {
+      log.info("job run is driven by its verbs, not by the orchestrator", { run_id: runId });
+      return;
+    }
     if (this.active.has(runId)) return;
     this.active.add(runId);
     try {

@@ -30,6 +30,25 @@ export const D48_SURFACE = [
   "lane_state",
   "lane_note",
   "add_client_domains",
+  // D52: the reads and the verbs for Grok bot
+  "campaigns",
+  "campaign_record",
+  "sources",
+  "count",
+  "held",
+  "jobs",
+  "job",
+  "spend",
+  "pull",
+  "suppress",
+  "enrich",
+  "verify",
+  "normalize",
+  "qa",
+  "stage",
+  "import",
+  "write_receipt",
+  "abort",
 ] as const;
 
 describe("D48 — planner and surface", () => {
@@ -49,7 +68,7 @@ describe("D48 — planner and surface", () => {
     }
   });
 
-  it("the surface is exactly the agreed tools (fifteen by D48, client_overview by D49), all operator-visible, none hidden, the retired ones gone", () => {
+  it("the surface is exactly the agreed tools (fifteen by D48, client_overview by D49, the reads and verbs by D52), all operator-visible, none hidden, the retired ones gone", () => {
     assert.deepEqual(Object.keys(MCP_TOOL_ROLE).sort(), [...D48_SURFACE].sort(), "D48: adding or removing a tool is a new decision. Ask Josh.");
     for (const tool of D48_SURFACE) assert.equal(MCP_TOOL_ROLE[tool], "operator", `D48: ${tool} is for Cayden as well as Josh`);
     assert.deepEqual([...HIDDEN_FROM_OPERATOR], []);

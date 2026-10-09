@@ -27,7 +27,10 @@ import { loadGeoFenceCities } from "./recipes/geoFence.js";
 import { mergeRecipes } from "./recipes/infer.js";
 import { resolveRecipeForStart } from "./recipes/resolve.js";
 import { mcpRouter } from "./mcp/server.js";
-import { Orchestrator } from "./orchestrator.js";
+import { Orchestrator, type Stages } from "./orchestrator.js";
+import { JobRunner } from "./jobs/runner.js";
+import { VendorCallLog } from "./plan/vendorLog.js";
+import { Overlap, SIZE_ACROSS_CLIENTS, SIZE_WITHIN_CLIENT } from "./lib/concurrency.js";
 import { loadRecipeFiles, syncRecipes } from "./recipes/load.js";
 import { SlackPoster } from "./slack/client.js";
 import { SlackConsole } from "./slack/console.js";
@@ -149,29 +152,30 @@ async function main(): Promise<void> {
   const people = cfg.PEOPLE_WATERFALL_MCP_URL ? new PeopleWaterfallClient(cfg.PEOPLE_WATERFALL_MCP_URL, cfg.PEOPLE_WATERFALL_TOKEN) : null;
   const emailWaterfall = cfg.EMAIL_WATERFALL_MCP_URL ? new EmailWaterfallClient(cfg.EMAIL_WATERFALL_MCP_URL, cfg.EMAIL_WATERFALL_TOKEN) : null;
   const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
+  const stages: Stages = {
+    trigger: new TriggerStage(base),
+    size: new SizeStage({ ...base, getleads, rails, maps, permits: permitCounts, aiArk }),
+    pull,
+    ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
+    suppress: new SuppressStage({ ...base, ledger }),
+    puzzle: new PuzzleStage({ ...base, ledger, rails, domain, people, cfg: jobs }),
+    findEmails: new FindEmailsStage({ ...base, rails, nameToEmail, emailWaterfall, cfg: jobs }),
+    verify,
+    normalize,
+    qa: new QaStage({ ...base, ledger }),
+    route: new RouteStage({ ...base, ledger }),
+    stage: new StageStage(base),
+    import: new ImportStage({ ...base, smartlead, rails, cfg: jobs }),
+    postImport: new PostImportStage({ ...base, smartlead, rails }),
+    flip: new FlipStage(base),
+};
   const orchestrator = new Orchestrator({
     repo,
     console: console_,
     ledger,
     fileRecipes: recipeFiles,
     retryDelayMs: cfg.STEP_RETRY_SECONDS * 1000,
-    stages: {
-      trigger: new TriggerStage(base),
-      size: new SizeStage({ ...base, getleads, rails, maps, permits: permitCounts, aiArk }),
-      pull,
-      ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
-      suppress: new SuppressStage({ ...base, ledger }),
-      puzzle: new PuzzleStage({ ...base, ledger, rails, domain, people, cfg: jobs }),
-      findEmails: new FindEmailsStage({ ...base, rails, nameToEmail, emailWaterfall, cfg: jobs }),
-      verify,
-      normalize,
-      qa: new QaStage({ ...base, ledger }),
-      route: new RouteStage({ ...base, ledger }),
-      stage: new StageStage(base),
-      import: new ImportStage({ ...base, smartlead, rails, cfg: jobs }),
-      postImport: new PostImportStage({ ...base, smartlead, rails }),
-      flip: new FlipStage(base),
-    },
+    stages,
   });
 
   if (cfg.SLACK_SIGNING_SECRET) {
@@ -224,6 +228,31 @@ async function main(): Promise<void> {
       operatorToken: cfg.MCP_OPERATOR_TOKEN,
       clientTags,
       recipes,
+      grok: {
+        repo,
+        ledger,
+        orchestrator,
+        jobs: new JobRunner({ repo, stages, console: console_, ledger }),
+        count: { getleads, aiArk, maps, permits: permitCounts, rails },
+        measure: {
+          db,
+          getleads,
+          aiArk,
+          maps,
+          permits: permitCounts,
+          rails,
+          loadGeo: (ref) => loadGeoFenceCities(db, ref),
+          log: new VendorCallLog(),
+          overlap: new Overlap(SIZE_WITHIN_CLIENT, SIZE_ACROSS_CLIENTS),
+          fetchText: async (url: string) => {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`export could not be read: HTTP ${res.status}`);
+            return res.text();
+          },
+          sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
+          now: () => Date.now(),
+        },
+      },
     }),
   );
 
