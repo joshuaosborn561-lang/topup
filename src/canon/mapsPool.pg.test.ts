@@ -245,7 +245,7 @@ describe("D62 — maps copy times out and dedupes without a unique index", () =>
     }
   });
 
-  it("a hung copy hits statement_timeout and throws (the live hang path)", async () => {
+  it("a failing copy throws and rolls back (PGlite does not honor statement_timeout)", async () => {
     const { db, close } = await pgliteDb();
     try {
       await db.exec(`
@@ -254,29 +254,43 @@ describe("D62 — maps copy times out and dedupes without a unique index", () =>
         create table client_t.maps_raw (
           place_id text, plan_id text, main_category text, name text, email text, domain text
         );
-        create view client_t.v_hang as
+        create view client_t.v_boom as
           select place_id, plan_id, main_category, name, email, domain, true as keep_final
             from client_t.maps_raw
-           where pg_sleep(3) is not null;
+           where (1 / 0) is not null;
         create table lp.t_ingested_leads (
           id serial primary key, email text, company_name text, source_label text
         );
         insert into client_t.maps_raw (place_id, plan_id, main_category, name, email, domain) values
           ('a', 'custom-1', 'church', 'A', 'a@example.test', 'a.example');
       `);
-      const withRun = async <T>(_id: string, fn: (tx: typeof db) => Promise<T>) => withTx(db, fn);
+      const seen: string[] = [];
+      const wrapped: Q = {
+        query: async (text, values) => {
+          seen.push(text);
+          return db.query(text, values);
+        },
+        exec: db.exec,
+      };
+      const withRun = async <T>(_id: string, fn: (tx: Q) => Promise<T>) => withTx(wrapped, fn);
       await assert.rejects(
         () =>
-          copyMapsPool({ ...db, withRun } as never, {
+          copyMapsPool({ ...wrapped, withRun } as never, {
             client_tag: "t",
-            filters: { plan_id: "custom-1", categories: ["church"], icp_view: "v_hang" },
+            filters: { plan_id: "custom-1", categories: ["church"], icp_view: "v_boom" },
             max_rows: 1,
             source_label: "fixture",
             run_id: "00000000-0000-0000-0000-000000000005",
             statementTimeoutMs: 200,
           }),
-        (err: Error) =>
-          /statement timeout|canceling statement|query_canceled|57014/i.test(err.message),
+        (err: Error) => /division by zero|57014|statement timeout|canceling statement/i.test(err.message),
+      );
+      assert.match(seen.join("\n"), /set local statement_timeout/i, "D62: timeout is set before the insert. Ask Josh.");
+      const left = await db.query("select count(*)::text as n from lp.t_ingested_leads");
+      assert.equal(
+        Number((left.rows[0] as { n: string }).n),
+        0,
+        "D62: a failed copy must roll back. Ask Josh.",
       );
     } finally {
       await close();
