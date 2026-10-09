@@ -38,7 +38,7 @@ describe("D48 — planner and surface", () => {
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     const readme = await readFile(new URL("README.md", root), "utf8");
     const babysitter = await readFile(new URL("skills/grok-bot-babysitter/SKILL.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D(48|49)\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /## The planner and the surface \(D48\)/);
     assert.match(canon, /No tool returns a lead\s+row or a file URL/);
     assert.match(ledger, /## D48 — /);

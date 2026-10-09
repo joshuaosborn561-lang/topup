@@ -11,7 +11,7 @@
 /** Interested replies per 2,000 sends a campaign needs to be topped up (D11, D44, brief §2). */
 export const REPLY_BAR_PER_2000 = 1;
 
-/** Net new leads a campaign needs before a top-up is worth running. Under this it is "TAM filled". */
+/** Leads a campaign must still have available before a top-up is worth running. Under this "the TAM for this campaign is exhausted". */
 export const MIN_NET_NEW = 1000;
 
 /** Pilot: a 200–300 row sample scored against the recipe; any scored dimension under 80% stops the size. */

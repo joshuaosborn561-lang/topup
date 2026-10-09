@@ -34,6 +34,11 @@ down. Copy that, do not invent a chat pipeline.
    campaign_id, count)`. The service pulls from the campaign's own build
    record (the tags), never from a method you wrote in chat.
 5. `run_status` once per message. Post a card with counts and a link.
+6. Nothing starts on its own (D50): the watch only logs what it would
+   have started; you are the start. Every paid call posts a spend card:
+   read `list_holds`, get Cayden's or Josh's yes in chat, then
+   `resolve_hold`. Under 1,000 leads available, say "the TAM for this
+   campaign is exhausted" and stop.
 
 Context rules: `topup_queue` only with `client_tag` or `limit` ≤ 20; no
 second read of a list you already have in this turn; never a Supabase

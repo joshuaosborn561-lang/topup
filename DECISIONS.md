@@ -46,7 +46,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D24 | Live |
 | D25 | Live |
 | D26 | Live; pipeline order and find_emails-before-ingest superseded by D29 |
-| D27 | Live; per-campaign needy as the start signal superseded by D38; the not-working card removed by D46 |
+| D27 | Live; superseded for starting by D50 (the watch observes); per-campaign needy as the start signal superseded by D38; the not-working card removed by D46 |
 | D28 | Live; pipeline list superseded by D29 |
 | D29 | Live; recipe-level ICP superseded by D30; empty-list-proceeds superseded by D34; 90-day send window restored by D35 |
 | D30 | Live |
@@ -57,7 +57,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
 | D36 | Live |
 | D37 | Live |
-| D38 | Live; n/a-as-healthy and inbox-only days superseded by D45 |
+| D38 | Live; n/a-as-healthy and inbox-only days superseded by D45; superseded for starting by D50 (the watch observes) |
 | D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context; receipt inference is D45 |
 | D40 | Live; live pull recipe MCP on this service, not LeadPipe; the three tools are folded into `campaign_history` by D48; watch Slack includes the count summary |
 | D41 | Live; HTTPS MCP needs no login; unauthenticated callers get the operator set |
@@ -69,6 +69,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D47 | Live; build records are the memory |
 | D48 | Live; the planner, the caches, the vendor-call log, lifecycle tools, the fifteen-tool surface, Slack optional; `client_overview` is the sixteenth tool by D49 |
 | D49 | Live; starts read the registry and the build tags for every client; `client_overview` and the `tags` block for the babysitter; the step 2 gate is the 1,000 floor |
+| D50 | Live; nothing starts on its own, Grok bot starts; every paid call waits for a named approval (auto cap $0); "the TAM for this campaign is exhausted"; Deep Roots mapped; the fourteen Peterson and Insight registry rows mapped |
 
 ---
 
@@ -1611,3 +1612,38 @@ and the report line names the campaign. The surface is sixteen tools, one
 more than D48.
 
 **Guard.** `src/guards/d49_tags_overview.test.ts`. Ask Josh.
+
+## D50 — Nothing starts on its own, and every paid call is approved first
+
+**Decision.**
+
+1. **The watch observes.** It still reads the mirror on its schedule and
+   judges every lane by the policy, and it logs what it would have started
+   (`would start`, with the campaigns and the reason), but it never opens a
+   run. Grok bot, or Cayden through Grok, starts runs with `size_client` or
+   `start_topup`.
+2. **Every paid vendor call waits for a named approval.** The auto cap on
+   the service is zero (`AUTO_SPEND_CAP_USD=0` on Railway): a free call
+   proceeds; any call with a worst case above zero posts a spend card that
+   `resolve_hold` answers, under $5 by Cayden, at $5 and above by Josh. The
+   ledger records the amount and who approved. The rebuild replaces the
+   card with `approved_by` on the verb that spends.
+3. **Under 1,000 leads available the line says "the TAM for this campaign
+   is exhausted."** The step 2 gate in the skill and the spine no longer
+   says never to declare a pool exhausted.
+4. **Deep Roots Capital is a client,** `deep_roots`, Smartlead client
+   597783. The fourteen Peterson and Insight registry rows the mirror could
+   not place carry their clients' Smartlead ids.
+
+**Why.** Josh, 2026-10-09: Grok bot is the reasoning layer and the app is a
+flat pipeline. "Grok is the one who's going to do all of this." "Somebody
+needs to approve spend before you do it." On 2026-10-08 the watch opened a
+run for BCP IT AirPods on its own on the first tick after a deploy, and
+Cayden met the app's own judgement instead of Grok's.
+
+**Tradeoff.** A low campaign waits for Grok instead of filling itself. A
+size run stops on a five-cent AI Ark call until someone taps. D27 and D38
+are superseded for starting; their judgement still shows in `topup_queue`
+and `client_overview`.
+
+**Guard.** `src/guards/d50_grok_starts.test.ts`. Ask Josh.

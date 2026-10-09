@@ -6,7 +6,6 @@ import type { Orchestrator } from "../orchestrator.js";
 import type { Recipe } from "../recipes/schema.js";
 import { recipeSummariesForWatch } from "../mcp/recipe.js";
 import { isParlayRefreshCampaign, isRetiredParlayLane, parlayCampaignRetired } from "../recipes/parlay.js";
-import { section } from "../slack/cards.js";
 import type { SlackConsole } from "../slack/console.js";
 import { Overlap, WATCH_ACROSS_CLIENTS, WATCH_WITHIN_CLIENT } from "../lib/concurrency.js";
 import { snapshotWatchLane } from "./assess.js";
@@ -114,19 +113,17 @@ export class RunwayWatch {
         note: "D38 under-2 mock: filters / net-new / $ are a size step, not invented here. Paid spend still needs Josh.",
       });
     }
-    const started = await this.d.orchestrator.startTopup({
-      clientTag: recipe.client_tag,
+    // D50: nothing starts on its own. The watch observes and says what it
+    // would have started; Grok bot starts runs, after a person approves.
+    const recipeSummary = await recipeSummariesForWatch(this.d.db, recipe.client_tag, decision.campaigns).catch(() => null);
+    log.info("would start", {
+      client_tag: recipe.client_tag,
       lane: recipe.lane,
-      by: "watch",
-      trigger: "runway",
-      campaignIds: decision.campaigns,
+      campaigns: decision.campaigns,
+      why: decision.why,
+      last_pull_counts: recipeSummary,
+      note: "D50: the watch does not start runs; Grok bot starts them with size_client or start_topup",
     });
-    if (!started.ok) {
-      log.info("go refused", { client_tag: recipe.client_tag, lane: recipe.lane, why: started.message });
-      return "skip";
-    }
-    const recipeSummary = await recipeSummariesForWatch(this.d.db, recipe.client_tag, decision.campaigns);
-    await this.d.console.postInThread(started.run, "Last pull recipe (counts)", [section(recipeSummary)]).catch((err) => log.warn("recipe summary failed", { error: (err as Error).message }));
     return "go";
   }
 }

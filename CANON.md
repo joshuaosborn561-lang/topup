@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D49** (2026-10-08). One page of current truth. When a new
+Canon as of **D50** (2026-10-09). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -113,7 +113,7 @@ that still has runway is not refilled.
 
 1. Done: ledger, `/where`, digest, verify → normalize (D17).
 2. **This build:** a getleads lane end to end, steps 2 → 12 (D26), and the
-   runway watch that starts a run on its own (D27).
+   runway watch that starts a run on its own (D27; since D50 it observes and Grok bot starts).
 3. Physical lane cascade with the **yield card** and the **pilot of ~100**;
    nothing scales without the second tap (D21). Peterson roof owners first.
 4. Vendor server fixes and attribution.
@@ -151,7 +151,7 @@ file recipe is the override when one exists.
 
 ## What this build runs (D26, D27, D28, D38)
 
-The **watch** is the normal start. Every six hours (and once on boot) it
+The **watch** observes; Grok bot is the start (D50). Every six hours (and once on boot) it
 reads the Smartlead mirror for every recipe, campaign by campaign. The
 needy signal is that campaign's own runway under `runway.floor_days`
 (empty or low). Client-wide rem / capacity (D38, D45) stays on the board
@@ -204,7 +204,7 @@ The stages:
    across its campaigns by need. Every vendor call, sent or not, is on the
    step with its outcome. One line per campaign with its gate and reason.
 3. **pull** — routed by the target campaigns' ICP and source
-   (`leadgen-mcp-routing` step zero). The watch starts a **client-holistic
+   (`leadgen-mcp-routing` step zero). A top-up is a **client-holistic
    DM pull** (same persona the client has been sending to), then route
    segments by title / mail class / gift into existing campaigns (D38,
    D30 persona stays per campaign at route time). getleads on a LinkedIn-native
@@ -262,8 +262,8 @@ The stages:
 13. **flip** — posts the step 13 line: Josh sets ACTIVE by hand and watches
     day one. The service never starts, pauses, or stops a campaign. Then the
     run closes as `done` with the **receipt** (the funnel plus one line per
-    campaign). The watch starts the next fill when the **client** is under
-    the runway floor and still working (D38).
+    campaign). The watch flags the next fill when the **client** is under
+    the runway floor and still working (D38); Grok bot starts it (D50).
 
 `/health` reports counts by `lead_status`, spend by vendor, stall events,
 open cards, open runs and which integrations are configured. It is
@@ -271,8 +271,9 @@ open cards, open runs and which integrations are configured. It is
 
 ## Money (D9)
 
-- Auto cap **$5** per step; spend of **$5 or above** asks with the worst case in
-  dollars and waits for Josh. Daily backstop **$25** across vendors.
+- Auto cap **$0** on the service since D50: every paid call asks with the
+  worst case in dollars and waits for a named approval, under $5 Cayden,
+  $5 or above Josh. Daily backstop **$25** across vendors.
 - Worst case comes from `src/spend/prices.ts` × batch size. Never a
   vendor's number.
 - One `topup.spend_ledger` row per vendor call, free or paid.
@@ -290,7 +291,7 @@ open cards, open runs and which integrations are configured. It is
   taps never spend and never change a recipe; the reply is "This needs Josh."
   Step 5 does not wait on a customer-domain-list card (D37). The
   heading stays `(code)`.
-- Commands: `/where`, `/topup` (override — the watch is the normal start), `/holds`, `/runs`, `/working` (owner),
+- Commands: `/where`, `/topup` (Grok bot or Cayden starts; the watch observes, D50), `/holds`, `/runs`, `/working` (owner),
   `/suppress` (explains the 90-day global positive list).
 - `/mcp` is Streamable HTTP over HTTPS at
   `https://leadtopup-production.up.railway.app/mcp` (D40, D41, D48). **No
@@ -315,7 +316,7 @@ open cards, open runs and which integrations are configured. It is
   `#campaign-watchdog` posts (empty, low, nearly-done 90%), ranked
   empty-first then shortest runway, each with the recipe count
   summary, `sends_last_14d`, and the working bar. It includes camps
-  the client-wide watch would skip (D38 still governs auto-start).
+  the client-wide watch would skip (D38 judges; nothing auto-starts, D50).
   Cayden's flow is `client_overview` for the client, or `topup_queue`
   across clients (gates already applied) → `campaign_history` for each
   campaign to top up → `size_client` (pilot and size, one call per
@@ -452,9 +453,19 @@ chosen build and tags, plus open runs and the loads switch, counts only.
 `campaign_history` carries the `tags` block (`campaign_method` legs,
 `missing_tags`, `lead_provenance` counted by build label and confidence).
 The step 2 gate is the policy's floor: at least 1,000 net new per
-campaign, else TAM filled (D46).
+campaign, else the TAM for this campaign is exhausted (D46).
 
-## Never (D1–D6, D8, D13, D14, D39, D48)
+## Nothing starts on its own; spend is approved first (D50)
+
+Grok bot is the reasoning layer and this service is the pipeline. The
+watch reads the mirror and judges every lane, and logs what it would have
+started, but it never opens a run; `size_client` and `start_topup` are the
+only starts. Every paid vendor call waits for a named approval through a
+spend card (`list_holds`, `resolve_hold`); a free call proceeds. Under
+1,000 leads available the line reads "the TAM for this campaign is
+exhausted". `deep_roots` is a client in `topup.client_map`.
+
+## Never (D1–D6, D8, D13, D14, D39, D48, D50)
 
 - Never write to a Supabase project other than `azpapwtnrbzywlnxxecz`.
 - Never hardcode a secret. Never call a vendor in a test.
@@ -471,6 +482,7 @@ campaign, else TAM filled (D46).
 - Never trust "processed" or a zero-verdict resume as a verification.
 - Never run more than one replica.
 - Never add an MCP tool that returns a lead row or a file URL (D48).
+- Never open a run from the watch, and never spend before a named approval (D50).
 - Never pull lead rows into Grok bot context. No export payloads, no
   CSV paste, no child-agent GetLeads fire into chat, no walk of the
   thirteen-step skill in that context. Counts, ids, and a link only
