@@ -192,7 +192,7 @@ export class PullStage {
           clientTag: run.client_tag,
           step: "pull",
           vendor: adapter.vendor,
-          action: job.source === "maps" ? "sync" : job.source === "permits" ? "metrics_monthly" : "export",
+          action: job.source === "maps" ? "pool" : job.source === "permits" ? "metrics_monthly" : "export",
           rows: result.rows_exported,
           credits: 0,
           worstCaseCents: 0,
@@ -315,7 +315,7 @@ export function pricePlans(plans: readonly PullJob[], shares: Map<string, number
     const n = shares.get(jobKey(plan)) ?? 1;
     rows += n;
     const planVendor = vendorFor(plan);
-    const planAction = plan.source === "maps" ? "sync" : plan.source === "permits" ? "metrics_monthly" : "export";
+    const planAction = plan.source === "maps" ? "pool" : plan.source === "permits" ? "metrics_monthly" : "export";
     const cents = worstCaseCents(planVendor, planAction, n);
     if (cents > 0) {
       vendor = planVendor;
@@ -331,8 +331,7 @@ function vendorFor(plan: PullJob): string {
   return plan.source;
 }
 
-export function credentialGap(plans: readonly PullJob[], maps: MapsQuote | null, permits: PermitCounts | null): string | null {
-  if (plans.some((plan) => plan.source === "maps") && !maps) return "missing credentials for maps";
+export function credentialGap(plans: readonly PullJob[], _maps: MapsQuote | null, permits: PermitCounts | null): string | null {
   if (plans.some((plan) => plan.source === "permits") && !permits) return "missing credentials for permitstack";
   return null;
 }

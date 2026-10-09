@@ -91,6 +91,8 @@ const wideningCandidate = z
 const mapsParams = z
   .object({
     categories: z.array(z.string().min(1)).min(1),
+    plan_id: z.string().min(1).optional(),
+    icp_view: z.string().min(1).optional(),
     states: z.array(z.string()).optional(),
     cities: z.array(z.string()).optional(),
   })

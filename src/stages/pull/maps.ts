@@ -1,42 +1,55 @@
-import type { MapsQuote } from "../../clients/mapsStats.js";
+import { copyMapsPool } from "../../canon/mapsPool.js";
+import type { Queryable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { Recipe } from "../../recipes/schema.js";
-import { worstCaseCents } from "../../spend/prices.js";
 import type { PollVerdict } from "../common.js";
 import type { PullAdapter, PullHandle, PullResult } from "./adapter.js";
 
+function sourceLabel(run: RunRow, campaignId?: number | null): string {
+  const base = `topup_${run.client_tag}_${run.lane}_${run.run_id.slice(0, 8)}`;
+  return campaignId ? `${base}_c${campaignId}` : base;
+}
+
 /**
- * Physical maps pull. `estimate_cost` is the price quote (it writes a plan
- * and does not scrape). The rows, when the spend card has cleared, come
- * from `sync_to_supabase` on data already scraped. `plan_leads` and
- * `run_leads` stay uncalled.
+ * Physical maps pull (D57). Reads the stored pool in
+ * `client_<tag>.maps_raw` (and the named ICP view), scoped by plan_id
+ * and categories. INSERT … SELECT into the ingest table. Does not call
+ * the Maps scraper, does not write dl_status / sg_exclude / skip_*.
  */
+export const MAPS_STORED_URL = "stored://maps-pool";
+
 export class MapsPull implements PullAdapter {
   readonly kind = "maps" as const;
   readonly vendor = "maps";
 
-  constructor(private readonly maps: MapsQuote | null) {}
+  constructor(
+    private readonly db: Queryable & { withRun: <T>(runId: string, fn: (tx: Queryable) => Promise<T>) => Promise<T> },
+  ) {}
 
   async start(run: RunRow, _recipe: Recipe, planRows: number, source?: Recipe["source"]): Promise<PullHandle> {
-    if (!this.maps) throw new Error("missing credentials for maps");
     if (source?.kind !== "maps") throw new Error("MapsPull needs a maps source");
-    const category = source.params.categories[0];
-    if (!category) throw new Error("maps pull needs a category");
-    const state = source.params.states?.find((s) => /^[A-Za-z]{2}$/.test(s.trim()));
-    const rows = await this.maps.syncExisting({
-      category,
-      clientTag: run.client_tag,
-      ...(state ? { state: state.trim().toUpperCase() } : {}),
+    if (!source.params.plan_id) throw new Error("maps needs plan_id. Receipts scope the stored pool by plan_id, never by ZIP or client_tag alone. Ask Josh.");
+    const campaignId = run.campaign_id;
+    const rows = await copyMapsPool(this.db, {
+      client_tag: run.client_tag,
+      filters: {
+        plan_id: source.params.plan_id,
+        categories: source.params.categories,
+        ...(source.params.icp_view ? { icp_view: source.params.icp_view } : {}),
+      },
+      max_rows: planRows,
+      source_label: sourceLabel(run, campaignId ?? undefined),
+      run_id: run.run_id,
     });
-    return { handle: `maps-sync:${rows}`, worstCaseCents: worstCaseCents("maps", "sync", Math.max(1, planRows)) };
+    return { handle: `maps-pool:${rows}`, worstCaseCents: 0 };
   }
 
   async check(handle: string): Promise<PollVerdict<PullResult>> {
-    const matched = /^maps-sync:(\d+)$/.exec(handle);
-    if (!matched) return { state: "failed", error: `maps sync handle ${handle} is not a count` };
+    const matched = /^maps-pool:(\d+)$/.exec(handle);
+    if (!matched) return { state: "failed", error: `maps pool handle ${handle} is not a count` };
     return {
       state: "done",
-      value: { export_url: "", rows_exported: Number(matched[1]), cap_reason: null, cap_message: null },
+      value: { export_url: MAPS_STORED_URL, rows_exported: Number(matched[1]), cap_reason: null, cap_message: null },
     };
   }
 }
