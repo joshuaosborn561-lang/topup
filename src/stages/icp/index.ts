@@ -10,7 +10,7 @@ import { attempt, columnsOf, finish, park, realClock, type Clock, type StageDeps
 import { domainSql } from "../puzzle/classify.js";
 
 /**
- * Step 5.5 — the ICP website gate (D58; skill icp-website-gate). After
+ * Step 5.5 — the ICP website gate (D60; skill icp-website-gate). After
  * suppression and before anything paid: fetch each distinct domain's site
  * with our own edge function (free), let Jev pick a category (about $0.11
  * per 1,000 sites), ask DiscoLike about the sites we could not read (about

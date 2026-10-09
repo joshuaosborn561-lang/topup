@@ -30,7 +30,7 @@ const log = logger("jobs");
  * approves that card, records who, and runs. import refuses while loads
  * are paused. Rows never leave the server.
  */
-/** The dumb pipeline: thirteen stages, each run once by a verb. Nothing sizes, triggers or flips (D53). The ICP gate sits between suppress and enrich (D58). */
+/** The dumb pipeline: thirteen stages, each run once by a verb. Nothing sizes, triggers or flips (D53). The ICP gate sits between suppress and enrich (D60). */
 export interface Stages {
   pull: PullStage;
   ingest: IngestStage;

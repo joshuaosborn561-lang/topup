@@ -1,7 +1,7 @@
 import type { Queryable } from "../db/pool.js";
 
 /**
- * The stored Maps pool (D57). `client_<tag>.maps_raw` scoped by the
+ * The stored Maps pool (D57, D59). `client_<tag>.maps_raw` scoped by the
  * receipt's `plan_id` and categories. An ICP view named on the receipt
  * is applied when it lives in that client schema. Counts only. Never
  * scoped by ZIP or by client_tag alone. Never writes `dl_status`,
@@ -116,18 +116,32 @@ function categoryClause(alias: string, cols: Set<string>, categories: string[], 
 
 function planClause(alias: string, cols: Set<string>, param: string): string {
   if (!cols.has("plan_id")) return "";
-  return ` and ${alias}.${q("plan_id")} = ${param}`;
+  const typed = param.includes("::") ? param : `${param}::text`;
+  return ` and ${alias}.${q("plan_id")} = ${typed}`;
 }
 
 function keepClause(alias: string, cols: Set<string>): string {
   return cols.has("keep_final") ? ` and ${alias}.${q("keep_final")} is true` : "";
 }
 
-async function resolvePool(
+export type MapsPoolResolved = {
+  schema: string;
+  fromSql: string;
+  params: unknown[];
+  cats: string[];
+  /** Companion union: plan_id is already in fromSql; do not add a second WHERE. */
+  companion: boolean;
+};
+
+/**
+ * Build the FROM/params for a maps pool count. Exported so tests can send
+ * the same SQL to a real Postgres (D59).
+ */
+export async function resolveMapsPool(
   db: Queryable,
   clientTag: string,
   spec: MapsPoolSpec,
-): Promise<{ schema: string; fromSql: string; params: unknown[]; cats: string[] } | { error: string }> {
+): Promise<MapsPoolResolved | { error: string }> {
   const schema = clientSchema(clientTag);
   if (!(await relationExists(db, schema, "maps_raw"))) {
     return { error: `${schema}.maps_raw is not on this project. A maps count reads the stored pool, not the Maps scraper.` };
@@ -149,33 +163,59 @@ async function resolvePool(
       const cCols = await columnsOf(db, schema, companies);
       const nCols = await columnsOf(db, schema, needing);
       if (cCols.has("place_id") && nCols.has("place_id")) {
-        const cPlan = planClause("c", cCols, "$1");
-        const nPlan = planClause("n", nCols, "$1");
-        const cCat = categoryClause("c", cCols, cats, catParam);
-        const nCat = categoryClause("n", nCols, cats, catParam);
+        const rawCols = await columnsOf(db, schema, "maps_raw");
+        const cPlan = planClause("c", cCols, "$1::text");
+        const nPlan = planClause("n", nCols, "$1::text");
+        const rawPlan = planClause("m", rawCols, "$1::text");
+        const needJoin = !cCols.has("plan_id") || !nCols.has("plan_id");
+        // Companion views are the ICP pool (D57). Do not re-apply scrape
+        // categories on them — that uses $2 and, when they have no plan_id,
+        // leaves $1 untyped (D59). Scope plan_id on maps_raw instead.
+        if (needJoin) {
+          if (!rawPlan) {
+            return { error: `${schema}.maps_raw has no plan_id; cannot scope the ICP companions. Ask Josh.` };
+          }
+          return {
+            schema,
+            fromSql: `(
+            select c.place_id as place_id
+              from ${q(schema)}.${q(companies)} c
+              join ${q(schema)}.${q("maps_raw")} m on m.place_id = c.place_id
+             where true${rawPlan}${cPlan}
+            union
+            select n.place_id as place_id
+              from ${q(schema)}.${q(needing)} n
+              join ${q(schema)}.${q("maps_raw")} m on m.place_id = n.place_id
+             where true${rawPlan}${nPlan}
+          ) pool`,
+            params: [spec.plan_id],
+            cats: [],
+            companion: true,
+          };
+        }
         return {
           schema,
           fromSql: `(
-            select c.place_id as place_id from ${q(schema)}.${q(companies)} c where true${cPlan}${cCat}
+            select c.place_id as place_id from ${q(schema)}.${q(companies)} c where true${cPlan}
             union
-            select n.place_id as place_id from ${q(schema)}.${q(needing)} n where true${nPlan}${nCat}
+            select n.place_id as place_id from ${q(schema)}.${q(needing)} n where true${nPlan}
           ) pool`,
-          params,
-          cats,
+          params: [spec.plan_id],
+          cats: [],
+          companion: true,
         };
       }
     }
-    const cols = await columnsOf(db, schema, spec.icp_view);
     return {
       schema,
       fromSql: `${q(schema)}.${q(spec.icp_view)} pool`,
       params,
       cats,
-      // keep_final / plan / category applied by callers via extraWhere — bake them in
+      companion: false,
     };
   }
 
-  return { schema, fromSql: `${q(schema)}.${q("maps_raw")} pool`, params, cats };
+  return { schema, fromSql: `${q(schema)}.${q("maps_raw")} pool`, params, cats, companion: false };
 }
 
 /**
@@ -185,14 +225,14 @@ async function resolvePool(
 export async function countMapsPool(db: Queryable, clientTag: string, filters: Record<string, unknown>): Promise<MapsPoolCount | { error: string }> {
   const spec = mapsPoolFromFilters(filters, clientTag);
   if ("error" in spec) return spec;
-  const resolved = await resolvePool(db, clientTag, spec);
+  const resolved = await resolveMapsPool(db, clientTag, spec);
   if ("error" in resolved) return resolved;
-  const catParam = spec.categories.length ? `$${resolved.params.length}` : "";
+  const catParam = resolved.cats.length ? `$${resolved.params.length}` : "";
   let where = "";
-  if (!resolved.fromSql.startsWith("(")) {
+  if (!resolved.companion) {
     const rel = spec.icp_view ?? "maps_raw";
     const cols = await columnsOf(db, resolved.schema, rel);
-    where = ` where true${planClause("pool", cols, "$1")}${categoryClause("pool", cols, resolved.cats, catParam)}${spec.icp_view ? keepClause("pool", cols) : ""}`;
+    where = ` where true${planClause("pool", cols, "$1::text")}${categoryClause("pool", cols, resolved.cats, catParam)}${spec.icp_view ? keepClause("pool", cols) : ""}`;
   }
   const { rows } = await db.query<{ n: string }>(`select count(*)::text as n from ${resolved.fromSql}${where}`, resolved.params);
   const pool = Number(rows[0]?.n ?? 0);
@@ -260,10 +300,18 @@ export async function copyMapsPool(
   const destCols = await columnsOf(db, destSchema, destTable);
   const cats = spec.categories.map((c) => c.toLowerCase());
   const params: unknown[] = [spec.plan_id];
-  const catParam = cats.length ? `$${params.push(cats)}` : "";
+  const companions = spec.icp_view
+    ? { companies: `${stemOf(spec.icp_view)}_companies`, needing: `${stemOf(spec.icp_view)}_needs_domain` }
+    : null;
+  const useCompanions = Boolean(
+    companions
+    && (await relationExists(db, schema, companions.companies))
+    && (await relationExists(db, schema, companions.needing)),
+  );
+  const catParam = !useCompanions && cats.length ? `$${params.push(cats)}` : "";
   const labelParam = `$${params.push(input.source_label)}`;
   const limitParam = `$${params.push(input.max_rows)}`;
-  const where = `true${planClause("s", srcCols, "$1")}${categoryClause("s", srcCols, cats, catParam)}${spec.icp_view && sourceName === spec.icp_view ? keepClause("s", srcCols) : ""}`;
+  const where = `true${planClause("s", srcCols, "$1::text")}${categoryClause("s", srcCols, useCompanions ? [] : cats, catParam)}${!useCompanions && spec.icp_view && sourceName === spec.icp_view ? keepClause("s", srcCols) : ""}`;
 
   const map: Array<[string, string]> = [];
   const pick = (dest: string, ...src: string[]) => {
@@ -285,16 +333,19 @@ export async function copyMapsPool(
 
   // Companion views (companies ∪ needs_domain) when the named ICP view has them.
   let fromSql = `${q(schema)}.${q(sourceName)} s`;
-  if (spec.icp_view) {
-    const stem = stemOf(spec.icp_view);
-    const companies = `${stem}_companies`;
-    const needing = `${stem}_needs_domain`;
-    if ((await relationExists(db, schema, companies)) && (await relationExists(db, schema, needing))) {
-      fromSql = `${q(schema)}.${q("maps_raw")} s
+  if (useCompanions && companions) {
+    const { companies, needing } = companions;
+    const rawCols = await columnsOf(db, schema, "maps_raw");
+    const rawPlan = planClause("m", rawCols, "$1::text");
+    fromSql = `${q(schema)}.${q("maps_raw")} s
         where s.place_id in (
-          select c.place_id from ${q(schema)}.${q(companies)} c where true${planClause("c", await columnsOf(db, schema, companies), "$1")}
+          select c.place_id from ${q(schema)}.${q(companies)} c
+            join ${q(schema)}.${q("maps_raw")} m on m.place_id = c.place_id
+           where true${rawPlan}
           union
-          select n.place_id from ${q(schema)}.${q(needing)} n where true${planClause("n", await columnsOf(db, schema, needing), "$1")}
+          select n.place_id from ${q(schema)}.${q(needing)} n
+            join ${q(schema)}.${q("maps_raw")} m on m.place_id = n.place_id
+           where true${rawPlan}
         )
         and ${where}`;
       const sql = `insert into ${q(destSchema)}.${q(destTable)} (${map.map(([d]) => q(d)).join(", ")})
@@ -305,7 +356,6 @@ export async function copyMapsPool(
         const result = await tx.query(sql, params);
         return result.rowCount ?? 0;
       });
-    }
   }
 
   const sql = `insert into ${q(destSchema)}.${q(destTable)} (${map.map(([d]) => q(d)).join(", ")})

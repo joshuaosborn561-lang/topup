@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D58** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D60** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -51,7 +51,7 @@ D48).
     through our own site fetch and Jev's category pick (skill
     `icp-website-gate`). Only `icp_gate = yes` moves on; flagged rows are
     suppressed with a reason and stay in the table. A client with no label
-    set in `topup.icp_variants` parks until one is written (D58).
+    set in `topup.icp_variants` parks until one is written (D60).
 12. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
     here, write a guard that names it. Ask Josh (D-meta).
 
@@ -66,7 +66,7 @@ bears on stated and no verdict (D52).
 | `campaigns(client_tag?, include_inactive?)` | Every ACTIVE email campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. Cold call campaigns are left off. |
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
-| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` when those exist; reports pool, already used as live leads on the receipt's campaigns, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
+| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; binds are typed; reports pool, already used as live leads on the receipt's campaigns, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds, and `net_new`. Under 1,000: the TAM for this campaign is exhausted. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
@@ -116,7 +116,8 @@ call next.
    getleads is free. BCP-style records keep industries per campaign under
    `industries_by_campaign`; pass that campaign's list as `industries`.
    Any other key stays as stored. Maps keeps `plan_id` and the categories
-   list; it never scopes by ZIP or `client_tag` alone (D57).
+   list; it never scopes by ZIP or `client_tag` alone (D57). Companion
+   views that omit `plan_id` join `maps_raw` so `$1::text` is used (D59).
 4. `held(client_tag, campaign_id, filters, tam)` with that count. If
    `net_new` is under 1,000, say *the TAM for this campaign is exhausted*
    and stop. Do not widen. If Josh wants options, give counts for each.
@@ -153,7 +154,8 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   re-reads lists.
 * Never invent a filter, a price, a threshold or a source the record does
   not carry. Never drop `plan_id` from a maps count or pull, and never
-  scope that pool by ZIP or `client_tag` alone (D57).
+  scope that pool by ZIP or `client_tag` alone (D57). Never send an
+  untyped `$1` on a maps ICP count (D59).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused.

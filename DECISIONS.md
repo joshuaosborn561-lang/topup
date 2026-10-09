@@ -77,7 +77,9 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D55 | Live; `leftovers` read: where past pulls left rows, per client, as counts (lane table, client schema, waterfall tables, people status, scratch estimates); moves nothing; each store shows its gap (domain, person, email, phone) and the step that fills it |
 | D56 | Live; phones are kept: phone / phone_type / wf_phone / wf_phone_type on every lane table, phone on staging, waterfall phones copied, cellphone from the people contacts, ingest maps vendor phone headers, stage carries phone to Smartlead's phone_number; `leftovers` shows need_phone |
 | D57 | Live; maps `count` and `pull` read `client_<tag>.maps_raw` scoped by `plan_id` and categories, plus the named ICP view (companion `v_*_companies` ∪ `v_*_needs_domain` when present); already used is live `public.leads` on the receipt's campaigns; never `pipeline_stats` by state/client_tag |
-| D58 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
+| D58 | Open on PR #35; LeadMagic is dropped and old receipts replay as aiark. Not shipped on this branch |
+| D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories are not applied again on that union |
+| D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 
 ---
 
@@ -1911,7 +1913,42 @@ receipt's `rows_imported`.
 **Guard.** `src/guards/d57_maps_plan_id.test.ts`. Ask Josh.
 
 
-## D58 — The ICP website gate is a verb
+## D58 — LeadMagic is dropped; replay old receipts as aiark
+
+**Decision.** Open PR #35 claims this number: LeadMagic is no longer a
+live vendor; old receipts that say `leadmagic` replay as `aiark`. This
+branch does not ship that. Maps ICP binds are D59.
+
+**Why.** Two PRs took D58 the same day. #35 was first.
+
+**Guard.** `src/guards/d58_drop_leadmagic.test.ts` on PR #35. Ask Josh.
+
+
+## D59 — Maps ICP binds are typed; companions join maps_raw for plan_id
+
+**Decision.** Every bind on a maps pool query is typed (`$1::text`,
+`$2::text[]`). Companion ICP views that have no `plan_id` (Lane E:
+`v_lane_e_companies` / `v_lane_e_needs_domain`) join
+`client_<tag>.maps_raw` so `plan_id = $1::text` is in the SQL. The
+service never sends `$2` without a typed `$1`. Scrape categories are
+not applied again on the companion union — those views are already the
+ICP pool (D57). `filters_used` still lists the categories the receipt
+carried.
+
+**Why.** After D57 shipped, `count(source=maps)` without an ICP view
+worked (emcor raw 34,805). The same call with `icp_filter` /
+`v_lane_e_final` failed: Postgres `could not determine data type of
+parameter $1`. The companions have `place_id` and `main_category` but
+no `plan_id`, so the SQL used `$2::text[]` for categories and never
+mentioned `$1`.
+
+**Tradeoff.** Re-applying the receipt's 25 scrape categories on the
+Lane E companions would cut the live pool from 18,322 to 8,972. That
+is a second filter the ICP already applied; Josh can ask for it.
+
+**Guard.** `src/guards/d59_maps_icp_binds.test.ts`. Ask Josh.
+
+## D60 — The ICP website gate is a verb
 
 **Decision.** `icp(job_id, approved_by?)` runs after `suppress` and
 before `enrich`, on spine step 5, as the skill `icp-website-gate` says
@@ -1947,4 +1984,4 @@ and a row in `topup.icp_variants`. The three functions share the
 project's 60-connection cap with the live Allo hooks; the limits in the
 skill are the limits in the code.
 
-**Guard.** `src/guards/d58_icp_gate.test.ts`. Ask Josh.
+**Guard.** `src/guards/d60_icp_gate.test.ts`. Ask Josh.

@@ -60,8 +60,9 @@ The rules you apply:
    `industries`. Every other key stays as stored. Maps keeps `plan_id`
    and the categories list (D57); it never scopes by ZIP or `client_tag`
    alone. Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
-   when those exist. Already used is live `public.leads` on the
-   receipt's campaigns.
+   when those exist. Companions that omit `plan_id` join `maps_raw`
+   so the bind is `$1::text` (D59). Already used is live `public.leads`
+   on the receipt's campaigns.
 4. `held(client_tag, campaign_id, filters, tam)`. If `net_new` < 1,000:
    *the TAM for this campaign is exhausted.* Stop there. If Josh asks for
    options, give each option with its count.

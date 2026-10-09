@@ -1,5 +1,5 @@
 /**
- * The ICP gate's three edge functions on campaignintelligence (D58; skill
+ * The ICP gate's three edge functions on campaignintelligence (D60; skill
  * icp-website-gate): icp-site-fetch reads the homepage and two subpages
  * into client_salesglider.icp_site_text; icp-llm has Jev pick a category
  * per site and writes icp_llm_results; icp-disco-fallback asks DiscoLike

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { IcpGateClient, jevModel } from "./icpGate.js";
 
-/** D58 — the three edge functions are called with their own key, by batch, and answer counts. No vendor is reached from a test. */
-describe("D58 — ICP gate client", () => {
+/** D60 — the three edge functions are called with their own key, by batch, and answer counts. No vendor is reached from a test. */
+describe("D60 — ICP gate client", () => {
   it("calls each function with its key and the batch, and reads counts back", async () => {
     const seen: string[] = [];
     const fetchImpl = (async (url: string) => {
