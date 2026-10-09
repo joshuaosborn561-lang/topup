@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D58** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D59** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -109,7 +109,7 @@ Order: `pull` → `suppress` → `enrich` → `verify` → `normalize` → `qa` 
    `industries_by_campaign`; pass that campaign's list as `industries`.
    Any other key stays as stored. Maps keeps `plan_id` and the categories
    list; it never scopes by ZIP or `client_tag` alone (D57). Companion
-   views that omit `plan_id` join `maps_raw` so `$1::text` is used (D58).
+   views that omit `plan_id` join `maps_raw` so `$1::text` is used (D59).
 4. `held(client_tag, campaign_id, filters, tam)` with that count. If
    `net_new` is under 1,000, say *the TAM for this campaign is exhausted*
    and stop. Do not widen. If Josh wants options, give counts for each.
@@ -145,7 +145,7 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
 * Never invent a filter, a price, a threshold or a source the record does
   not carry. Never drop `plan_id` from a maps count or pull, and never
   scope that pool by ZIP or `client_tag` alone (D57). Never send an
-  untyped `$1` on a maps ICP count (D58).
+  untyped `$1` on a maps ICP count (D59).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused.

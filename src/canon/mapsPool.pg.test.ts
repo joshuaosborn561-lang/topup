@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { countMapsPool, mapsPoolFromFilters, resolveMapsPool } from "./mapsPool.js";
 
 /**
- * D58 — the ICP path must survive a real Postgres bind, not a mock.
+ * D59 — the ICP path must survive a real Postgres bind, not a mock.
  * PGlite is Postgres. The live emcor count is a read-only check in the PR,
  * not a test (D4: tests do not construct Db).
  */
@@ -48,7 +48,7 @@ async function seedLane(db: Q): Promise<void> {
   `);
 }
 
-describe("D58 — maps ICP against real Postgres", () => {
+describe("D59 — maps ICP against real Postgres", () => {
   it("Postgres rejects $2 when $1 is unused and untyped (the live failure)", async () => {
     const { db, close } = await pgliteDb();
     try {
@@ -85,9 +85,9 @@ describe("D58 — maps ICP against real Postgres", () => {
         categories: ["church", "hotel"],
         icp_filter: "client_t.v_lane_e_final",
       });
-      assert.ok(!("error" in r), "D58: ICP count must not fail on real Postgres. Ask Josh.");
+      assert.ok(!("error" in r), "D59: ICP count must not fail on real Postgres. Ask Josh.");
       if ("error" in r) return;
-      assert.equal(r.pool, 3, "D58: a,b,c on this plan; d is another plan_id");
+      assert.equal(r.pool, 3, "D59: a,b,c on this plan; d is another plan_id");
       assert.equal(r.already_used, 0);
       assert.equal(r.net_new, 3);
     } finally {

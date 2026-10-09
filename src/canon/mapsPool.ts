@@ -1,7 +1,7 @@
 import type { Queryable } from "../db/pool.js";
 
 /**
- * The stored Maps pool (D57, D58). `client_<tag>.maps_raw` scoped by the
+ * The stored Maps pool (D57, D59). `client_<tag>.maps_raw` scoped by the
  * receipt's `plan_id` and categories. An ICP view named on the receipt
  * is applied when it lives in that client schema. Counts only. Never
  * scoped by ZIP or by client_tag alone. Never writes `dl_status`,
@@ -135,7 +135,7 @@ export type MapsPoolResolved = {
 
 /**
  * Build the FROM/params for a maps pool count. Exported so tests can send
- * the same SQL to a real Postgres (D58).
+ * the same SQL to a real Postgres (D59).
  */
 export async function resolveMapsPool(
   db: Queryable,
@@ -170,7 +170,7 @@ export async function resolveMapsPool(
         const needJoin = !cCols.has("plan_id") || !nCols.has("plan_id");
         // Companion views are the ICP pool (D57). Do not re-apply scrape
         // categories on them — that uses $2 and, when they have no plan_id,
-        // leaves $1 untyped (D58). Scope plan_id on maps_raw instead.
+        // leaves $1 untyped (D59). Scope plan_id on maps_raw instead.
         if (needJoin) {
           if (!rawPlan) {
             return { error: `${schema}.maps_raw has no plan_id; cannot scope the ICP companions. Ask Josh.` };

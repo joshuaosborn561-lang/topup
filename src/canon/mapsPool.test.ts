@@ -95,9 +95,9 @@ describe("D57 — maps stored pool", () => {
     assert.ok(!("error" in r));
     if ("error" in r) return;
     const poolSql = db.seen.filter((q) => q.includes("union")).join("\n");
-    assert.match(poolSql, /maps_raw/, "D58: companions without plan_id join maps_raw");
-    assert.match(poolSql, /\$1::text/, "D58: the plan_id bind is typed");
-    assert.doesNotMatch(poolSql, /\$2/, "D58: $2 must not appear without a typed $1");
+    assert.match(poolSql, /maps_raw/, "D59: companions without plan_id join maps_raw");
+    assert.match(poolSql, /\$1::text/, "D59: the plan_id bind is typed");
+    assert.doesNotMatch(poolSql, /\$2/, "D59: $2 must not appear without a typed $1");
     assert.equal(r.already_used, 6017);
   });
 });
