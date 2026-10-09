@@ -79,7 +79,7 @@ describe("D40 — live pull recipe lives on this service", () => {
     const watch = await readFile(new URL("src/watch/index.ts", root), "utf8");
     assert.match(watch, /recipeSummariesForWatch/);
     assert.match(watch, /recipeSummary/);
-    assert.match(watch, /postInThread/);
+    assert.match(watch, /last_pull_counts/, "D40/D51: the watch carries the count summary on its would-start line; it no longer opens a run thread. Ask Josh.");
     const cards = await readFile(new URL("src/slack/cards.ts", root), "utf8");
     assert.match(cards, /recipeSummary/);
     const blocks = notWorkingCard({

@@ -30,7 +30,7 @@ describe("D49 — starts read the tags; client_overview", () => {
     const readme = await readFile(new URL("README.md", root), "utf8");
     const agents = await readFile(new URL("AGENTS.md", root), "utf8");
     const babysitter = await readFile(new URL("skills/grok-bot-babysitter/SKILL.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D(49|50)\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /## Starts read the tags; the babysitter sees a client in one read \(D49\)/);
     assert.match(canon, /There is no hand-written method per campaign/);
     assert.match(ledger, /## D49 — Starts read the tags/);

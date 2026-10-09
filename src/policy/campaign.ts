@@ -171,7 +171,7 @@ export function evaluateCampaign(f: CampaignFacts): CampaignVerdict {
   }
   const left = f.tam_left ?? tamTotal ?? 0;
   if (left < MIN_NET_NEW) {
-    return verdict(f, "tam_filled", `${id}: ${left} net new is under the ${MIN_NET_NEW} minimum; TAM filled, not topped up`, false);
+    return verdict(f, "tam_filled", `${id}: the TAM for this campaign is exhausted; ${left} more available is under the ${MIN_NET_NEW} minimum`, false);
   }
   return verdict(f, "ok", `${id}: ${bar.why}; ${left} net new`, false);
 }

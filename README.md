@@ -19,8 +19,9 @@ Read `CANON.md` first. It is one page and it is the current truth.
 - The `topup` schema, the `lead_status` column on `lp.*_ingested_leads`, the
   write lock (one open run per lane and per campaign; lead writes carry
   `app.run_id`).
-- Spend rails: $5 auto cap per step, $25 per day, worst case from the price
-  table, ledger row per call, Slack card for anything over the cap.
+- Spend rails: auto cap $0 on the service (D51), $25 per day backstop, worst
+  case from the price table, ledger row per call, a spend card for every paid
+  call that `resolve_hold` answers.
 - Slack: one thread per run, cards with buttons, slash commands, owner and
   operator roles.
 - `/mcp` — Streamable HTTP over HTTPS at
@@ -148,7 +149,7 @@ Josh → `start_topup` once approved and `loads_paused` is off.
 | `campaign_history` | **Read before any top up.** The build records for a campaign (vendor, exact query or stored pool, counts, interested, method note, reconstructed flag), lifetime sends and positives, the build the service would repeat and why, and the live pull recipe (`select topup.recipe($1, $2)`; `campaign not found in public.campaigns` when the mirror has no row), plus `tags`: the `campaign_method` legs, `missing_tags`, and `lead_provenance` counted by build label and confidence (D49). `client_tag` is the live list from `topup.client_map` (D42). Counts and method text, never lead rows. |
 | `size_client` | Pilot and size one client in one call: a size-only run per lane, concurrently; waits up to `wait_seconds`; returns each lane's one-line-per-campaign report and briefing. `pilot=true` scores the sample only. Nothing is pulled or loaded. |
 | `approval_briefing` | Josh's one line per campaign from the latest sized run of each lane, or one `run_id`: what loads, what is skipped and why, the build it repeats, whether loads are paused. |
-| `start_topup` | Open a run. `client_tag` + `campaign_id` (optional `count`) or `lane`. File recipe wins; else infer from pull_receipts, and every ACTIVE campaign the registry puts on the lane joins it, each pulled from its own build record (D49). Every campaign is judged by the policy first. Spend of $5 or above asks Josh. |
+| `start_topup` | Open a run. `client_tag` + `campaign_id` (optional `count`) or `lane`. File recipe wins; else infer from pull_receipts, and every ACTIVE campaign the registry puts on the lane joins it, each pulled from its own build record (D49). Every campaign is judged by the policy first. Every paid call waits for a named approval (D51); $5 or above is Josh. Nothing starts without this call or `size_client` (D51). |
 | `run_status` | Counts, spend, step state, the per-campaign report with gates and reasons, every vendor call's outcome, open cards. Never rows. |
 | `list_runs` | Recent runs. |
 | `abort_run` | Abort any open run, parked or running. |

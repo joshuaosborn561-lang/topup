@@ -10,7 +10,7 @@ describe("D50 — lane, pool, gap", () => {
   it("CANON and the ledger name D50 — Ask Josh", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D50\*\*/);
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/);
     assert.match(canon, /## The lane on the registry, the stored pool, and a count gap \(D50\)/);
     assert.match(canon, /mismatch_minor/);
     assert.match(ledger, /## D50 — /);
