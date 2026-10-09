@@ -15,7 +15,7 @@ export interface StoreLine {
   table: string;
   kind: StoreKind;
   rows: number;
-  /** False when `rows` is the planner's estimate (the long tail of scratch tables is never counted exactly). */
+  /** False when `rows` is the planner's estimate from the last analyze (the long tail of scratch tables is never counted exactly). */
   exact: boolean;
   with_email?: number;
   with_domain?: number;
@@ -65,9 +65,12 @@ function q(name: string): string {
 }
 
 async function discover(db: Queryable, tag: string): Promise<Found[]> {
-  const { rows } = await db.query<{ table_schema: string; table_name: string; n_live_tup: string | null }>(
-    `select t.table_schema, t.table_name, s.n_live_tup::text as n_live_tup
+  const { rows } = await db.query<{ table_schema: string; table_name: string; estimate: string | null }>(
+    `select t.table_schema, t.table_name,
+            greatest(coalesce(s.n_live_tup, 0), coalesce(c.reltuples, 0))::bigint::text as estimate
        from information_schema.tables t
+       left join pg_namespace n on n.nspname = t.table_schema
+       left join pg_class c on c.relnamespace = n.oid and c.relname = t.table_name
        left join pg_stat_user_tables s on s.schemaname = t.table_schema and s.relname = t.table_name
       where t.table_type = 'BASE TABLE'
         and ((t.table_schema = 'lp' and t.table_name like $1 || '\\_%' escape '\\')
@@ -78,7 +81,7 @@ async function discover(db: Queryable, tag: string): Promise<Found[]> {
   );
   const found = rows
     .filter((r) => IDENT.test(r.table_schema) && IDENT.test(r.table_name))
-    .map((r) => ({ schema: r.table_schema, table: r.table_name, estimate: Math.max(0, Number(r.n_live_tup ?? 0)), columns: new Set<string>() }));
+    .map((r) => ({ schema: r.table_schema, table: r.table_name, estimate: Math.max(0, Number(r.estimate ?? 0)), columns: new Set<string>() }));
   if (found.length === 0) return found;
   const { rows: cols } = await db.query<{ table_schema: string; table_name: string; column_name: string }>(
     `select table_schema, table_name, column_name from information_schema.columns

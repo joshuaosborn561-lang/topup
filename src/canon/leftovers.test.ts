@@ -15,10 +15,10 @@ function fakeDb() {
         assert.equal(params?.[0], "bcp");
         return {
           rows: [
-            { table_schema: "lp", table_name: "bcp_ingested_leads", n_live_tup: "900" },
-            { table_schema: "lp", table_name: "bcp_it_scoped", n_live_tup: "12000" },
-            { table_schema: "client_bcp", table_name: "contacts", n_live_tup: "400" },
-            { table_schema: "public", table_name: "bcp_wf_contacts", n_live_tup: "50" },
+            { table_schema: "lp", table_name: "bcp_ingested_leads", estimate: "900" },
+            { table_schema: "lp", table_name: "bcp_it_scoped", estimate: "12000" },
+            { table_schema: "client_bcp", table_name: "contacts", estimate: "400" },
+            { table_schema: "public", table_name: "bcp_wf_contacts", estimate: "50" },
           ],
         };
       }
