@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { countMapsPool, icpViewOf, mapsPoolFromFilters, MAPS_NEEDS_PLAN } from "./mapsPool.js";
 
-/** D56 — maps pool is scoped by plan_id. Ask Josh. */
+/** D57 — maps pool is scoped by plan_id. Ask Josh. */
 
 function fakeDb(opts: { pool?: number; used?: number; tables?: string[]; columns?: Record<string, string[]> }) {
   const seen: string[] = [];
@@ -41,7 +41,7 @@ const laneE = {
   states: [],
 };
 
-describe("D56 — maps stored pool", () => {
+describe("D57 — maps stored pool", () => {
   it("keeps plan_id and the named ICP view, and drops zips and states", () => {
     const spec = mapsPoolFromFilters(laneE, "emcor");
     assert.ok(!("error" in spec));
@@ -68,15 +68,15 @@ describe("D56 — maps stored pool", () => {
     assert.equal(r.filters_used.plan_id, "custom-1789679826");
     assert.deepEqual(r.filters_used.categories, ["church", "hotel"]);
     assert.equal(r.filters_used.icp_view, "v_lane_e_final");
-    assert.notEqual(r.pool, 0, "D56: count must not be 0 when the stored pool exists");
+    assert.notEqual(r.pool, 0, "D57: count must not be 0 when the stored pool exists");
     const sql = db.seen.join("\n");
-    assert.match(sql, /plan_id/, "D56: plan_id scoping must not be dropped");
+    assert.match(sql, /plan_id/, "D57: plan_id scoping must not be dropped");
     assert.doesNotMatch(sql, /pipeline_stats/);
     const poolSql = db.seen.filter((q) => q.includes("union") || q.includes("maps_raw") || q.includes("v_lane")).join("\n");
-    assert.doesNotMatch(poolSql, /\b(state|zip|source_zip|client_tag)\b\s*=/, "D56: must not scope by ZIP or client_tag");
+    assert.doesNotMatch(poolSql, /\b(state|zip|source_zip|client_tag)\b\s*=/, "D57: must not scope by ZIP or client_tag");
     for (const q of db.seen) {
       if (q.includes("information_schema")) continue;
-      assert.doesNotMatch(q, /select\s+(?!count)[^`]*\b(email|first_name|last_name|phone|linkedin_url)\b/i, `D2/D56: ${q.slice(0, 80)}`);
+      assert.doesNotMatch(q, /select\s+(?!count)[^`]*\b(email|first_name|last_name|phone|linkedin_url)\b/i, `D2/D57: ${q.slice(0, 80)}`);
     }
   });
 });

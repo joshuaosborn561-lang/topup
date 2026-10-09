@@ -11,7 +11,7 @@ function sourceLabel(run: RunRow, campaignId?: number | null): string {
 }
 
 /**
- * Physical maps pull (D56). Reads the stored pool in
+ * Physical maps pull (D57). Reads the stored pool in
  * `client_<tag>.maps_raw` (and the named ICP view), scoped by plan_id
  * and categories. INSERT … SELECT into the ingest table. Does not call
  * the Maps scraper, does not write dl_status / sg_exclude / skip_*.

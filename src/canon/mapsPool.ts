@@ -1,7 +1,7 @@
 import type { Queryable } from "../db/pool.js";
 
 /**
- * The stored Maps pool (D56). `client_<tag>.maps_raw` scoped by the
+ * The stored Maps pool (D57). `client_<tag>.maps_raw` scoped by the
  * receipt's `plan_id` and categories. An ICP view named on the receipt
  * is applied when it lives in that client schema. Counts only. Never
  * scoped by ZIP or by client_tag alone. Never writes `dl_status`,

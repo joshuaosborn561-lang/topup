@@ -69,8 +69,8 @@ describe("D52 — count", () => {
     assert.equal(maps.already_used, 10);
     assert.equal(maps.net_new, 18312);
     assert.equal(maps.filters_used.plan_id, "custom-1789679826");
-    assert.ok(!("states" in maps.filters_used) && !("zips" in maps.filters_used), "D56: plan_id scoping must not be dropped for states/zips");
-    assert.notEqual(maps.count, 0, "D56: count must not be 0 when the stored pool exists");
+    assert.ok(!("states" in maps.filters_used) && !("zips" in maps.filters_used), "D57: plan_id scoping must not be dropped for states/zips");
+    assert.notEqual(maps.count, 0, "D57: count must not be 0 when the stored pool exists");
     const dropped = await countSource(d, { client_tag: "emcor", source: "maps", filters: { categories: ["church"], states: ["CA"] } });
     assert.equal(dropped.count, null);
     assert.match(dropped.note ?? "", /plan_id/);
