@@ -6,10 +6,17 @@ import { parseRecipe } from "../recipes/schema.js";
 import { importMatched, parseJobs } from "./import/index.js";
 import { sourceLabel, titlePattern } from "./ingest/index.js";
 import { QA_FIELD_COLUMN, scopeSql } from "./qa/index.js";
-import { bandSegment, cellLabel, mailClassSegment, matchRule } from "./route/index.js";
+import { bandSegment, cellLabel, excludedInboxesOf, mailClassSegment, matchRule } from "./route/index.js";
 import { classifyPuzzle } from "./puzzle/classify.js";
 import { pullPlans, routePull, routeSize } from "./pull/route.js";
-import { clientPriorContactSql, positiveReplySql, recycleDays } from "./suppress/recycle.js";
+import {
+  campaignMailboxSetOk,
+  clientPriorContactSql,
+  expiredEligibleSql,
+  hardBounceSql,
+  positiveReplySql,
+  recycleDays,
+} from "./suppress/recycle.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 function campaignRecipe(
@@ -150,36 +157,65 @@ describe("D29 — pull and size routing", () => {
   });
 });
 
-describe("D35 — prior contact is a 90-day send window", () => {
-  it("recycle defaults to 90 days", () => {
-    assert.equal(recycleDays(undefined), 90);
-    assert.equal(recycleDays(null), 90);
-    assert.equal(recycleDays(0), 90);
+describe("D63 — prior contact is a 6-month send window, this client only", () => {
+  it("recycle defaults to 180 days (6 months)", () => {
+    assert.equal(recycleDays(undefined), 180);
+    assert.equal(recycleDays(null), 180);
+    assert.equal(recycleDays(0), 180);
     assert.equal(recycleDays(60), 60);
   });
 
   it("client_prior_contact is a send by this client inside the window", () => {
-    const sql = clientPriorContactSql("$10", false);
+    const sql = clientPriorContactSql(false);
     assert.match(sql, /public\.sends/);
     assert.match(sql, /smartlead_client_id = \$6/);
+    assert.match(sql, /interval '6 months'/);
     assert.doesNotMatch(sql, /leads_staging/);
   });
 
   it("live-campaign exclusion SQL is used when the flag is on", () => {
-    const sql = clientPriorContactSql("$10", true);
+    const sql = clientPriorContactSql(true);
     assert.match(sql, /leads_staging/);
     assert.match(sql, /STOPPED/);
     assert.match(sql, /COMPLETED/);
   });
 });
 
-describe("D37 — positives expire 90 days after the reply", () => {
-  it("positive SQL is dated against replied_at and does not lifetime-block on category alone", () => {
-    const sql = positiveReplySql("$10");
+describe("D63 — positives expire after 6 months, this client only", () => {
+  it("positive SQL is dated against replied_at and scoped to this client", () => {
+    const sql = positiveReplySql();
     assert.match(sql, /replied_at/);
     assert.match(sql, /positive_reply/);
-    assert.match(sql, /\$10::int \* interval '1 day'/);
+    assert.match(sql, /interval '6 months'/);
+    assert.match(sql, /smartlead_client_id = \$6/);
     assert.match(sql, /not exists/);
     assert.doesNotMatch(sql, /confirmed_empty/);
+  });
+});
+
+describe("D63 — hard bounce forever; mailbox set; expired-eligible", () => {
+  it("hard bounce SQL has no recycle window", () => {
+    const sql = hardBounceSql();
+    assert.match(sql, /s\.bounced/);
+    assert.match(sql, /smartlead_client_id = \$6/);
+    assert.doesNotMatch(sql, /interval /);
+  });
+
+  it("expired-eligible is an old send on this client that is not a hard bounce", () => {
+    const sql = expiredEligibleSql();
+    assert.match(sql, /sent_at < now\(\) - interval '6 months'/);
+    assert.match(sql, /smartlead_client_id = \$6/);
+  });
+
+  it("campaignMailboxSetOk refuses overlap and an unknown mailbox set", () => {
+    assert.equal(campaignMailboxSetOk([], ["a@x.com"]), true);
+    assert.equal(campaignMailboxSetOk(["a@x.com"], []), false);
+    assert.equal(campaignMailboxSetOk(["a@x.com"], ["b@x.com"]), true);
+    assert.equal(campaignMailboxSetOk(["A@X.com"], ["a@x.com"]), false);
+  });
+
+  it("excludedInboxesOf reads the qa_flags list", () => {
+    assert.deepEqual(excludedInboxesOf({ excluded_inboxes: ["a@x.com"] }), ["a@x.com"]);
+    assert.deepEqual(excludedInboxesOf(null), []);
   });
 });

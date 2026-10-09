@@ -3,34 +3,38 @@ import type { RunRow } from "../../domain/runs.js";
 import { INTERESTED_CATEGORY_IDS } from "../../domain/working.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import type { Recipe } from "../../recipes/schema.js";
-import { gateUnmet } from "../../spine/gate.js";
-import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
-import { clientPriorContactSql, positiveReplySql, recycleDays } from "./recycle.js";
+import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
+import {
+  clientPriorContactSql,
+  excludedCampaignsSql,
+  excludedInboxesSql,
+  expiredEligibleSql,
+  hardBounceSql,
+  positiveReplySql,
+  publicSuppressionSql,
+  recycleDays,
+  SUPPRESS_RECYCLE_MONTHS,
+  thisClientLead,
+} from "./recycle.js";
 
 /**
- * Step 5 — Suppress and dedupe (skill lead-list-build; skill global-suppression; D29).
+ * Step 5 — Suppress (D63). Per client only; applied at pull time, no cron.
  *
- * One SQL pass, response based only. In priority order a row is removed for
- * the first reason that applies:
+ *   positive_reply        this client's Interested / Meeting Request /
+ *                         Positive Reply, inside 6 months
+ *   do_not_contact        this client's current DNC category
+ *   wrong_person          this client's current Wrong Person category
+ *   suppression_list      public.suppression if permanent or first_seen
+ *                         inside 6 months (older unsubscribes expire)
+ *   bounced               this client's hard bounce, forever
+ *   client_prior_contact  this client sent in the last 6 months, or the
+ *                         address is in a live campaign of this client
+ *   client_domain         this client's own customer domain list
  *
- *   positive_reply        replied Interested / Meeting Request / Positive Reply
- *                         to any client, for 90 days after the reply (D37)
- *   do_not_contact        category Do Not Contact, any client, forever
- *   wrong_person          category Wrong Person, any client, forever
- *   suppression_list      on public.suppression
- *   bounced               a bounced send or a Sender Originated Bounce, any client
- *   client_prior_contact  this client sent to the address in the last
- *                         recycle_after_days (default 90), or the address
- *                         is already in a live campaign of this client
- *                         (D36 item 2). DNC / wrong person stay blocked
- *                         forever above this. Positives expire (D37).
- *   same_offer_other_client  received the same offer (registry offer_key) from another client
- *   client_domain         the client's own customer domain list, when one exists
- *
- * Never against all of public.leads (every client). This client's leads are
- * in-campaign duplicates, not "someone else emailed them."
- * Empty customer list does not halt (D37). Positives from
- * campaignintelligence are the global list for every client.
+ * A block for another client never applies. After 6 months the person is
+ * eligible again for this client; excluded_inboxes stay on the row.
+ * same_offer_other_client is not applied (D63). Empty customer list does
+ * not halt. Never writes dl_status, sg_exclude, or skip_*.
  */
 export interface SuppressDeps extends StageDeps {
   ledger?: LaneLedger;
@@ -63,19 +67,13 @@ export class SuppressStage {
       const t = await this.tables();
       const clientCampaigns = await this.clientCampaignIds(recipe, t);
       const offerKeys = await this.offerKeys(recipe, t);
-      if (recipe.suppression.same_offer_any_client && offerKeys.length === 0) {
-        return gateUnmet(
-          "suppress",
-          "same_offer_any_client is on and topup.campaign_registry has no offer_key for this lane's campaigns. Seed the registry; do not skip.",
-          { raw: 0, offer_keys: 0 },
-        );
-      }
       const { rows: rawRows } = await db.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status = 'ingested'`, [run.run_id]);
       const raw = Number(rawRows[0]?.n ?? 0);
 
       const headcountDropped = 0;
       const removed = await this.d.repo.withRun(run.run_id, async (tx) => {
-        const reasonSql = this.reasonCase(recipe, t, offerKeys.length > 0, domainCount > 0);
+        const reasonSql = this.reasonCase(recipe, t, domainCount > 0);
+        const bind = [run.run_id, INTERESTED_CATEGORY_IDS, DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, recipe.smartlead_client_id, clientCampaigns, offerKeys, run.client_tag, days, [] as string[]];
         const { rows } = await tx.query<{ reason: string; n: string }>(
           `with p as (
              select $2::int[] as positive, $3::int as dnc, $4::int as wrong_person, $5::int as bounce,
@@ -94,10 +92,30 @@ export class SuppressStage {
              returning j.reason
            )
            select reason, count(*)::text as n from hit group by reason`,
-          [run.run_id, INTERESTED_CATEGORY_IDS, DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, recipe.smartlead_client_id, clientCampaigns, offerKeys, run.client_tag, days, [] as string[]],
+          bind,
         );
         const byReason: Record<string, number> = Object.fromEntries(SUPPRESS_REASONS.map((r) => [r, 0]));
         for (const r of rows) byReason[r.reason] = Number(r.n);
+
+        let expiredEligible = 0;
+        if (t.leads && t.sends) {
+          const expired = await tx.query(
+            `with r as (
+               select id, lower(email) as e
+               from ${table} where run_id = $1 and lead_status = 'ingested' and coalesce(email, '') <> ''
+             )
+             update ${table} t
+                set qa_flags = coalesce(t.qa_flags, '{}'::jsonb) || jsonb_build_object(
+                  'expired_eligible', true,
+                  'excluded_inboxes', ${excludedInboxesSql()},
+                  'excluded_campaigns', ${excludedCampaignsSql()}
+                )
+               from r
+              where t.id = r.id and ${expiredEligibleSql()}`,
+            [run.run_id, INTERESTED_CATEGORY_IDS, DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, recipe.smartlead_client_id],
+          );
+          expiredEligible = expired.rowCount ?? 0;
+        }
 
         const dup = await tx.query(
           `with ranked as (
@@ -110,7 +128,7 @@ export class SuppressStage {
         );
         const noEmail = await tx.query(`update ${table} set lead_status = 'needs_email', status_changed_at = now() where run_id = $1 and lead_status = 'ingested' and coalesce(email, '') = ''`, [run.run_id]);
         const survivors = await tx.query(`update ${table} set lead_status = 'needs_verify', status_changed_at = now() where run_id = $1 and lead_status = 'ingested'`, [run.run_id]);
-        return { byReason, deduped: dup.rowCount ?? 0, needs_email: noEmail.rowCount ?? 0, net_new: survivors.rowCount ?? 0 };
+        return { byReason, deduped: dup.rowCount ?? 0, needs_email: noEmail.rowCount ?? 0, net_new: survivors.rowCount ?? 0, expired_eligible: expiredEligible };
       });
 
       const suppressed = Object.values(removed.byReason).reduce((a, b) => a + b, 0);
@@ -122,7 +140,9 @@ export class SuppressStage {
         deduped: removed.deduped,
         needs_email: removed.needs_email,
         net_new: removed.net_new,
+        expired_eligible: removed.expired_eligible,
         recycle_after_days: days,
+        recycle_months: SUPPRESS_RECYCLE_MONTHS,
         client_domain_list: domainCount,
       };
       const skipped: string[] = [];
@@ -135,37 +155,28 @@ export class SuppressStage {
         .map(([k, n]) => `${k} ${n}`)
         .join(", ");
       const line =
-        `Suppress done: raw ${raw} · removed ${suppressed + headcountDropped}${reasons ? ` (${reasons})` : ""}${headcountDropped ? ` · linkedin headcount ${headcountDropped}` : ""} · ${removed.deduped} duplicates within the pull · ${removed.needs_email} with no address · *net new ${removed.net_new}* — the number from here on.` +
-        ` · prior contact is a send by this client in the last ${days} days` +
-        (recipe.suppression.exclude_other_live_campaigns ? ` (plus anyone already in a live campaign)` : "") +
-        `; positives expire ${days} days after the reply; DNC and wrong person stay forever.` +
+        `Suppress done: raw ${raw} · removed ${suppressed + headcountDropped}${reasons ? ` (${reasons})` : ""}${headcountDropped ? ` · linkedin headcount ${headcountDropped}` : ""} · ${removed.deduped} duplicates within the pull · ${removed.needs_email} with no address · expired-and-eligible ${removed.expired_eligible} · *net new ${removed.net_new}* — the number from here on.` +
+        ` · per client only; prior contact and positives recycle after ${SUPPRESS_RECYCLE_MONTHS} months; hard bounces stay forever; sending inboxes stay blocked.` +
+        (recipe.suppression.exclude_other_live_campaigns ? ` Live campaigns of this client still exclude.` : "") +
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);
     });
   }
 
-  /** The CASE that names the first reason a row is removed. $2–$10 as in run(). */
-  private reasonCase(recipe: Recipe, t: Tables, haveOffer: boolean, haveDomains: boolean): string {
+  /** The CASE that names the first reason a row is removed. This client only (D63). */
+  private reasonCase(recipe: Recipe, t: Tables, haveDomains: boolean): string {
     const whens: string[] = [];
-    const inLeads = (cond: string) => `exists (select 1 from public.leads l where lower(l.email) = r.e and ${cond})`;
     if (t.leads) {
-      whens.push(`when ${positiveReplySql("$10")} then 'positive_reply'`);
-      whens.push(`when ${inLeads("l.category_id = $3")} then 'do_not_contact'`);
-      whens.push(`when ${inLeads("l.category_id = $4")} then 'wrong_person'`);
+      whens.push(`when ${positiveReplySql()} then 'positive_reply'`);
+      whens.push(`when ${thisClientLead("l.category_id = $3")} then 'do_not_contact'`);
+      whens.push(`when ${thisClientLead("l.category_id = $4")} then 'wrong_person'`);
     }
-    if (recipe.suppression.public_suppression && t.suppression) whens.push(`when exists (select 1 from public.suppression s where lower(s.email) = r.e) then 'suppression_list'`);
+    if (recipe.suppression.public_suppression && t.suppression) whens.push(`when ${publicSuppressionSql()} then 'suppression_list'`);
     if (recipe.suppression.bounced_any_client && t.leads) {
-      const bounce = [t.sends ? `exists (select 1 from public.leads l join public.sends s on s.lead_id = l.id where lower(l.email) = r.e and s.bounced)` : null, inLeads("l.category_id = $5")].filter(Boolean).join(" or ");
-      whens.push(`when ${bounce} then 'bounced'`);
+      whens.push(`when ${hardBounceSql()} then 'bounced'`);
     }
     if (recipe.suppression.client_prior_contacts && t.leads && t.sends) {
-      whens.push(`when ${clientPriorContactSql("$10", recipe.suppression.exclude_other_live_campaigns && t.staging && t.campaigns)} then 'client_prior_contact'`);
-    }
-    if (recipe.suppression.same_offer_any_client && haveOffer && t.leads && t.campaigns) {
-      whens.push(
-        `when exists (select 1 from public.leads l join public.campaigns c on c.id = l.campaign_id join topup.campaign_registry cr on cr.campaign_id = c.smartlead_campaign_id
-                       where lower(l.email) = r.e and cr.offer_key = any($8::text[]) and cr.client_tag <> $9 and not (cr.client_tag = any($11::text[]))) then 'same_offer_other_client'`,
-      );
+      whens.push(`when ${clientPriorContactSql(recipe.suppression.exclude_other_live_campaigns && t.staging && t.campaigns)} then 'client_prior_contact'`);
     }
     if (recipe.suppression.client_domain_blocklist && haveDomains) {
       whens.push(`when exists (select 1 from topup.client_domain_blocklist b where b.client_tag = $9 and b.domain = r.d) then 'client_domain'`);

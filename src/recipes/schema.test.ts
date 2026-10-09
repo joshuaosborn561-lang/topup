@@ -131,7 +131,7 @@ describe("recipe schema", () => {
       1,
       "Parlay's six campaigns share one persona today; another offer would add a second",
     );
-    assert.equal(r.suppression.recycle_after_days, 90, "D35 item 2: 90-day send window");
+    assert.equal(r.suppression.recycle_after_days, 180, "D63: 6-month send window");
     assert.equal(r.suppression.exclude_other_live_campaigns, true, "D36 item 2: never two live campaigns of the same client");
     assert.equal(r.email_finding.name_to_email, false, "D36 item 71: Name to Email is paused");
     assert.equal(r.verify.drop_gateway_catchalls, false, "D36 item 58: Insight-only; Parlay still segments");

@@ -63,7 +63,7 @@ Verbs (one stage each, counts back):
 | Tool | Runs |
 |---|---|
 | `pull` | Opens a job, returns the `job_id` at once, and pulls 1 to 2,000 rows from getleads, Maps, permits or a table in the background; poll `job(job_id)`. Maps skips emails already in the ingest table. |
-| `suppress` | The suppression set. Returns raw, dropped by reason, net new. |
+| `suppress` | Per client only (D63): this client's prior contacts and positives (6 months), hard bounces forever, public list if permanent or inside 6 months. Returns raw, dropped by reason, `expired_eligible`, net new. |
 | `icp` | The ICP website gate (our own site fetch, Jev picks a category, DiscoLike on unreadable sites). Flagged rows are suppressed with a reason. Paid; estimate first. |
 | `enrich` | Domains, people, emails through the waterfalls. Paid tiers estimate first. |
 | `verify` | MillionVerifier then No2Bounce. Paid; estimate first. |

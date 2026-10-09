@@ -179,8 +179,8 @@ const suppression = z
     client_domain_blocklist: z.boolean().default(true),
     same_offer_any_client: z.literal(true),
     same_gift_any_client: z.boolean().default(false),
-    /** Days since last send by this client. Default 90 (D35 item 2). */
-    recycle_after_days: z.number().int().min(1).nullable().optional().default(90),
+    /** Days since last send by this client. Default 180 / 6 months (D63). */
+    recycle_after_days: z.number().int().min(1).nullable().optional().default(180),
     /**
      * Item 2 addition (D36): never put someone in two live campaigns of
      * the same client at once. Default on.
