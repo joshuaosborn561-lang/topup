@@ -6,6 +6,7 @@ import type { Recipe } from "../../recipes/schema.js";
 import { pendingCampaignCard } from "../../console/cards.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
+import { campaignMailboxSetOk } from "../suppress/recycle.js";
 
 /**
  * Step 9 — Route to campaigns (skill lead-list-build; skill
@@ -59,6 +60,13 @@ export function matchRule(cell: Cell, routing: Recipe["routing"]): Recipe["routi
   return null;
 }
 
+export function excludedInboxesOf(flags: unknown): string[] {
+  if (!flags || typeof flags !== "object") return [];
+  const raw = (flags as { excluded_inboxes?: unknown }).excluded_inboxes;
+  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  return [];
+}
+
 export function cellLabel(cell: Cell, dims: readonly string[]): string {
   return dims.map((d) => `${d}=${cell[d] ?? "?"}`).join(" · ");
 }
@@ -85,8 +93,9 @@ export class RouteStage {
         return r.rowCount ?? 0;
       });
 
-      const { rows } = await db.query<{ id: string; company_size: string | null; mail_class: string | null; gift: string | null; source_label: string | null }>(
-        `select id::text, company_size, mail_class, normalize_flags->'gift_tier'->>0 as gift, ${labelSql} from ${table}
+      const flagsSql = cols.has("qa_flags") ? "qa_flags" : "null::jsonb as qa_flags";
+      const { rows } = await db.query<{ id: string; company_size: string | null; mail_class: string | null; gift: string | null; source_label: string | null; qa_flags: unknown }>(
+        `select id::text, company_size, mail_class, normalize_flags->'gift_tier'->>0 as gift, ${labelSql}, ${flagsSql} from ${table}
          where run_id = $1 and lead_status in ('qa_passed', 'pending_campaign')`,
         [run.run_id],
       );
@@ -97,12 +106,13 @@ export class RouteStage {
         const stamped = campaignIdFromSourceLabel(r.source_label, targets);
         const rule = stamped ? null : matchRule(cell, recipe.routing);
         const campaign = stamped ?? rule?.campaign_id ?? null;
-        if (campaign) {
+        const excluded = excludedInboxesOf(r.qa_flags);
+        if (campaign && campaignMailboxSetOk(excluded, [])) {
           const ids = byCampaign.get(campaign) ?? [];
           ids.push(r.id);
           byCampaign.set(campaign, ids);
         } else {
-          const label = cellLabel(cell, dims);
+          const label = excluded.length ? `excluded_inbox · ${cellLabel(cell, dims)}` : cellLabel(cell, dims);
           const ids = pending.get(label) ?? [];
           ids.push(r.id);
           pending.set(label, ids);

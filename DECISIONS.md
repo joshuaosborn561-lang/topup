@@ -54,9 +54,9 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D32 | Live; `other` and trusted backfill TAM superseded by D33 |
 | D33 | Live |
 | D34 | Live; lifetime prior contact superseded by D35 item 2; empty-list halt superseded by D37; staging dedupe, mixed headcount, MX, health, QA regex stay |
-| D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37 |
+| D35 | Live; live-campaign exclude pending and Name-to-Email-first superseded by D36; positives-forever and empty-list item 4 superseded by D37; 90-day send recycle superseded by D63 |
 | D36 | Live |
-| D37 | Live |
+| D37 | Live; global 90-day positives superseded by D63 (per client, 6 months) |
 | D38 | Live; n/a-as-healthy and inbox-only days superseded by D45; superseded for starting by D51 (the watch observes) |
 | D39 | Live; allow/ban + LeadPipe/csv-endpoint + no 13-step walk in Grok context; receipt inference is D45 |
 | D40 | Live; live pull recipe MCP on this service, not LeadPipe; the three tools are folded into `campaign_history` by D48; watch Slack includes the count summary |
@@ -81,6 +81,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories are not applied again on that union |
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 | D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
+| D62 | Live on PR #39 (maps pull timeout); reserved so this ledger stays contiguous |
+| D63 | Live; suppress is per client only; after 6 months a person (including unsubscribes) is eligible again for that client except the sending inboxes, which stay blocked forever; hard bounces stay forever; applied at pull time only; `expired_eligible` is a separate count |
 
 ---
 
@@ -2058,3 +2060,53 @@ and a second replica cannot be turned off from this repo; they are
 named in the PR.
 
 **Guard.** `src/guards/d61_maps_pull_async_watch.test.ts`. Ask Josh.
+
+## D62 — A background maps pull cannot hang
+
+**Decision.** On PR #39 (`cursor/maps-pull-timeout-hang-a879`). A background
+maps pull always ends `done` or `failed` with `last_error`. The copy
+reads the named ICP view, not the companion join; it times out; it
+dedupes with or without a unique email index. This entry keeps the
+ledger contiguous while that PR is open. Ask Josh.
+
+**Guard.** `src/guards/d62_maps_pull_timeout.test.ts` on that PR.
+
+## D63 — Suppression is per client; 6 months then eligible except those inboxes
+
+**Decision.** Josh, 2026-10-09 3:44pm CT. He accepts the unsubscribe risk.
+
+1. **Per client only.** A block for one client never applies to another.
+   Positives, DNC, wrong person, prior contact, and hard bounces are
+   scoped to `smartlead_client_id`. `same_offer_other_client` is not
+   applied.
+2. **Six months.** After 6 months a suppressed person (including
+   unsubscribes on `public.suppression` that are not `permanent`) is
+   eligible again for the **same** client. The sending inbox(es) that
+   emailed them stay blocked forever for that person.
+3. **Hard bounces stay forever** on that client (`s.bounced` or Sender
+   Originated Bounce).
+4. **Pull time only.** Applied inside `suppress`. No cron, no routine
+   (canon rule 5).
+5. **`expired_eligible` is a separate count** on the suppress step.
+6. **Route and stage carry `excluded_inboxes`** on the row (`qa_flags`
+   and `leads_staging.excluded_inboxes`). A campaign whose mailbox set
+   overlaps that list is not used. An unknown mailbox set is refused
+   when the list is non-empty.
+
+`public.sends` has no sender-inbox column (D38: no mailbox mirror).
+Until Josh names the source, `excluded_inboxes` is stamped empty and
+`expired_eligible` still counts. Smartlead cannot exclude inboxes per
+lead on import (see the PR). Never writes `dl_status`, `sg_exclude`,
+or `skip_*`.
+
+**Why.** Josh wants people we already emailed to come back after six
+months for that client, but never from the same inbox, and never to
+carry one client's unsub or bounce onto another.
+
+**Tradeoff.** Cross-client positives no longer suppress (D37
+superseded for scope). DNC / wrong person still block while that
+category is current on this client. Permanent rows on
+`public.suppression` stay. A one-campaign top-up of an expired-eligible
+person will still route there until the inbox list is filled.
+
+**Guard.** `src/guards/d63_client_suppress.test.ts`. Ask Josh.

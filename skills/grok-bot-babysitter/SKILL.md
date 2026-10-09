@@ -37,6 +37,11 @@ The rules you apply:
 * **Josh flips ACTIVE.** Never SG Nurture. Cold call campaigns (Gabe Calls,
   Cayden Calls, Cold Call, Post-call) are ignored: the service leaves them
   off `campaigns` and refuses `pull` on them.
+* **Suppress is per client (D63).** A block for one client never applies
+  to another. After 6 months a person (including unsubscribes) is eligible
+  again for that client; the sending inboxes stay blocked forever; hard
+  bounces stay forever. Applied at pull time only. Report
+  `expired_eligible` separately. Do not invent a cron or a routine.
 
 ## The loop (one campaign at a time)
 

@@ -1,18 +1,18 @@
 ---
 name: merged-list
-description: The full merged list-build rulebook (D35–D37). Use before any pull, top-up, recipe, or suppression change. The six taps Josh left pending are yes. Positives expire 90 days after the reply.
+description: The full merged list-build rulebook (D35–D37). Use before any pull, top-up, recipe, or suppression change. D63 supersedes the 90-day / global-positive windows: suppress is per client, 6 months, sending inboxes stay blocked. The six taps Josh left pending are yes.
 ---
 
 # Merged list
 
-Josh's rulebook, 2026-09-14. Canon as of D37. The six taps he left pending are yes (D36). Positives expire 90 days after the reply and are the global list for every client (D37).
+Josh's rulebook, 2026-09-14. Canon as of D63. The six taps he left pending are yes (D36). D37's global 90-day positives are superseded: suppress is per client; after 6 months the person is eligible again for that client except the sending inboxes (D63). Josh accepts the unsubscribe risk.
 
 ## Every client
 
-1. Only block people who replied positively, said don't contact, or said wrong person. DNC and wrong person forever. Positives expire 90 days after the reply (D37).
-2. Don't load anyone the client sent to in the last 90 days. Past 90 days with no DNC / wrong-person response, they're fair game. Never put someone in two live campaigns of the same client at once.
-3. Two clients can email the same person. The same offer from two clients can't.
-4. Customer domain lists are optional. The global list is campaignintelligence positives (D37). Do not halt a run for an empty customer list.
+1. Only block people on **this client** who replied positively, said don't contact, or said wrong person. Hard bounces on this client stay forever. Positives expire 6 months after the reply (D63). DNC / wrong person block while that category is current on this client.
+2. Don't load anyone this client sent to in the last 6 months. Past 6 months they are eligible again for this client, never from the sending inbox(es) that emailed them (D63). Never put someone in two live campaigns of the same client at once.
+3. A block for one client never applies to another (D63). `same_offer_other_client` is not applied.
+4. Customer domain lists are optional. Do not halt a run for an empty customer list. Permanent `public.suppression` stays; older non-permanent unsubscribes expire (Josh accepts that risk).
 5. Verify everything before Smartlead, whatever the vendor says. Verified means MillionVerifier good, or catch all plus No2Bounce deliverable.
 6. SEG split is always on. Gateway companies go to the SEG campaigns, not thrown out.
 7. If the lane has a gift: no team found means AirPods. If no gift, teams don't matter.

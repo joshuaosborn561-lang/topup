@@ -5,27 +5,29 @@ description: Build and apply the SalesGlider Growth global suppression list befo
 
 # Global suppression
 
-## Scope, corrected 2026-08-25
+## Scope (D63, 2026-10-09)
 
-Suppress on **response**, not on contact history.
+Suppress **per client only**. A block for one client never applies to another.
+Applied inside `suppress` at pull time. No cron, no routine.
 
-Suppress:
+Suppress on this `smartlead_client_id`:
 
-- Positive replies, any client, any campaign, for 90 days after the reply (D37)
-- Do Not Contact replies (forever)
-- Wrong Person replies (forever)
-- Everything in `public.suppression`
+- Positive replies, for 6 months after the reply
+- Current Do Not Contact and Wrong Person on this client
+- Hard bounces on this client (forever: `s.bounced` or Sender Originated Bounce)
+- `public.suppression` when `permanent` or `first_seen` is inside 6 months
+  (older non-permanent unsubscribes expire — Josh accepts that risk)
+- Anyone this client sent to in the last 6 months
+- Anyone already in a live campaign of this client (D36)
 
-Do **not** suppress someone merely because another client emailed them. Prior contact by any
-other client is no longer a suppression reason. Two clients in different verticals reaching the same
-person is acceptable; two clients reaching someone who already asked out is not.
+After 6 months the person is eligible again for **this** client. The sending
+inboxes that emailed them stay blocked forever for that person. Route and
+stage carry `excluded_inboxes`. Report `expired_eligible` separately.
 
-**This client's prior sends are excluded for 90 days** (D35 item 2). Anyone this
-`smartlead_client_id` sent to in the last 90 days is skipped. Past 90 days with no
-DNC / wrong-person response, they are fair game. DNC and wrong person stay
-blocked forever. Positive replies expire 90 days after the reply and apply to
-every client (D37). Never put someone in two live campaigns of the same client
-at once (D36 item 2). An empty customer domain list does not halt a run.
+Do **not** suppress someone merely because another client emailed them, replied
+positively, or unsubscribed. `same_offer_other_client` is not applied.
+Never put someone in two live campaigns of the same client at once
+(D36 item 2). An empty customer domain list does not halt a run.
 
 **Any pool-exhaustion figure computed before 2026-08-25 used the old contact-history scope and
 is understated.** Recount before telling a client their pool is dry.

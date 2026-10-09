@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D61** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D63** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -65,7 +65,14 @@ D48).
     email and skips emails already there (`ON CONFLICT DO NOTHING`).
     Skipped rows are `already_held`. `pull` returns the job id at once and
     runs in the background; `job(job_id)` is the poll (D61).
-14. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+14. **Suppression is per client.** A block for one client never applies
+    to another. After 6 months a suppressed person (including
+    unsubscribes) is eligible again for the same client; the sending
+    inboxes stay blocked forever for that person. Hard bounces stay
+    forever. Applied inside `suppress` at pull time only. `suppress`
+    reports `expired_eligible` separately. Route and stage carry
+    `excluded_inboxes` (D63).
+15. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -96,7 +103,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 | Verb | Stage(s) | Notes |
 |---|---|---|
 | `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. `source` is `getleads`, `maps`, `permits` or `table`. Maps copies into `lp.<tag>_ingested_leads` with a unique email skip (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
-| `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
+| `suppress(job_id)` | suppress | Per client only (D63): this client's prior contacts (6 months), positives, DNC, wrong person, hard bounces (forever), public suppression (permanent or inside 6 months), the client's domain list. Returns raw, dropped by reason, `expired_eligible`, net new. |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; no and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
 | `enrich(job_id, approved_by?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. |
 | `verify(job_id, approved_by?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. |
@@ -174,7 +181,7 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   scope that pool by ZIP or `client_tag` alone (D57). Never send an
   untyped `$1` on a maps ICP count (D59). A maps insert that hits an
   email already in `lp.<tag>_ingested_leads` skips it as `already_held`
-  (D61).
+  (D61). Never apply one client's suppress block to another (D63).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).

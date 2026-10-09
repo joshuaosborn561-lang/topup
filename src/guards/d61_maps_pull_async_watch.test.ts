@@ -28,7 +28,7 @@ describe("D61 — maps pull idempotent, async, no self-start", () => {
     assert.match(grok, /d\.jobs\.begin\(id, "pull"/, "D61: the pull tool must return before pull+ingest finish. Ask Josh.");
     assert.doesNotMatch(grok, /d\.jobs\.run\(id, "pull"/, "D61: the pull tool must not await the full pull on the MCP call. Ask Josh.");
     assert.match(canon, /returns the `job_id` at once/i, "D61: CANON.md must say pull returns the job id at once. Ask Josh.");
-    assert.match(canon, /Canon as of \*\*D61\*\*/, "D61: fold this decision into CANON.md. Ask Josh.");
+    assert.match(canon, /job_id` at once/, "D61: fold this decision into CANON.md. Ask Josh.");
   });
 
   it("nothing opens as the watch, and a watch or runway trigger is refused", async () => {
