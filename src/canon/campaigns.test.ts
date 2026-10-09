@@ -30,7 +30,7 @@ describe("D52 — campaigns", () => {
     assert.ok(!("error" in out));
     if ("error" in out) return;
     assert.match(out.rule, /1 positive reply per 2,000 sends/);
-    assert.deepEqual(out.campaigns.map((c) => c.campaign_id), [10, 4085158, 11], "over the bar first, then the emptiest");
+    assert.deepEqual(out.campaigns.map((c) => c.campaign_id), [10, 11], "over the bar first, then the emptiest; the cold call campaign is left off (D54)");
     const ten = out.campaigns.find((c) => c.campaign_id === 10)!;
     assert.equal(ten.rate_per_2000, 1);
     assert.equal(ten.passes_reply_bar, true);
@@ -39,9 +39,8 @@ describe("D52 — campaigns", () => {
     const eleven = out.campaigns.find((c) => c.campaign_id === 11)!;
     assert.equal(eleven.rate_per_2000, 0.5);
     assert.equal(eleven.passes_reply_bar, false);
-    const gabe = out.campaigns.find((c) => c.campaign_id === 4085158)!;
-    assert.equal(gabe.never_top_up, true);
-    assert.deepEqual(out.counts, { campaigns: 3, passing_reply_bar: 1, passing_and_under_1000_untouched: 1, never_top_up: 1 });
+    assert.equal(out.campaigns.find((c) => c.campaign_id === 4085158), undefined, "D54: SG Gabe Calls is a cold call campaign and is ignored");
+    assert.deepEqual(out.counts, { campaigns: 2, passing_reply_bar: 1, passing_and_under_1000_untouched: 1, never_top_up: 0, ignored_cold_call: 1 });
     assert.ok(!JSON.stringify(out).includes("@"));
   });
 

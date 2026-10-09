@@ -35,5 +35,6 @@ describe("D52 — job recipe", () => {
     assert.throws(() => jobRecipe({ ...base, filters: { industries: ["Hospitals"] } }), /job_titles/);
     assert.throws(() => jobRecipe({ ...base, source: "maps", filters: {} }), /categories/);
     assert.throws(() => jobRecipe({ ...base, max_rows: 0 }), /max_rows/);
+    assert.throws(() => jobRecipe({ ...base, max_rows: 2001 }), /max_rows/, "D53: a job pulls 1 to 2,000 rows");
   });
 });

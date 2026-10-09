@@ -23,6 +23,7 @@ repo. `DECISIONS.md` is the ledger of why.
 * Spend without a named approval. Import while loads are paused.
 * Return a lead row or a file URL from any tool.
 * Set a Smartlead campaign ACTIVE, or pause, stop, edit or delete one.
+* Touch a campaign marked as cold call. It is not listed, read or pulled (D54).
 
 ## Running it
 

@@ -9,6 +9,8 @@ import { VERB_ORDER, type JobRunner, type Verb } from "../jobs/runner.js";
 import { loadClientMap } from "../canon/clients.js";
 import { registryRows } from "../canon/registry.js";
 import { EMAIL_TIERS } from "../recipes/schema.js";
+import { campaignNameBySmartleadId } from "../ledger/health.js";
+import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
 
 /**
  * The reads and the verbs for Grok bot (D52). Reads return what Supabase
@@ -113,7 +115,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         campaign_id: z.number().int(),
         source: z.enum(JOB_SOURCES as unknown as [string, ...string[]]),
         filters,
-        max_rows: z.number().int().min(1).max(50_000),
+        max_rows: z.number().int().min(1).max(MAX_ROWS_PER_JOB).describe(`1 to ${MAX_ROWS_PER_JOB} rows per job.`),
         lane: snake.optional().describe("Defaults to the campaign's registry lane."),
         email_max_tier: z.enum(EMAIL_TIERS).optional(),
         name_to_email: z.boolean().optional(),
@@ -128,6 +130,8 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
         if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
         const registry = registryRows(await d.repo.campaignRegistry(client_tag).catch(() => []));
+        const name = (await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null)) ?? registry.find((r) => r.campaign_id === campaign_id)?.campaign_name ?? null;
+        if (isColdCall(name)) return text({ error: `#${campaign_id} ${name} is marked as cold call; the service ignores it (D54). Ask Josh.` });
         const laneName = lane ?? registry.find((r) => r.campaign_id === campaign_id)?.lane ?? "grok";
         const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(email_max_tier ? { email_max_tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
         const opened = await d.jobs.open(spec, d.by);

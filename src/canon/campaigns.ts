@@ -2,7 +2,7 @@ import { campaignPerformance } from "../builds/load.js";
 import type { Queryable } from "../db/pool.js";
 import { assessCampaign, campaignIdsForClient, campaignSnapshots } from "../ledger/health.js";
 import { loadClientMap } from "./clients.js";
-import { isNeverTopUp, ratePer2000, REPLY_BAR_PER_2000 } from "../policy/rules.js";
+import { isColdCall, isNeverTopUp, ratePer2000, REPLY_BAR_PER_2000 } from "../policy/rules.js";
 import { registryRows } from "./registry.js";
 
 /**
@@ -32,7 +32,7 @@ export interface CampaignLine {
 export interface CampaignsRead {
   rule: string;
   clients: string[];
-  counts: { campaigns: number; passing_reply_bar: number; passing_and_under_1000_untouched: number; never_top_up: number };
+  counts: { campaigns: number; passing_reply_bar: number; passing_and_under_1000_untouched: number; never_top_up: number; ignored_cold_call: number };
   campaigns: CampaignLine[];
 }
 
@@ -49,6 +49,7 @@ export async function listCampaigns(
   if (clientTag && clients.length === 0) return { error: `${clientTag} is not in topup.client_map. Adding a client is a row in that table. Ask Josh.` };
 
   const out: CampaignLine[] = [];
+  let ignoredColdCall = 0;
   for (const client of clients) {
     const ids = await campaignIdsForClient(db, client.smartlead_client_id, !opts.include_inactive).catch(() => [] as number[]);
     if (ids.length === 0) continue;
@@ -59,6 +60,11 @@ export async function listCampaigns(
     ]);
     const lanes = new Map(registryRows(registry).map((r) => [r.campaign_id, r.lane] as const));
     for (const snap of snaps) {
+      // D54: a campaign marked as cold call is not an email campaign; it is left off the list entirely.
+      if (isColdCall(snap.name)) {
+        ignoredColdCall += 1;
+        continue;
+      }
       const h = assessCampaign(snap);
       const p = perf.get(snap.smartlead_campaign_id) ?? { sends: 0, positives: 0 };
       const rate = Math.round(ratePer2000(p.sends, p.positives) * 100) / 100;
@@ -91,6 +97,7 @@ export async function listCampaigns(
       passing_reply_bar: out.filter((c) => c.passes_reply_bar && !c.never_top_up).length,
       passing_and_under_1000_untouched: out.filter((c) => c.passes_reply_bar && !c.never_top_up && c.untouched < 1000).length,
       never_top_up: out.filter((c) => c.never_top_up).length,
+      ignored_cold_call: ignoredColdCall,
     },
     campaigns: out,
   };

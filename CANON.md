@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D53** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D54** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -34,8 +34,9 @@ D48).
 6. **Josh flips ACTIVE by hand.** The service never sets a campaign ACTIVE,
    never pauses, stops or deletes one, and never creates or edits one in
    Smartlead (D5, D14).
-7. **Never top up** SG Gabe Calls (4085158), SG Nurture (3122546), or any
-   campaign named "Cayden Calls" (D46).
+7. **Never top up** SG Nurture (3122546) (D46). **Ignore any campaign
+   marked as cold call** ("Cold Call", "Gabe Calls", "Cayden Calls",
+   "Post-call"): it is not listed, not read, not pulled (D54).
 8. **Counts and ids, never rows.** Logs, cards, receipts and answers carry
    counts, labels and notes. The logger redacts (D2).
 9. **Only campaignintelligence** (`azpapwtnrbzywlnxxecz`). Secrets live in
@@ -52,7 +53,7 @@ bears on stated and no verdict (D52).
 | Read | What it answers |
 |---|---|
 | `canon` | This page. Also the MCP server's instructions. |
-| `campaigns(client_tag?, include_inactive?)` | Every ACTIVE campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. |
+| `campaigns(client_tag?, include_inactive?)` | Every ACTIVE email campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. Cold call campaigns are left off. |
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
 | `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool) or `permits` with the filters you pass. Returns the number, every call, the cost. |

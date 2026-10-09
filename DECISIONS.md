@@ -73,6 +73,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D51 | Live; nothing starts on its own, Grok bot starts; every paid call waits for a named approval (auto cap $0); "the TAM for this campaign is exhausted"; Deep Roots mapped; the fourteen Peterson and Insight registry rows mapped |
 | D52 | Live; the reads and the verbs for Grok bot: reads state the rule and no verdict, verbs run one stage on a job, approvals by name through the console, no row or file URL |
 | D53 | Live; the reasoning half is deleted (watch, planner, recipes inference, policy gates, Slack console, old MCP tools); one short canon; the surface is the canon tools only; version 1.0.0 |
+| D54 | Live; a campaign marked as cold call is ignored everywhere (not listed, not read, not pulled); the mark is in the name; a job pulls at most 2,000 rows |
 
 ---
 
@@ -1788,3 +1789,24 @@ the vendor runs. The old queue and overview are gone; `campaigns` and
 `campaign_record` answer the same questions without a verdict.
 
 **Guard.** `src/guards/d53_canon.test.ts`. Ask Josh.
+
+
+## D54 — Cold call campaigns are ignored
+
+**Decision.** A Smartlead campaign marked as cold call is not an email
+campaign and the service ignores it: `campaigns` leaves it off the list
+(counted under `ignored_cold_call`), `campaign_record` answers with the
+reason, and `pull` refuses to open a job on it. The mark is in the
+campaign name: "Cold Call", "Calls" (Gabe Calls, Cayden Calls),
+"Post-call", "calling", "dialer". No column marks it on
+`public.campaigns` or the registry today; if one appears, it joins the
+check. Also pinned here: a job pulls at most 2,000 rows, as the canon
+said and the `pull` schema did not.
+
+**Why.** Josh, 2026-10-09: "this app should ignore any campaign marked
+as cold call." The two stale goliath runs were aborted the same day.
+
+**Tradeoff.** A name that says "call" for another reason is ignored too.
+Rename it or ask Josh for a narrower mark.
+
+**Guard.** `src/guards/d54_cold_call.test.ts`. Ask Josh.
