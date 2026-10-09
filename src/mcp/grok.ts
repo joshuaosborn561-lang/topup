@@ -66,7 +66,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "count",
     {
       description:
-        "A count on one source with the filters you supply, as the record stores them: getleads (free), ai_ark (about five cents; needs approved_by), maps (the stored Maps pool), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
+        "A count on one source with the filters you supply, as the record stores them: getleads (free), ai_ark (about five cents; needs approved_by), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
       inputSchema: { client_tag: snake, source: z.enum(["getleads", "ai_ark", "maps", "permits"]), filters, approved_by: z.string().optional().describe("Name of the person who approved the paid call.") },
     },
     async ({ client_tag, source, filters: f, approved_by }) => text(await countSource(d.count, { client_tag, source, filters: f, approved_by: approved_by ?? null })),

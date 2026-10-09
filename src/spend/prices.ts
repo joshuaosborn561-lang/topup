@@ -96,7 +96,7 @@ export const BANNED_VENDORS: readonly string[] = ["pdl", "peopledatalabs", "peop
 export const BANNED_ACTIONS: readonly string[] = ["detect_job_change", "job_change", "job_change_detector"];
 
 /** Actions that are free by construction (a resume reloads an existing file). */
-export const FREE_ACTIONS: readonly string[] = ["resume", "status", "results", "mx_classify", "count"];
+export const FREE_ACTIONS: readonly string[] = ["resume", "status", "results", "mx_classify", "count", "pool"];
 
 export function isBannedVendor(vendor: string): boolean {
   return BANNED_VENDORS.includes(vendor.toLowerCase().replace(/[-\s]/g, "_"));

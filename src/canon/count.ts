@@ -1,7 +1,9 @@
 import type { Getleads, GetleadsFilters } from "../clients/getleads.js";
 import type { MapsStats } from "../clients/mapsStats.js";
 import type { PermitCounts } from "../clients/permits.js";
+import type { Queryable } from "../db/pool.js";
 import { getleadsParamsFromFilters } from "../jobs/filters.js";
+import { countMapsPool, MAPS_POOL_NOTE, mapsPoolFiltersUsed, mapsPoolFromFilters } from "./mapsPool.js";
 import type { SpendRails } from "../spend/rails.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
 
@@ -19,6 +21,8 @@ export interface CountDeps {
   maps: MapsStats | null;
   permits: PermitCounts | null;
   rails: SpendRails;
+  /** Required for source=maps: the stored pool lives in this project. */
+  db?: Queryable | null;
 }
 
 export interface CountCall {
@@ -33,6 +37,10 @@ export interface CountRead {
   source: CountSource;
   filters_used: Record<string, unknown>;
   count: number | null;
+  /** Maps stored pool: size after plan_id / categories / ICP view. */
+  pool?: number;
+  already_used?: number;
+  net_new?: number;
   calls: CountCall[];
   cost_cents: number;
   rule: string;
@@ -86,23 +94,30 @@ export async function countSource(
       }
     }
     case "maps": {
-      const categories = strings(input.filters.categories ?? input.filters.maps ?? input.filters.category);
-      const states = strings(input.filters.states);
-      if (!d.maps) return { ...base, filters_used: { categories, states }, count: null, cost_cents: 0, note: "MAPS_MCP_URL is not set on the service." };
-      if (categories.length === 0) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: "maps needs categories." };
-      let total = 0;
-      for (const category of categories) {
-        for (const state of states.length ? states : [undefined]) {
-          try {
-            const n = await d.maps.scopedBusinesses({ category, ...(state ? { state } : {}), clientTag: input.client_tag });
-            calls.push({ vendor: "maps", action: "pipeline_stats", ok: true, count: n, message: `${category}${state ? ` / ${state}` : ""}` });
-            total += n;
-          } catch (err) {
-            calls.push({ vendor: "maps", action: "pipeline_stats", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
-          }
+      const spec = mapsPoolFromFilters(input.filters, input.client_tag);
+      if ("error" in spec) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: spec.error };
+      if (!d.db) return { ...base, filters_used: mapsPoolFiltersUsed(spec), count: null, cost_cents: 0, note: "maps count reads client_<tag>.maps_raw on the database; it is not wired." };
+      try {
+        const r = await countMapsPool(d.db, input.client_tag, input.filters);
+        if ("error" in r) {
+          calls.push({ vendor: "supabase", action: "maps_pool", ok: false, count: null, message: r.error });
+          return { ...base, filters_used: mapsPoolFiltersUsed(spec), count: null, cost_cents: 0, note: r.error };
         }
+        calls.push({ vendor: "supabase", action: "maps_pool", ok: true, count: r.pool, message: r.relation });
+        return {
+          ...base,
+          filters_used: r.filters_used,
+          count: r.pool,
+          pool: r.pool,
+          already_used: r.already_used,
+          net_new: r.net_new,
+          cost_cents: 0,
+          note: `${MAPS_POOL_NOTE}. ${r.relation}: pool ${r.pool}, already used ${r.already_used}, net new ${r.net_new}.`,
+        };
+      } catch (err) {
+        calls.push({ vendor: "supabase", action: "maps_pool", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
+        return { ...base, filters_used: mapsPoolFiltersUsed(spec), count: null, cost_cents: 0, note: "maps pool count failed; see calls" };
       }
-      return { ...base, filters_used: { categories, states }, count: calls.some((c) => c.ok) ? total : null, cost_cents: 0, note: "the stored Maps pool for this client; a fresh scrape is the Google Maps Scraper MCP" };
     }
     case "permits": {
       const types = strings(input.filters.permit_types ?? input.filters.permits ?? input.filters.permit_type);

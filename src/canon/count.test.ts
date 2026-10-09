@@ -19,6 +19,17 @@ function deps(over: Partial<Parameters<typeof countSource>[0]> = {}) {
       maps: { scopedBusinesses: async ({ category }: { category: string }) => (category === "roofing" ? 120 : 30) },
       permits: { monthlyTotal: async () => ({ total: 50, months: 1, state: "TX" }) },
       rails,
+      db: {
+        query: async (text: string) => {
+          if (text.includes("information_schema.tables")) return { rows: [{ n: "1" }] };
+          if (text.includes("information_schema.columns")) {
+            return { rows: ["place_id", "plan_id", "main_category"].map((column_name) => ({ column_name })) };
+          }
+          if (text.includes("from public.leads")) return { rows: [{ n: "10" }] };
+          if (text.startsWith("select count(*)::text as n")) return { rows: [{ n: "18322" }] };
+          return { rows: [] };
+        },
+      },
       ...over,
     } as never,
     recorded,
@@ -46,10 +57,23 @@ describe("D52 — count", () => {
     assert.equal((recorded[0] as { approvedBy: string }).approvedBy, "Cayden");
   });
 
-  it("maps and permits sum the stored pools per category and state, and bad filters say what is missing", async () => {
+  it("maps reads the stored pool by plan_id and is not zero when rows exist; permits still sum by type and state", async () => {
     const { d } = deps();
-    const maps = await countSource(d, { client_tag: "vasco", source: "maps", filters: { categories: ["roofing", "hvac"], states: ["TX"] } });
-    assert.equal(maps.count, 150);
+    const maps = await countSource(d, {
+      client_tag: "emcor",
+      source: "maps",
+      filters: { plan_id: "custom-1789679826", categories: ["church", "hotel"], states: [], zips: ["94107"] },
+    });
+    assert.equal(maps.count, 18322);
+    assert.equal(maps.pool, 18322);
+    assert.equal(maps.already_used, 10);
+    assert.equal(maps.net_new, 18312);
+    assert.equal(maps.filters_used.plan_id, "custom-1789679826");
+    assert.ok(!("states" in maps.filters_used) && !("zips" in maps.filters_used), "D56: plan_id scoping must not be dropped for states/zips");
+    assert.notEqual(maps.count, 0, "D56: count must not be 0 when the stored pool exists");
+    const dropped = await countSource(d, { client_tag: "emcor", source: "maps", filters: { categories: ["church"], states: ["CA"] } });
+    assert.equal(dropped.count, null);
+    assert.match(dropped.note ?? "", /plan_id/);
     const permits = await countSource(d, { client_tag: "peterson", source: "permits", filters: { permit_types: ["roof"], states: ["TX", "FL"] } });
     assert.equal(permits.count, 100);
     const bad = await countSource(d, { client_tag: "bcp", source: "getleads", filters: { industries: ["Hospitals"] } });

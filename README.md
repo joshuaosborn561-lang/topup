@@ -50,7 +50,7 @@ Reads (counts, ids, labels, notes; the rule stated; no verdict):
 | `campaigns` | Every ACTIVE campaign with sends, positives, rate per 2,000, leads left, `passes_reply_bar`. |
 | `campaign_record` | Every receipt, build row, lead stamp count, registry row and note for one campaign. |
 | `sources` | The source vocabulary. |
-| `count` | A count on getleads (free), AI Ark (paid, needs a name), Maps or permits with the filters you pass. |
+| `count` | A count on getleads (free), AI Ark (paid, needs a name), Maps (stored pool by `plan_id`) or permits with the filters you pass. |
 | `held` | How much of a getleads pool the client already holds, and net new. |
 | `jobs`, `job` | The job log and one job with its steps, report, vendor calls and waiting cards. |
 | `spend` | Today, thirty days, month to date, cards waiting. |

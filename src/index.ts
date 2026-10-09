@@ -121,7 +121,7 @@ async function main(): Promise<void> {
   const pull = new PullStage({
     ...base,
     rails,
-    adapters: [new GetleadsPull(getleads, (ref) => loadGeoFenceCities(db, ref)), new MapsPull(maps), new PermitsPull(permitCounts)],
+    adapters: [new GetleadsPull(getleads, (ref) => loadGeoFenceCities(db, ref)), new MapsPull(db), new PermitsPull(permitCounts)],
     maps,
     permits: permitCounts,
     cfg: jobs,
@@ -181,7 +181,7 @@ async function main(): Promise<void> {
         ledger,
         orchestrator,
         jobs: new JobRunner({ repo, stages, console: console_, ledger }),
-        count: { getleads, aiArk, maps, permits: permitCounts, rails },
+        count: { getleads, aiArk, maps, permits: permitCounts, rails, db },
         held: {
           db,
           getleads,
