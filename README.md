@@ -62,7 +62,7 @@ Verbs (one stage each, counts back):
 
 | Tool | Runs |
 |---|---|
-| `pull` | Opens a job, returns the `job_id` at once, and pulls 1 to 2,000 rows from getleads, Maps, permits or a table in the background; poll `job(job_id)`. Maps skips emails already in the ingest table. |
+| `pull` | Opens a job, returns the `job_id` at once, and pulls 1 to 2,000 rows from getleads, Maps, permits or a table in the background; poll `job(job_id)`. A hang or throw ends failed with `last_error`. Maps copies the named ICP view (not the companion join) and skips emails already in the ingest table. |
 | `suppress` | The suppression set. Returns raw, dropped by reason, net new. |
 | `icp` | The ICP website gate (our own site fetch, Jev picks a category, DiscoLike on unreadable sites). Flagged rows are suppressed with a reason. Paid; estimate first. |
 | `enrich` | Domains, people, emails through the waterfalls. Paid tiers estimate first. |

@@ -70,7 +70,8 @@ The rules you apply:
    you will pull, worst-case cost. Wait for the yes.
 6. `pull(client_tag, campaign_id, source, filters, max_rows)`. It returns
    the `job_id` at once (`status` started). Poll `job(job_id)` until pull
-   is done, then
+   is done or failed. If it failed, read `last_error` and stop; do not
+   wait on an empty running step. Then
    `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage`, each
    with the `job_id`. `icp` is the website gate from `icp-website-gate`:
    it costs about $0.25 per 1,000 domains, needs a name, and reports the
@@ -132,6 +133,8 @@ re-reads a list.
   and stop.
 * A verb says `refused`: read `why`. A job the service opened on its own
   cannot exist any more; if you see one, `abort` it and say so.
+* `job(job_id)` shows pull `failed`: read `last_error`. Do not wait on a
+  running step with empty counts.
 * `loads_paused` is on: nothing imports. Say who can flip it.
 * Anything else: `note(client_tag, lane, line)` what you did and what you
   meant to do next, and ask.

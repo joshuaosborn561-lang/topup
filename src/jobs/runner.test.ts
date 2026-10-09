@@ -32,6 +32,21 @@ function fakeRepo(opts: { loadsPaused?: boolean } = {}) {
     approveStep: async (id: string, step: string, cents: number) => { const k = `${id}/${step}`; const s = steps.get(k) ?? { status: "pending", attempts: 0, approved_cents: 0 }; s.approved_cents += cents; steps.set(k, s); },
     resolveCard: async (card_id: string, by: string, resolution: string) => { const c = cards.find((x) => x.card_id === card_id)!; c.status = "resolved"; (c as Record<string, unknown>).resolved_by = by; (c as Record<string, unknown>).resolution = resolution; return c; },
     loadsPaused: async () => opts.loadsPaused ?? true,
+    failStep: async (id: string, step: string, error: string) => {
+      const k = `${id}/${step}`;
+      const s = steps.get(k) ?? { status: "pending", attempts: 1, approved_cents: 0 };
+      s.status = "failed";
+      steps.set(k, s);
+      const r = runs.get(id);
+      if (r) r.last_error = error;
+    },
+    setRunStatus: async (id: string, status: string, _step?: string, lastError?: string) => {
+      const r = runs.get(id);
+      if (!r) return;
+      if (["done", "failed", "aborted", "declined", "sized"].includes(r.status)) return;
+      r.status = status;
+      if (lastError) r.last_error = lastError;
+    },
   };
   return repo;
 }
@@ -205,5 +220,41 @@ describe("D52 — job runner", () => {
     release({ kind: "done", counts: { pulled: 2 } });
     await held;
     await new Promise((r) => setTimeout(r, 10));
+  });
+
+  it("a hung background verb ends failed with last_error (D62)", async () => {
+    const repo = fakeRepo();
+    const stages = {
+      pull: { run: async () => new Promise(() => undefined) },
+      ingest: freeStage(repo, "ingest", {}),
+      suppress: freeStage(repo, "suppress", {}),
+      puzzle: freeStage(repo, "puzzle", {}),
+      findEmails: freeStage(repo, "find_emails", {}),
+      verify: freeStage(repo, "verify", {}),
+      normalize: freeStage(repo, "normalize", {}),
+      qa: freeStage(repo, "qa", {}),
+      route: freeStage(repo, "route", {}),
+      stage: freeStage(repo, "stage", {}),
+      import: freeStage(repo, "import", {}),
+      postImport: freeStage(repo, "post_import", {}),
+    };
+    const j = new JobRunner({
+      repo: repo as never,
+      stages: stages as never,
+      console: { resolveAs: async () => ({ ok: true }) } as never,
+      ledger: { event: async () => undefined } as never,
+      now: () => 1700000000000,
+      backgroundTimeoutMs: 30,
+    });
+    const opened = await j.open(spec, "mcp:operator");
+    assert.ok(opened.ok);
+    if (!opened.ok) return;
+    const started = await j.begin(opened.job_id, "pull", { by: "mcp:operator" });
+    assert.equal(started.status, "started");
+    await new Promise((r) => setTimeout(r, 80));
+    const run = repo.runs.get(opened.job_id)!;
+    assert.equal(run.status, "failed", "D62: a hung background pull must close as failed. Ask Josh.");
+    assert.match(run.last_error ?? "", /timed out/, "D62: last_error must name the timeout. Ask Josh.");
+    assert.equal(repo.steps.get(`${opened.job_id}/pull`)?.status, "failed");
   });
 });
