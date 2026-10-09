@@ -40,6 +40,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   loads_paused: "operator",
   pull: "operator",
   suppress: "operator",
+  icp: "operator",
   enrich: "operator",
   verify: "operator",
   normalize: "operator",

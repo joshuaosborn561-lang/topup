@@ -21,6 +21,8 @@ export const VENDORS = [
   "smartlead",
   "maps",
   "permitstack",
+  "jev",
+  "discolike",
 ] as const;
 export type Vendor = (typeof VENDORS)[number];
 
@@ -87,6 +89,18 @@ export const PRICES: Readonly<Record<Vendor, VendorPrice>> = {
     source: "docs/servers.md place price $0.001; rounded up to 0.1 cents so a quote cannot land at $0",
   },
   permitstack: { kind: "included", unitCents: 0, creditsPerRow: 1, source: "plan-billed; metrics_monthly reports no per-call cost" },
+  jev: {
+    kind: "paid",
+    unitCents: 0.011,
+    creditsPerRow: 1,
+    source: "icp-website-gate (Oct 2026): Jev on OpenRouter Decisions, about $0.11 per 1,000 sites, input tokens only",
+  },
+  discolike: {
+    kind: "paid",
+    unitCents: 0.38,
+    creditsPerRow: 1,
+    source: "icp-website-gate (Oct 2026): DiscoLike validate/icp about $0.0038 per unreadable site",
+  },
 };
 
 /** Vendors that must never be wired, including through wrappers (brief section 8). */

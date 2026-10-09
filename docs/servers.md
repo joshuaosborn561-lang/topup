@@ -946,3 +946,33 @@ regardless of the table.
 `leadtopup` does not work around any of these. Where a path is used before its
 PR lands, the run is bounded by batch size (≤ 500 rows per vendor job, one
 page) and the PR description says so.
+
+## ICP gate (icp-site-fetch, icp-llm, icp-disco-fallback)
+
+Three edge functions on campaignintelligence, written for the
+`icp-website-gate` skill (Oct 9 2026). `src/clients/icpGate.ts`.
+
+* `icp-site-fetch?k=&batch=&n=&w=` fetches the homepage plus up to two
+  subpages of every domain in `client_salesglider.icp_site_text` with
+  that batch and no `http_status`, with `w` parallel site fetches, and
+  returns `{processed, ok, released, remaining}`. Rows are claimed with
+  `FOR UPDATE SKIP LOCKED`, so up to three calls may run side by side.
+  One database connection per call. Free.
+* `icp-llm?k=&mode=run&model=jev:<openrouter id>|<variant>&batch=&n=&w=`
+  has Jev (OpenRouter Decisions) pick one category per fetched site and
+  writes `client_salesglider.icp_llm_results` keyed `(domain, model)`
+  with `fit`, `prob`, the label in `reason` and the raw answer. Returns
+  `{processed, errors, last_error, remaining}`. It does not claim rows:
+  one call at a time per batch. About $0.11 per 1,000 sites. Variants
+  are label sets in the function (`choice`, `emcor2`, `deeproots`); a new
+  client needs one written there and a row in `topup.icp_variants`.
+* `icp-disco-fallback?k=&mode=submit&batch=&icp=` sends the sites the
+  fetch could not read to DiscoLike `validate/icp` and returns a
+  `task_id`; `mode=collect&task=&batch=` polls it and writes the verdicts
+  as model `discolike:website`. About $0.0038 per site. One task at a
+  time.
+
+The database has a hard cap of 60 connections shared with the live Allo
+hooks; the service never runs more than three fetch calls or one Jev
+call at once. No cancel on any of the three; a batch that is abandoned
+simply stops being polled.

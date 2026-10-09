@@ -51,12 +51,12 @@ export function classifyPuzzle(row: PuzzleRow): PuzzleNeed {
 }
 
 /** SQL expression for the domain column a LeadPipe table actually has. */
-export function domainSql(cols: Set<string>): string {
+export function domainSql(cols: Set<string>, prefix = ""): string {
   const parts: string[] = [];
-  if (cols.has("company_domain")) parts.push("nullif(btrim(company_domain), '')");
-  if (cols.has("domain")) parts.push("nullif(btrim(domain), '')");
-  if (cols.has("website")) parts.push("nullif(btrim(website), '')");
-  if (cols.has("email")) parts.push("nullif(split_part(email, '@', 2), '')");
+  if (cols.has("company_domain")) parts.push(`nullif(btrim(${prefix}company_domain), '')`);
+  if (cols.has("domain")) parts.push(`nullif(btrim(${prefix}domain), '')`);
+  if (cols.has("website")) parts.push(`nullif(btrim(${prefix}website), '')`);
+  if (cols.has("email")) parts.push(`nullif(split_part(${prefix}email, '@', 2), '')`);
   return parts.length ? `lower(coalesce(${parts.join(", ")}))` : "null";
 }
 
