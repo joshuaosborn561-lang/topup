@@ -239,8 +239,8 @@ async function exportText(d: MeasureDeps, run: Ledgerable, filters: GetleadsFilt
  * not on the client or the spend gate says no.
  */
 export async function sampleAiArkPilot(d: MeasureDeps, run: Ledgerable, filters: GetleadsFilters): Promise<PilotRow[] | null> {
-  const preview = d.aiArk?.preview;
-  if (!preview) return null;
+  const client = d.aiArk;
+  if (!client?.preview) return null;
   const pages = [
     { page: 0, size: 100 },
     { page: 1, size: 100 },
@@ -265,7 +265,7 @@ export async function sampleAiArkPilot(d: MeasureDeps, run: Ledgerable, filters:
     for (const part of pages) {
       if (rows.length >= PILOT_ROWS) break;
       const page = await d.overlap.run(run.clientTag, () =>
-        d.log.time("aiark", "people_preview", () => preview(filters, part.page, part.size), (v) => v.rows.length),
+        d.log.time("aiark", "people_preview", () => client.preview!(filters, part.page, part.size), (v) => v.rows.length),
       );
       credits += 1;
       for (const person of page.rows) {

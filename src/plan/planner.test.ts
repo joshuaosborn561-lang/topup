@@ -4,6 +4,7 @@ import type { GetleadsFilters } from "../clients/getleads.js";
 import { Overlap } from "../lib/concurrency.js";
 import { parseRecipe } from "../recipes/schema.js";
 import { NO_CACHE, type PoolCacheHit, type PoolCacheReader } from "./cache.js";
+import { sampleAiArkPilot } from "./measure.js";
 import { planSize, type PlannerDeps } from "./planner.js";
 import { VendorCallLog } from "./vendorLog.js";
 
@@ -240,6 +241,35 @@ describe("D48 — the size planner", () => {
     assert.ok((row.ai_ark_pilot?.title_match ?? 0) >= 80);
     assert.ok((row.ai_ark_pilot?.industry_match ?? 0) >= 80);
     assert.equal(row.pilot?.gate, "ok", "the getleads pilot still gates the pool");
+  });
+
+  it("scores the AI Ark pilot through the client method, not a detached function", async () => {
+    class Client {
+      async count() {
+        return { total_matching: 1 };
+      }
+      async preview(_f: GetleadsFilters, _page: number, _size: number) {
+        return this.page();
+      }
+      page() {
+        return {
+          total_matching: 1,
+          rows: [{ title: "CIO", industry: "Hospitals", description: "", company_size: "51 to 200", employees: 80, country: "United States", state: "Texas", city: "Dallas" }],
+        };
+      }
+    }
+    const rows = await sampleAiArkPilot(
+      {
+        aiArk: new Client(),
+        rails: { gate: async () => ({ kind: "proceed", worstCaseCents: 9, reason: "ok" }), record: async () => 0 },
+        log: new VendorCallLog(() => 1),
+        overlap: new Overlap(2, 4),
+      } as never,
+      { runId: run.run_id, clientTag: "acme" },
+      { job_titles: ["CIO"], countries: ["United States"] },
+    );
+    assert.equal(rows?.length, 3);
+    assert.equal(rows?.[0]?.title, "CIO");
   });
 
   it("a pool with under 1,000 net new is TAM filled per campaign; nothing to pull closes the run as sized", async () => {
