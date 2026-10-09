@@ -19,9 +19,15 @@ export interface CampaignReportEntry {
   gate_reason?: string;
   strategy: string;
   tam_source?: string;
-  tam_check?: "ok" | "tam_mismatch" | "tam_source_missing" | "single_source";
+  tam_check?: "ok" | "tam_mismatch" | "tam_source_missing" | "single_source" | "mismatch_minor" | "ai_ark_wider" | "getleads_only";
   getleads_count?: number | null;
   ai_ark_count?: number | null;
+  getleads_filters?: string;
+  ai_ark_filters?: string;
+  pool_rows?: number | null;
+  already_held?: number | null;
+  already_contacted?: number | null;
+  ai_ark_pilot?: PilotScore;
   pool_industry?: number | null;
   pool_description?: number | null;
   pool_both?: number | null;
@@ -134,6 +140,12 @@ export interface CampaignReportInput {
   tam_check?: CampaignReportEntry["tam_check"];
   getleads_count?: number | null;
   ai_ark_count?: number | null;
+  getleads_filters?: string;
+  ai_ark_filters?: string;
+  pool_rows?: number | null;
+  already_held?: number | null;
+  already_contacted?: number | null;
+  ai_ark_pilot?: PilotScore;
   pool_industry?: number | null;
   pool_description?: number | null;
   pool_both?: number | null;
@@ -169,7 +181,16 @@ export function campaignVerdict(input: GateInput): { gate: CampaignGate; reason:
     : input.pilot_failed ? { gate: "pilot_mismatch" as const, failed: [], rows_scored: 0 }
     : null;
   const sized = input.pilot_only ? undefined : input.not_sized ? (input.pilot_failed ? undefined : false) : true;
-  const tamCheck = input.tam_check === "tam_mismatch" || input.tam_check === "tam_source_missing" || input.tam_check === "single_source" || input.tam_check === "ok" ? input.tam_check : null;
+  const tamCheck =
+    input.tam_check === "tam_mismatch" ||
+    input.tam_check === "tam_source_missing" ||
+    input.tam_check === "single_source" ||
+    input.tam_check === "ok" ||
+    input.tam_check === "mismatch_minor" ||
+    input.tam_check === "ai_ark_wider" ||
+    input.tam_check === "getleads_only"
+      ? input.tam_check
+      : null;
   const v = evaluateCampaign({
     campaign_id: input.campaign_id,
     campaign_name: input.campaign_name,
@@ -214,6 +235,12 @@ export function buildCampaignReport(rows: readonly CampaignReportInput[]): Campa
     ...(row.tam_check ? { tam_check: row.tam_check } : {}),
     ...(row.getleads_count !== undefined ? { getleads_count: row.getleads_count } : {}),
     ...(row.ai_ark_count !== undefined ? { ai_ark_count: row.ai_ark_count } : {}),
+    ...(row.getleads_filters ? { getleads_filters: row.getleads_filters } : {}),
+    ...(row.ai_ark_filters ? { ai_ark_filters: row.ai_ark_filters } : {}),
+    ...(row.pool_rows !== undefined ? { pool_rows: row.pool_rows } : {}),
+    ...(row.already_held !== undefined ? { already_held: row.already_held } : {}),
+    ...(row.already_contacted !== undefined ? { already_contacted: row.already_contacted } : {}),
+    ...(row.ai_ark_pilot ? { ai_ark_pilot: row.ai_ark_pilot } : {}),
     ...(row.pool_industry !== undefined ? { pool_industry: row.pool_industry } : {}),
     ...(row.pool_description !== undefined ? { pool_description: row.pool_description } : {}),
     ...(row.pool_both !== undefined ? { pool_both: row.pool_both } : {}),
@@ -245,6 +272,14 @@ export function formatCampaignReport(rows: readonly CampaignReportEntry[]): stri
           row.tam_check ? ` tam_check ${row.tam_check}.` : "",
           row.getleads_count != null ? ` getleads ${row.getleads_count}.` : "",
           row.ai_ark_count != null ? ` AI Ark ${row.ai_ark_count}.` : row.tam_check === "single_source" ? " AI Ark count not available." : "",
+          row.getleads_filters ? ` getleads filters ${row.getleads_filters}.` : "",
+          row.ai_ark_filters ? ` AI Ark filters ${row.ai_ark_filters}.` : "",
+          row.pool_rows != null ? ` pool_rows ${row.pool_rows}.` : "",
+          row.already_held != null ? ` already_held ${row.already_held}.` : "",
+          row.already_contacted != null ? ` already_contacted ${row.already_contacted}.` : "",
+          row.ai_ark_pilot
+            ? ` AI Ark pilot ${row.ai_ark_pilot.rows_scored} scored, title ${row.ai_ark_pilot.title_match ?? "n/a"}%, industry ${row.ai_ark_pilot.industry_match ?? "n/a"}%, gate ${row.ai_ark_pilot.gate}.`
+            : "",
           row.tam_it != null ? ` tam_it ${row.tam_it}.` : "",
           row.tam_coo != null ? ` tam_coo ${row.tam_coo}.` : "",
           row.pool_note ? ` ${row.pool_note}` : "",

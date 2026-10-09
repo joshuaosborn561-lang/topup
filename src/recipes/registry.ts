@@ -12,6 +12,7 @@ export const PETERSON_LANES: Readonly<Record<number, string>> = {
   3798229: "c2_property_managers",
   3798230: "c2_property_managers",
   3798231: "c3_churches",
+  3798232: "c3_churches",
 };
 
 export function repairedClient(

@@ -3,7 +3,7 @@ import { icpKindForClient, type IcpKind } from "../stages/size/tamSource.js";
 import { PARLAY_REFRESH_FIRST, PARLAY_REFRESH_LAST, PARLAY_REFRESH_KNOWN, PARLAY_RETIRED_CAMPAIGN_IDS } from "../recipes/parlay.js";
 
 const log = logger("repo");
-import { petersonLaneCaseSql } from "../recipes/registry.js";
+import { PETERSON_LANES, petersonLaneCaseSql } from "../recipes/registry.js";
 import type { Db, Queryable } from "./pool.js";
 import type { Role, RunRow, RunStepRow, RunStatus, Step } from "../domain/runs.js";
 import { MAX_STEP_ATTEMPTS } from "../domain/runs.js";
@@ -770,6 +770,18 @@ export class Repo {
   }
 
   async laneForCampaign(clientTag: string, campaignId: number): Promise<string | null> {
+    try {
+      const registry = await this.db.query<{ lane: string | null }>(
+        `select lane from topup.campaign_registry
+          where client_tag = $1 and campaign_id = $2 and lane is not null
+          limit 1`,
+        [clientTag, campaignId],
+      );
+      if (registry.rows[0]?.lane) return registry.rows[0].lane;
+    } catch {
+      /* an older database has no campaign_registry; receipts still name a lane */
+    }
+    if (clientTag === "peterson" && PETERSON_LANES[campaignId]) return PETERSON_LANES[campaignId];
     const { rows } = await this.db.query<{ lane: string }>(
       `select lane from topup.pull_receipts
         where client_tag = $1 and $2 = any(campaign_ids)

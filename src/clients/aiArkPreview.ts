@@ -52,8 +52,8 @@ const BANDS: Readonly<Record<string, { start: number; end: number }>> = {
 };
 
 export type PreviewBody = {
-  page: 0;
-  size: 1;
+  page: number;
+  size: number;
   account?: Record<string, unknown>;
   contact?: Record<string, unknown>;
 };
@@ -71,7 +71,7 @@ function locations(filters: GetleadsFilters): string[] | null {
  * The People Search body for these getleads filters. A filter this schema
  * cannot express returns ok: false. The caller must not send a partial body.
  */
-export function peoplePreviewBody(filters: GetleadsFilters): PreviewBuild {
+export function peoplePreviewBody(filters: GetleadsFilters, page = 0, size = 1): PreviewBuild {
   if (filters.geo_fence) {
     return { ok: false, reason: "AI Ark People Preview is not called for a geo fence; the city list is not on this filter" };
   }
@@ -132,7 +132,7 @@ export function peoplePreviewBody(filters: GetleadsFilters): PreviewBuild {
     contact.departmentAndFunction = { any: { include: [mapped] } };
   }
 
-  const body: PreviewBody = { page: 0, size: 1 };
+  const body: PreviewBody = { page, size: Math.max(1, Math.min(100, Math.floor(size))) };
   if (Object.keys(account).length) body.account = account;
   if (Object.keys(contact).length) body.contact = contact;
   return { ok: true, body };
@@ -151,8 +151,90 @@ function previewErrorDetail(text: string): string {
   }
 }
 
+/** A preview person with the fields the pilot scorer reads. No address, no name. */
+export interface PreviewPerson {
+  title: string;
+  industry: string;
+  description: string;
+  company_size: string;
+  employees: number | null;
+  country: string;
+  state: string;
+  city: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function textOf(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (Array.isArray(value)) return textOf(value[0]);
+  const rec = asRecord(value);
+  if (!rec) return "";
+  return textOf(rec.name ?? rec.title ?? rec.content ?? rec.label);
+}
+
+function employeesOf(company: Record<string, unknown>): number | null {
+  const raw = company.employeeCount ?? company.employees ?? company.staffCount ?? company.headcount;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Map a People Preview page to scorer fields. The page itself is not returned. */
+export function previewPeople(content: unknown): PreviewPerson[] {
+  const list = Array.isArray(content) ? content : [];
+  const out: PreviewPerson[] = [];
+  for (const item of list) {
+    const person = asRecord(item);
+    if (!person) continue;
+    const company = asRecord(person.company) ?? asRecord(person.account) ?? {};
+    const location = asRecord(person.location) ?? asRecord(company.location) ?? {};
+    const experience = asRecord(person.experience);
+    const latest = asRecord(experience?.latest);
+    const titleNode = asRecord(latest?.title);
+    out.push({
+      title: textOf(person.title) || textOf(person.headline) || textOf(titleNode?.content) || textOf(latest?.title),
+      industry: textOf(company.industry) || textOf(company.industries),
+      description: textOf(company.description) || textOf(company.summary) || textOf(company.about),
+      company_size: textOf(company.employeeSize) || textOf(company.headcount),
+      employees: employeesOf(company),
+      country: textOf(location.country) || textOf(person.country),
+      state: textOf(location.state) || textOf(person.state),
+      city: textOf(location.city) || textOf(person.city),
+    });
+  }
+  return out;
+}
+
+/** Titles, seniority, industries, bands, geography and description words, for the size report. */
+export function previewFilterWords(filters: GetleadsFilters): string {
+  const built = peoplePreviewBody(filters);
+  if (!built.ok) return built.reason;
+  const bits: string[] = [];
+  const account = built.body.account ?? {};
+  const contact = built.body.contact ?? {};
+  const titles = (((contact.experience as { latest?: { title?: { any?: { include?: { content?: string[] } } } } } | undefined)?.latest?.title?.any?.include?.content) ?? []);
+  if (titles.length) bits.push(`titles ${titles.join(", ")}`);
+  const seniority = (contact.seniority as { any?: { include?: string[] } } | undefined)?.any?.include;
+  if (seniority?.length) bits.push(`seniority ${seniority.join(", ")}`);
+  const fn = (contact.departmentAndFunction as { any?: { include?: string[] } } | undefined)?.any?.include;
+  if (fn?.length) bits.push(`function ${fn.join(", ")}`);
+  const industries = (account.industries as { any?: { include?: { content?: string[] } } } | undefined)?.any?.include?.content;
+  if (industries?.length) bits.push(`industries ${industries.join(", ")}`);
+  const bands = (account.employeeSize as { range?: Array<{ start: number; end: number }> } | undefined)?.range;
+  if (bands?.length) bits.push(`headcount ${bands.map((b) => `${b.start}-${b.end}`).join(", ")}`);
+  const where = (account.location as { any?: { include?: string[] } } | undefined)?.any?.include;
+  if (where?.length) bits.push(`geography ${where.join(", ")}`);
+  const words = (account.keyword as { any?: { include?: { content?: string[] } } } | undefined)?.any?.include?.content;
+  if (words?.length) bits.push(`description ${words.join(", ")}`);
+  return bits.join("; ") || "no mapped filters";
+}
+
 export interface AiArkPreview {
   count(filters: GetleadsFilters): Promise<{ total_matching: number }>;
+  preview?(filters: GetleadsFilters, page: number, size: number): Promise<{ total_matching: number; rows: PreviewPerson[] }>;
 }
 
 export class AiArkPreviewClient implements AiArkPreview {
@@ -162,20 +244,18 @@ export class AiArkPreviewClient implements AiArkPreview {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  async count(filters: GetleadsFilters): Promise<{ total_matching: number }> {
+  private async post(body: PreviewBody): Promise<{ total: number; content: unknown }> {
     if (!this.token) throw new Error(AI_ARK_TOKEN_MISSING);
-    const built = peoplePreviewBody(filters);
-    if (!built.ok) throw new Error(built.reason);
     const res = await this.fetchImpl(this.url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-TOKEN": this.token },
-      body: JSON.stringify(built.body),
+      body: JSON.stringify(body),
     });
     const text = await res.text();
     if (!res.ok) throw new Error(`HTTP ${res.status} from ${this.url}: ${previewErrorDetail(text)}`);
-    let json: { totalElements?: unknown };
+    let json: { totalElements?: unknown; content?: unknown };
     try {
-      json = JSON.parse(text) as { totalElements?: unknown };
+      json = JSON.parse(text) as { totalElements?: unknown; content?: unknown };
     } catch {
       throw new Error(`HTTP ${res.status} from ${this.url}: response was not JSON`);
     }
@@ -184,6 +264,21 @@ export class AiArkPreviewClient implements AiArkPreview {
       const keys = Object.keys(json).slice(0, 12).join(", ") || "none";
       throw new Error(`HTTP ${res.status} from ${this.url}: no totalElements. Keys: ${keys}`);
     }
-    return { total_matching: total };
+    return { total, content: json.content };
+  }
+
+  async count(filters: GetleadsFilters): Promise<{ total_matching: number }> {
+    const built = peoplePreviewBody(filters, 0, 1);
+    if (!built.ok) throw new Error(built.reason);
+    const page = await this.post(built.body);
+    return { total_matching: page.total };
+  }
+
+  /** One page of masked people for the pilot. The raw page is dropped after mapping. */
+  async preview(filters: GetleadsFilters, page: number, size: number): Promise<{ total_matching: number; rows: PreviewPerson[] }> {
+    const built = peoplePreviewBody(filters, page, size);
+    if (!built.ok) throw new Error(built.reason);
+    const result = await this.post(built.body);
+    return { total_matching: result.total, rows: previewPeople(result.content) };
   }
 }

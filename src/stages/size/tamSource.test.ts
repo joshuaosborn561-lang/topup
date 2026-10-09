@@ -22,6 +22,15 @@ describe("TAM source", () => {
     assert.equal(result.tam_total, 18323 - 230);
     assert.match(result.tam_source, /Google Maps/);
     assert.match(result.tam_source, /404/);
+    const later = originalTamFromBuilds(
+      [
+        { smartlead_campaign_id: 4036515, company_source: "getleads", method: "an older title list" },
+        { smartlead_campaign_id: 4036515, company_source: "maps", method: SMALL_OPS, leads: "230" },
+      ],
+      4036515,
+    );
+    assert.equal(later.kind, "pool");
+    if (later.kind === "pool") assert.equal(later.pool, 18323);
   });
 
   it("EMCOR Property and Colleges do not size from the getleads geo fence count", () => {
@@ -52,11 +61,18 @@ describe("TAM source", () => {
     assert.equal(agreed.tam_total, 1000);
     assert.equal(agreed.getleads_count, 1000);
     assert.equal(agreed.ai_ark_count, 950);
-    const apart = linkedinTamDecision(1000, 800);
-    assert.equal(apart.tam_check, "tam_mismatch");
-    assert.equal(apart.getleads_count, 1000);
-    assert.equal(apart.ai_ark_count, 800);
-    assert.match(apart.reason ?? "", /tam_mismatch/);
+    const apart = linkedinTamDecision(1262, 1466);
+    assert.equal(apart.tam_check, "mismatch_minor");
+    assert.equal(apart.tam_total, 1262);
+    assert.equal(apart.reason, null);
+    const wideFail = linkedinTamDecision(816, 2231, null, false);
+    assert.equal(wideFail.tam_check, "getleads_only");
+    assert.equal(wideFail.tam_total, 816);
+    assert.equal(wideFail.reason, null);
+    const widePass = linkedinTamDecision(816, 2231, null, true);
+    assert.equal(widePass.tam_check, "ai_ark_wider");
+    assert.equal(widePass.tam_total, 2231);
+    assert.equal(widePass.reason, null);
     const unwired = linkedinTamDecision(4040, null);
     assert.equal(unwired.tam_check, "single_source");
     assert.equal(unwired.tam_total, 4040);

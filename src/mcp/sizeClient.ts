@@ -16,6 +16,8 @@ export interface SizeClientDeps {
   repo: Pick<Repo, "getRun" | "getStep" | "openRunFor">;
   orchestrator: Pick<Orchestrator, "startTopup">;
   recipes: readonly Recipe[];
+  /** campaign_id to the lane `campaign_registry` names. Required once campaign_ids are passed. */
+  registryLanes?: (clientTag: string) => Promise<Map<number, string>>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
@@ -55,19 +57,48 @@ export interface SizeClientResult {
 export const SIZE_CLIENT_DEFAULT_WAIT_SECONDS = 120;
 export const SIZE_CLIENT_MAX_WAIT_SECONDS = 300;
 
-function lanesFor(recipes: readonly Recipe[], input: SizeClientInput): Array<{ lane: string; campaignIds?: number[] }> {
+export interface LaneTarget {
+  lane: string;
+  campaignIds?: number[];
+}
+
+export interface MissingCampaign {
+  campaign_id: number;
+  message: string;
+}
+
+/**
+ * Requested campaign ids open the lane `campaign_registry` names for them.
+ * An id with no lane is reported and does not open a run on another lane.
+ * With no campaign ids, every recipe lane for the client is sized.
+ */
+export function lanesForCampaigns(
+  recipes: readonly Recipe[],
+  registry: ReadonlyMap<number, string>,
+  input: SizeClientInput,
+): { targets: LaneTarget[]; missing: MissingCampaign[] } {
   const mine = recipes.filter((r) => r.client_tag === input.clientTag && !(r.client_tag === "parlay" && isRetiredParlayLane(r.lane)));
   const want = new Set(input.lanes ?? []);
-  const byLane = new Map<string, number[]>();
   if (input.campaignIds?.length) {
+    const byLane = new Map<string, number[]>();
+    const missing: MissingCampaign[] = [];
     for (const id of input.campaignIds) {
-      const recipe = mine.find((r) => r.routing.some((rule) => rule.campaign_id === id));
-      const lane = recipe?.lane ?? `campaign:${id}`;
+      const lane = registry.get(id)?.trim() ?? "";
+      if (!lane) {
+        missing.push({
+          campaign_id: id,
+          message: `#${id} is not on a lane in campaign_registry for ${input.clientTag}. No run was opened on another lane.`,
+        });
+        continue;
+      }
       byLane.set(lane, [...(byLane.get(lane) ?? []), id]);
     }
-    return [...byLane.entries()].map(([lane, ids]) => (lane.startsWith("campaign:") ? { lane, campaignIds: ids } : { lane, campaignIds: ids }));
+    return { targets: [...byLane.entries()].map(([lane, ids]) => ({ lane, campaignIds: ids })), missing };
   }
-  return mine.filter((r) => r.routing.length > 0 && (want.size === 0 || want.has(r.lane))).map((r) => ({ lane: r.lane }));
+  return {
+    targets: mine.filter((r) => r.routing.length > 0 && (want.size === 0 || want.has(r.lane))).map((r) => ({ lane: r.lane })),
+    missing: [],
+  };
 }
 
 function laneResult(lane: string, run: RunRow | null, started: boolean, message: string | null, step: { counts: Record<string, unknown> } | null): LaneSizeResult {
@@ -92,7 +123,11 @@ export async function sizeClient(d: SizeClientDeps, input: SizeClientInput): Pro
   const sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const now = d.now ?? (() => Date.now());
   const waitSeconds = Math.min(SIZE_CLIENT_MAX_WAIT_SECONDS, Math.max(0, input.waitSeconds ?? SIZE_CLIENT_DEFAULT_WAIT_SECONDS));
-  const targets = lanesFor(d.recipes, input);
+  let registry = new Map<number, string>();
+  if (input.campaignIds?.length && d.registryLanes) {
+    registry = await d.registryLanes(input.clientTag).catch(() => new Map<number, string>());
+  }
+  const { targets, missing } = lanesForCampaigns(d.recipes, registry, input);
   const started = await Promise.all(
     targets.map(async (t) => {
       const lane = t.lane.startsWith("campaign:") ? undefined : t.lane;
@@ -127,6 +162,37 @@ export async function sizeClient(d: SizeClientDeps, input: SizeClientInput): Pro
   }
 
   const lanes: LaneSizeResult[] = [];
+  for (const m of missing) {
+    lanes.push({
+      lane: "none",
+      run_id: null,
+      status: null,
+      started: false,
+      message: m.message,
+      campaigns_ok: 0,
+      campaigns_skipped: 1,
+      plan_rows: 0,
+      vendor_calls: 0,
+      campaign_report: [
+        {
+          campaign_id: m.campaign_id,
+          campaign_name: `campaign ${m.campaign_id}`,
+          found: null,
+          to_add: 0,
+          source: "not routed",
+          titles: "persona not set",
+          filters: "no company filter",
+          tam_total: null,
+          tam_left: null,
+          reply_rate: "not sized",
+          gate: "not_sized",
+          gate_reason: m.message,
+          strategy: "No lane in campaign_registry. No run was opened.",
+        },
+      ],
+      briefing: m.message,
+    });
+  }
   for (const s of started) {
     const run = s.run ? await d.repo.getRun(s.run.run_id) : null;
     const step = run ? await d.repo.getStep(run.run_id, "size").catch(() => null) : null;

@@ -39,7 +39,7 @@ export type CampaignGate =
   | "tam_mismatch"
   | "tam_filled";
 
-export type TamCheck = "ok" | "tam_mismatch" | "single_source" | "tam_source_missing";
+export type TamCheck = "ok" | "tam_mismatch" | "single_source" | "tam_source_missing" | "mismatch_minor" | "ai_ark_wider" | "getleads_only";
 
 export interface PilotVerdict {
   gate: "ok" | "pilot_mismatch";
@@ -165,6 +165,9 @@ export function evaluateCampaign(f: CampaignFacts): CampaignVerdict {
   }
   if (f.tam_check === "tam_mismatch") {
     return verdict(f, "tam_mismatch", `${id}: getleads and AI Ark are more than 10% apart; both counts are reported. ${ASK}`, false);
+  }
+  if (f.sized === true && (tamTotal === 0 || tamTotal == null) && f.tam_check !== "ok" && f.tam_check !== "single_source" && f.tam_check !== "mismatch_minor" && f.tam_check !== "ai_ark_wider" && f.tam_check !== "getleads_only") {
+    return verdict(f, "tam_source_missing", `${id}: no stored pool was read, so TAM 0 is not a filled market. ${ASK}`, false);
   }
   const left = f.tam_left ?? tamTotal ?? 0;
   if (left < MIN_NET_NEW) {

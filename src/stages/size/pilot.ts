@@ -257,6 +257,13 @@ export function pilotAllowsSize(score: PilotScore): boolean {
   return score.gate === "ok";
 }
 
+/** The AI Ark extra count is real only when title and industry both clear the gate. */
+export function aiArkPilotPasses(score: PilotScore): boolean {
+  if (score.title_match == null || score.title_match < PILOT_GATE) return false;
+  if (score.industry_match == null || score.industry_match < PILOT_GATE) return false;
+  return true;
+}
+
 export function pilotMismatchReason(campaignId: number, score: PilotScore): string | null {
   if (score.gate === "ok") return null;
   const bits = score.failed.map((name) => {

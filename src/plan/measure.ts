@@ -13,6 +13,7 @@ import { recipeAuthorises, type MapsSource, type PermitsSource, type Recipe } fr
 import type { SpendRails } from "../spend/rails.js";
 import { bandSizeDecision, partitionCheck, type Partition } from "../stages/size/partition.js";
 import { emailsFromCsv, scaleOverlap, type HeldMethod } from "../stages/size/overlap.js";
+import type { PreviewPerson } from "../clients/aiArkPreview.js";
 import { PILOT_EXPORT_COLUMNS, pilotSampleFromCsv, type PilotFields, type PilotRow } from "../stages/size/pilot.js";
 import { planSlices, sumSlices } from "./chunk.js";
 import type { VendorCallLog } from "./vendorLog.js";
@@ -28,7 +29,10 @@ const log = logger("measure");
 export interface MeasureDeps {
   db: Queryable;
   getleads: Getleads;
-  aiArk: { count(filters: GetleadsFilters): Promise<{ total_matching: number }> } | null;
+  aiArk: {
+    count(filters: GetleadsFilters): Promise<{ total_matching: number }>;
+    preview?(filters: GetleadsFilters, page: number, size: number): Promise<{ total_matching: number; rows: PreviewPerson[] }>;
+  } | null;
   maps: MapsStats | null;
   permits: PermitCounts | null;
   rails: Pick<SpendRails, "gate" | "record">;
@@ -141,6 +145,8 @@ export interface BcpCounts {
   description: number | null;
   both: number | null;
   coo: number | null;
+  /** AI Ark count of the same COO fallback. Set only when that side wins the TAM. */
+  ark_coo?: number | null;
 }
 
 /** BCP: industry-only is the IT count; description-only and both are reported beside it; the COO fallback counts toward the TAM. */
@@ -225,6 +231,78 @@ async function exportText(d: MeasureDeps, run: Ledgerable, filters: GetleadsFilt
   if (!url) return null;
   await recordFree(d, run, "getleads", "export", rows, started.export_id);
   return { text: await d.fetchText(url), rows };
+}
+
+/**
+ * 250 AI Ark rows for the same pilot scorer. Three pages (100, 100, 50),
+ * one credit each. The page is mapped and dropped. Null when preview is
+ * not on the client or the spend gate says no.
+ */
+export async function sampleAiArkPilot(d: MeasureDeps, run: Ledgerable, filters: GetleadsFilters): Promise<PilotRow[] | null> {
+  const preview = d.aiArk?.preview;
+  if (!preview) return null;
+  const pages = [
+    { page: 0, size: 100 },
+    { page: 1, size: 100 },
+    { page: 2, size: 50 },
+  ];
+  const decision = await d.rails.gate({
+    runId: run.runId,
+    clientTag: run.clientTag,
+    step: "size",
+    vendor: "aiark",
+    action: "people_preview",
+    rows: pages.length,
+    recipeAuthorised: true,
+  });
+  if (decision.kind !== "proceed") {
+    d.log.note({ vendor: "aiark", action: "people_preview", ok: false, status: null, message: `AI Ark pilot was not sent. ${decision.reason}`, rows: null });
+    return null;
+  }
+  const rows: PilotRow[] = [];
+  let credits = 0;
+  try {
+    for (const part of pages) {
+      if (rows.length >= PILOT_ROWS) break;
+      const page = await d.overlap.run(run.clientTag, () =>
+        d.log.time("aiark", "people_preview", () => preview(filters, part.page, part.size), (v) => v.rows.length),
+      );
+      credits += 1;
+      for (const person of page.rows) {
+        if (rows.length >= PILOT_ROWS) break;
+        rows.push({
+          title: person.title,
+          industry: person.industry,
+          description: person.description,
+          company_size: person.company_size,
+          employees: person.employees,
+          country: person.country,
+          state: person.state,
+          city: person.city,
+        });
+      }
+    }
+  } finally {
+    if (credits > 0) {
+      await d.rails
+        .record({
+          runId: run.runId,
+          clientTag: run.clientTag,
+          step: "size",
+          vendor: "aiark",
+          action: "people_preview",
+          rows: rows.length,
+          credits,
+          worstCaseCents: decision.worstCaseCents,
+          balanceBefore: null,
+          balanceAfter: null,
+          vendorJobId: null,
+          approvedBy: null,
+        })
+        .catch((err) => log.warn("ledger row failed", { vendor: "aiark", action: "people_preview", error: (err as Error).message }));
+    }
+  }
+  return rows;
 }
 
 /** 250 rows for the pilot scorer. No email column is asked for. */

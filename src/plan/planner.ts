@@ -2,19 +2,20 @@ import type { GetleadsFilters } from "../clients/getleads.js";
 import { buildRecordsFromRows, chooseBuildForCampaign, strategyLine, type BuildRecord, type CampaignPerformance } from "../builds/index.js";
 import type { CampaignSnapshot } from "../ledger/health.js";
 import { logger } from "../lib/log.js";
-import { evaluateCampaign, marketCapFor, type CampaignFacts, type CampaignVerdict } from "../policy/index.js";
+import { previewFilterWords } from "../clients/aiArkPreview.js";
+import { countGap, evaluateCampaign, LINKEDIN_GAP_MINOR, marketCapFor, type CampaignFacts, type CampaignVerdict } from "../policy/index.js";
 import { ruleSource } from "../recipes/campaigns.js";
-import { bcpPoolReport, bcpSizedTam } from "../recipes/bcp.js";
+import { bcpPoolFilters, bcpPoolReport } from "../recipes/bcp.js";
 import type { Recipe, Source } from "../recipes/schema.js";
 import { recycleDays } from "../stages/suppress/recycle.js";
 import { buildCampaignReport, filtersWords, sourceWords, titlesWords, type CampaignReportEntry, type CampaignReportInput } from "../stages/size/campaignReport.js";
 import { lanePeopleTam, netNewFromOverlap, planShares, heldMethodCode } from "../stages/size/overlap.js";
 import { rowsNeeded } from "../stages/size/partition.js";
-import { pilotAllowsSize, pilotExpectFor, pilotMismatchReason, recipeFingerprint, scorePilot, type PilotScore } from "../stages/size/pilot.js";
-import { icpKindForClient, linkedinTamDecision, originalTamFromBuilds, type IcpKind, type LinkedinTam, type OriginalTam } from "../stages/size/tamSource.js";
+import { aiArkPilotPasses, pilotAllowsSize, pilotExpectFor, pilotMismatchReason, recipeFingerprint, scorePilot, type PilotFields, type PilotRow, type PilotScore } from "../stages/size/pilot.js";
+import { icpKindForClient, linkedinTamDecision, originalTamFromBuilds, storedYieldFromBuilds, type IcpKind, type LinkedinTam, type OriginalTam } from "../stages/size/tamSource.js";
 import { approvalBriefing } from "./briefing.js";
 import { freshness, type PoolCacheEntry, type PoolCacheReader } from "./cache.js";
-import { countAiArk, countBcpAlternates, countMaps, countPeople, countPermits, heldInPool, samplePilotRows, type BcpCounts, type MeasureDeps } from "./measure.js";
+import { countAiArk, countBcpAlternates, countMaps, countPeople, countPermits, heldInPool, sampleAiArkPilot, samplePilotRows, type BcpCounts, type MeasureDeps } from "./measure.js";
 import { eligibilityFor, type Eligibility } from "./facts.js";
 import { poolFingerprint, poolsFor, type Pool } from "./pools.js";
 
@@ -71,6 +72,9 @@ export interface PoolResult {
   net_new: number | null;
   /** Why this pool could not be counted. */
   reason: string | null;
+  getleads_filters: string | null;
+  ai_ark_filters: string | null;
+  ai_ark_pilot: PilotScore | null;
 }
 
 export interface CampaignPlan {
@@ -157,11 +161,7 @@ export async function planSize(d: PlannerDeps, run: RunLike, recipe: Recipe, cam
   // Non-LinkedIn clients size each campaign from its stored pool; people pools do not apply to them.
   const originals = new Map<number, OriginalTam>();
   if (icp === "non_linkedin") {
-    for (const id of eligible) {
-      const pool = poolOf.get(id);
-      if (pool && (pool.kind === "maps" || pool.kind === "permits")) continue;
-      originals.set(id, originalTamFromBuilds(buildRows, id));
-    }
+    for (const id of eligible) originals.set(id, originalTamFromBuilds(buildRows, id));
   }
 
   const measured = await Promise.all(
@@ -186,6 +186,9 @@ export async function planSize(d: PlannerDeps, run: RunLike, recipe: Recipe, cam
         tam: new Map(),
         net_new: null,
         reason: null,
+        getleads_filters: null,
+        ai_ark_filters: null,
+        ai_ark_pilot: null,
       };
       if (live.length === 0) return { ...base, reason: pool.reason ?? "no eligible campaign in this pool" };
       if (pool.kind === "park") return { ...base, reason: pool.reason };
@@ -237,6 +240,22 @@ export async function planSize(d: PlannerDeps, run: RunLike, recipe: Recipe, cam
     };
     campaigns.set(id, plan);
     if (!elig.verdict.qualifies) {
+      if (elig.verdict.gate === "no_company_filter") {
+        const yieldTam = storedYieldFromBuilds(buildRows, id);
+        if (yieldTam) {
+          plan.tam_total = yieldTam.tam_total;
+          plan.tam_left = yieldTam.tam_total;
+          plan.original = {
+            kind: "pool",
+            pool: yieldTam.tam_total,
+            contacted: 0,
+            tam_total: yieldTam.tam_total,
+            tam_source: yieldTam.tam_source,
+          };
+          counts[`tam_${id}`] = yieldTam.tam_total;
+          lines.push(`#${id}: TAM ${yieldTam.tam_total} from ${yieldTam.tam_source}`);
+        }
+      }
       counts[`skipped_${id}`] = 1;
       lines.push(`#${id}: skipped, ${elig.verdict.gate}: ${elig.verdict.reason}`);
       continue;
@@ -324,6 +343,27 @@ export async function planSize(d: PlannerDeps, run: RunLike, recipe: Recipe, cam
     if (method != null) counts.held_method = method;
   }
 
+  // Campaigns that share one stored Maps or permits pool split that pool.
+  // Each campaign's own plan must not be added on top of the other's.
+  const sharedPools = new Map<string, number[]>();
+  for (const id of ids) {
+    const plan = campaigns.get(id);
+    const original = plan?.original;
+    if (!plan?.verdict.qualifies || !original || original.kind !== "pool") continue;
+    const key = `${original.pool}|${original.tam_source}`;
+    sharedPools.set(key, [...(sharedPools.get(key) ?? []), id]);
+  }
+  for (const members of sharedPools.values()) {
+    if (members.length < 2) continue;
+    const tamLeft = Math.min(...members.map((id) => campaigns.get(id)?.tam_left ?? 0));
+    const shares = planShares(tamLeft, members.map((id) => needFor(snapshots, id, recipe)));
+    members.forEach((id, i) => {
+      const plan = campaigns.get(id)!;
+      plan.plan_rows = Math.min(recipe.runway.max_per_run, shares[i] ?? 0);
+      lines.push(`#${id}: shared pool left ${tamLeft}, request ${plan.plan_rows}`);
+    });
+  }
+
   // Final verdicts with the sizing facts, and the report.
   const aiArkErrors: string[] = [];
   let aiArkCalled = false;
@@ -363,9 +403,19 @@ export async function planSize(d: PlannerDeps, run: RunLike, recipe: Recipe, cam
     plan.verdict = finalVerdict;
     if (!finalVerdict.qualifies && !pilotOnly) counts[`skipped_${id}`] = 1;
     const b = pool?.bcp?.get(id);
+    const itUsed = decision?.tam_total ?? null;
+    const cooUsed = b && plan.tam_total != null && itUsed != null ? plan.tam_total - itUsed : (b?.coo ?? null);
     const poolNote = b
-      ? bcpPoolReport({ industry: pool?.getleads_count ?? null, description: b.description, both: b.both, coo: b.coo, rows_found: rowsFound })
+      ? [
+          bcpPoolReport({ industry: pool?.getleads_count ?? null, description: b.description, both: b.both, coo: b.coo, rows_found: rowsFound }),
+          b.ark_coo != null ? `AI Ark COO fallback ${b.ark_coo}.` : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
       : undefined;
+    const storedYield = plan.original?.tam_source?.startsWith("stored yield") ? plan.original.tam_source : null;
+    const poolRows = plan.original?.kind === "pool" ? plan.original.pool : undefined;
+    const contacted = plan.original?.kind === "pool" ? plan.original.contacted : undefined;
     rows.push({
       campaign_id: id,
       campaign_name: names.get(id) || `campaign ${id}`,
@@ -387,14 +437,24 @@ export async function planSize(d: PlannerDeps, run: RunLike, recipe: Recipe, cam
       verdict: pilotOnly ? undefined : { gate: finalVerdict.gate, reason: finalVerdict.reason },
       rows_found: rowsFound,
       market_cap: marketCap,
-      strategy: pilotOnly ? "Pilot only. TAM was not sized. Nothing was loaded." : strategyLine(plan.chosen_build, recipe.recipe_id),
+      strategy: pilotOnly
+        ? "Pilot only. TAM was not sized. Nothing was loaded."
+        : storedYield
+          ? `Not a repeatable vendor query. ${storedYield}.`
+          : strategyLine(plan.chosen_build, recipe.recipe_id),
       pilot_only: pilotOnly,
       not_sized: !pilotOnly && !sized,
       pilot_failed: pool?.pilot != null && pool.pilot.gate !== "ok",
       ...(plan.original?.tam_source ? { tam_source: plan.original.tam_source } : decision?.tam_source ? { tam_source: decision.tam_source } : {}),
       ...(tamCheck ? { tam_check: tamCheck } : {}),
       ...(decision ? { getleads_count: decision.getleads_count, ai_ark_count: decision.ai_ark_count } : {}),
-      ...(b ? { pool_industry: pool?.getleads_count ?? null, pool_description: b.description, pool_both: b.both, coo_fallback_count: b.coo, tam_it: pool?.getleads_count ?? null, tam_coo: b.coo } : {}),
+      ...(pool?.getleads_filters ? { getleads_filters: pool.getleads_filters } : {}),
+      ...(pool?.ai_ark_filters ? { ai_ark_filters: pool.ai_ark_filters } : {}),
+      ...(pool?.ai_ark_pilot ? { ai_ark_pilot: pool.ai_ark_pilot } : {}),
+      ...(poolRows != null ? { pool_rows: poolRows } : {}),
+      ...(contacted != null ? { already_contacted: contacted } : {}),
+      ...(plan.already_held > 0 || contacted != null ? { already_held: plan.already_held > 0 ? plan.already_held : (contacted ?? 0) } : {}),
+      ...(b ? { pool_industry: pool?.getleads_count ?? null, pool_description: b.description, pool_both: b.both, coo_fallback_count: b.coo, tam_it: itUsed, tam_coo: cooUsed } : {}),
       ...(poolNote ? { pool_note: poolNote } : {}),
       ...(pool?.pilot ? { pilot: pool.pilot } : {}),
     });
@@ -496,7 +556,7 @@ async function measurePeople(d: PlannerDeps, run: RunLike, recipe: Recipe, pool:
   out.partition_ok = partitionOk;
   out.slices = slices;
 
-  // BCP: the sized TAM is senior IT plus the COO fallback, per campaign.
+  // BCP: industry, description, and the getleads COO fallback. The AI Ark COO is counted only when that side wins.
   if (recipe.client_tag === "bcp") {
     out.bcp = new Map();
     for (const id of pool.campaignIds) {
@@ -504,12 +564,59 @@ async function measurePeople(d: PlannerDeps, run: RunLike, recipe: Recipe, pool:
       if (b) out.bcp.set(id, b);
     }
   }
+  const titleWords = filters.job_titles?.length ? `titles ${filters.job_titles.join(", ")}` : "";
+  const glWords = [titleWords, filtersWords({ kind: "getleads", params: filters } as Source)].filter(Boolean).join("; ");
+  const arkWords = previewFilterWords(filters);
+  const cooNote = out.bcp?.size ? "COO fallback titles COO, Chief Operating Officer" : "";
+  out.getleads_filters = cooNote ? `${glWords}; ${cooNote}` : glWords;
+  out.ai_ark_filters = cooNote ? `${arkWords}; ${cooNote}` : arkWords;
+
+  const itCount = getleadsCount ?? 0;
+  let pilotPasses: boolean | null = null;
+  if (aiArk?.total != null && countGap(itCount, aiArk.total) > LINKEDIN_GAP_MINOR) {
+    try {
+      const rows = await sampleAiArkPilot(d, ledger, filters);
+      if (rows && rows.length > 0) {
+        const present = (pick: (row: PilotRow) => string) => rows.some((row) => pick(row).trim().length > 0);
+        const fields: PilotFields = {
+          title: present((row) => row.title),
+          industry: present((row) => row.industry),
+          description: present((row) => row.description),
+          headcount: rows.some((row) => row.company_size.trim().length > 0 || row.employees != null),
+          country: present((row) => row.country),
+          state: present((row) => row.state),
+          city: present((row) => row.city),
+        };
+        out.ai_ark_pilot = scorePilot(rows, pilotExpectFor(recipe.client_tag, recipe.lane, filters), fields);
+        pilotPasses = aiArkPilotPasses(out.ai_ark_pilot);
+      }
+    } catch (err) {
+      log.warn("AI Ark pilot was not scored", { run_id: run.run_id, error: (err as Error).message.slice(0, 200) });
+    }
+  }
+  const decision = linkedinTamDecision(itCount, aiArk?.total ?? null, aiArk?.error ?? null, pilotPasses);
+  out.linkedin = decision;
+  const arkWon =
+    decision.tam_check === "ai_ark_wider" ||
+    (decision.tam_check === "mismatch_minor" && (decision.ai_ark_count ?? Number.POSITIVE_INFINITY) < decision.getleads_count);
+  const arkCooByVertical = new Map<string, number | null>();
+  if (recipe.client_tag === "bcp" && arkWon && out.bcp) {
+    for (const b of out.bcp.values()) {
+      if (arkCooByVertical.has(b.vertical)) {
+        b.ark_coo = arkCooByVertical.get(b.vertical) ?? null;
+        continue;
+      }
+      const counted = await countAiArk(d, ledger, bcpPoolFilters(filters, b.vertical).coo);
+      arkCooByVertical.set(b.vertical, counted.total);
+      b.ark_coo = counted.total;
+    }
+  }
   for (const id of pool.campaignIds) {
     const b = out.bcp?.get(id);
-    out.tam.set(id, b ? bcpSizedTam(getleadsCount ?? 0, b.coo) : (getleadsCount ?? 0));
+    const it = decision.tam_total ?? itCount;
+    const coo = !b ? 0 : arkWon ? (b.ark_coo ?? 0) : (b.coo ?? 0);
+    out.tam.set(id, it + coo);
   }
-  const itCount = getleadsCount ?? 0;
-  out.linkedin = linkedinTamDecision(itCount, aiArk?.total ?? null, aiArk?.error ?? null);
 
   // Net new: the overlap with what the client already holds, sampled and scaled, cached when fresh.
   const poolTam = lanePeopleTam(pool.campaignIds.map((id) => out.tam.get(id) ?? 0));

@@ -1,6 +1,6 @@
 # Canon — what this service does
 
-Canon as of **D49** (2026-10-08). One page of current truth. When a new
+Canon as of **D50** (2026-10-09). One page of current truth. When a new
 decision lands in `DECISIONS.md`, this file is updated **in the same PR**;
 the meta guard in `src/guards/meta.test.ts` enforces both.
 
@@ -396,8 +396,13 @@ filter is never sized from titles alone; a pilot (200–300 vendor rows)
 must score 80% or more on every dimension it can score, a missing export
 column is "not scored"; a pool more than 20× the build it repeats or above
 a known market cap (about 40,000 MSPs) is a suspect filter; a non-LinkedIn
-ICP sizes only from its stored pool; two LinkedIn-native counts more than
-10% apart are a mismatch; and under **1,000 net new** is `tam_filled`.
+ICP sizes only from its stored pool, and a pool that cannot be read is
+`tam_source_missing`, never a filled market at TAM 0 (D50); two
+LinkedIn-native counts within 10% agree, a gap of 10% to 25% uses the
+lower count (`mismatch_minor`), and a gap over 25% uses the AI Ark count
+only when a 250-row pilot passes 80% on title and industry
+(`ai_ark_wider`), otherwise the getleads count (`getleads_only`); neither
+gap parks (D50); and under **1,000 net new** is `tam_filled`.
 Spend: free proceeds, under $5 is Cayden, $5 or above is Josh, and over
 the $25 day is Josh too. Parking is per campaign, never per run: a
 campaign that fails is skipped with its reason and the rest continue.
@@ -453,6 +458,17 @@ chosen build and tags, plus open runs and the loads switch, counts only.
 `missing_tags`, `lead_provenance` counted by build label and confidence).
 The step 2 gate is the policy's floor: at least 1,000 net new per
 campaign, else TAM filled (D46).
+
+## The lane on the registry, the stored pool, and a count gap (D50)
+
+`size_client` and `start_topup` open the lane `campaign_registry` names
+for that campaign. The first recipe whose routing mentions the id does
+not win, and an id on no lane is reported without a run on another lane.
+Campaigns that share one stored Maps or permits pool split `plan_rows` so
+the sum does not exceed `tam_left`. Abort returns rows left in
+`verifying`, `claimed`, `reserved`, or `pulling` and reports how many.
+A LinkedIn count gap is resolved as the policy says above. Both filter
+sets and both counts stay on the campaign line. Ask Josh.
 
 ## Never (D1–D6, D8, D13, D14, D39, D48)
 

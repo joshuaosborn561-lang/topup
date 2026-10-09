@@ -69,6 +69,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D47 | Live; build records are the memory |
 | D48 | Live; the planner, the caches, the vendor-call log, lifecycle tools, the fifteen-tool surface, Slack optional; `client_overview` is the sixteenth tool by D49 |
 | D49 | Live; starts read the registry and the build tags for every client; `client_overview` and the `tags` block for the babysitter; the step 2 gate is the 1,000 floor |
+| D50 | Live; registry lane wins over the first recipe; a stored Maps pool is the TAM; a LinkedIn gap no longer parks |
 
 ---
 
@@ -1611,3 +1612,50 @@ and the report line names the campaign. The surface is sixteen tools, one
 more than D48.
 
 **Guard.** `src/guards/d49_tags_overview.test.ts`. Ask Josh.
+
+## D50 — The registry lane, the stored pool, and a count gap that does not park
+
+**Decision.** Three sizing rules, from the 2026-10-09 briefs.
+
+1. **The lane is the one `campaign_registry` names.** `size_client`
+   with `campaign_ids`, and `start_topup` with a campaign and no lane,
+   open that lane. The first in-memory recipe whose routing mentions the
+   id does not win. An id on no lane is said so, and no run opens on
+   another lane. Every requested campaign is on a report line.
+   Campaigns that share one stored pool split `plan_rows` so the sum
+   does not exceed `tam_left`.
+2. **A non-LinkedIn ICP sizes from the stored Maps or permits pool on
+   the build, including when the route kind is maps or permits.** A
+   pool that cannot be read is `tam_source_missing`. TAM 0 is not a
+   filled market unless the pool was actually read. Abort releases rows
+   left in `verifying`, `claimed`, `reserved`, or `pulling` and reports
+   the count. The campaign line carries `tam_source`, `pool_rows`,
+   `already_held`, and `already_contacted`.
+3. **A LinkedIn count gap does not park.** Within 10% the counts agree.
+   From 10% to 25% the TAM is the lower count (`mismatch_minor`). Over
+   25%, a 250-row AI Ark pilot that passes 80% on title and industry
+   makes the TAM the AI Ark count (`ai_ark_wider`) and the extra people
+   are that side's; otherwise the TAM stays the getleads count
+   (`getleads_only`). `reason` stays null. Both counts and both filter
+   sets are on the line. BCP compares the IT-only pair, then adds the
+   COO fallback of the side that won. People Preview is one credit per
+   page. The page is dropped.
+
+**Why.** On 2026-10-09, `size_client` opened the first recipe that
+mentioned a campaign: PowerGRYD 4005226 went to `msp_sec_leads`,
+4005228 to `name_bank`, TechEvo 3730560 to `govt_sub`, and Peterson C2
+and C3 to `c1_general_contractors`. `topup_queue` already showed the
+registry lanes. The same day EMCOR E Small Ops, which had sized at
+about 17,600 from a stored Maps pool of 18,323, sized to 0 and parked
+`tam_filled` after one live maps call. LinkedIn lanes parked
+`tam_mismatch` whenever getleads and AI Ark differed by more than 10%,
+including PowerGRYD MSP Owners at 1,262 versus 1,466.
+
+**Tradeoff.** A gap over 25% can spend a few People Preview credits to
+score 250 rows before the TAM is chosen. A registry row on the wrong
+lane still routes there. A stored yield is reported when the vendor
+query cannot be repeated; it does not invent titles.
+
+**Guard.** `src/plan/planner.test.ts`, `src/mcp/sizeClient.test.ts`,
+`src/policy/campaign.test.ts`, `src/guards/d50_lane_pool_gap.test.ts`.
+Ask Josh.
