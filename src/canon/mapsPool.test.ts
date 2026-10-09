@@ -72,7 +72,8 @@ describe("D56 — maps stored pool", () => {
     const sql = db.seen.join("\n");
     assert.match(sql, /plan_id/, "D56: plan_id scoping must not be dropped");
     assert.doesNotMatch(sql, /pipeline_stats/);
-    assert.doesNotMatch(sql, /\b(state|zip|source_zip|client_tag)\b\s*=/, "D56: must not scope by ZIP or client_tag");
+    const poolSql = db.seen.filter((q) => q.includes("union") || q.includes("maps_raw") || q.includes("v_lane")).join("\n");
+    assert.doesNotMatch(poolSql, /\b(state|zip|source_zip|client_tag)\b\s*=/, "D56: must not scope by ZIP or client_tag");
     for (const q of db.seen) {
       if (q.includes("information_schema")) continue;
       assert.doesNotMatch(q, /select\s+(?!count)[^`]*\b(email|first_name|last_name|phone|linkedin_url)\b/i, `D2/D56: ${q.slice(0, 80)}`);

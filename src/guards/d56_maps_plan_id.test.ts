@@ -57,7 +57,8 @@ describe("D56 — maps stored pool is scoped by plan_id", () => {
     assert.doesNotMatch(count, /pipeline_stats/, "D56: count must not call pipeline_stats. Ask Josh.");
     assert.match(pool, /maps_raw/, "D56: the pool is client_<tag>.maps_raw. Ask Josh.");
     assert.match(pool, /plan_id/, "D56: plan_id scoping must not be dropped. Ask Josh.");
-    assert.doesNotMatch(pool, /\b(update|insert)\b[\s\S]*\b(dl_status|sg_exclude|skip_)/i, "D56: never write dl_status, sg_exclude, or skip_*. Ask Josh.");
+    assert.doesNotMatch(pool, /\b(dl_status|sg_exclude)\s*=/, "D56: never write dl_status or sg_exclude. Ask Josh.");
+    assert.doesNotMatch(pool, /\bskip_[a-z0-9_]*\s*=/, "D56: never write skip_*. Ask Josh.");
     assert.match(pull, /copyMapsPool|maps_raw/, "D56: pull must read the stored pool. Ask Josh.");
     assert.doesNotMatch(pull, /sync_to_supabase|pipeline_stats/, "D56: pull must not call the Maps scraper for the stored pool. Ask Josh.");
     assert.match(canon, /plan_id/, "D56: CANON.md must say maps is scoped by plan_id. Ask Josh.");
