@@ -25,6 +25,7 @@ const CLIENT_SERVER: Readonly<Record<string, string>> = {
   "mapsStats.ts": "Google Maps Scraper",
   "permits.ts": "PermitStack",
   "icpGate.ts": "ICP gate",
+  "sitePeople.ts": "Site people",
 };
 
 /** The ten servers the addendum names (section 4). */

@@ -203,16 +203,17 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "site_check",
     {
       description:
-        "The website checker (skill icp-website-gate): our own site fetch (free), then one Jev question, about $0.11 per 1,000 answers. question=icp: is each company in the client's ICP (the client's label set; verdict per domain, which icp(job_id) then stamps on a job's rows at no extra cost). question=owners: for each named person, which role Jev reads them into from the title we hold and the company's own site: owner_or_founder, executive_decision_maker, manager_or_lead, staff_or_individual_contributor; the first two are the owners and decision makers. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. Nothing on the rows changes; verdicts are kept per domain and per person so a re-run never pays twice. Jev does not find names: it judges the people the store already holds. Counts and labels only.",
+        "The website checker (skill icp-website-gate): our own site fetch (free), then a question over what the site says. question=icp: is each company in the client's ICP (the client's label set, Jev's category pick, about $0.11 per 1,000; verdict per domain, which icp(job_id) then stamps on a job's rows for free). question=people: crawl each company's homepage and people pages (team, leadership, staff, about, contact), have Gemini list every person the site presents, then ask Jev which of them is looking_for (default: the owner, or the person who runs the company; or say who you want: 'the service manager', 'the person who buys IT'). About $1.11 per 1,000 sites worst case. The people found become rows of topup.site_people_found (first_name, last_name, title, domain, source_url) that pull(source=\"table\") can bring into a job. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. Nothing on the rows changes; sites, people and answers are kept per domain so a re-run never pays twice. Counts and labels only; never a name.",
       inputSchema: {
         question: z.enum(SITE_CHECK_QUESTIONS),
         client_tag: snake.optional(),
         job_id: z.string().optional().describe("A job from pull(): its rows in lp.<tag>_ingested_leads."),
         table: z.string().optional().describe("schema.table as leftovers lists it (lp.<tag>_…, client_<tag>.…, public.<tag>…_wf_contacts). Needs client_tag."),
+        looking_for: z.string().max(200).optional().describe("people only: who to find on the site, in plain words. Default: the owner, or the person who runs the company."),
         approved_by: z.string().optional().describe("Name of the person who approved the quoted worst case."),
       },
     },
-    async ({ question, client_tag, job_id, table, approved_by }) => text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, approved_by: approved_by ?? null })),
+    async ({ question, client_tag, job_id, table, looking_for, approved_by }) => text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, looking_for: looking_for ?? null, approved_by: approved_by ?? null })),
   );
 
   server.registerTool(

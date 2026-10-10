@@ -7,6 +7,7 @@ import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
 import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
 import { GetleadsClient } from "./clients/getleads.js";
 import { IcpGateClient } from "./clients/icpGate.js";
+import { SitePeopleClient } from "./clients/sitePeople.js";
 import { LeadPipeClient } from "./clients/leadpipe.js";
 import { MapsStatsClient } from "./clients/mapsStats.js";
 import { NameToEmailClient } from "./clients/nameToEmail.js";
@@ -121,6 +122,7 @@ async function main(): Promise<void> {
   const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
   const jobs = { pollMs: cfg.JOB_POLL_SECONDS * 1000, deadMs: cfg.JOB_DEAD_MINUTES * 60_000 };
   const icpGate = cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY ? new IcpGateClient(cfg.SUPABASE_FUNCTIONS_URL, { fetch: cfg.ICP_SITE_FETCH_KEY, llm: cfg.ICP_LLM_KEY, disco: cfg.ICP_DISCO_KEY }) : null;
+  const sitePeople = cfg.SITE_PEOPLE_KEY ? new SitePeopleClient(cfg.SUPABASE_FUNCTIONS_URL, cfg.SITE_PEOPLE_KEY) : null;
   const base = { repo, console: console_ };
 
   const pull = new PullStage({
@@ -201,7 +203,7 @@ async function main(): Promise<void> {
           now: () => Date.now(),
         },
         size: new SizeRunner(db),
-        siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, jevModel: cfg.ICP_JEV_MODEL, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
+        siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, people: sitePeople, jevModel: cfg.ICP_JEV_MODEL, geminiModel: cfg.SITE_PEOPLE_GEMINI_MODEL, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
       },
     }),
   );

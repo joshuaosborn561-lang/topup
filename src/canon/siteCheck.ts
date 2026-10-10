@@ -1,5 +1,7 @@
 import type { IcpGate } from "../clients/icpGate.js";
 import { jevModel } from "../clients/icpGate.js";
+import { geminiModel, jevPickModel, type SitePeople } from "../clients/sitePeople.js";
+import { createHash } from "node:crypto";
 import { spendApprovalCard } from "../console/cards.js";
 import type { Console } from "../console/console.js";
 import type { Queryable } from "../db/pool.js";
@@ -16,45 +18,51 @@ import { icpLabelSql } from "../stages/icp/parse.js";
 import { discoverStores } from "./leftovers.js";
 
 /**
- * The website checker as a verb (D71; skill icp-website-gate). Our own
- * site fetch (free), then one Jev question over a job's rows or a store
- * that `leftovers` named:
+ * The website checker as a verb (D71, D72; skill icp-website-gate). Our
+ * own site fetch (free), then a question over what the site says, on a
+ * job's rows or a store that `leftovers` named:
  *
  *   icp     Is each company in the client's ICP? The client's label set
- *           from topup.icp_variants; the verdict is per domain in
- *           client_salesglider.icp_llm_results, where icp(job_id) reads
- *           it too, so a checked domain is never paid for twice.
- *   owners  For each named person, which role Jev reads them into from
- *           the title we hold and the company's own site: owner_or_founder,
- *           executive_decision_maker, manager_or_lead,
- *           staff_or_individual_contributor. The verdict is per person in
- *           topup.site_check_people. The first two labels are the owners
- *           and decision makers Josh's call lists want.
+ *           from topup.icp_variants, Jev's category pick; the verdict is
+ *           per domain in client_salesglider.icp_llm_results, where
+ *           icp(job_id) reads it too, so a checked domain is never paid
+ *           for twice.
+ *   people  Who on the site is what we are looking for? The site-people
+ *           function crawls the homepage and the people pages (team,
+ *           leadership, staff, about, contact), Gemini (Josh's key) lists
+ *           every person the site presents into topup.site_people, and
+ *           Jev picks which of them is `looking_for` (default: the owner,
+ *           or the person who runs the company) into topup.site_answers.
+ *           The people found are rows of the view topup.site_people_found
+ *           (first_name, last_name, title, domain, source_url) that a
+ *           table pull can bring into a job.
  *
  * The first call returns the estimate and the counts so far; the same
  * call with approved_by runs it and records who said yes (D51). Nothing
- * on the store's rows changes. Jev cannot name a person it has not been
- * given: this verb judges the people a store already holds; names come
- * from site_staff, the people waterfall or a pull. Counts, labels and at
+ * on the store's rows changes. Sites, people and answers are kept per
+ * domain, so a re-run pays only for what is new. Counts, labels and at
  * most ten sample domains; never a name.
  */
-export const SITE_CHECK_QUESTIONS = ["icp", "owners"] as const;
+export const SITE_CHECK_QUESTIONS = ["icp", "people"] as const;
 export type SiteCheckQuestion = (typeof SITE_CHECK_QUESTIONS)[number];
 
-/** The owners question's label set, one pick per person; the first two pass (D71). */
-export const OWNER_LABELS = ["owner_or_founder", "executive_decision_maker", "manager_or_lead", "staff_or_individual_contributor"] as const;
-export const OWNER_PASS: readonly string[] = ["owner_or_founder", "executive_decision_maker"];
-/** The icp-llm variant that carries the owners question. */
-export const OWNERS_VARIANT = "owners";
-export const PEOPLE_TABLE = "topup.site_check_people";
+/** What the people question looks for when the caller does not say. */
+export const DEFAULT_LOOKING_FOR = "the owner, or the person who runs the company";
+export const PEOPLE_TEXT = "topup.site_people_text";
+export const PEOPLE_TABLE = "topup.site_people";
+export const ANSWERS = "topup.site_answers";
+export const FOUND_VIEW = "topup.site_people_found";
 export const LABEL_TOKEN = /^[a-z][a-z0-9_]{2,80}$/;
 const SAMPLE_FLAGGED = 10;
 const SAMPLE_PASSED = 4;
+const SAMPLE_FOUND = 10;
+const TITLES_SHOWN = 10;
 
 export const SITE_CHECK_RULE =
-  "The website checker: our own site fetch (free) then one Jev question, about $0.11 per 1,000 answers (D71). " +
-  "question=icp grades each company against the client's label set; question=owners sorts each named person into owner_or_founder, executive_decision_maker, manager_or_lead or staff_or_individual_contributor. " +
-  "The first call is the estimate; approved_by=\"Name\" runs it. Verdicts are kept per domain and per person, so a re-run pays only for what is new. Nothing on the rows changes; you read the counts and decide (D53).";
+  "The website checker: our own site fetch (free), then a question over what the site says (D71, D72). " +
+  "question=icp grades each company against the client's label set (Jev, about $0.11 per 1,000). " +
+  "question=people crawls the site's people pages, has Gemini list every person it presents, and asks Jev which of them is looking_for (about $1.11 per 1,000 sites worst case); the people found are rows of topup.site_people_found. " +
+  "The first call is the estimate; approved_by=\"Name\" runs it. Sites, people and answers are kept per domain, so a re-run pays only for what is new. Nothing on the rows changes; you read the counts and decide (D53).";
 
 export interface SiteCheckDeps {
   db: Queryable;
@@ -63,8 +71,11 @@ export interface SiteCheckDeps {
   rails: Pick<SpendRails, "decide" | "record" | "cfg">;
   ledger?: Pick<LaneLedger, "event"> | null;
   gate: IcpGate | null;
+  people: SitePeople | null;
   /** The OpenRouter model id Jev runs as (ICP_JEV_MODEL). */
   jevModel: string;
+  /** The Gemini model that lists a site's people (SITE_PEOPLE_GEMINI_MODEL). */
+  geminiModel: string;
   pollMs: number;
   deadMs: number;
   by: string;
@@ -76,6 +87,7 @@ export interface SiteCheckInput {
   client_tag?: string | null;
   job_id?: string | null;
   table?: string | null;
+  looking_for?: string | null;
   approved_by?: string | null;
 }
 
@@ -100,8 +112,9 @@ export interface SiteCheckResult {
   by_label?: Record<string, number>;
   samples?: { flagged: string[]; passed: string[] };
   cost_cents?: number;
-  labels?: readonly string[];
-  passes?: readonly string[];
+  looking_for?: string;
+  question_key?: string;
+  by_title?: Record<string, number>;
   rule: string;
 }
 
@@ -129,32 +142,23 @@ export function storeDomainSql(cols: Set<string>, prefix = ""): string | null {
   return `(case when ${d} ~ '^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$' then ${d} else null end)`;
 }
 
-/** A person's display name from the store's columns; stays inside SQL (insert … select). `name` is left out: on Maps tables it is the business. */
-export function storeNameSql(cols: Set<string>, prefix = ""): string | null {
-  const parts: string[] = [];
-  if (cols.has("first_name") || cols.has("last_name")) {
-    const f = cols.has("first_name") ? `${prefix}first_name` : "null";
-    const l = cols.has("last_name") ? `${prefix}last_name` : "null";
-    parts.push(`nullif(btrim(concat_ws(' ', ${f}, ${l})), '')`);
-  }
-  for (const c of ["full_name", "owner_name", "dm_name"]) if (cols.has(c)) parts.push(`nullif(btrim(${prefix}${c}), '')`);
-  if (!parts.length) return null;
-  const n = `coalesce(${parts.join(", ")})`;
-  return `(case when ${n} ~ '^[^@]{2,80}$' then ${n} else null end)`;
+/** The question as the function stores it: whitespace collapsed, trimmed; the key is md5 of its lower case, the same expression Postgres uses. */
+export function normalizeLookingFor(v: string | null | undefined): string {
+  const t = (v ?? "").replace(/\s+/g, " ").trim();
+  return t || DEFAULT_LOOKING_FOR;
 }
 
-export function storeTitleSql(cols: Set<string>, prefix = ""): string {
-  const parts = ["title", "job_title", "owner_title", "wf_title", "position", "headline", "role"].filter((c) => cols.has(c)).map((c) => `nullif(btrim(${prefix}${c}), '')`);
-  return parts.length ? `left(coalesce(${parts.join(", ")}), 120)` : "null::text";
+export function questionKey(lookingFor: string): string {
+  return createHash("md5").update(lookingFor.toLowerCase()).digest("hex");
 }
 
 export function siteCheckBatch(question: SiteCheckQuestion, seed: string): string {
   return `check_${question}_${seed.replace(/[^a-z0-9]/gi, "").slice(0, 8).toLowerCase()}`;
 }
 
-/** Worst case for n answers: the ICP question adds the DiscoLike fallback on the unreadable tenth; the owners question is Jev only. */
+/** Worst case for n sites: the ICP question adds the DiscoLike fallback on the unreadable tenth; the people question is Gemini on every site plus Jev on every site. */
 export function siteCheckWorstCaseCents(question: SiteCheckQuestion, n: number): number {
-  return question === "icp" ? icpWorstCaseCents(n) : worstCaseCents("jev", "grade", n);
+  return question === "icp" ? icpWorstCaseCents(n) : worstCaseCents("gemini", "extract", n) + worstCaseCents("jev", "grade", n);
 }
 
 async function columnsOf(db: Queryable, schema: string, table: string): Promise<Set<string>> {
@@ -198,9 +202,9 @@ type Approval = { ok: true; approvedCents: number; by: string | null } | { ok: f
  * that grew past what was approved asks again.
  */
 async function approval(d: SiteCheckDeps, scope: Scope, question: SiteCheckQuestion, rows: number, worst: number, approvedBy: string | null, spentToday: number): Promise<Approval> {
-  const payload = { step: "site_check", question, client_tag: scope.clientTag, scope: scope.label, vendor: question === "icp" ? "jev+discolike" : "jev", action: question === "icp" ? "icp_gate" : "owners", rows, worst_case_cents: worst };
+  const payload = { step: "site_check", question, client_tag: scope.clientTag, scope: scope.label, vendor: question === "icp" ? "jev+discolike" : "gemini+jev", action: question === "icp" ? "icp_gate" : "people", rows, worst_case_cents: worst };
   const blocks = (cardId: string) =>
-    spendApprovalCard({ cardId, runId: scope.run?.run_id ?? scope.label, clientTag: scope.clientTag, step: "icp", vendor: question === "icp" ? "jev + discolike" : "jev", action: `site_check ${question}`, rows, worstCaseCents: worst, projectedUseful: null, spentTodayCents: spentToday, dailyCapCents: d.rails.cfg.dailyCapCents });
+    spendApprovalCard({ cardId, runId: scope.run?.run_id ?? scope.label, clientTag: scope.clientTag, step: "icp", vendor: question === "icp" ? "jev + discolike" : "gemini + jev", action: `site_check ${question}`, rows, worstCaseCents: worst, projectedUseful: null, spentTodayCents: spentToday, dailyCapCents: d.rails.cfg.dailyCapCents });
   const text = `site_check(${question}) on ${scope.label}: ${rows} to check, worst case ${usd(worst)}.`;
   let card = await openCard(d, scope, question);
   if (!approvedBy) {
@@ -238,11 +242,6 @@ async function variantFor(db: Queryable, clientTag: string): Promise<{ jev_varia
 /** The distinct domains of the scope, as a subquery named `d` with one column `d`. */
 function domainsSql(scope: Scope, dsql: string): string {
   return `(select distinct ${dsql} as d from ${scope.rel} where ${scope.where} and ${dsql} is not null)`;
-}
-
-/** The distinct people of the scope: domain `d`, name `n`, title `t`, key `k`. Names stay in SQL. */
-function peopleSql(scope: Scope, dsql: string, nsql: string, tsql: string): string {
-  return `(select distinct on (d, k) d, n, t, k from (select ${dsql} as d, ${nsql} as n, ${tsql} as t, md5(lower(${dsql}) || '|' || lower(${nsql})) as k from ${scope.rel} where ${scope.where}) s where d is not null and n is not null order by d, k)`;
 }
 
 interface IcpTally {
@@ -283,36 +282,52 @@ async function icpTally(d: SiteCheckDeps, scope: Scope, dsql: string, model: str
 }
 
 interface PeopleTally {
-  people: number;
-  answered: number;
+  domains: number;
+  found: number;
+  nobody_listed: number;
   unreadable: number;
-  unanswered: number;
-  owner_or_decision_maker: number;
-  by_label: Record<string, number>;
+  unchecked: number;
 }
 
-async function peopleTally(d: SiteCheckDeps, scope: Scope, dsql: string, nsql: string, tsql: string): Promise<PeopleTally> {
+/** Per domain: found (Jev picked someone), nobody_listed (asked, nobody fits), unreadable (fetched, no text), unchecked. Counts only. */
+async function peopleTally(d: SiteCheckDeps, scope: Scope, dsql: string, lookingFor: string): Promise<PeopleTally> {
   const n = scope.params.length;
-  const { rows } = await d.db.query<{ choice: string | null; unreadable: boolean | null; n: string }>(
-    `select p.choice, (p.choice is null and t.http_status is not null and not (t.http_status between 200 and 399 and coalesce(t.chars, 0) > 300)) as unreadable, count(*)::text as n
-       from ${peopleSql(scope, dsql, nsql, tsql)} s
-       left join ${PEOPLE_TABLE} p on p.client_tag = $${n + 1} and p.domain = s.d and p.person_key = s.k
-       left join ${SITE_TEXT} t on t.domain = s.d
-      group by 1, 2`,
-    [...scope.params, scope.clientTag],
+  const { rows } = await d.db.query<{ k: string; n: string }>(
+    `select case when a.domain is not null and a.person_key is not null then 'found'
+                 when a.domain is not null then 'nobody_listed'
+                 when t.http_status is not null and not (t.http_status between 200 and 399 and coalesce(t.chars, 0) > 300) then 'unreadable'
+                 else 'unchecked' end as k, count(*)::text as n
+       from ${domainsSql(scope, dsql)} d
+       left join ${ANSWERS} a on a.domain = d.d and a.question_key = md5(lower($${n + 1})) and a.error is null
+       left join ${PEOPLE_TEXT} t on t.domain = d.d
+      group by 1`,
+    [...scope.params, lookingFor],
   );
-  const t: PeopleTally = { people: 0, answered: 0, unreadable: 0, unanswered: 0, owner_or_decision_maker: 0, by_label: {} };
+  const t: PeopleTally = { domains: 0, found: 0, nobody_listed: 0, unreadable: 0, unchecked: 0 };
   for (const r of rows) {
     const c = Number(r.n);
-    t.people += c;
-    if (r.choice && LABEL_TOKEN.test(r.choice)) {
-      t.answered += c;
-      t.by_label[`label_${r.choice.slice(0, 40)}`] = (t.by_label[`label_${r.choice.slice(0, 40)}`] ?? 0) + c;
-      if (OWNER_PASS.includes(r.choice)) t.owner_or_decision_maker += c;
-    } else if (r.unreadable) t.unreadable += c;
-    else t.unanswered += c;
+    t.domains += c;
+    if (r.k === "found") t.found += c;
+    else if (r.k === "nobody_listed") t.nobody_listed += c;
+    else if (r.k === "unreadable") t.unreadable += c;
+    else t.unchecked += c;
   }
   return t;
+}
+
+/** The titles the people found carry, as counts (top ten); and up to ten found domains with that title. Titles and domains, never names. */
+async function peopleTitles(d: SiteCheckDeps, scope: Scope, dsql: string, lookingFor: string): Promise<{ by_title: Record<string, number>; samples: string[] }> {
+  const n = scope.params.length;
+  const join = `from ${domainsSql(scope, dsql)} d
+       join ${ANSWERS} a on a.domain = d.d and a.question_key = md5(lower($${n + 1})) and a.person_key is not null and a.error is null
+       join ${PEOPLE_TABLE} p on p.domain = a.domain and p.person_key = a.person_key`;
+  try {
+    const { rows } = await d.db.query<{ title: string | null; n: string }>(`select lower(coalesce(nullif(btrim(p.title), ''), 'no title given')) as title, count(*)::text as n ${join} group by 1 order by 2 desc, 1 limit ${TITLES_SHOWN}`, [...scope.params, lookingFor]);
+    const { rows: sample } = await d.db.query<{ d: string; title: string | null }>(`select d.d, p.title ${join} order by d.d limit ${SAMPLE_FOUND}`, [...scope.params, lookingFor]);
+    return { by_title: Object.fromEntries(rows.map((r) => [r.title ?? "no title given", Number(r.n)])), samples: sample.map((r) => `${r.d} (${r.title ?? "no title given"})`) };
+  } catch {
+    return { by_title: {}, samples: [] };
+  }
 }
 
 /** The ten-sample rule (D2): at most ten flagged and four passed domains with their label. Domains, never people. */
@@ -366,7 +381,7 @@ export async function siteCheck(d: SiteCheckDeps, input: SiteCheckInput): Promis
     const before = await icpTally(d, scope, dsql, model);
     const toCheck = before.unchecked + (variant.disco_icp ? before.unreadable : 0);
     const counts = (t: IcpTally): SiteCheckCounts => ({ domains: t.domains, checked_yes: t.checked_yes, checked_no: t.checked_no, unreadable: t.unreadable, unchecked: t.unchecked });
-    const tail = { batch, model, labels: undefined, passes: undefined };
+    const tail = { batch, model };
     if (toCheck === 0) return { ...out, ...tail, status: "nothing", to_check: 0, counts: counts(before), by_label: before.by_label, samples: await icpSamples(d, scope, dsql, model), next: before.domains === 0 ? "no domains in scope" : "every domain in scope has a verdict; read the counts" };
     const worst = siteCheckWorstCaseCents("icp", toCheck);
     const ok = await approval(d, scope, "icp", toCheck, worst, input.approved_by ?? null, spentToday);
@@ -423,56 +438,64 @@ export async function siteCheck(d: SiteCheckDeps, input: SiteCheckInput): Promis
     return result;
   }
 
-  // owners
-  const nsql = storeNameSql(scope.cols);
-  if (!nsql) return { ...out, status: "refused", reason: `${scope.label} has no name column (first_name/last_name, full_name, owner_name or dm_name); the owners question judges people a store already holds`, next: "people_waterfall or a pull names people; then site_check again" };
-  const tsql = storeTitleSql(scope.cols);
-  const model = jevModel(d.jevModel, OWNERS_VARIANT);
-  const before = await peopleTally(d, scope, dsql, nsql, tsql);
-  const counts = (t: PeopleTally): SiteCheckCounts => ({ people: t.people, answered: t.answered, owner_or_decision_maker: t.owner_or_decision_maker, unreadable: t.unreadable, unanswered: t.unanswered });
-  const tail = { batch, model, labels: OWNER_LABELS, passes: OWNER_PASS };
-  if (before.unanswered === 0) return { ...out, ...tail, status: "nothing", to_check: 0, counts: counts(before), by_label: before.by_label, next: before.people === 0 ? "no named people with a domain in scope" : "every person in scope has a verdict; read the counts" };
-  const worst = siteCheckWorstCaseCents("owners", before.unanswered);
-  const ok = await approval(d, scope, "owners", before.unanswered, worst, input.approved_by ?? null, spentToday);
-  if (!ok.ok) return { ...out, ...tail, status: "waiting_approval", to_check: before.unanswered, worst_case_cents: worst, card_id: ok.card.card_id, counts: counts(before), by_label: before.by_label, next: `name the worst case ${usd(worst)} to a person, then site_check again with approved_by="Their name"` };
-  const decision = d.rails.decide({ runId: scope.run?.run_id ?? "canon", clientTag: scope.clientTag, step: "icp", vendor: "jev", action: "grade", rows: before.unanswered, recipeAuthorised: true, approvedCents: ok.approvedCents, worstCaseCents: worst }, spentToday);
+  // people
+  if (!d.people) return { ...out, status: "refused", reason: "the site-people function is not configured on this service (SITE_PEOPLE_KEY). Ask Josh." };
+  const lookingFor = normalizeLookingFor(input.looking_for);
+  const qkey = questionKey(lookingFor);
+  const gModel = geminiModel(d.geminiModel);
+  const jModel = jevPickModel(d.jevModel);
+  const before = await peopleTally(d, scope, dsql, lookingFor);
+  const counts = (t: PeopleTally): SiteCheckCounts => ({ domains: t.domains, found: t.found, nobody_listed: t.nobody_listed, unreadable: t.unreadable, unchecked: t.unchecked });
+  const tail = { batch, model: `${gModel} then ${jModel}`, looking_for: lookingFor, question_key: qkey };
+  const pullHint = `the people found are rows of ${FOUND_VIEW} (first_name, last_name, title, domain, source_url); pull(client_tag, campaign_id, source="table", filters={"table":"${FOUND_VIEW}","where":"question_key = '${qkey}'"}, max_rows) brings them into a job`;
+  if (before.unchecked === 0) {
+    const titles = await peopleTitles(d, scope, dsql, lookingFor);
+    return { ...out, ...tail, status: "nothing", to_check: 0, counts: counts(before), by_title: titles.by_title, samples: { flagged: [], passed: titles.samples }, next: before.domains === 0 ? "no domains in scope" : `every site in scope has an answer for "${lookingFor}"; ${pullHint}` };
+  }
+  const worst = siteCheckWorstCaseCents("people", before.unchecked);
+  const ok = await approval(d, scope, "people", before.unchecked, worst, input.approved_by ?? null, spentToday);
+  if (!ok.ok) return { ...out, ...tail, status: "waiting_approval", to_check: before.unchecked, worst_case_cents: worst, card_id: ok.card.card_id, counts: counts(before), next: `name the worst case ${usd(worst)} to a person, then site_check again with approved_by="Their name"` };
+  const decision = d.rails.decide({ runId: scope.run?.run_id ?? "canon", clientTag: scope.clientTag, step: "icp", vendor: "gemini", action: "extract", rows: before.unchecked, recipeAuthorised: true, approvedCents: ok.approvedCents, worstCaseCents: worst }, spentToday);
   if (decision.kind !== "proceed") return { ...out, ...tail, status: "refused", reason: decision.reason, worst_case_cents: worst, counts: counts(before) };
   const n = scope.params.length;
-  // 1. The people join the queue, server side; an answered person keeps the answer, an unanswered one is re-pointed and retried.
+  // 1. The sites without an answer for this question join the batch; a site fetched before keeps its text and is re-pointed so extract and ask see it.
   await d.db.query(
-    `insert into ${PEOPLE_TABLE} (client_tag, domain, person_key, full_name, title, batch)
-     select $${n + 1}, s.d, s.k, s.n, s.t, $${n + 2} from ${peopleSql(scope, dsql, nsql, tsql)} s
-     on conflict (client_tag, domain, person_key) do update
-       set batch = excluded.batch, title = coalesce(excluded.title, ${PEOPLE_TABLE}.title), error = null
-       where ${PEOPLE_TABLE}.choice is null`,
-    [...scope.params, scope.clientTag, batch],
+    `insert into ${PEOPLE_TEXT} (domain, batch)
+     select d.d, $${n + 1} from ${domainsSql(scope, dsql)} d
+      where not exists (select 1 from ${ANSWERS} a where a.domain = d.d and a.question_key = md5(lower($${n + 2})) and a.error is null)
+     on conflict (domain) do update set batch = excluded.batch where ${PEOPLE_TEXT}.http_status is distinct from -1`,
+    [...scope.params, batch, lookingFor],
   );
-  // 2. Their sites join the fetch queue; a site fetched before is read as it is.
-  await d.db.query(
-    `insert into ${SITE_TEXT} (domain, batch)
-     select distinct p.domain, $2 from ${PEOPLE_TABLE} p where p.batch = $2 and p.client_tag = $1 and p.choice is null
-     on conflict (domain) do update set batch = excluded.batch where ${SITE_TEXT}.http_status is null`,
-    [scope.clientTag, batch],
-  );
-  const fetched = await fetchAll(d.gate, batch);
-  // 3. Jev reads each person into a role, one call at a time.
-  const graded = await gradeAll((per, w) => d.gate!.gradePeople(batch, model, per, w));
-  const cost = await costCents(d.db, `select coalesce(sum(cost), 0)::text as usd from ${PEOPLE_TABLE} where batch = $1 and client_tag = $2`, [batch, scope.clientTag]);
-  await d.rails.record({ runId: scope.run?.run_id ?? null, clientTag: scope.clientTag, step: "site_check", vendor: "jev", action: "grade", rows: graded.graded, credits: graded.graded, worstCaseCents: worst, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy: ok.by });
-  const after = await peopleTally(d, scope, dsql, nsql, tsql);
+  // 2. Fetch the people pages (free). 3. Gemini lists the people. 4. Jev picks. One extract or ask call at a time.
+  const fetched = await fetchAll(d.people, batch);
+  let extracted = 0;
+  const ex = await gradeAll(async (per, w) => {
+    const r = await d.people!.extract(batch, gModel, per, w);
+    extracted += r.people;
+    return r;
+  });
+  await d.rails.record({ runId: scope.run?.run_id ?? null, clientTag: scope.clientTag, step: "site_check", vendor: "gemini", action: "extract", rows: ex.graded, credits: ex.graded, worstCaseCents: worst, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy: ok.by });
+  const asked = await gradeAll((per, w) => d.people!.ask(batch, lookingFor, jModel, per, w));
+  const jevCost = await costCents(d.db, `select coalesce(sum(cost), 0)::text as usd from ${ANSWERS} where domain in (select domain from ${PEOPLE_TEXT} where batch = $1) and question_key = md5(lower($2))`, [batch, lookingFor]);
+  await d.rails.record({ runId: scope.run?.run_id ?? null, clientTag: scope.clientTag, step: "site_check", vendor: "jev", action: "grade", rows: asked.graded, credits: asked.graded, worstCaseCents: null, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy: ok.by });
+  const after = await peopleTally(d, scope, dsql, lookingFor);
+  const titles = await peopleTitles(d, scope, dsql, lookingFor);
+  const cost = worstCaseCents("gemini", "extract", ex.graded) + jevCost;
+  const lastError = ex.last_error ?? asked.last_error;
   const result: SiteCheckResult = {
     ...out,
     ...tail,
     status: "done",
     approved_by: ok.by,
-    to_check: before.unanswered,
+    to_check: before.unchecked,
     worst_case_cents: worst,
-    counts: { ...counts(after), fetched: fetched.fetched, fetched_ok: fetched.fetched_ok, graded: graded.graded, grade_errors: graded.errors, newly_answered: after.answered - before.answered },
-    by_label: after.by_label,
+    counts: { ...counts(after), fetched: fetched.fetched, fetched_ok: fetched.fetched_ok, extracted_sites: ex.graded, people_listed: extracted, asked: asked.graded, errors: ex.errors + asked.errors, newly_found: after.found - before.found },
+    by_title: titles.by_title,
+    samples: { flagged: [], passed: titles.samples },
     cost_cents: cost,
-    next: "owner_or_founder and executive_decision_maker are the owners and decision makers; the rest are not. Nothing on the rows changed: you decide what to do with the counts.",
-    ...(graded.last_error ? { reason: `last Jev error: ${graded.last_error.slice(0, 120)}` } : {}),
+    next: `${after.found} sites name someone who is "${lookingFor}"; ${pullHint}. nobody_listed means the site shows no one who fits; unreadable means our fetch could not read the site.`,
+    ...(lastError ? { reason: `last model error: ${lastError.slice(0, 120)}` } : {}),
   };
-  await d.ledger?.event({ client_tag: scope.clientTag, lane: scope.run?.lane ?? "site_check", run_id: scope.run?.run_id ?? null, event: "step", line: `site_check(owners) on ${scope.label} by ${d.by}, approved by ${ok.by}: ${after.owner_or_decision_maker} owners or decision makers of ${after.people} · ${after.unreadable} unreadable · ${usd(cost)}.`, actor: d.by }).catch(() => undefined);
+  await d.ledger?.event({ client_tag: scope.clientTag, lane: scope.run?.lane ?? "site_check", run_id: scope.run?.run_id ?? null, event: "step", line: `site_check(people, "${lookingFor.slice(0, 60)}") on ${scope.label} by ${d.by}, approved by ${ok.by}: found ${after.found} · nobody ${after.nobody_listed} · unreadable ${after.unreadable} of ${after.domains} · ${usd(cost)}.`, actor: d.by }).catch(() => undefined);
   return result;
 }

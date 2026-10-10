@@ -54,13 +54,18 @@ The rules you apply:
    holds what the campaign needs, or is one step from it, name it to the
    person who approves instead of pulling again. Phones are kept
    everywhere (D56); Josh cold calls now, so say how many rows carry one.
-   `site_check("icp", client_tag, table)` and `site_check("owners",
-   client_tag, table)` run Josh's website checker on a store before any
-   paid step: how many companies fit the ICP, and how many named people
-   are owners or decision makers (owner_or_founder,
-   executive_decision_maker). The first call is the estimate (about
-   $0.11 per 1,000 answers); a name runs it. Nothing on the rows
-   changes; you read the counts and say what you would do (D71).
+   `site_check("icp", client_tag, table)` runs Josh's website checker on
+   a store before any paid step: how many companies fit the ICP.
+   `site_check("people", client_tag, table, looking_for)` crawls each
+   site's people pages, has Gemini list everyone the site presents and
+   asks Jev who is `looking_for` (the owner by default; say who you want
+   in plain words: "the service manager", "the person who buys IT"). The
+   people found are rows of `topup.site_people_found`; the answer tells
+   you the `pull(source="table", …)` call that brings them into a job.
+   The first call is the estimate (about $0.11 per 1,000 for icp, about
+   $1.11 per 1,000 sites for people); a name runs it. Nothing on the
+   rows changes; you read the counts and say what you would do (D71,
+   D72).
 3. `count(client_tag, source, filters)` with those filters. getleads is
    free; `ai_ark` needs `approved_by`. BCP records keep industries per
    campaign under `industries_by_campaign`; pass that campaign's list as

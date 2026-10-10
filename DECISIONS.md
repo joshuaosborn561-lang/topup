@@ -90,7 +90,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D68 | Live; job 46b1c941 after #45: hold and fill share `company_n`; maps city is parsed from `City, ST`; lane E ICP re-applies `main_category` and drops preschool–high school (reverses D59's no-reapply) |
 | D69 | Live; job 46b1c941 after #46: a step reopen replaces counts (stale held_company_n / company.missing cannot survive); size pool binds start at $11 so categories do not collide with $2::int[] |
 | D70 | Reserved for PR #49 (`cursor/size-param-type-74ac`). That PR writes the live D70 text. This stub keeps the ledger contiguous so D71 can ship off main |
-| D71 | Live; the website checker is a verb: `site_check(question, job_id | client_tag + table, approved_by?)` runs our own site fetch and one Jev question over a job or a store `leftovers` named; `icp` grades each company with the client's label set (verdict per domain, which `icp(job_id)` stamps for free); `owners` sorts each named person into owner_or_founder, executive_decision_maker, manager_or_lead, staff_or_individual_contributor (verdict per person in `topup.site_check_people`); estimate first, a name runs it; nothing on the rows changes; names never return to the service |
+| D71 | Superseded by D72 for the people half: the `owners` question (Jev judging names a store already held) is gone; the `icp` question stands as written. `topup.site_check_people` was never written; dropping it is Josh's call |
+| D72 | Live; `site_check("people", …, looking_for?)` crawls each company's homepage and people pages, has Gemini (Josh's key) list every person the site presents, and asks Jev which of them is `looking_for` (default: the owner, or the person who runs the company); sites, people and answers are kept per domain (`topup.site_people_text`, `site_people`, `site_extractions`, `site_answers`); the people found are rows of the view `topup.site_people_found` a table pull reads; estimate first, a name runs it; nothing on the rows changes; a name never returns to the service |
 
 ---
 
@@ -2547,3 +2548,67 @@ cannot disturb a running job's batch counts for graded domains.
 
 **Guard.** `src/guards/d71_site_check.test.ts`; unit tests in
 `src/canon/siteCheck.test.ts`. Ask Josh.
+
+## D72 — The people question crawls the site: Gemini lists, Jev picks `looking_for`
+
+**Decision.** D71's second question is replaced. `site_check("people", …)`
+does not judge names a store already holds; it goes to the website.
+The new `site-people` edge function (key `SITE_PEOPLE_KEY` in Railway)
+has three modes over `topup.site_people_text`:
+
+1. **fetch** — the homepage plus up to six people pages chosen by link
+   path and text (team, leadership, staff, management, people, meet,
+   founder, owner, executive, board, about, our story, history,
+   contact), 5,000 characters a page, 36,000 a site, plus the schema.org
+   people on those pages as `STRUCTURED` lines. Free. Rows are claimed
+   `FOR UPDATE SKIP LOCKED`, up to three calls side by side.
+2. **extract** — Gemini (`gemini-3.1-flash-lite`, Josh's key from the
+   vault; Claude via the API is never used for this) lists every person
+   the site presents, with the title the site gives them, a quote under
+   160 characters, and the page, up to twelve, into `topup.site_people`
+   keyed `(domain, md5(lower(name)))`. One row per domain in
+   `topup.site_extractions` remembers the extraction, so a site that
+   names nobody is never re-paid.
+3. **ask** — Jev picks, as one `choice` over the people listed plus
+   `nobody_listed`, which of them is `looking_for`, with the site text as
+   state. One row per domain and question in `topup.site_answers` keyed
+   `(domain, md5(lower(looking_for)))`. A site with nobody listed is
+   answered `nobody_listed` without a model call.
+
+`looking_for` is plain words from the caller ("the owner", "the service
+manager", "the person who buys IT"); empty means *the owner, or the
+person who runs the company*. The people found are rows of the view
+`topup.site_people_found` (`first_name`, `last_name`, `title`, `domain`,
+`company_domain`, `source_url`, `question_key`), which a table pull can
+bring into a job as `needs_email` rows. The verb returns counts per
+domain (`found`, `nobody_listed`, `unreadable`, `unchecked`), the
+titles the people found carry (top ten), and up to ten found domains
+with the title; never a name. Worst case is Gemini on every unchecked
+site plus Jev on every unchecked site, about $1.11 per 1,000; a name
+approves it (D51); both calls land in the ledger under `site_check`.
+
+**What it does not do.** Nothing on the store's rows changes. It does
+not fill `needs_person` rows in a job by itself; Grok reads the counts
+and pulls the view, or a later decision adds a site tier to the people
+waterfall. The held-name queue of D71 (`topup.site_check_people`) is
+retired and empty; dropping it is Josh's call.
+
+**Why.** Josh, Oct 10 2026, on D71: "I don't want it to just look for
+names I gave it. The point of this is that it goes to the website and
+takes all the content from the website and relevant pages, and then
+asks a question like, who is the decision maker for this? Or who is the
+owner? It should be flexible enough where I can find who I'm looking
+for on the website." Jev answers typed questions (choice, noul, score)
+and cannot write a name, so the names come from Gemini's extraction and
+Jev makes the pick; the question is whatever Josh asks.
+
+**Tradeoff.** Two models instead of one, about ten times D71's price
+per site, still about a dollar per thousand. Gemini can miss a person
+written in an image or a PDF; the site text is capped at 36,000
+characters. Jev picks from the people listed only: a site that hides its
+owner answers `nobody_listed`, which is the honest answer. First run on
+a client should be small and checked against the real sites, as
+`icp-website-gate` says.
+
+**Guard.** `src/guards/d72_site_people.test.ts` (replaces the D71
+guard); unit tests in `src/canon/siteCheck.test.ts`. Ask Josh.

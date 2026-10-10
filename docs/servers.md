@@ -973,16 +973,6 @@ Three edge functions on campaignintelligence, written for the
   one call at a time per batch. About $0.11 per 1,000 sites. Variants
   are label sets in the function (`choice`, `emcor2`, `deeproots`); a new
   client needs one written there and a row in `topup.icp_variants`.
-* `icp-llm?k=&mode=people&model=jev:<openrouter id>|owners&batch=&n=&w=`
-  (D71) reads the people queued in `topup.site_check_people` for that
-  batch whose site text was fetched, asks Jev one category pick per
-  person (`owner_or_founder`, `executive_decision_maker`,
-  `manager_or_lead`, `staff_or_individual_contributor`) with the site
-  text and the title as state, and writes `choice`, `prob`, `answers`,
-  `cost` and `error` on the queue row. Returns `{processed, errors,
-  last_error, remaining}`. One call at a time per batch. The service
-  (`site_check`) fills the queue with `insert … select` and reads counts
-  by label; a name never returns to it.
 * `icp-disco-fallback?k=&mode=submit&batch=&icp=` sends the sites the
   fetch could not read to DiscoLike `validate/icp` and returns a
   `task_id`; `mode=collect&task=&batch=` polls it and writes the verdicts
@@ -993,3 +983,41 @@ The database has a hard cap of 60 connections shared with the live Allo
 hooks; the service never runs more than three fetch calls or one Jev
 call at once. No cancel on any of the three; a batch that is abandoned
 simply stops being polled.
+
+## Site people (site-people)
+
+One edge function on campaignintelligence, written for `site_check`'s
+`people` question (D72). `src/clients/sitePeople.ts`. Key
+`SITE_PEOPLE_KEY` in Railway, passed as `k`. Three modes, all over
+`topup.site_people_text`, all returning counts:
+
+* `site-people?k=&mode=fetch&batch=&n=&w=` reads the homepage plus up to
+  six people pages (team, leadership, staff, management, people, meet,
+  founder, owner, executive, board, about, our story, history, contact)
+  of every domain in the batch with no `http_status`, 5,000 characters
+  a page and 36,000 a site, and appends the schema.org people on those
+  pages as `STRUCTURED` lines. Rows are claimed `FOR UPDATE SKIP
+  LOCKED`, so up to three calls may run side by side. Free. Returns
+  `{processed, ok, released, remaining}`.
+* `site-people?k=&mode=extract&batch=&n=&w=&model=gemini:<name>` has
+  Gemini (Josh's key, `gemini_api_key` in the vault) list every person
+  the site presents, with title, a short quote and the page, up to
+  twelve, into `topup.site_people` keyed `(domain, md5(lower(name)))`,
+  and one row per domain in `topup.site_extractions`. Does not claim
+  rows: one call at a time per batch. About $1 per 1,000 sites at
+  36,000 characters. Returns `{processed, errors, last_error, people,
+  remaining}`.
+* `site-people?k=&mode=ask&batch=&looking_for=&n=&w=&model=jev:<id>`
+  has Jev pick, as one `choice` over the people listed plus
+  `nobody_listed`, which of them is `looking_for`, with the site text as
+  state, into `topup.site_answers` keyed `(domain,
+  md5(lower(looking_for)))`. A site with nobody listed is answered
+  without a model call. One call at a time per batch. About $0.11 per
+  1,000. Returns `{processed, errors, last_error, found, nobody_listed,
+  remaining}`.
+
+The people found are the view `topup.site_people_found` (`first_name`,
+`last_name`, `title`, `domain`, `company_domain`, `source_url`,
+`question_key`, `looking_for`). The service inserts domains and reads
+counts; a name never returns to it. Same connection cap as the ICP gate:
+one connection per call, never more than three fetch calls side by side.
