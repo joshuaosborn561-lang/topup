@@ -13,7 +13,8 @@ import { usd, worstCaseCents } from "../spend/prices.js";
 import type { SpendRails } from "../spend/rails.js";
 import { realClock, type Clock } from "../stages/common.js";
 import { icpWorstCaseCents } from "../stages/icp/index.js";
-import { DISCO_MODEL, fetchAll, gradeAll, LLM_RESULTS, SITE_TEXT } from "../stages/icp/loops.js";
+import { RpmLimiter } from "../lib/backoff.js";
+import { DISCO_MODEL, fetchAll, gradeAll, LLM_RESULTS, peopleLoopConfig, SITE_TEXT, type PeopleLoopConfig } from "../stages/icp/loops.js";
 import { icpLabelSql } from "../stages/icp/parse.js";
 import { discoverStores } from "./leftovers.js";
 
@@ -40,8 +41,9 @@ import { discoverStores } from "./leftovers.js";
  * The first call returns the estimate and the counts so far; the same
  * call with approved_by runs it and records who said yes (D51). Nothing
  * on the store's rows changes. Sites, people and answers are kept per
- * domain, so a re-run pays only for what is new. Counts, labels and at
- * most ten sample domains; never a name.
+ * domain, so a re-run pays only for what is new. A container restart
+ * does not resume this (D5); Topup calls the same verb again. Counts,
+ * labels and at most ten sample domains; never a name.
  */
 export const SITE_CHECK_QUESTIONS = ["icp", "people"] as const;
 export type SiteCheckQuestion = (typeof SITE_CHECK_QUESTIONS)[number];
@@ -62,7 +64,7 @@ export const SITE_CHECK_RULE =
   "The website checker: our own site fetch (free), then a question over what the site says (D71, D72). " +
   "question=icp grades each company against the client's label set (Jev, about $0.11 per 1,000). " +
   "question=people crawls the site's people pages, has Gemini list every person it presents, and asks Jev which of them is looking_for (about $1.11 per 1,000 sites worst case); the people found are rows of topup.site_people_found. " +
-  "The first call is the estimate; approved_by=\"Name\" runs it. Sites, people and answers are kept per domain, so a re-run pays only for what is new. Nothing on the rows changes; you read the counts and decide (D53).";
+  "The first call is the estimate; approved_by=\"Name\" runs it. Sites, people and answers are kept per domain, so a re-run pays only for what is new. A deploy does not resume the loop — call the same verb again (D5, D73). Nothing on the rows changes; you read the counts and decide (D53).";
 
 export interface SiteCheckDeps {
   db: Queryable;
@@ -76,6 +78,8 @@ export interface SiteCheckDeps {
   jevModel: string;
   /** The Gemini model that lists a site's people (SITE_PEOPLE_GEMINI_MODEL). */
   geminiModel: string;
+  /** People-loop fan-out (D73). Missing: env defaults (~50 fetch, ~28 Gemini/Jev). */
+  peopleLoops?: PeopleLoopConfig;
   pollMs: number;
   deadMs: number;
   by: string;
@@ -89,6 +93,12 @@ export interface SiteCheckInput {
   table?: string | null;
   looking_for?: string | null;
   approved_by?: string | null;
+  fetch_parallel?: number | null;
+  fetch_workers?: number | null;
+  extract_parallel?: number | null;
+  extract_workers?: number | null;
+  ask_parallel?: number | null;
+  ask_workers?: number | null;
 }
 
 export interface SiteCheckCounts {
@@ -370,7 +380,7 @@ export async function siteCheck(d: SiteCheckDeps, input: SiteCheckInput): Promis
   if (!d.gate) return { ...out, status: "refused", reason: "the website checker is not configured on this service (ICP_SITE_FETCH_KEY, ICP_LLM_KEY). Ask Josh." };
   const dsql = storeDomainSql(scope.cols);
   if (!dsql) return { ...out, status: "refused", reason: `${scope.label} has no domain, website or email column to read a site from`, next: "domain_waterfall fills domains; then site_check again" };
-  const seed = scope.run?.run_id ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  const seed = scope.run?.run_id ?? createHash("md5").update(scope.label).digest("hex");
   const batch = siteCheckBatch(input.question, seed);
   const spentToday = await d.repo.spentTodayCents();
 
@@ -385,7 +395,7 @@ export async function siteCheck(d: SiteCheckDeps, input: SiteCheckInput): Promis
     if (toCheck === 0) return { ...out, ...tail, status: "nothing", to_check: 0, counts: counts(before), by_label: before.by_label, samples: await icpSamples(d, scope, dsql, model), next: before.domains === 0 ? "no domains in scope" : "every domain in scope has a verdict; read the counts" };
     const worst = siteCheckWorstCaseCents("icp", toCheck);
     const ok = await approval(d, scope, "icp", toCheck, worst, input.approved_by ?? null, spentToday);
-    if (!ok.ok) return { ...out, ...tail, status: "waiting_approval", to_check: toCheck, worst_case_cents: worst, card_id: ok.card.card_id, counts: counts(before), by_label: before.by_label, next: `name the worst case ${usd(worst)} to a person, then site_check again with approved_by="Their name"` };
+    if (!ok.ok) return { ...out, ...tail, status: "waiting_approval", to_check: toCheck, worst_case_cents: worst, card_id: ok.card.card_id, counts: counts(before), by_label: before.by_label, next: `name the worst case ${usd(worst)} to a person, then site_check(question="icp", ${scope.kind === "job" ? `job_id="${scope.run!.run_id}"` : `client_tag="${scope.clientTag}", table="${scope.rel.replace(/"/g, "")}"`}, approved_by="Their name"). A deploy does not resume this.` };
     const decision = d.rails.decide({ runId: scope.run?.run_id ?? "canon", clientTag: scope.clientTag, step: "icp", vendor: "jev", action: "grade", rows: toCheck, recipeAuthorised: true, approvedCents: ok.approvedCents, worstCaseCents: worst }, spentToday);
     if (decision.kind !== "proceed") return { ...out, ...tail, status: "refused", reason: decision.reason, worst_case_cents: worst, counts: counts(before) };
     const n = scope.params.length;
@@ -454,11 +464,28 @@ export async function siteCheck(d: SiteCheckDeps, input: SiteCheckInput): Promis
   }
   const worst = siteCheckWorstCaseCents("people", before.unchecked);
   const ok = await approval(d, scope, "people", before.unchecked, worst, input.approved_by ?? null, spentToday);
-  if (!ok.ok) return { ...out, ...tail, status: "waiting_approval", to_check: before.unchecked, worst_case_cents: worst, card_id: ok.card.card_id, counts: counts(before), next: `name the worst case ${usd(worst)} to a person, then site_check again with approved_by="Their name"` };
+  const resume = `site_check(question="people", ${scope.kind === "job" ? `job_id="${scope.run!.run_id}"` : `client_tag="${scope.clientTag}", table="${scope.rel.replace(/"/g, "")}"`}${input.looking_for ? `, looking_for="${lookingFor}"` : ""}, approved_by="Their name")`;
+  if (!ok.ok) return { ...out, ...tail, status: "waiting_approval", to_check: before.unchecked, worst_case_cents: worst, card_id: ok.card.card_id, counts: counts(before), next: `name the worst case ${usd(worst)} to a person, then ${resume}. A deploy does not resume this — nothing starts on boot (D5).` };
   const decision = d.rails.decide({ runId: scope.run?.run_id ?? "canon", clientTag: scope.clientTag, step: "icp", vendor: "gemini", action: "extract", rows: before.unchecked, recipeAuthorised: true, approvedCents: ok.approvedCents, worstCaseCents: worst }, spentToday);
   if (decision.kind !== "proceed") return { ...out, ...tail, status: "refused", reason: decision.reason, worst_case_cents: worst, counts: counts(before) };
   const n = scope.params.length;
-  // 1. The sites without an answer for this question join the batch; a site fetched before keeps its text and is re-pointed so extract and ask see it.
+  const loops = peopleLoopConfig(process.env, {
+    fetch_parallel: input.fetch_parallel ?? d.peopleLoops?.fetch.parallel,
+    fetch_workers: input.fetch_workers ?? d.peopleLoops?.fetch.workers,
+    fetch_per_call: d.peopleLoops?.fetch.perCall,
+    extract_parallel: input.extract_parallel ?? d.peopleLoops?.extract.parallel,
+    extract_workers: input.extract_workers ?? d.peopleLoops?.extract.workers,
+    extract_per_call: d.peopleLoops?.extract.perCall,
+    ask_parallel: input.ask_parallel ?? d.peopleLoops?.ask.parallel,
+    ask_workers: input.ask_workers ?? d.peopleLoops?.ask.workers,
+    ask_per_call: d.peopleLoops?.ask.perCall,
+    per_host: d.peopleLoops?.perHost,
+    gemini_rpm: d.peopleLoops?.geminiRpm,
+  });
+  // Dead claims from a killed container: http_status=-1 and in_progress extracts older than 2 min.
+  await d.db.query(`update ${PEOPLE_TEXT} set http_status = null where http_status = -1 and fetched_at < now() - interval '2 minutes'`).catch(() => undefined);
+  await d.db.query(`update topup.site_extractions set error = 'released' where error = 'in_progress' and extracted_at < now() - interval '3 minutes'`).catch(() => undefined);
+  // 1. Sites without an answer join the batch. Already-extracted / already-answered domains are not re-paid (extract and ask skip those tables). A fetched site keeps its text and is re-pointed so ask can see it after a restart.
   await d.db.query(
     `insert into ${PEOPLE_TEXT} (domain, batch)
      select d.d, $${n + 1} from ${domainsSql(scope, dsql)} d
@@ -466,16 +493,18 @@ export async function siteCheck(d: SiteCheckDeps, input: SiteCheckInput): Promis
      on conflict (domain) do update set batch = excluded.batch where ${PEOPLE_TEXT}.http_status is distinct from -1`,
     [...scope.params, batch, lookingFor],
   );
-  // 2. Fetch the people pages (free). 3. Gemini lists the people. 4. Jev picks. One extract or ask call at a time.
-  const fetched = await fetchAll(d.people, batch);
+  // 2. Fetch (free, ~50 workers, 2 per host). 3. Gemini lists. 4. Jev picks. Fan-out; each call claims rows.
+  const fetched = await fetchAll(d.people, batch, loops.fetch);
   let extracted = 0;
+  const geminiLim = new RpmLimiter(loops.geminiRpm);
   const ex = await gradeAll(async (per, w) => {
+    for (let i = 0; i < w; i++) await geminiLim.take();
     const r = await d.people!.extract(batch, gModel, per, w);
     extracted += r.people;
     return r;
-  });
+  }, loops.extract);
   await d.rails.record({ runId: scope.run?.run_id ?? null, clientTag: scope.clientTag, step: "site_check", vendor: "gemini", action: "extract", rows: ex.graded, credits: ex.graded, worstCaseCents: worst, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy: ok.by });
-  const asked = await gradeAll((per, w) => d.people!.ask(batch, lookingFor, jModel, per, w));
+  const asked = await gradeAll((per, w) => d.people!.ask(batch, lookingFor, jModel, per, w), loops.ask);
   const jevCost = await costCents(d.db, `select coalesce(sum(cost), 0)::text as usd from ${ANSWERS} where domain in (select domain from ${PEOPLE_TEXT} where batch = $1) and question_key = md5(lower($2))`, [batch, lookingFor]);
   await d.rails.record({ runId: scope.run?.run_id ?? null, clientTag: scope.clientTag, step: "site_check", vendor: "jev", action: "grade", rows: asked.graded, credits: asked.graded, worstCaseCents: null, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy: ok.by });
   const after = await peopleTally(d, scope, dsql, lookingFor);

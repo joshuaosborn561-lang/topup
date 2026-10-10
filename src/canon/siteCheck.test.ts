@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { CardRow } from "../db/repo.js";
 import { icpWorstCaseCents } from "../stages/icp/index.js";
 import { worstCaseCents } from "../spend/prices.js";
+import { peopleLoopConfig } from "../stages/icp/loops.js";
 import { DEFAULT_LOOKING_FOR, questionKey, siteCheck, storeDomainSql, type SiteCheckDeps } from "./siteCheck.js";
 
 /** D71, D72 — the website checker is a verb. Fake database, fake edge functions, fake console; the assertions are on the SQL shape, the ledger and the counts. No vendor is reached. Ask Josh. */
@@ -111,6 +112,7 @@ function build(w: World) {
     },
     jevModel: "typesafe/jev-1.13",
     geminiModel: "gemini-3.1-flash-lite",
+    peopleLoops: peopleLoopConfig({}, { fetch_parallel: 1, fetch_workers: 1, extract_parallel: 1, extract_workers: 1, ask_parallel: 1, ask_workers: 1 }),
     pollMs: 1,
     deadMs: 100,
     by: "grok",
@@ -187,6 +189,8 @@ describe("D71 — site_check", () => {
     const w = build({ icpRows: [], peopleRows: [{ k: "found", n: "4" }, { k: "nobody_listed", n: "1" }, { k: "unchecked", n: "3" }, { k: "unreadable", n: "1" }], variant: null, run });
     const first = await siteCheck(w.deps, { question: "people", job_id: run.run_id });
     assert.equal(first.status, "waiting_approval");
+    assert.match(first.next!, /site_check\(question="people", job_id="11111111-2222-3333-4444-555555555555", approved_by=/);
+    assert.match(first.next!, /does not resume/);
     assert.equal(first.client_tag, "emcor");
     assert.equal(first.scope, "job:11111111");
     assert.equal(first.looking_for, DEFAULT_LOOKING_FOR, "D72: no looking_for means the owner");
@@ -205,6 +209,8 @@ describe("D71 — site_check", () => {
     assert.match(queue!.text, /not exists \(select 1 from topup\.site_answers a where a\.domain = d\.d and a\.question_key = md5\(lower\(\$3\)\)/, "D72: a site answered for this question is not re-pointed or re-paid");
     assert.equal(queue!.params[2], "the service manager");
     assert.doesNotMatch(queue!.text, /returning/i);
+    assert.ok(w.seen.some((q) => q.text.includes("http_status = -1") && q.text.includes("interval '2 minutes'")), "D73: a restart releases stale fetch claims");
+    assert.ok(w.seen.some((q) => q.text.includes("in_progress") && q.text.includes("site_extractions")), "D73: a restart releases stale extract claims");
     assert.ok(w.gateCalls.some((c) => c.startsWith("pfetch:check_people_11111111")));
     assert.ok(w.gateCalls.some((c) => c.startsWith("extract:check_people_11111111:gemini:gemini-3.1-flash-lite")));
     assert.ok(w.gateCalls.some((c) => c === "ask:check_people_11111111:the service manager:jev:typesafe/jev-1.13"));
