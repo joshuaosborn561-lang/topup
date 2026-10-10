@@ -49,7 +49,8 @@ export const SIZE_STATEMENT_TIMEOUT_MS = 45_000;
 /**
  * Recycle SQL hardcodes $2 (interested ids) through $10 (days). The pool
  * FROM after D68 also binds $1 / $2 (plan_id, categories). Shift those
- * pool binds past the suppress slots (D69).
+ * pool binds past the suppress slots (D69). The CTE still names $1::text
+ * so Postgres can type the first slot after the shift (D70).
  */
 export const SIZE_SUPPRESS_BIND_OFFSET = 10;
 
@@ -136,7 +137,7 @@ export function sizeSuppressJoinSql(resolved: MapsPoolResolved, destRef: string 
   const fromSql = shiftSqlParams(resolved.fromSql, SIZE_SUPPRESS_BIND_OFFSET);
   const whereSql = shiftSqlParams(where, SIZE_SUPPRESS_BIND_OFFSET);
   return `with p as (
-         select $2::int[] as positive, $3::int as dnc, $4::int as wrong_person, $5::int as bounce,
+         select $1::text as plan_id, $2::int[] as positive, $3::int as dnc, $4::int as wrong_person, $5::int as bounce,
                 $6::bigint as smartlead_client_id, $7::bigint[] as client_campaigns, $8::text[] as offer_keys, $9::text as client_tag,
                 $10::int as recycle_after_days
        ),

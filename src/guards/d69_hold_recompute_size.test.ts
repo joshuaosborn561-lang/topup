@@ -48,7 +48,7 @@ describe("D69 — rerun replaces hold counts; size suppress binds do not collide
 
   it("CANON names the replace-on-rerun and the size bind shift", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D69\*\*/, "D69: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D70\*\*/, "D70 is current; D69 stays folded. Ask Josh.");
     assert.match(canon, /replaces/, "D69: a rerun replaces step counts. Ask Josh.");
     assert.match(canon, /\$11/, "D69: size pool binds start at $11. Ask Josh.");
   });

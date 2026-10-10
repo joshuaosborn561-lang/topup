@@ -70,7 +70,8 @@ The rules you apply:
    is the free dry-run of that pool plus suppression by reason. It
    returns a `size_id` at once; poll `size(size_id)` (D65). Pool
    binds are `$11` / `$12` so they do not collide with recycle `$2`
-   (D69). A normalize reopen replaces step counts; do not trust a
+   (D69). The suppress CTE types `$1::text` so `$1` is not unused
+   (D70). A normalize reopen replaces step counts; do not trust a
    leftover `held_company_n` from a prior hash.
 4. `held(client_tag, campaign_id, filters, tam)`. If `net_new` < 1,000:
    *the TAM for this campaign is exhausted.* Stop there. If Josh asks for
