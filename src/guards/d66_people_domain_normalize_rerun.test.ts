@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { shouldReopenStep } from "../jobs/runner.js";
 import { STEP_RULES, stepRulesHash, storedRulesHash, withRulesHash } from "../jobs/rules.js";
 import { domainSql } from "../stages/puzzle/classify.js";
-import { ewDomainViewName, ewDomainViewSql } from "../stages/puzzle/ewSource.js";
+import { ewDomainViewName } from "../stages/puzzle/ewSource.js";
 
 /**
  * D66 — job 46b1c941 after #43. Ask Josh before any of this changes.
@@ -15,17 +15,12 @@ const root = new URL("../../", import.meta.url);
 describe("D66 — people domain view and normalize rules-hash rerun", () => {
   it("the ingest view aliases company_domain as domain and does not ALTER the lane table", async () => {
     const cols = new Set(["company_domain", "email", "first_name", "company_name"]);
-    const sql = ewDomainViewSql("lp.emcor_ingested_leads", cols);
-    assert.equal(ewDomainViewName("lp.emcor_ingested_leads"), "lp.emcor_ingested_leads_ew");
-    assert.match(sql, /create view lp\.emcor_ingested_leads_ew/, "D66: sibling view, not an ALTER of the lane table. Ask Josh.");
-    assert.match(sql, /as domain/, "D66: the view exposes domain. Ask Josh.");
-    assert.match(sql, /company_domain/, "D66: domain comes from company_domain. Ask Josh.");
+    assert.equal(ewDomainViewName("lp.emcor_ingested_leads"), "topup.emcor_ingested_leads_ew");
     assert.equal(domainSql(cols, "t.").includes("company_domain"), true);
-    assert.doesNotMatch(sql, /alter table/i, "D66: do not ALTER lp.emcor_ingested_leads. Ask Josh.");
     const puzzle = await readFile(new URL("src/stages/puzzle/index.ts", root), "utf8");
-    assert.match(puzzle, /ensureEwDomainSource/, "D66: people waterfall must get the view. Ask Josh.");
+    assert.match(puzzle, /resolveEwDomainSource/, "D66/D67: people waterfall must get the view. Ask Josh.");
     const email = await readFile(new URL("src/stages/find_emails/index.ts", root), "utf8");
-    assert.match(email, /ensureEwDomainSource/, "D66: email waterfall shares ew_read_source. Ask Josh.");
+    assert.match(email, /resolveEwDomainSource/, "D66/D67: email waterfall shares ew_read_source. Ask Josh.");
     const people = await readFile(new URL("src/clients/peopleWaterfall.ts", root), "utf8");
     assert.doesNotMatch(people, /map:/, "D66: resolve_people does not accept map; the fix is the view. Ask Josh.");
   });
@@ -37,9 +32,9 @@ describe("D66 — people domain view and normalize rules-hash rerun", () => {
     assert.match(src, /people_waterfall\/source\.py/, "D66: people waterfall is the caller. Ask Josh.");
     assert.match(src, /FIELD_CANDIDATES/, "D66: their map is domain\/website, not company_domain. Ask Josh.");
     const migration = await readFile(new URL("supabase/migrations/0020_ingested_ew_domain_view.sql", root), "utf8");
-    assert.match(migration, /unapplied/i, "D66: 0020 is unapplied until Josh says so. Ask Josh.");
-    assert.match(migration, /ensure_ingested_ew_view/, "D66: the durable function is in this repo. Ask Josh.");
+    assert.match(migration, /drop function if exists topup\.ensure_ingested_ew_view/, "D67: 0020 must not recreate the runtime-DDL function. Ask Josh.");
     assert.doesNotMatch(migration, /alter table lp\./i, "D66: the migration must not ALTER a live lane table. Ask Josh.");
+    assert.doesNotMatch(migration, /create or replace function topup\.ensure_ingested_ew_view/i, "D67: no runtime CREATE VIEW function. Ask Josh.");
   });
 
   it("reopens normalize when the rules hash changed or force is on", () => {

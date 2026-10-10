@@ -10,7 +10,7 @@ import { usd, worstCaseCents, type Vendor } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { attempt, columnsOf, finish, keepPhones, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql } from "../puzzle/classify.js";
-import { ensureEwDomainSource } from "../puzzle/ewSource.js";
+import { resolveEwDomainSource } from "../puzzle/ewSource.js";
 
 /**
  * Email enrichment, immediately before verify (D29; D36 item 71).
@@ -147,7 +147,7 @@ export class FindEmailsStage {
     if (!recipeAuthorises(recipe, "find_emails", maxTier === "fullenrich" ? "fullenrich" : maxTier === "aiark" ? "aiark" : maxTier)) {
       throw new Error(`the recipe does not authorise email finding at max_tier ${maxTier}`);
     }
-    const source = await ensureEwDomainSource(this.d.repo, table);
+    const source = await resolveEwDomainSource(this.d.repo, table);
     const quote = await this.d.emailWaterfall!.estimate({ client_tag: run.client_tag, source_table: source, where, max_tier: maxTier, need: "email" });
     const vendor: Vendor =
       maxTier === "getleads" || maxTier === "smartlead" || maxTier === "aiark" || maxTier === "prospeo" || maxTier === "fullenrich" ? maxTier : "aiark";

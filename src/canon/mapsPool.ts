@@ -51,6 +51,16 @@ function q(name: string): string {
   return `"${name}"`;
 }
 
+/** First non-empty of the listed columns. Job 46b1c941: maps_raw.company
+ *  exists and is blank; maps_raw.name is the business name. Picking the
+ *  first *existing* column hid the name (D67). */
+export function firstNonEmptyColSql(alias: string, cols: string[]): string {
+  if (!IDENT.test(alias)) throw new Error(`not an identifier: ${alias}`);
+  const parts = cols.map((c) => `nullif(${alias}.${q(c)}::text, '')`);
+  if (parts.length === 0) throw new Error("firstNonEmptyColSql needs a column");
+  return parts.length === 1 ? parts[0]! : `coalesce(${parts.join(", ")})`;
+}
+
 export function clientSchema(tag: string): string {
   if (!IDENT.test(tag)) throw new Error(`client_tag must be snake_case: ${tag}`);
   return `client_${tag}`;
@@ -445,8 +455,8 @@ export async function copyMapsPool(
   const map: Array<[string, string]> = [];
   const pick = (dest: string, ...src: string[]) => {
     if (!destCols.has(dest)) return;
-    const col = src.find((c) => srcCols.has(c));
-    if (col) map.push([dest, `nullif(s.${q(col)}::text, '')`]);
+    const have = src.filter((c) => srcCols.has(c));
+    if (have.length) map.push([dest, firstNonEmptyColSql("s", have)]);
   };
   pick("first_name", "first_name");
   pick("last_name", "last_name");

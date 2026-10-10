@@ -290,5 +290,11 @@ describe("normalizeLead — step 7 for one row", () => {
     );
     assert.equal(greeted.first_name_n, "There");
     assert.ok(greeted.flags.first_name?.includes("role_inbox_fallback"));
+    const fromRaw = normalizeLead(
+      { id: "1", first_name: null, company_name: null, city: "Tahoe", state: "CA", email: "info@example.com", maps_name: "Obexer's Water Sports" },
+      refs,
+      { names_cities: true, company: true, location: false, sports_team: null },
+    );
+    assert.equal(fromRaw.company_n, "Obexer's Water Sports", "D67: maps_raw.name wins when ingest title is empty.");
   });
 });

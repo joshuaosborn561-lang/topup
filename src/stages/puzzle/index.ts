@@ -13,7 +13,7 @@ import type { SpendRails } from "../../spend/rails.js";
 import { spendApprovalCard } from "../../console/cards.js";
 import { attempt, columnsOf, finish, keepPhones, park, poll, realClock, statusCounts, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql, nameSql } from "./classify.js";
-import { ensureEwDomainSource } from "./ewSource.js";
+import { resolveEwDomainSource } from "./ewSource.js";
 
 /**
  * Puzzle pieces, after suppress and before email finding (D29).
@@ -335,7 +335,7 @@ export class PuzzleStage {
     // D58: Find Named Person's default is site_staff → cache → discolike →
     // prospeo_search → aiark_people. Do not send a dropped-vendor filter
     // or ceiling; the people service no longer has those tiers.
-    const source = await ensureEwDomainSource(this.d.repo, table);
+    const source = await resolveEwDomainSource(this.d.repo, table);
     const quote = await this.d.people!.estimate({ source_table: source, where, client_tag: run.client_tag });
     const worst = this.d.rails ? peopleWaterfallWorstCaseCents(rows) : 0;
     if (this.d.rails) {

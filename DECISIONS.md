@@ -85,7 +85,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). That PR writes the live D63 text. This stub keeps the ledger contiguous so D64 can ship off main |
 | D64 | Live; job 46b1c941: enrich approval runs the paid people step; a step that did not run is not done; ICP labels are tokens; spend cards re-quote and record actuals; maps used/net-new includes ingested + contacted; lp_export reads the wrapped payload; verify retry uses the recorded approval and does not park; `size` is the free dry-run; maps pull skips held emails before max_rows |
 | D65 | Live; job 46b1c941 after #42: size is async + aggregate SQL; approval is idempotent per step/approver/amount; QA hold count is this job; a false done with queued rows is reopened; Lane E role-inbox company from Maps name; first_name_fallback defaults off |
-| D66 | Live; job 46b1c941 after #43: people/email waterfalls read an ingest `_ew` view that exposes `domain` from `company_domain`; a done step reopens when its `rules_hash` changed or `force=true` |
+| D66 | Live; job 46b1c941 after #43: people/email waterfalls read an ingest `_ew` view that exposes `domain` from `company_domain`; a done step reopens when its `rules_hash` changed or `force=true`. Runtime CREATE VIEW in `lp` superseded by D67 |
+| D67 | Live; job 46b1c941 after #44: no runtime DDL — people/email waterfalls read `topup.<tag>_ingested_leads_ew` from one-time migration 0021; normalize fills company from `maps_raw.name` joined on email; ingest coalesces company/name/title |
 
 ---
 
@@ -2301,3 +2302,70 @@ instead, or if people-waterfall should take `map`.
 
 **Guard.** `src/guards/d66_people_domain_normalize_rerun.test.ts`. Ask
 Josh.
+
+## D67 — No runtime DDL; Maps company is `maps_raw.name`
+
+**Decision.** Two leftovers on job `46b1c941` after D66 shipped
+(`eb62bf6`).
+
+1. **The service never CREATE / DROP / ALTER.** D66's
+   `ensureEwDomainSource` ran `DROP VIEW` / `CREATE VIEW` in schema
+   `lp`. `leadtopup_app` cannot CREATE there (`permission denied for
+   schema lp`). We do not grant CREATE or USAGE extras on `lp`.
+   `ew_read_source` (and `dw_read_source`) SELECTs identifier columns
+   only — no aliases — so we cannot hand `company_domain AS domain`.
+   People waterfall does not accept `map`. The fix is a one-time,
+   non-destructive migration `0021_ingested_ew_domain_views.sql` that
+   creates `topup.<tag>_ingested_leads_ew` (`select t.*, company_domain
+   / email host as domain`) for every existing `lp.*_ingested_leads`
+   that has no `domain` column, plus SELECT/UPDATE on those views to
+   `leadtopup_app`. **Unapplied until Josh says so.** The service
+   looks the view up (`to_regclass` / `information_schema.tables`) and
+   fails with "apply 0021, ask Josh" when it is missing. 0020 is a
+   no-op that drops `topup.ensure_ingested_ew_view` if it ever landed.
+   The other-repo alternative, if Josh prefers that to applying 0021:
+   `people_waterfall/source.py` add `company_domain` to
+   `FIELD_CANDIDATES['domain']` and make `count_source_with_domain`
+   use the mapped column. This repo does not edit that file.
+
+2. **Normalize fills company from `maps_raw.name`.** After D66's
+   rules-hash reopen the Maps-name fill matched 0 of 147. Read-only
+   counts on `lp.emcor_ingested_leads` (job `46b1c941`): every held
+   row has empty `title` and empty `company_name`. Ingest has no
+   `place_id`, no `source_url_hash`, no `content_hash`. All 147 join
+   `client_emcor.maps_raw` on `lower(email)`; `maps_raw.name` is
+   populated on every join; `maps_raw.company` and `title` are empty.
+   Sample names (10, no emails): Obexer's Water Sports; Howell Mountain
+   Ace Hardware; American Canyon High School; American Canyon Middle
+   School; Utica Park FitLot Outdoor Fitness Park; Bret Harte Theater;
+   Dainty Montessori School by Olivina Educ; Haven Humane Society
+   Adoption Center; Auberge du Soleil; The Pines Resort. Root cause of
+   the empty ingest: `copyMapsPool` picked the first *existing* column
+   (`company`) and `nullif` emptied it, never falling through to
+   `name`. The copy now coalesces `company`, then `name`, then
+   `title`. Normalize left-joins `maps_raw` on `lower(email)` and
+   fills empty company from `name` (any row, not only role-inbox —
+   `name` is the business). Role-inbox `title` fill stays as a
+   fallback. Role-inbox locals grow by the generic roles on this job
+   (`staff`, `customerservice`, `concierge`, `boxoffice`, `events`,
+   `rentals`, `orders`, `recruiting`, `inquire`, `reservations`,
+   `adoptions`, `parties`, `storage`). Brand-as-local and person
+   locals are not added. First-name fallback stays off. Normalize's
+   `rules_hash` is `d67:maps-raw-name-join` so the 147 reopen.
+
+**Why.** After #44: Find Named Person failed with `permission denied
+for schema lp` on the runtime CREATE VIEW. The 147 still held —
+ingest never stored the Maps business name, so title→company wrote
+nothing. 54 of 147 locals were already on the role-inbox list; the
+company miss was the empty ingest columns, not the list. `ew_read_source`
+cannot alias; a SECURITY DEFINER read function in topup would not be
+called by people-waterfall (it hardcodes that RPC).
+
+**Tradeoff.** 0021 covers the 17 `lp.*_ingested_leads` tables that
+exist at apply time. A client added later needs another view in the
+same shape — ask Josh; the service will not CREATE it. Writeback
+UPDATEs the view (auto-updatable; `domain` is computed and is not
+written). Applying 0021 is Josh's call. The other-repo FIELD_CANDIDATES
+change is documented, not shipped here.
+
+**Guard.** `src/guards/d67_no_runtime_ddl_maps_name.test.ts`. Ask Josh.
