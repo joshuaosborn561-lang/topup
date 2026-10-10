@@ -59,9 +59,11 @@ The rules you apply:
    campaign under `industries_by_campaign`; pass that campaign's list as
    `industries`. Every other key stays as stored. Maps keeps `plan_id`
    and the categories list (D57); it never scopes by ZIP or `client_tag`
-   alone. Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
+   alone.    Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
    when those exist. Companions that omit `plan_id` join `maps_raw`
-   so the bind is `$1::text` (D59). Already used is the union of live
+   so the bind is `$1::text` (D59). On `v_lane_e_*` the receipt
+   categories match `main_category` and preschool–high school are
+   dropped (D68). Already used is the union of live
    `public.leads` on the receipt's campaigns, emails already in
    `lp.<tag>_ingested_leads`, and this-client prior contact /
    suppression (D64). `size(client_tag, campaign_id, source, filters)`

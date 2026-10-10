@@ -136,7 +136,9 @@ export class NormalizeStage {
         await this.repo.withRun(run.run_id, (tx) =>
           tx.query(
             `update ${table} t set
-               first_name_n = v.first_name_n, company_n = v.company_n, location = v.location,
+               first_name_n = v.first_name_n, company_n = v.company_n,
+               company_name = coalesce(nullif(btrim(t.company_name), ''), v.company_n),
+               location = v.location,
                local_sports_team = v.local_sports_team, normalize_flags = v.flags::jsonb,
                qa_flags = coalesce(t.qa_flags, '{}'::jsonb) - 'merge_field_empty' - 'hold_rule',
                normalized_at = now(), lead_status = 'normalized', status_changed_at = now()
@@ -201,8 +203,14 @@ export class NormalizeStage {
     const fields = mergeFieldsToHold(recipe.required_fields);
     if (fields.length === 0) return { rows: 0, by_field: {} };
     const col = (f: string) => mergeFieldColumn(f);
-    const emptyList = fields.map((f) => `case when coalesce(${col(f)}::text, '') = '' then '${f}' end`).join(", ");
-    const anyEmpty = fields.map((f) => `coalesce(${col(f)}::text, '') = ''`).join(" or ");
+    const valueSql = (f: string): string => {
+      const c = col(f);
+      if (c === "company_n") return "coalesce(nullif(btrim(company_n::text), ''), nullif(btrim(company_name::text), ''))";
+      if (c === "first_name_n") return "coalesce(nullif(btrim(first_name_n::text), ''), nullif(btrim(first_name::text), ''))";
+      return `coalesce(${c}::text, '')`;
+    };
+    const emptyList = fields.map((f) => `case when ${valueSql(f)} = '' then '${f}' end`).join(", ");
+    const anyEmpty = fields.map((f) => `${valueSql(f)} = ''`).join(" or ");
     // `held` exposes the returned aliases (the merge field names), not the table's column names.
     const perField = fields.map((f) => `count(*) filter (where coalesce("${f}"::text, '') = '')::text as "${f}"`).join(", ");
     return this.repo.withRun(run.run_id, async (tx) => {

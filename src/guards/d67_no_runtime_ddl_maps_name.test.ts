@@ -127,7 +127,7 @@ describe("D67 — no runtime DDL; Maps company from maps_raw.name", () => {
     assert.equal(isRoleInbox("inquire@example.test"), true);
     assert.equal(isRoleInbox("adam@example.test"), false, "D67: person locals stay off the list. Ask Josh.");
     assert.equal(isRoleInbox("bowmanvet@example.test"), false, "D67: brand-as-local stays off the list. Ask Josh.");
-    assert.equal(STEP_RULES.normalize, "d67:maps-raw-name-join", "D67: normalize hash must change so the 147 reopen. Ask Josh.");
+    assert.equal(STEP_RULES.normalize, "d68:hold-city-icp", "D68 superseded the D67 hash so the 147 reopen. Ask Josh.");
   });
 
   it("CANON and the babysitter name the view, the migration, and the maps_raw join", async () => {

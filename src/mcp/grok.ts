@@ -68,7 +68,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "count",
     {
       description:
-        "A count on one source with the filters you supply, as the record stores them: getleads (free), ai_ark (about five cents; needs approved_by), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
+        "A count on one source with the filters you supply, as the record stores them: getleads (free), ai_ark (about five cents; needs approved_by), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
       inputSchema: { client_tag: snake, source: z.enum(["getleads", "ai_ark", "maps", "permits"]), filters, approved_by: z.string().optional().describe("Name of the person who approved the paid call.") },
     },
     async ({ client_tag, source, filters: f, approved_by }) => text(await countSource(d.count, { client_tag, source, filters: f, approved_by: approved_by ?? null })),
@@ -281,7 +281,7 @@ function verbDescription(verb: Exclude<Verb, "pull">): string {
     case "verify":
       return "Verify the job's emails (MillionVerifier, then No2Bounce on the catch-alls). Paid; the first call returns the estimate, approved_by runs it. Returns sendable and reject rate.";
     case "normalize":
-      return "Normalize names, companies and locations and assign the local sports team on the job's rows. Free. Empty company is filled from client_<tag>.maps_raw.name joined on email (D67). Role-inbox title fill stays as a fallback. Re-runs when the step's rules hash changed or force=true.";
+      return "Normalize names, companies and locations and assign the local sports team on the job's rows. Free. Empty company is filled from client_<tag>.maps_raw.name joined on email (D67). The hold reads company_n, not the empty raw company_name (D68). City, ST in city is split before geocode. Role-inbox title fill stays as a fallback. Re-runs when the step's rules hash changed or force=true.";
     case "qa":
       return "The merge-field QA gate on the job's rows: every field the copy uses is populated or the row is held. Returns held counts by reason.";
     case "stage":

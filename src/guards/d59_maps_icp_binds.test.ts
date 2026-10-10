@@ -49,8 +49,9 @@ describe("D59 — maps ICP binds are typed", () => {
     if ("error" in resolved) return;
     assert.match(resolved.fromSql, /maps_raw/, "D59: companions without plan_id join maps_raw. Ask Josh.");
     assert.match(resolved.fromSql, /\$1::text/, "D59: plan_id bind must be $1::text. Ask Josh.");
-    assert.doesNotMatch(resolved.fromSql, /\$2/, "D59: must not send $2 when $1 was the unused plan_id. Ask Josh.");
-    assert.deepEqual(resolved.params, ["custom-1789679826"]);
+    assert.match(resolved.fromSql, /\$2::text\[\]/, "D68: categories bind as $2 after typed $1. Ask Josh.");
+    assert.deepEqual(resolved.params[0], "custom-1789679826");
+    assert.deepEqual(resolved.params[1], ["church", "hotel"]);
     assert.equal(resolved.companion, true);
   });
 

@@ -112,7 +112,7 @@ describe("D57 — maps stored pool", () => {
     const poolSql = db.seen.filter((q) => q.includes("union")).join("\n");
     assert.match(poolSql, /maps_raw/, "D59: companions without plan_id join maps_raw");
     assert.match(poolSql, /\$1::text/, "D59: the plan_id bind is typed");
-    assert.doesNotMatch(poolSql, /\$2/, "D59: $2 must not appear without a typed $1");
+    assert.match(poolSql, /\$2::text\[\]/, "D68: categories bind as $2 after typed $1. Ask Josh.");
     assert.equal(r.already_used, 6017);
   });
 

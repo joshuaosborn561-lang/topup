@@ -1,4 +1,5 @@
 import type { Queryable } from "../db/pool.js";
+import { icpCategoryClause, isLaneEIcp, schoolExcludeClause } from "./icpFilter.js";
 
 /**
  * The stored Maps pool (D57, D59, D61, D62). `client_<tag>.maps_raw` scoped
@@ -134,6 +135,23 @@ function categoryClause(alias: string, cols: Set<string>, categories: string[], 
   return hits.length ? ` and (${hits.join(" or ")})` : "";
 }
 
+/** Maps city is often `City, ST`. Take the city token; keep a real state column (D68). */
+export function mapsCitySql(alias: string, cols: Set<string>): string | null {
+  if (!IDENT.test(alias)) throw new Error(`not an identifier: ${alias}`);
+  if (!cols.has("city")) return null;
+  return `nullif(btrim(split_part(${alias}.${q("city")}, ',', 1)), '')`;
+}
+
+export function mapsStateSql(alias: string, cols: Set<string>): string | null {
+  if (!IDENT.test(alias)) throw new Error(`not an identifier: ${alias}`);
+  const fromCol = cols.has("state") ? `nullif(btrim(${alias}.${q("state")}), '')` : "";
+  const fromCity = cols.has("city")
+    ? `nullif(upper(substring(btrim(split_part(${alias}.${q("city")}, ',', 2)) from '^[A-Za-z]{2}')), '')`
+    : "";
+  if (fromCol && fromCity) return `coalesce(${fromCol}, ${fromCity})`;
+  return fromCol || fromCity || null;
+}
+
 function planClause(alias: string, cols: Set<string>, param: string): string {
   if (!cols.has("plan_id")) return "";
   const typed = param.includes("::") ? param : `${param}::text`;
@@ -188,40 +206,33 @@ export async function resolveMapsPool(
         const nPlan = planClause("n", nCols, "$1::text");
         const rawPlan = planClause("m", rawCols, "$1::text");
         const needJoin = !cCols.has("plan_id") || !nCols.has("plan_id");
-        // Companion views are the ICP pool (D57). Do not re-apply scrape
-        // categories on them — that uses $2 and, when they have no plan_id,
-        // leaves $1 untyped (D59). Scope plan_id on maps_raw instead.
-        if (needJoin) {
-          if (!rawPlan) {
-            return { error: `${schema}.maps_raw has no plan_id; cannot scope the ICP companions. Ask Josh.` };
-          }
-          return {
-            schema,
-            fromSql: `(
-            select c.place_id as place_id
-              from ${q(schema)}.${q(companies)} c
-              join ${q(schema)}.${q("maps_raw")} m on m.place_id = c.place_id
-             where true${rawPlan}${cPlan}
-            union
-            select n.place_id as place_id
-              from ${q(schema)}.${q(needing)} n
-              join ${q(schema)}.${q("maps_raw")} m on m.place_id = n.place_id
-             where true${rawPlan}${nPlan}
-          ) pool`,
-            params: [spec.plan_id],
-            cats: [],
-            companion: true,
-          };
+        // Companion views are the ICP pool (D57). Plan_id stays typed $1::text
+        // (D59). D68 re-applies the receipt categories on maps_raw.main_category
+        // and drops lane-E schools. Always join maps_raw so those filters bind.
+        const joinRaw = `join ${q(schema)}.${q("maps_raw")} m on m.place_id`;
+        const planOnRaw = rawCols.has("plan_id") ? planClause("m", rawCols, "$1::text") : rawPlan || cPlan;
+        if (needJoin && !rawCols.has("plan_id")) {
+          return { error: `${schema}.maps_raw has no plan_id; cannot scope the ICP companions. Ask Josh.` };
         }
+        const catOnRaw = icpCategoryClause("m", rawCols, cats, catParam);
+        const school = isLaneEIcp(spec.icp_view) ? schoolExcludeClause("m", rawCols) : "";
+        const paramsOut: unknown[] = [spec.plan_id];
+        if (cats.length && catOnRaw) paramsOut.push(cats);
         return {
           schema,
           fromSql: `(
-            select c.place_id as place_id from ${q(schema)}.${q(companies)} c where true${cPlan}
+            select c.place_id as place_id
+              from ${q(schema)}.${q(companies)} c
+              ${joinRaw} = c.place_id
+             where true${planOnRaw}${cPlan}${catOnRaw}${school}
             union
-            select n.place_id as place_id from ${q(schema)}.${q(needing)} n where true${nPlan}
+            select n.place_id as place_id
+              from ${q(schema)}.${q(needing)} n
+              ${joinRaw} = n.place_id
+             where true${planOnRaw}${nPlan}${catOnRaw}${school}
           ) pool`,
-          params: [spec.plan_id],
-          cats: [],
+          params: paramsOut,
+          cats,
           companion: true,
         };
       }
@@ -252,7 +263,11 @@ export async function countMapsPool(db: Queryable, clientTag: string, filters: R
   if (!resolved.companion) {
     const rel = spec.icp_view ?? "maps_raw";
     const cols = await columnsOf(db, resolved.schema, rel);
-    where = ` where true${planClause("pool", cols, "$1::text")}${categoryClause("pool", cols, resolved.cats, catParam)}${spec.icp_view ? keepClause("pool", cols) : ""}`;
+    const catsSql = spec.icp_view
+      ? icpCategoryClause("pool", cols, resolved.cats, catParam)
+      : categoryClause("pool", cols, resolved.cats, catParam);
+    const school = spec.icp_view && isLaneEIcp(spec.icp_view) ? schoolExcludeClause("pool", cols) : "";
+    where = ` where true${planClause("pool", cols, "$1::text")}${catsSql}${school}${spec.icp_view ? keepClause("pool", cols) : ""}`;
   }
   const { rows } = await db.query<{ n: string }>(`select count(*)::text as n from ${resolved.fromSql}${where}`, resolved.params);
   const pool = Number(rows[0]?.n ?? 0);
@@ -450,7 +465,10 @@ export async function copyMapsPool(
   const catParam = cats.length ? `$${params.push(cats)}` : "";
   const labelParam = `$${params.push(input.source_label)}`;
   const limitParam = `$${params.push(input.max_rows)}`;
-  const where = `true${planClause("s", srcCols, "$1::text")}${categoryClause("s", srcCols, cats, catParam)}${spec.icp_view && sourceName === spec.icp_view ? keepClause("s", srcCols) : ""}`;
+  const icp = Boolean(spec.icp_view && sourceName === spec.icp_view);
+  const catsSql = icp ? icpCategoryClause("s", srcCols, cats, catParam) : categoryClause("s", srcCols, cats, catParam);
+  const school = icp && isLaneEIcp(spec.icp_view) ? schoolExcludeClause("s", srcCols) : "";
+  const where = `true${planClause("s", srcCols, "$1::text")}${catsSql}${school}${icp ? keepClause("s", srcCols) : ""}`;
 
   const map: Array<[string, string]> = [];
   const pick = (dest: string, ...src: string[]) => {
@@ -464,8 +482,14 @@ export async function copyMapsPool(
   pick("title", "title", "owner_title");
   pick("company_name", "company", "name", "title");
   pick("company_domain", "domain");
-  pick("city", "city");
-  pick("state", "state");
+  {
+    const citySql = mapsCitySql("s", srcCols);
+    if (destCols.has("city") && citySql) map.push(["city", citySql]);
+    else pick("city", "city");
+    const stateSql = mapsStateSql("s", srcCols);
+    if (destCols.has("state") && stateSql) map.push(["state", stateSql]);
+    else pick("state", "state");
+  }
   pick("industry", "main_category", "source_category", "category");
   if (destCols.has("source_label")) map.push(["source_label", labelParam]);
   if (map.length === 0) throw new Error(`${schema}.${sourceName} has no columns the ingest table can take`);
