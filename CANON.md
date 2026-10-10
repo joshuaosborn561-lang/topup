@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D67** (2026-10-10). One page. `DECISIONS.md` is the append-only
+Canon as of **D68** (2026-10-10). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -110,7 +110,7 @@ D48).
 17. **A done step reopens when its rules changed, or when force is on.**
    Each step stores a `rules_hash` when it finishes. A later call with a
    different hash (or `force=true`) resets the step and runs it again
-   (D66). Normalize's hash is `d67:maps-raw-name-join`.
+   (D66). Normalize's hash is `d68:hold-city-icp`.
 18. **Maps company is `maps_raw.name`.** The ingest copy coalesces
    `company`, then `name`, then `title` so an empty `company` column
    does not hide the business name. Normalize joins
@@ -118,7 +118,20 @@ D48).
    `place_id` — and fills empty company from that name. Role-inbox
    locals include the generic roles seen on job 46b1c941 (`staff`,
    `customerservice`, …). `title` is a role-inbox fallback only (D67).
-19. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+19. **Hold and fill share `company_n`.** After normalize the merge
+   value is `company_n` (staging copies it to Smartlead
+   `company_name`). `MERGE_FIELD_COLUMN` maps `company_name` →
+   `company_n` and `first_name` → `first_name_n`. An empty raw
+   `company_name` is filled from `company_n` so the hold cannot read
+   the empty source column (D68).
+20. **Maps city is parsed; lane E ICP re-applies `main_category` and
+   drops schools.** Ingest and normalize split `City, ST` in the city
+   column. On `v_lane_e_*` the receipt categories match
+   `maps_raw.main_category` (not `source_category`, the scrape
+   bucket). Preschool through high school are excluded on lane E —
+   they belong to lane D. This reverses D59's choice not to re-apply
+   categories on the companion union (D68).
+21. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -132,7 +145,7 @@ bears on stated and no verdict (D52).
 | `campaigns(client_tag?, include_inactive?)` | Every ACTIVE email campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. Cold call campaigns are left off. |
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
-| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
+| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds, and `net_new`. Under 1,000: the TAM for this campaign is exhausted. |
 | `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
@@ -154,7 +167,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
 | `enrich(job_id, approved_by?, force?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. People and email waterfalls read `topup.<tag>_ingested_leads_ew` so `ew_read_source` sees `domain` (D67; apply 0021 first). The service never CREATE VIEW. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). `force=true` re-runs a done step. |
 | `verify(job_id, approved_by?, force?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry and is not added again. A third failure does not park. |
-| `normalize(job_id, force?)` | normalize | Names, companies, locations, local sports team. Free. Empty company is filled from `client_<tag>.maps_raw.name` joined on email (D67). Role-inbox `title` fill is the fallback. `first_name_fallback` is optional and off by default. Re-runs this job's merge-field holds. Reopens when the stored `rules_hash` is stale or `force=true`. |
+| `normalize(job_id, force?)` | normalize | Names, companies, locations, local sports team. Free. Empty company is filled from `client_<tag>.maps_raw.name` joined on email (D67). The hold reads `company_n`, not the empty raw `company_name` (D68). `City, ST` in city is split before geocode. Role-inbox `title` fill is the fallback. `first_name_fallback` is optional and off by default. Re-runs this job's merge-field holds. Reopens when the stored `rules_hash` is stale or `force=true`. |
 | `qa(job_id)` | qa | Every merge field populated or the row is held. Hold counts are this job only. Holds show in `holds`. |
 | `stage(job_id)` | route, stage | Rows routed to the campaign and staged. |
 | `import(job_id, approved_by?)` | import, post_import | Through LeadPipe into Smartlead. Refuses while `loads_paused`. Never sets ACTIVE. |
@@ -248,7 +261,11 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   on schema `lp` (D67). Never skip a normalize whose `rules_hash` is
   stale (D66). Never ALTER a live lane table to add `domain` (D66).
   Never pick the first existing Maps column for company when a later
-  one holds the business name (D67).
+  one holds the business name (D67). Never hold a filled `company_n`
+  because the check read empty `company_name` (D68). Never geocode
+  the raw `City, ST` city column (D68). Never skip the receipt
+  categories on a lane E ICP union, and never leave preschool
+  through high school on lane E (D68).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).

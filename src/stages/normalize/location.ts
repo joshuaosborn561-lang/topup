@@ -1,5 +1,5 @@
 import { geocode, haversineMiles, type CityCoords, type LatLon } from "./geo.js";
-import { normalizeCity } from "./names.js";
+import { normalizeCity, normalizeState } from "./names.js";
 
 /**
  * Conversational location: a port of
@@ -115,10 +115,17 @@ export function metroFor(p: LatLon): string | null {
   return best;
 }
 
+function stateFromCityField(rawCity: string | null | undefined): string | null {
+  if (!rawCity || !rawCity.includes(",")) return null;
+  const rest = rawCity.split(",").slice(1).join(",").trim();
+  return normalizeState(rest);
+}
+
 export function conversationalLocation(rawCity: string | null | undefined, rawState: string | null | undefined, coords: CityCoords): LocationResult {
   const c = normalizeCity(rawCity);
   if (!c.city) return { location: "", metro: null, city: null, geo: null, source: "no_city", flags: c.flags };
-  const geo = geocode(c.city, rawState, coords);
+  const state = (rawState && String(rawState).trim()) || stateFromCityField(rawCity);
+  const geo = geocode(c.city, state, coords);
   if (!geo) return { location: "", metro: null, city: c.city, geo: null, source: "no_geocode", flags: [...c.flags, "no_geocode"] };
   const metro = metroFor(geo);
   if (metro) return { location: metro, metro, city: c.city, geo, source: "metro", flags: c.flags };

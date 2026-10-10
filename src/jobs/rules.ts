@@ -4,7 +4,7 @@
  * instead of returning identical counts. Ask Josh before adding a key.
  */
 export const STEP_RULES: Readonly<Record<string, string>> = {
-  normalize: "d67:maps-raw-name-join",
+  normalize: "d68:hold-city-icp",
 };
 
 export function stepRulesHash(step: string): string | null {

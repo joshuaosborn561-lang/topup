@@ -78,7 +78,7 @@ describe("D59 — maps ICP against real Postgres", () => {
       assert.ok(!("error" in resolved));
       if ("error" in resolved) return;
       assert.match(resolved.fromSql, /\$1::text/);
-      assert.doesNotMatch(resolved.fromSql, /\$2/);
+      assert.match(resolved.fromSql, /\$2::text\[\]/);
       await db.query(`prepare icp_ok as select count(*)::text as n from ${resolved.fromSql}`);
       const r = await countMapsPool(db, "t", {
         plan_id: "custom-1",
@@ -90,6 +90,31 @@ describe("D59 — maps ICP against real Postgres", () => {
       assert.equal(r.pool, 3, "D59: a,b,c on this plan; d is another plan_id");
       assert.equal(r.already_used, 0);
       assert.equal(r.net_new, 3);
+    } finally {
+      await close();
+    }
+  });
+
+  it("lane E ICP re-applies main_category and drops preschool–high school (D68)", async () => {
+    const { db, close } = await pgliteDb();
+    try {
+      await seedLane(db);
+      await db.exec(`insert into client_t.maps_raw (place_id, plan_id, main_category, name) values
+        ('e', 'custom-1', 'private school', 'E'),
+        ('f', 'custom-1', 'church', 'Lincoln Elementary School');`);
+      await db.exec(`
+        create or replace view client_t.v_lane_e_companies as
+          select place_id, name, main_category from client_t.maps_raw
+           where place_id in ('a', 'b', 'e', 'f');
+      `);
+      const r = await countMapsPool(db, "t", {
+        plan_id: "custom-1",
+        categories: ["church", "hotel", "private school"],
+        icp_filter: "client_t.v_lane_e_final",
+      });
+      assert.ok(!("error" in r), "D68: ICP count must still bind. Ask Josh.");
+      if ("error" in r) return;
+      assert.equal(r.pool, 3, "D68: a,b,c stay; private school and elementary name drop. Ask Josh.");
     } finally {
       await close();
     }

@@ -89,7 +89,12 @@ export const HOLDABLE_FIELDS: readonly string[] = ["first_name_n", "company_n", 
  * `job_title`; LeadPipe's table says `title` (read from the live schema of
  * lp.parlay_ingested_leads, 2026-09-11). Every other field is its own column.
  */
-export const MERGE_FIELD_COLUMN: Readonly<Record<string, string>> = { job_title: "title" };
+export const MERGE_FIELD_COLUMN: Readonly<Record<string, string>> = {
+  job_title: "title",
+  /** After normalize the copy reads company_n; staging copies it to company_name (D68). */
+  company_name: "company_n",
+  first_name: "first_name_n",
+};
 
 export function mergeFieldColumn(field: string): string {
   const col = MERGE_FIELD_COLUMN[field] ?? field;
@@ -107,10 +112,19 @@ export function mergeFieldsToHold(required: readonly string[]): string[] {
   return out;
 }
 
+function mergeFieldValue(row: Record<string, unknown>, field: string): unknown {
+  const col = MERGE_FIELD_COLUMN[field] ?? field;
+  const primary = row[col] ?? row[field];
+  if (primary !== null && primary !== undefined && String(primary).trim() !== "") return primary;
+  if (col === "company_n") return row.company_name;
+  if (col === "first_name_n") return row.first_name;
+  return primary;
+}
+
 /** Pure form of the hold test, for one row in memory. Returns the empty fields. */
 export function emptyMergeFields(row: Record<string, unknown>, fields: readonly string[]): string[] {
   return fields.filter((f) => {
-    const v = row[f];
+    const v = mergeFieldValue(row, f);
     return v === null || v === undefined || String(v).trim() === "";
   });
 }

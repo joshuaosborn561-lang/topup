@@ -40,7 +40,7 @@ export interface QaRule {
 export const QA_FIELD_COLUMN: Readonly<Record<string, string>> = {
   title: "title",
   job_title: "title",
-  company_name: "company_name",
+  company_name: "company_n",
   company_n: "company_n",
   industry: "industry",
   vertical: "vertical",

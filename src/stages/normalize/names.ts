@@ -146,8 +146,11 @@ export function normalizeCity(raw: string | null | undefined): CityResult {
       .join(" ");
     flags.push("recased");
   }
-  if (city.includes(",")) flags.push("comma_in_city");
-  return { city, flags };
+  if (city.includes(",")) {
+    flags.push("city_state_split");
+    city = collapseSpace(city.split(",")[0] ?? "");
+  }
+  return { city: city || null, flags };
 }
 
 const STATE_ABBR: Readonly<Record<string, string>> = {

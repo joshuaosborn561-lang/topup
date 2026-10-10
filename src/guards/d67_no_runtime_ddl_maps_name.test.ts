@@ -127,12 +127,12 @@ describe("D67 — no runtime DDL; Maps company from maps_raw.name", () => {
     assert.equal(isRoleInbox("inquire@example.test"), true);
     assert.equal(isRoleInbox("adam@example.test"), false, "D67: person locals stay off the list. Ask Josh.");
     assert.equal(isRoleInbox("bowmanvet@example.test"), false, "D67: brand-as-local stays off the list. Ask Josh.");
-    assert.equal(STEP_RULES.normalize, "d67:maps-raw-name-join", "D67: normalize hash must change so the 147 reopen. Ask Josh.");
+    assert.equal(STEP_RULES.normalize, "d68:hold-city-icp", "D68 superseded the D67 hash so the 147 reopen. Ask Josh.");
   });
 
   it("CANON and the babysitter name the view, the migration, and the maps_raw join", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D67\*\*/, "D67: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D68\*\*/, "D68 is current; D67 stays folded. Ask Josh.");
     assert.match(canon, /topup\.<tag>_ingested_leads_ew/, "D67: the view lives in topup. Ask Josh.");
     assert.match(canon, /never CREATE \/ DROP \/ ALTER at runtime/i, "D67: no runtime DDL. Ask Josh.");
     assert.match(canon, /maps_raw\.name/, "D67: company is maps_raw.name. Ask Josh.");

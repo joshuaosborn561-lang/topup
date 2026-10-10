@@ -184,6 +184,16 @@ describe("conversational location — port of conversational_location.py + the S
   it("tighter metros win: Orange County beats the LA blanket", () => {
     assert.equal(metroFor({ lat: 33.6846, lon: -117.8265 }), "Orange County");
   });
+  it("City, ST in the city column geocodes after the split (D68)", () => {
+    const city = normalizeCity("Naperville, IL");
+    assert.equal(city.city, "Naperville");
+    assert.ok(city.flags.includes("city_state_split"));
+    const loc = conversationalLocation("Naperville, IL", "IL", coords);
+    assert.equal(loc.location, "Chicagoland");
+    assert.equal(loc.source, "metro");
+    const fromCityOnly = conversationalLocation("Naperville, IL", null, coords);
+    assert.equal(fromCityOnly.source, "metro", "D68: state token in the city column is enough to geocode. Ask Josh.");
+  });
   it("NO_GEOCODE is a blank location, never a broken sentence", () => {
     const r = conversationalLocation("Nowhere", "TX", coords);
     assert.equal(r.location, "");

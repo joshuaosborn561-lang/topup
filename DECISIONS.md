@@ -78,7 +78,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D56 | Live; phones are kept: phone / phone_type / wf_phone / wf_phone_type on every lane table, phone on staging, waterfall phones copied, cellphone from the people contacts, ingest maps vendor phone headers, stage carries phone to Smartlead's phone_number; `leftovers` shows need_phone |
 | D57 | Live; maps `count` and `pull` read `client_<tag>.maps_raw` scoped by `plan_id` and categories, plus the named ICP view (companion `v_*_companies` ∪ `v_*_needs_domain` when present); already used is live `public.leads` on the receipt's campaigns; never `pipeline_stats` by state/client_tag |
 | D58 | Live; LeadMagic is dropped. Replay maps `email_max_tier=leadmagic` to `aiark` and a LeadMagic person source to the live Find Named Person order; old receipts are not rewritten |
-| D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories are not applied again on that union |
+| D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories re-applied on the companion union by D68 |
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 | D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
 | D62 | Live; a background maps pull always ends done or failed with `last_error`; the copy reads the named ICP view (not the companion join), times out, and dedupes with or without a unique email index |
@@ -87,6 +87,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D65 | Live; job 46b1c941 after #42: size is async + aggregate SQL; approval is idempotent per step/approver/amount; QA hold count is this job; a false done with queued rows is reopened; Lane E role-inbox company from Maps name; first_name_fallback defaults off |
 | D66 | Live; job 46b1c941 after #43: people/email waterfalls read an ingest `_ew` view that exposes `domain` from `company_domain`; a done step reopens when its `rules_hash` changed or `force=true`. Runtime CREATE VIEW in `lp` superseded by D67 |
 | D67 | Live; job 46b1c941 after #44: no runtime DDL — people/email waterfalls read `topup.<tag>_ingested_leads_ew` from one-time migration 0021; normalize fills company from `maps_raw.name` joined on email; ingest coalesces company/name/title |
+| D68 | Live; job 46b1c941 after #45: hold and fill share `company_n`; maps city is parsed from `City, ST`; lane E ICP re-applies `main_category` and drops preschool–high school (reverses D59's no-reapply) |
 
 ---
 
@@ -2369,3 +2370,62 @@ written). Applying 0021 is Josh's call. The other-repo FIELD_CANDIDATES
 change is documented, not shipped here.
 
 **Guard.** `src/guards/d67_no_runtime_ddl_maps_name.test.ts`. Ask Josh.
+
+## D68 — Hold reads `company_n`; maps city is parsed; lane E ICP re-applies categories and drops schools
+
+**Decision.** Three leftovers on job `46b1c941` after D67 shipped
+(`2bf9f7c`).
+
+1. **Hold and fill share `company_n`.** After normalize the merge
+   value is `company_n` (recipe `required_fields`, staging copies it
+   to Smartlead `company_name`). `MERGE_FIELD_COLUMN` and
+   `QA_FIELD_COLUMN` map `company_name` → `company_n` (and
+   `first_name` → `first_name_n`). The hold SQL coalesces
+   `company_n` then `company_name`. An empty raw `company_name` is
+   filled from `company_n` so a later check cannot read the empty
+   source column. Read-only on the 147 `qa_hold` rows: `company_n`
+   filled 147, `company_name` empty 147, `merge_field_empty` has
+   `company_n` 0 / `company_name` 0 (they stay held for
+   `first_name_n` 147, `location` 147, `job_title` 147).
+
+2. **Maps city is parsed.** `maps_raw.city` is `City, ST` (147 of
+   147 holds have a comma; the state column is already set). Ingest
+   writes the city token and keeps/derives state. Normalize splits
+   the same shape before geocode (`city_state_split`). Against
+   `topup.ref_cities`: raw city geocodes 0 of 147; after the split,
+   140 of 147.
+
+3. **Lane E ICP re-applies `main_category` and drops schools.**
+   D59 left scrape categories off the companion union (pool 18,322
+   vs ~8,972 with the receipt's 25). The 147 include 10
+   preschool–high school rows (lane D) plus strays whose ingest
+   industry is outside that 25. On `v_lane_e_*`, categories match
+   `maps_raw.main_category` (not `source_category`, the scrape
+   bucket). Preschool through high school are excluded by an
+   explicit category list plus name keywords (`montessori`,
+   `charter school`, `junior high` included; bare `school` and
+   college are not). Lane D views are untouched. `private school`
+   stays on the receipt list and is still dropped on lane E.
+   Size-equivalent read-only SQL (companion ∪, plan
+   `custom-1789679826`, 25 cats, school exclude): pool 8,973
+   (was 18,322); distinct emails 3,616; already live 2,434;
+   already ingested 486; already contacted 1,827; used union
+   2,625; email net-new 991. Count-style `pool − used` net-new
+   6,348. Full `size()` suppress-by-reason was not replayed.
+   Normalize's `rules_hash` is `d68:hold-city-icp` so the 147
+   reopen.
+
+**Why.** After #45: company fill wrote `company_n` and left
+`company_name` empty. Every hold still failed geocode because the
+city column carried `City, ST`. The ICP companion had no category
+filter, so schools and off-list industries entered the 147.
+
+**Tradeoff.** Re-applying the 25 on lane E cuts the companion pool
+from 18,322 to 8,973 (D59 named this cut and left it for Josh;
+this entry takes it). Email net-new on that pool is 991, under
+the 1,000 TAM floor — ask Josh whether to pull, widen, or stop.
+School exclude is lane E only; a lane D campaign keeps those
+rows. The 147 already ingested stay until a new pull; this does
+not purge them.
+
+**Guard.** `src/guards/d68_hold_city_icp.test.ts`. Ask Josh.
