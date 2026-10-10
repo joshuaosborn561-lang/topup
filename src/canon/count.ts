@@ -86,20 +86,21 @@ export async function countSource(
       const parsed = getleadsParamsFromFilters(input.filters);
       if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
       const params = parsed.params;
-      if (!d.aiArk) return { ...base, filters_used: params, count: null, cost_cents: 0, note: "AI_ARK_TOKEN is not set on the service." };
+      const used = { ...params } as Record<string, unknown>;
+      if (!d.aiArk) return { ...base, filters_used: used, count: null, cost_cents: 0, note: "AI_ARK_TOKEN is not set on the service." };
       const decision = await d.rails.gate({ runId: "canon", clientTag: input.client_tag, step: "size", vendor: "aiark", action: "people_preview", rows: 1, recipeAuthorised: true, approvedCents: input.approved_by ? 100 : 0 });
       if (decision.kind !== "proceed") {
         calls.push({ vendor: "aiark", action: "people_preview", ok: false, count: null, message: decision.reason });
-        return { ...base, filters_used: params, count: null, cost_cents: 0, note: `Not sent: ${decision.reason}. An AI Ark count costs about five cents; pass approved_by with the name of the person who said yes.` };
+        return { ...base, filters_used: used, count: null, cost_cents: 0, note: `Not sent: ${decision.reason}. An AI Ark count costs about five cents; pass approved_by with the name of the person who said yes.` };
       }
       try {
         const r = await d.aiArk.count(params as GetleadsFilters);
         calls.push({ vendor: "aiark", action: "people_preview", ok: true, count: r.total_matching, message: null });
         await d.rails.record({ runId: null, clientTag: input.client_tag, step: "size", vendor: "aiark", action: "people_preview", rows: 0, credits: 1, worstCaseCents: decision.worstCaseCents, balanceBefore: null, balanceAfter: null, vendorJobId: null, approvedBy: input.approved_by ?? null }).catch(() => undefined);
-        return { ...base, filters_used: params, count: r.total_matching, cost_cents: decision.worstCaseCents, note: null };
+        return { ...base, filters_used: used, count: r.total_matching, cost_cents: decision.worstCaseCents, note: null };
       } catch (err) {
         calls.push({ vendor: "aiark", action: "people_preview", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
-        return { ...base, filters_used: params, count: null, cost_cents: 0, note: "AI Ark count failed; see calls" };
+        return { ...base, filters_used: used, count: null, cost_cents: 0, note: "AI Ark count failed; see calls" };
       }
     }
     case "maps": {
