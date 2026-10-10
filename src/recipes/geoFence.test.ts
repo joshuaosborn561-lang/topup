@@ -17,8 +17,9 @@ function cities(n: number, chunkOf: (i: number) => string | null): GeoCity[] {
 
 describe("EMCOR geo fence sizing", () => {
   it("copies the recipe filters and does not add a band", () => {
-    const params = getleadsParamsFromFilters(PROPERTY_FILTERS);
-    assert.ok(params);
+    const parsed = getleadsParamsFromFilters(PROPERTY_FILTERS);
+    assert.ok(parsed.ok);
+    const params = parsed.params;
     assert.equal(params.company_size, undefined);
     assert.deepEqual(params.email_status, ["VALID"]);
     assert.deepEqual(params.states, ["California"]);
@@ -42,8 +43,9 @@ describe("EMCOR geo fence sizing", () => {
   });
 
   it("sizes Property near 1612 from the chunk counts, before held contacts", () => {
-    const params = getleadsParamsFromFilters(PROPERTY_FILTERS);
-    assert.ok(params);
+    const parsed = getleadsParamsFromFilters(PROPERTY_FILTERS);
+    assert.ok(parsed.ok);
+    const params = parsed.params;
     const slices = countSlices(params, cities(135, (i) => String(Math.floor(i / 45))));
     assert.equal(slices.length, 3);
     assert.ok(slices.every((slice) => (slice.cities?.length ?? 0) <= 45));

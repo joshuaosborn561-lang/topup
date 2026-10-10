@@ -40,9 +40,9 @@ function sourceFor(spec: JobSpec): Recipe["source"] {
   const f = spec.filters;
   switch (spec.source) {
     case "getleads": {
-      const params = getleadsParamsFromFilters(f);
-      if (!params) throw new Error("getleads needs job_titles, or job_function plus seniority, and company_size as band labels when given. Read them off the record's company_filters.");
-      return { kind: "getleads", params, widening_candidates: [] } as Recipe["source"];
+      const parsed = getleadsParamsFromFilters(f);
+      if (!parsed.ok) throw new Error(parsed.error);
+      return { kind: "getleads", params: parsed.params, widening_candidates: [] } as Recipe["source"];
     }
     case "maps": {
       const pool = mapsPoolFromFilters(f, spec.client_tag);

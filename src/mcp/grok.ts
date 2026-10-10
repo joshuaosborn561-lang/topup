@@ -54,7 +54,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "campaign_record",
     {
       description:
-        "How this campaign was pulled, as Supabase holds it: every receipt (company, domain, person and email sources, company_filters as stored, build label, method note, yield by step, segment, dates), the build rows, the stamped leads counted by label and by source leg, the registry row, lifetime sends and positives, the source vocabulary for the values seen, and the written notes. Read it, see where most of the leads came from, repeat that. No verdict, never a lead row.",
+        "How this campaign was pulled, as Supabase holds it: every receipt (company, domain, person and email sources, company_filters as stored, build label, method note, yield by step, segment, dates), the build rows, the stamped leads counted by label and by source leg for this campaign only (not twins sharing a build), the registry row, lifetime sends and positives, the source vocabulary for the values seen, and the written notes. Read it, see where most of the leads came from, repeat that. No verdict, never a lead row.",
       inputSchema: { client_tag: snake, campaign_id: z.number().int() },
     },
     async ({ client_tag, campaign_id }) => text(await campaignRecord(d.repo.raw(), d.repo, client_tag, campaign_id)),
@@ -70,7 +70,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "count",
     {
       description:
-        "A count on one source with the filters you supply, as the record stores them: getleads (free), ai_ark (about five cents; needs approved_by), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
+        "A count on one source with the filters you supply, as the record stores them: getleads (free; every stored key is mapped or the call fails; filters_used is what was applied), ai_ark (about five cents; needs approved_by), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
       inputSchema: { client_tag: snake, source: z.enum(["getleads", "ai_ark", "maps", "permits"]), filters, approved_by: z.string().optional().describe("Name of the person who approved the paid call.") },
     },
     async ({ client_tag, source, filters: f, approved_by }) => text(await countSource(d.count, { client_tag, source, filters: f, approved_by: approved_by ?? null })),
@@ -80,7 +80,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "held",
     {
       description:
-        "How much of a getleads pool the client already holds: a page of the pool is matched against what the client sent and its live campaigns, scaled to the tam you pass from count. Returns held and net_new with the method. Under 1,000 net new, the TAM for this campaign is exhausted.",
+        "How much of a getleads pool the client already holds: a page of the pool is matched against this client's 90-day sends, live campaigns, and suppression, scaled to the tam you pass from count. net_new is the pool minus that held count. Under 1,000 net new, the TAM for this campaign is exhausted.",
       inputSchema: { client_tag: snake, campaign_id: z.number().int(), filters, tam: z.number().int().min(0), days: z.number().int().min(1).max(365).optional() },
     },
     async ({ client_tag, campaign_id, filters: f, tam, days }) => {

@@ -1,4 +1,4 @@
-import { EXPORT_DONE, EXPORT_FAILED, type Getleads, type GetleadsFilters } from "../clients/getleads.js";
+import { EXPORT_DONE, EXPORT_FAILED, outboundFilters, type Getleads, type GetleadsFilters } from "../clients/getleads.js";
 import type { Queryable } from "../db/pool.js";
 import { logger } from "../lib/log.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
@@ -49,10 +49,10 @@ export async function heldRead(
   d: HeldDeps,
   input: { client_tag: string; smartlead_client_id: number; campaign_ids: readonly number[]; filters: Record<string, unknown>; tam: number; days?: number },
 ): Promise<HeldRead | { error: string }> {
-  const params = getleadsParamsFromFilters(input.filters);
-  if (!params) return { error: "held needs getleads filters: job_titles, or job_function plus seniority; company_size as band labels when given." };
+  const parsed = getleadsParamsFromFilters(input.filters);
+  if (!parsed.ok) return { error: parsed.error };
   if (!Number.isFinite(input.tam) || input.tam < 0) return { error: 'tam must be the count from count(source="getleads", ...).' };
-  const { max_per_company: _cap, ...filters } = params as GetleadsFilters & { max_per_company?: number };
+  const { max_per_company: _cap, ...filters } = parsed.params;
   const tam = Math.floor(input.tam);
   const days = input.days ?? 90;
   const sample = await sampleEmails(d, input.client_tag, filters as GetleadsFilters);
@@ -67,17 +67,17 @@ export async function heldRead(
     method = scaled.method;
     note =
       method === "overlap"
-        ? `${held} of this pool are already held (matched the export page). The client total was not subtracted.`
-        : `${matched} of ${sample.length} sampled rows are already held, scaled to ${held} of ${tam}. The client total was not subtracted.`;
+        ? `${held} of this pool are already held (export page matched this client's 90-day sends, live campaigns, or suppression). net_new is the pool minus that held count.`
+        : `${matched} of ${sample.length} sampled rows are already held (sends, live, or suppressed), scaled to ${held} of ${tam}. net_new is the pool minus that held estimate.`;
   } else {
     matched = await countHeldEmails(d.db, input.smartlead_client_id, input.campaign_ids, days, true, null);
     held = Math.min(tam, matched);
     method = "lane";
-    note = `${held} addresses already held on this lane's campaigns. The client total was not subtracted.`;
+    note = `${held} addresses already held on this lane's campaigns (capped at the pool). The pool could not be sampled, so this is the lane total, not a pool-overlap. net_new is the pool minus that count.`;
   }
   return {
     source: "getleads",
-    filters_used: filters,
+    filters_used: outboundFilters(filters as GetleadsFilters),
     tam,
     held,
     net_new: Math.max(0, tam - held),
@@ -146,9 +146,10 @@ async function exportPage(d: HeldDeps, clientTag: string, filters: GetleadsFilte
 /** Distinct addresses this client sent in the window, plus live-campaign holds. A sample limits it to those emails; lane mode limits it to these campaigns. */
 export async function countHeldEmails(db: Queryable, clientId: number, campaignIds: readonly number[], days: number, excludeLive: boolean, emails: string[] | null): Promise<number> {
   if (campaignIds.length === 0) return 0;
-  const { rows: has } = await db.query<{ leads: boolean; sends: boolean; staging: boolean; campaigns: boolean }>(
+  const { rows: has } = await db.query<{ leads: boolean; sends: boolean; staging: boolean; campaigns: boolean; suppression: boolean }>(
     `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends,
-            to_regclass('public.leads_staging') is not null as staging, to_regclass('public.campaigns') is not null as campaigns`,
+            to_regclass('public.leads_staging') is not null as staging, to_regclass('public.campaigns') is not null as campaigns,
+            to_regclass('public.suppression') is not null as suppression`,
   );
   if (!has[0]?.leads || !has[0].sends) return 0;
   const sample = emails !== null && emails.length > 0;
@@ -179,6 +180,10 @@ export async function countHeldEmails(db: Queryable, clientId: number, campaignI
        where c.smartlead_client_id = $1 and st.email is not null
          and upper(coalesce(c.status, '')) not in ('STOPPED', 'COMPLETED')
          ${laneLive}` : ""}
+       ${sample && has[0].suppression ? `union
+       select lower(s.email) as e
+       from public.suppression s
+       where s.email is not null` : ""}
      ) x
      ${sample ? "where e = any($3::text[])" : ""}`,
     sample ? [clientId, days, emails] : [clientId, days, campaignIds],

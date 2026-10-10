@@ -1,4 +1,4 @@
-import type { Getleads, GetleadsFilters } from "../clients/getleads.js";
+import { outboundFilters, type Getleads, type GetleadsFilters } from "../clients/getleads.js";
 import type { MapsStats } from "../clients/mapsStats.js";
 import type { PermitCounts } from "../clients/permits.js";
 import type { Queryable } from "../db/pool.js";
@@ -65,35 +65,42 @@ export async function countSource(
   const base = { source: input.source, calls, rule: COUNT_RULE };
   switch (input.source) {
     case "getleads": {
-      const params = getleadsParamsFromFilters(input.filters);
-      if (!params) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: "getleads needs job_titles, or job_function plus seniority; company_size as band labels when given." };
-      const { max_per_company: _cap, ...countFilters } = params as GetleadsFilters & { max_per_company?: number };
+      const parsed = getleadsParamsFromFilters(input.filters);
+      if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
+      const { max_per_company: exportCap, ...countFilters } = parsed.params;
+      const applied = outboundFilters(countFilters as GetleadsFilters);
       try {
         const r = await d.getleads.count(countFilters as GetleadsFilters);
         calls.push({ vendor: "getleads", action: "count_contacts", ok: true, count: r.total_matching, message: null });
-        return { ...base, filters_used: countFilters, count: r.total_matching, cost_cents: 0, note: r.exportable_rows != null && r.exportable_rows !== r.total_matching ? `exportable_rows ${r.exportable_rows}` : null };
+        const bits = [
+          r.exportable_rows != null && r.exportable_rows !== r.total_matching ? `exportable_rows ${r.exportable_rows}` : null,
+          exportCap != null ? `max_per_company ${exportCap} is an export cap; count_contacts does not apply it (D43).` : null,
+        ].filter((s): s is string => Boolean(s));
+        return { ...base, filters_used: applied, count: r.total_matching, cost_cents: 0, note: bits.length ? bits.join(" ") : null };
       } catch (err) {
         calls.push({ vendor: "getleads", action: "count_contacts", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
-        return { ...base, filters_used: countFilters, count: null, cost_cents: 0, note: "getleads count failed; see calls" };
+        return { ...base, filters_used: applied, count: null, cost_cents: 0, note: "getleads count failed; see calls" };
       }
     }
     case "ai_ark": {
-      const params = getleadsParamsFromFilters(input.filters);
-      if (!params) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: "AI Ark takes the same filters as getleads: job_titles, company_size, countries, industries." };
-      if (!d.aiArk) return { ...base, filters_used: params, count: null, cost_cents: 0, note: "AI_ARK_TOKEN is not set on the service." };
+      const parsed = getleadsParamsFromFilters(input.filters);
+      if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
+      const params = parsed.params;
+      const used = { ...params } as Record<string, unknown>;
+      if (!d.aiArk) return { ...base, filters_used: used, count: null, cost_cents: 0, note: "AI_ARK_TOKEN is not set on the service." };
       const decision = await d.rails.gate({ runId: "canon", clientTag: input.client_tag, step: "size", vendor: "aiark", action: "people_preview", rows: 1, recipeAuthorised: true, approvedCents: input.approved_by ? 100 : 0 });
       if (decision.kind !== "proceed") {
         calls.push({ vendor: "aiark", action: "people_preview", ok: false, count: null, message: decision.reason });
-        return { ...base, filters_used: params, count: null, cost_cents: 0, note: `Not sent: ${decision.reason}. An AI Ark count costs about five cents; pass approved_by with the name of the person who said yes.` };
+        return { ...base, filters_used: used, count: null, cost_cents: 0, note: `Not sent: ${decision.reason}. An AI Ark count costs about five cents; pass approved_by with the name of the person who said yes.` };
       }
       try {
         const r = await d.aiArk.count(params as GetleadsFilters);
         calls.push({ vendor: "aiark", action: "people_preview", ok: true, count: r.total_matching, message: null });
         await d.rails.record({ runId: null, clientTag: input.client_tag, step: "size", vendor: "aiark", action: "people_preview", rows: 0, credits: 1, worstCaseCents: decision.worstCaseCents, balanceBefore: null, balanceAfter: null, vendorJobId: null, approvedBy: input.approved_by ?? null }).catch(() => undefined);
-        return { ...base, filters_used: params, count: r.total_matching, cost_cents: decision.worstCaseCents, note: null };
+        return { ...base, filters_used: used, count: r.total_matching, cost_cents: decision.worstCaseCents, note: null };
       } catch (err) {
         calls.push({ vendor: "aiark", action: "people_preview", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
-        return { ...base, filters_used: params, count: null, cost_cents: 0, note: "AI Ark count failed; see calls" };
+        return { ...base, filters_used: used, count: null, cost_cents: 0, note: "AI Ark count failed; see calls" };
       }
     }
     case "maps": {

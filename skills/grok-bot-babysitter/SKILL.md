@@ -72,7 +72,9 @@ The rules you apply:
 3. `count(client_tag, source, filters)` with those filters. getleads is
    free; `ai_ark` needs `approved_by`. BCP records keep industries per
    campaign under `industries_by_campaign`; pass that campaign's list as
-   `industries`. Every other key stays as stored. Maps keeps `plan_id`
+   `industries` — do not pass the parent object. Every other getleads key
+   stays as stored and is mapped, or count fails (D74). `filters_used` is
+   what was applied. Maps keeps `plan_id`
    and the categories list (D57); it never scopes by ZIP or `client_tag`
    alone.    Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
    when those exist. Companions that omit `plan_id` join `maps_raw`

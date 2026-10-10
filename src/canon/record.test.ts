@@ -4,11 +4,14 @@ import { campaignRecord } from "./record.js";
 
 /** D52 — campaign_record: what Supabase holds, newest first, counted by leg, never a lead row. Ask Josh. */
 
+const sql: string[] = [];
 const db = {
   query: async (text: string) => {
+    sql.push(text);
+    if (text.includes("to_regclass('public.leads')")) return { rows: [{ leads: true, campaigns: true }] };
     if (text.includes("count(*) filter (where s.sent)")) return { rows: [{ id: "7", sends: "2000", positives: "1" }] };
     if (text.includes("group by 1, 2\n")) return { rows: [{ build_label: "b2", confidence: "traced", leads: "300" }] };
-    if (text.includes("company_source, domain_source, person_source, email_source, count(*)")) {
+    if (text.includes("company_source") && text.includes("count(*)")) {
       return { rows: [{ company_source: "getleads", domain_source: "already", person_source: "getleads", email_source: "getleads", leads: "280" }, { company_source: "getleads", domain_source: "already", person_source: "getleads", email_source: "email_waterfall", leads: "20" }] };
     }
     return { rows: [] };
@@ -34,6 +37,7 @@ describe("D52 — campaign_record", () => {
     assert.equal(r.builds[0]?.leads, 300);
     assert.deepEqual(r.leads_by_label, [{ build_label: "b2", confidence: "traced", leads: 300 }]);
     assert.equal(r.leads_by_leg[0]?.leads, 280);
+    assert.ok(sql.some((q) => q.includes("smartlead_campaign_id") && q.includes("lead_provenance")), "D74: stamps are this campaign, not the shared build");
     assert.equal(r.registry?.lane, "it_dm");
     assert.equal(r.performance.passes_reply_bar, true);
     assert.ok(r.sources.lines.some((l) => l.leg === "email" && l.value === "email_waterfall"));
