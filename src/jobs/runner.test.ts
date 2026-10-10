@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { RunRow } from "../domain/runs.js";
 import { JobRunner, shouldReopenStep, VERB_STEPS } from "./runner.js";
+import { STEP_RULES } from "./rules.js";
 
 /** D52 — a job runs one verb at a time; money waits for a name; import waits for the switch. Ask Josh. */
 
@@ -442,7 +443,71 @@ describe("D65 — shouldReopenStep", () => {
     assert.equal(shouldReopenStep({ step: "puzzle", status: "done", useful_output: 0, counts: { needs_person: 19, people_ran: 0 }, queued: { needs_person: 19 } }), true);
     assert.equal(shouldReopenStep({ step: "puzzle", status: "done", useful_output: 0, counts: { needs_person: 19, people_ran: 0 }, queued: {} }), true);
     assert.equal(shouldReopenStep({ step: "puzzle", status: "done", useful_output: 19, counts: { needs_person: 19, people_ran: 1 }, queued: {} }), false);
-    assert.equal(shouldReopenStep({ step: "normalize", status: "done", useful_output: 0, counts: { held: 147 }, queued: { qa_hold: 147 } }), true);
+    assert.equal(shouldReopenStep({ step: "normalize", status: "done", useful_output: 0, counts: { held: 147 }, queued: { qa_hold: 147 }, stored_rules_hash: STEP_RULES.normalize, rules_hash: STEP_RULES.normalize }), true);
     assert.equal(shouldReopenStep({ step: "verify", status: "done", useful_output: 147, counts: {}, queued: {} }), false);
+  });
+});
+
+describe("D66 — rules hash and force rerun", () => {
+  it("reopens normalize when the stored hash is missing or stale, or force is on", () => {
+    assert.equal(
+      shouldReopenStep({ step: "normalize", status: "done", useful_output: 0, counts: { held: 147 }, queued: {}, rules_hash: STEP_RULES.normalize, stored_rules_hash: null }),
+      true,
+    );
+    assert.equal(
+      shouldReopenStep({ step: "normalize", status: "done", useful_output: 147, counts: {}, queued: {}, rules_hash: STEP_RULES.normalize, stored_rules_hash: STEP_RULES.normalize, force: true }),
+      true,
+    );
+    assert.equal(
+      shouldReopenStep({ step: "normalize", status: "done", useful_output: 147, counts: {}, queued: {}, rules_hash: STEP_RULES.normalize, stored_rules_hash: STEP_RULES.normalize }),
+      false,
+    );
+  });
+
+  it("force re-runs a done normalize even when queued is empty", async () => {
+    const repo = fakeRepo();
+    let ran = 0;
+    const stages = {
+      pull: freeStage(repo, "pull", { pulled: 1 }),
+      ingest: freeStage(repo, "ingest", { inserted: 1 }),
+      suppress: freeStage(repo, "suppress", {}),
+      icp: freeStage(repo, "icp", {}),
+      puzzle: freeStage(repo, "puzzle", {}),
+      findEmails: freeStage(repo, "find_emails", {}),
+      verify: freeStage(repo, "verify", {}),
+      normalize: {
+        run: async (run: { run_id: string }) => {
+          ran += 1;
+          await repo.finishStep(run.run_id, "normalize");
+          return { kind: "done", counts: { normalized: 147, held: 0 } };
+        },
+      },
+      qa: freeStage(repo, "qa", {}),
+      route: freeStage(repo, "route", {}),
+      stage: freeStage(repo, "stage", {}),
+      import: freeStage(repo, "import", {}),
+      postImport: freeStage(repo, "post_import", {}),
+    };
+    const j = new JobRunner({
+      repo: repo as never,
+      stages: stages as never,
+      console: { resolveAs: async () => ({ ok: true }) } as never,
+      ledger: { event: async (e: { line: string }) => { repo.events.push(e.line); } } as never,
+      now: () => 1700000000000,
+    });
+    const opened = await j.open(spec, "mcp:operator");
+    assert.ok(opened.ok);
+    if (!opened.ok) return;
+    await j.run(opened.job_id, "pull", { by: "x" });
+    repo.steps.set(`${opened.job_id}/normalize`, { status: "done", attempts: 1, approved_cents: 0, useful_output: 0, counts: { held: 147 } });
+    const skipped = await j.run(opened.job_id, "normalize", { by: "x" });
+    assert.equal(skipped.status, "done");
+    assert.equal(ran, 1, "D66: missing rules_hash reopens normalize. Ask Josh.");
+    repo.steps.set(`${opened.job_id}/normalize`, { status: "done", attempts: 1, approved_cents: 0, useful_output: 147, counts: { held: 0, rules_hash: STEP_RULES.normalize as unknown as number } });
+    (repo.steps.get(`${opened.job_id}/normalize`)!.counts as Record<string, unknown>).rules_hash = STEP_RULES.normalize;
+    const forced = await j.run(opened.job_id, "normalize", { by: "x", force: true });
+    assert.equal(forced.status, "done");
+    assert.equal(ran, 2, "D66: force=true re-runs a matching-hash normalize. Ask Josh.");
+    assert.ok(repo.events.some((l) => /force=true/.test(l)), "D66: force writes a lane event. Ask Josh.");
   });
 });

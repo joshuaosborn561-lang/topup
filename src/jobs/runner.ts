@@ -7,6 +7,7 @@ import { targetCountPatch } from "../recipes/campaigns.js";
 import { parseRecipe, type Recipe } from "../recipes/schema.js";
 import { statusCounts } from "../stages/common.js";
 import { jobLane, jobRecipe, type JobSpec } from "./recipe.js";
+import { stepRulesHash, storedRulesHash } from "./rules.js";
 import { isSelfStart, isWatchActor } from "./selfStart.js";
 import type { FindEmailsStage } from "../stages/find_emails/index.js";
 import type { IcpStage } from "../stages/icp/index.js";
@@ -74,9 +75,9 @@ export const STEP_QUEUE_STATUSES: Readonly<Record<string, readonly string[]>> = 
 };
 
 /**
- * Pre-D64 code marked a step done when it did not run, or processed 0 of N.
- * Reopen when rows are still queued for that step, or useful_output is 0 of N
- * (D65). Ask Josh.
+ * Reopen a done step when: force is on; its rules hash changed since it ran
+ * (D66); rows are still queued for it; or useful_output is 0 of N (D65).
+ * Ask Josh.
  */
 export function shouldReopenStep(input: {
   step: string;
@@ -84,8 +85,15 @@ export function shouldReopenStep(input: {
   useful_output: number | null;
   counts: Record<string, number>;
   queued: Record<string, number>;
+  force?: boolean;
+  rules_hash?: string | null;
+  stored_rules_hash?: string | null;
 }): boolean {
   if (input.status !== "done") return false;
+  if (input.force) return true;
+  const current = input.rules_hash ?? stepRulesHash(input.step);
+  const stored = input.stored_rules_hash ?? null;
+  if (current && stored !== current) return true;
   const keys = STEP_QUEUE_STATUSES[input.step];
   if (!keys) return false;
   const queuedN = keys.reduce((a, k) => a + (input.queued[k] ?? 0), 0);
@@ -169,7 +177,7 @@ export class JobRunner {
    * called it; nothing schedules the next one. A throw or a timeout writes
    * last_error and closes the job as failed (D62).
    */
-  async begin(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null }): Promise<VerbResult> {
+  async begin(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null; force?: boolean }): Promise<VerbResult> {
     const first = VERB_STEPS[verb][0]!;
     const run = await this.d.repo.getRun(jobId);
     if (!run) return this.result(jobId, verb, first, "refused", {}, null, null, null, "no such job", "jobs() lists them");
@@ -181,7 +189,7 @@ export class JobRunner {
     return this.result(jobId, verb, first, "started", {}, null, null, null, null, `job(job_id) until ${verb} is done, then ${this.nextLine(verb)}`);
   }
 
-  private async runInBackground(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null }): Promise<void> {
+  private async runInBackground(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null; force?: boolean }): Promise<void> {
     const timeoutMs = Math.max(1, Math.floor(this.d.backgroundTimeoutMs ?? VERB_BACKGROUND_TIMEOUT_MS));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
@@ -228,7 +236,7 @@ export class JobRunner {
   }
 
   /** Run one verb on a job. */
-  async run(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null }): Promise<VerbResult> {
+  async run(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null; force?: boolean }): Promise<VerbResult> {
     const run = await this.d.repo.getRun(jobId);
     const steps = VERB_STEPS[verb];
     const first = steps[0]!;
@@ -248,8 +256,19 @@ export class JobRunner {
       const already = await this.d.repo.getStep(jobId, step);
       if (already?.status === "done") {
         const queued = await this.queuedFor(run);
-        if (shouldReopenStep({ step, status: already.status, useful_output: already.useful_output, counts: numbers(already.counts), queued })) {
-          await this.reopen(run, step, opts.by);
+        if (
+          shouldReopenStep({
+            step,
+            status: already.status,
+            useful_output: already.useful_output,
+            counts: numbers(already.counts),
+            queued,
+            force: opts.force === true,
+            rules_hash: stepRulesHash(step),
+            stored_rules_hash: storedRulesHash(already.counts),
+          })
+        ) {
+          await this.reopen(run, step, opts.by, opts.force === true ? "force" : stepRulesHash(step) && storedRulesHash(already.counts) !== stepRulesHash(step) ? "rules" : "queued");
         } else {
           continue;
         }
@@ -323,18 +342,22 @@ export class JobRunner {
     return approvedBy;
   }
 
-  /** Reopen a step that was marked done with work still queued (D65). Closes its leftover parked card. */
-  private async reopen(run: RunRow, step: Step, by: string): Promise<void> {
+  /** Reopen a done step (queued work, rules hash change, or force). Closes its leftover parked card. */
+  private async reopen(run: RunRow, step: Step, by: string, why: "queued" | "rules" | "force" = "queued"): Promise<void> {
     await this.d.repo.resetStep(run.run_id, step);
     const open = await this.d.repo.openCardsForRun(run.run_id);
     for (const card of open.filter((c) => (c.kind === "parked" || c.kind === "spend_approval") && c.payload?.step === step)) {
       const choice = card.kind === "parked" ? "resume_run" : "approve_spend";
       await this.d.console.resolveAs(`${by} reopen`, card.kind === "parked" ? "operator" : "owner", card.card_id, choice).catch(() => ({ ok: false }));
     }
-    await this.d.ledger
-      ?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "step", line: `${step}: reopened; pre-D64 marked it done with work still queued.`, actor: by })
-      .catch(() => undefined);
-    log.info("step reopened", { run_id: run.run_id, step, by });
+    const line =
+      why === "force"
+        ? `${step}: reopened; force=true.`
+        : why === "rules"
+          ? `${step}: reopened; rules hash changed (${stepRulesHash(step)}).`
+          : `${step}: reopened; pre-D64 marked it done with work still queued.`;
+    await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "step", line, actor: by }).catch(() => undefined);
+    log.info("step reopened", { run_id: run.run_id, step, by, why });
   }
 
   private async queuedFor(run: RunRow): Promise<Record<string, number>> {

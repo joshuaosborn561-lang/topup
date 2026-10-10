@@ -1,6 +1,7 @@
 import type { Repo } from "../../db/repo.js";
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
+import { withRulesHash } from "../../jobs/rules.js";
 import type { Recipe } from "../../recipes/schema.js";
 import type { Console } from "../../console/console.js";
 import { mergeFieldColumn, mergeFieldsToHold } from "../../spine/gate.js";
@@ -151,7 +152,7 @@ export class NormalizeStage {
       const heldDetail = Object.entries(held.by_field).filter(([, n]) => n > 0);
       await this.repo.finishStep(run.run_id, "normalize", {
         useful_output: normalized - held.rows,
-        counts: { normalized, held_merge_field: held.rows, flagged, ...Object.fromEntries(heldDetail.map(([f, n]) => [`held_${f}`, n])), ...flagTotals },
+        counts: withRulesHash("normalize", { normalized, held_merge_field: held.rows, flagged, ...Object.fromEntries(heldDetail.map(([f, n]) => [`held_${f}`, n])), ...flagTotals }),
       });
       await this.repo.mergeRunCounts(run.run_id, { normalized, held: held.rows });
       const geocodeNote = refs.coords.size === 0 ? " · topup.ref_cities is empty, so every location is NO_GEOCODE: run `npm run seed:cities`" : "";
