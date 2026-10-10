@@ -1,8 +1,10 @@
 /**
- * Role-inbox locals for Lane E Maps rows (D65). info@ / office@ and the
- * rest have no person. Company comes from the Maps business name.
- * First-name/greeting fallback is configurable on the recipe; default
- * is unchanged (hold). Ask Josh before growing this set.
+ * Role-inbox locals for Lane E Maps rows (D65, D67). info@ / office@ and
+ * the rest have no person. Company comes from maps_raw.name. First-name
+ * / greeting fallback is configurable on the recipe; default is
+ * unchanged (hold). D67 adds locals seen on job 46b1c941 that are
+ * generic role inboxes, not a brand or a person. Ask Josh before
+ * growing this set again.
  */
 
 export const ROLE_INBOX_LOCALS: ReadonlySet<string> = new Set([
@@ -18,6 +20,7 @@ export const ROLE_INBOX_LOCALS: ReadonlySet<string> = new Set([
   "inbox",
   "enquiry",
   "inquiry",
+  "inquire",
   "reception",
   "help",
   "service",
@@ -31,6 +34,18 @@ export const ROLE_INBOX_LOCALS: ReadonlySet<string> = new Set([
   "marketing",
   "press",
   "media",
+  "staff",
+  "customerservice",
+  "concierge",
+  "boxoffice",
+  "events",
+  "rentals",
+  "orders",
+  "recruiting",
+  "reservations",
+  "adoptions",
+  "parties",
+  "storage",
 ]);
 
 export function roleInboxLocal(email: string | null | undefined): string | null {

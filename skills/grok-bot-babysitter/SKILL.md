@@ -84,9 +84,10 @@ The rules you apply:
    `approved_by="Their name"`. `parked` means read `job(job_id)` and fix
    or `abort`. QA holds show in `holds`; clear them with `resolve`.
    A done normalize whose rules changed (or `force=true`) runs again
-   so the Maps-name company fill can write (D66). Do not pass a lead
+   so the Maps-name company fill can write. Do not pass a lead
    table with no `domain` column to Find Named Person — this service
-   hands it `lp.<tag>_ingested_leads_ew`.
+   hands it `topup.<tag>_ingested_leads_ew` (apply migration 0021
+   first; the service never CREATE VIEW).
 7. `import(job_id)` only when `loads_paused` is off and a person said so.
 8. `write_receipt(job_id, …)` with the four legs, the filters you used and
    one plain sentence. The next top-up reads it.
