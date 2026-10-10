@@ -6,7 +6,7 @@ import { domainSql } from "./classify.js";
  * Shared email-waterfall RPC `ew_read_source` (defined in
  * joshuaosborn561-lang/email-waterfall `supabase/migrations/003_ew_source_rpcs.sql`,
  * used by find-named-person-waterfall `people_waterfall/source.py`) SELECTs
- * the columns it is given. People waterfall's discover map is
+ * the columns it is given. People waterfall's FIELD_CANDIDATES map is
  * `domain` / `website` only — not `company_domain` — and
  * `count_source_with_domain` hardcodes `domain is not null`.
  *
