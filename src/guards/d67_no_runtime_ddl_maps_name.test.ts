@@ -132,7 +132,7 @@ describe("D67 — no runtime DDL; Maps company from maps_raw.name", () => {
 
   it("CANON and the babysitter name the view, the migration, and the maps_raw join", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D69\*\*/, "D69 is current; D67 stays folded. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D(69|[7-9][0-9]|[0-9]{3,})\*\*/, "D69 is current; D67 stays folded. Ask Josh.");
     assert.match(canon, /topup\.<tag>_ingested_leads_ew/, "D67: the view lives in topup. Ask Josh.");
     assert.match(canon, /never CREATE \/ DROP \/ ALTER at runtime/i, "D67: no runtime DDL. Ask Josh.");
     assert.match(canon, /maps_raw\.name/, "D67: company is maps_raw.name. Ask Josh.");

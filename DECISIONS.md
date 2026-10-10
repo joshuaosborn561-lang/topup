@@ -89,6 +89,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D67 | Live; job 46b1c941 after #44: no runtime DDL — people/email waterfalls read `topup.<tag>_ingested_leads_ew` from one-time migration 0021; normalize fills company from `maps_raw.name` joined on email; ingest coalesces company/name/title |
 | D68 | Live; job 46b1c941 after #45: hold and fill share `company_n`; maps city is parsed from `City, ST`; lane E ICP re-applies `main_category` and drops preschool–high school (reverses D59's no-reapply) |
 | D69 | Live; job 46b1c941 after #46: a step reopen replaces counts (stale held_company_n / company.missing cannot survive); size pool binds start at $11 so categories do not collide with $2::int[] |
+| D70 | Reserved for PR #49 (`cursor/size-param-type-74ac`). That PR writes the live D70 text. This stub keeps the ledger contiguous so D71 can ship off main |
+| D71 | Live; the website checker is a verb: `site_check(question, job_id | client_tag + table, approved_by?)` runs our own site fetch and one Jev question over a job or a store `leftovers` named; `icp` grades each company with the client's label set (verdict per domain, which `icp(job_id)` stamps for free); `owners` sorts each named person into owner_or_founder, executive_decision_maker, manager_or_lead, staff_or_individual_contributor (verdict per person in `topup.site_check_people`); estimate first, a name runs it; nothing on the rows changes; names never return to the service |
 
 ---
 
@@ -2467,3 +2469,81 @@ for in-flight markers. A size query error is `failed` with
 table should stay a soft zero.
 
 **Guard.** `src/guards/d69_hold_recompute_size.test.ts`. Ask Josh.
+
+## D70 — `size()` `$1` type after the `$11`/`$12` shift (reserved)
+
+**Decision.** Reserved for PR #49 (`cursor/size-param-type-74ac`). That
+PR owns D70 (typing `size()`'s `$1` after D69 moved the pool binds).
+This stub exists so D71 can land on a branch off main without a gap in
+the ledger. Do not implement D70 here.
+
+**Why.** #49 is open and unmerged. Meta requires contiguous numbers.
+
+## D71 — The website checker is a verb: `site_check`, two questions
+
+**Decision.** Grok bot can use Josh's website checker on its own, not
+only inside a job's `icp` step. `site_check(question, …)` runs the same
+two edge functions the gate uses (skill `icp-website-gate`): our own
+site fetch (free) and then **one Jev question**, about $0.11 per 1,000
+answers. Scope is a job (`job_id`: its rows in `lp.<tag>_ingested_leads`)
+or a store `leftovers` listed (`client_tag` plus `table` as
+`schema.table`; anything else is refused). Two questions, and a third is
+a new decision:
+
+1. **`icp`** — is each company in the client's ICP. The client's label
+   set from `topup.icp_variants`, Jev's category pick, DiscoLike on the
+   sites we could not read. The verdict is per domain in
+   `client_salesglider.icp_llm_results` keyed `(domain, model)`, which
+   is where `icp(job_id)` reads too: a domain checked here is stamped on
+   a job's rows later at no extra cost, and a domain with a verdict for
+   this model is never queued or paid for again.
+2. **`owners`** — for each named person in the scope, which role Jev
+   reads them into from the title we hold and the company's own site,
+   as one category pick (the form that measured best on Oct 9):
+   `owner_or_founder`, `executive_decision_maker`, `manager_or_lead`,
+   `staff_or_individual_contributor`. The first two are the owners and
+   decision makers Josh's call lists want. The queue and the verdict are
+   per person in `topup.site_check_people`, keyed by client, domain and
+   `md5(domain | name)`; the service writes the queue with
+   `insert … select` and reads back counts by label only. The
+   `icp-llm` edge function gained a `people` mode that joins the queue to
+   the fetched site text, asks Jev, and writes the answer. No DiscoLike
+   fallback on people: an unreadable site leaves the person
+   `unreadable`.
+
+The first call returns the estimate and the counts so far (status
+`waiting_approval` with a spend card, or `nothing` when every row has a
+verdict); the same call with `approved_by="Name"` taps the card as that
+person and runs it (D51). A name with no open card opens one and taps it
+in the same call so the cards still say who approved what; a quote that
+grew past the approved amount asks again. Spend is decided by
+`SpendRails.decide` and recorded with the name under step `site_check`.
+Nothing on the store's rows changes: no `icp_gate` stamp, no
+suppression, no column added. Grok reads the counts and decides what to
+do (D53). Samples follow the ten-sample rule: up to ten flagged and four
+passed **domains** with their label on the `icp` question; the `owners`
+question returns counts and labels only.
+
+**What it does not do.** Jev answers typed questions (`choice`, `noul`,
+`score`); it cannot name a person it was not given. The owners question
+judges the people a store already holds; names still come from
+`site_staff`, the people waterfall, or a pull. Writing a drop or a hold
+from the owners verdict into a job is a separate decision.
+
+**Why.** Josh, Oct 10 2026: "give grok the ability to use my new website
+checker where it pulls a website and asks jev a question. It's specially
+looking for owners or decision makers or whether they are in icp." Until
+now the checker only ran as step 5.5 of a job and only asked the ICP
+question; the leftovers stores (D55) with thousands of named people and
+no email could not be checked before paying for emails, and nothing
+asked whether a contact is the owner.
+
+**Tradeoff.** A per-person question costs Jev input tokens per person,
+not per site (five people at one company read the same site five
+times); the price table's Jev row prices both the same. The `icp`
+question re-points a domain's `icp_site_text.batch` only when this model
+has no verdict for it, which is narrower than the gate's re-point and
+cannot disturb a running job's batch counts for graded domains.
+
+**Guard.** `src/guards/d71_site_check.test.ts`; unit tests in
+`src/canon/siteCheck.test.ts`. Ask Josh.

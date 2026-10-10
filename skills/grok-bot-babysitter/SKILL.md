@@ -54,6 +54,13 @@ The rules you apply:
    holds what the campaign needs, or is one step from it, name it to the
    person who approves instead of pulling again. Phones are kept
    everywhere (D56); Josh cold calls now, so say how many rows carry one.
+   `site_check("icp", client_tag, table)` and `site_check("owners",
+   client_tag, table)` run Josh's website checker on a store before any
+   paid step: how many companies fit the ICP, and how many named people
+   are owners or decision makers (owner_or_founder,
+   executive_decision_maker). The first call is the estimate (about
+   $0.11 per 1,000 answers); a name runs it. Nothing on the rows
+   changes; you read the counts and say what you would do (D71).
 3. `count(client_tag, source, filters)` with those filters. getleads is
    free; `ai_ark` needs `approved_by`. BCP records keep industries per
    campaign under `industries_by_campaign`; pass that campaign's list as
@@ -114,7 +121,7 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
 `campaign_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
-`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `suppress`, `enrich`, `verify`,
+`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `site_check`, `suppress`, `enrich`, `verify`,
 `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
 `resolve`, `note`.
 

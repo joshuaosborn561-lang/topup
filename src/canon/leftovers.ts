@@ -84,7 +84,7 @@ const NEXT_STEP: Readonly<Record<string, string>> = {
 const LABEL_COLUMNS = ["source_label", "build_label", "run_label", "lane", "source_tool", "source_tier", "source"] as const;
 const SCRATCH_SHOWN = 25;
 
-interface Found {
+export interface Found {
   schema: string;
   table: string;
   estimate: number;
@@ -96,7 +96,8 @@ function q(name: string): string {
   return `"${name}"`;
 }
 
-async function discover(db: Queryable, tag: string): Promise<Found[]> {
+/** The stores a client owns: lp.<tag>_*, client_<tag>.*, public.<tag>…_(wf_)?(companies|contacts). D55; site_check scopes by this list (D71). */
+export async function discoverStores(db: Queryable, tag: string): Promise<Found[]> {
   const { rows } = await db.query<{ table_schema: string; table_name: string; estimate: string | null }>(
     `select t.table_schema, t.table_name,
             greatest(coalesce(s.n_live_tup, 0), coalesce(c.reltuples, 0))::bigint::text as estimate
@@ -204,7 +205,7 @@ async function peopleStatus(db: Queryable, tag: string): Promise<StoreLine | nul
 }
 
 export async function leftoversClient(db: Queryable, tag: string): Promise<LeftoversClient> {
-  const found = await discover(db, tag);
+  const found = await discoverStores(db, tag);
   const stores: StoreLine[] = [];
   const scratch: Found[] = [];
   for (const f of found) {

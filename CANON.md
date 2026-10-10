@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D69** (2026-10-10). One page. `DECISIONS.md` is the append-only
+Canon as of **D71** (2026-10-10). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -140,7 +140,19 @@ D48).
    `$2` as interested ids; the ICP pool's `$1` / `$2` shift to
    `$11` / `$12` so categories do not collide with `$2::int[]`
    (D69).
-22. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+22. **The website checker is a verb.** `site_check(question, …)` runs
+   our own site fetch (free) and one Jev question over a job or a store
+   `leftovers` named. `icp`: is each company in the client's ICP (the
+   client's label set; verdict per domain, which `icp(job_id)` stamps for
+   free). `owners`: for each named person, which role Jev reads them into
+   from the title we hold and the company's own site: `owner_or_founder`,
+   `executive_decision_maker`, `manager_or_lead`,
+   `staff_or_individual_contributor`; the first two are the owners and
+   decision makers. About $0.11 per 1,000 answers; estimate first, a name
+   runs it; a verdict is kept per domain and per person so a re-run never
+   pays twice. Nothing on the rows changes. Jev does not find names: it
+   judges the people a store already holds (D71).
+23. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -174,6 +186,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 | `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits` or `table`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails *before* `max_rows` (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
 | `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
+| `site_check(question, job_id \| client_tag + table, approved_by?)` | — | The website checker on a job or a store `leftovers` named: our own site fetch (free), then one Jev question (about $0.11 per 1,000 answers). `icp` grades each company with the client's label set; `owners` sorts each named person into owner_or_founder, executive_decision_maker, manager_or_lead or staff_or_individual_contributor. First call: estimate and counts so far; `approved_by` runs it. Verdicts kept per domain and per person; nothing on the rows changes. Counts, labels, at most ten sample domains; never a name. |
 | `enrich(job_id, approved_by?, force?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. People and email waterfalls read `topup.<tag>_ingested_leads_ew` so `ew_read_source` sees `domain` (D67; apply 0021 first). The service never CREATE VIEW. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). `force=true` re-runs a done step. |
 | `verify(job_id, approved_by?, force?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry and is not added again. A third failure does not park. |
 | `normalize(job_id, force?)` | normalize | Names, companies, locations, local sports team. Free. Empty company is filled from `client_<tag>.maps_raw.name` joined on email (D67). The hold reads `company_n`, not the empty raw `company_name` (D68). `City, ST` in city is split before geocode. Role-inbox `title` fill is the fallback. `first_name_fallback` is optional and off by default. Re-runs this job's merge-field holds. Reopens when the stored `rules_hash` is stale or `force=true`. |
@@ -201,6 +214,10 @@ call next.
    `company_filters` is a question for Josh, not a guess. `leftovers(client_tag)`
    shows rows earlier pulls left in the stores; name the store to the person
    who approves before reusing one.
+   Before paying for emails or phones on a store, `site_check("icp",
+   client_tag, table)` says how many of its companies fit and
+   `site_check("owners", client_tag, table)` how many of its people are
+   owners or decision makers; each is an estimate until a person says yes.
 3. `count(client_tag, source, filters)` with the filters from that record.
    getleads is free. BCP-style records keep industries per campaign under
    `industries_by_campaign`; pass that campaign's list as `industries`.
@@ -281,6 +298,8 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).
+* Never ask Jev to name a person; `site_check` judges the people a store
+  already holds and returns counts and labels (D71).
 * Never start, pause, stop, edit or delete a Smartlead campaign. The
   service never sets a campaign ACTIVE.
 
