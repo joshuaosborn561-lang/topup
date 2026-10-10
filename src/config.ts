@@ -63,6 +63,8 @@ const schema = z.object({
   ICP_LLM_KEY: z.string().default(""),
   ICP_DISCO_KEY: z.string().default(""),
   ICP_JEV_MODEL: z.string().default("typesafe/jev-1.13"),
+  SITE_PEOPLE_KEY: z.string().default(""),
+  SITE_PEOPLE_GEMINI_MODEL: z.string().default("gemini-3.1-flash-lite"),
 
   /** Poll cadence and patience for the vendor jobs. */
   JOB_POLL_SECONDS: numberWithDefault(30),
@@ -128,5 +130,6 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     email_waterfall: Boolean(cfg.EMAIL_WATERFALL_MCP_URL),
     name_to_email: Boolean(cfg.NAME_TO_EMAIL_MCP_URL),
     icp_gate: Boolean(cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY),
+    site_people: Boolean(cfg.SITE_PEOPLE_KEY),
   };
 }

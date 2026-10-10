@@ -24,6 +24,7 @@ export const VENDORS = [
   "permitstack",
   "jev",
   "discolike",
+  "gemini",
 ] as const;
 export type Vendor = (typeof VENDORS)[number];
 
@@ -107,6 +108,12 @@ export const PRICES: Readonly<Record<Vendor, VendorPrice>> = {
     unitCents: 0.38,
     creditsPerRow: 1,
     source: "icp-website-gate (Oct 2026): DiscoLike validate/icp about $0.0038 per unreadable site",
+  },
+  gemini: {
+    kind: "paid",
+    unitCents: 0.1,
+    creditsPerRow: 1,
+    source: "icp-website-gate (Oct 2026): Gemini 3.1 Flash-Lite measured $0.25 to $0.55 per 1,000 sites at 12k chars; site-people reads up to 36k chars, priced at $1 per 1,000 (D72)",
   },
 };
 

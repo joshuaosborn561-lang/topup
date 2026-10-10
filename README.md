@@ -66,7 +66,7 @@ Verbs (one stage each, counts back):
 | `pull` | Opens a job, returns the `job_id` at once, and pulls 1 to 2,000 rows from getleads, Maps, permits or a table in the background; poll `job(job_id)`. A hang or throw ends failed with `last_error`. Maps copies the named ICP view (not the companion join) and skips emails already in the ingest table before `max_rows`. |
 | `suppress` | The suppression set. Returns raw, dropped by reason, net new. |
 | `icp` | The ICP website gate (our own site fetch, Jev picks a category, DiscoLike on unreadable sites). Flagged rows are suppressed with a reason. Paid; estimate first. |
-| `site_check` | The website checker on a job or a store `leftovers` named: our own site fetch, then one Jev question. `icp` grades each company with the client's label set; `owners` sorts each named person into owner_or_founder, executive_decision_maker, manager_or_lead or staff_or_individual_contributor. Paid; estimate first. Nothing on the rows changes. |
+| `site_check` | The website checker on a job or a store `leftovers` named: our own site fetch, then a question over what the site says. `icp` grades each company with the client's label set; `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (the owner by default). The people found are rows of `topup.site_people_found`. Paid; estimate first. Nothing on the rows changes. |
 | `enrich` | Domains, people, emails through the waterfalls. Paid tiers estimate first. |
 | `verify` | MillionVerifier then No2Bounce. Paid; estimate first. |
 | `normalize` | Names, companies, locations, sports team. |

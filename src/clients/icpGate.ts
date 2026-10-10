@@ -3,10 +3,9 @@
  * icp-website-gate): icp-site-fetch reads the homepage and two subpages
  * into client_salesglider.icp_site_text; icp-llm has Jev pick a category
  * per site and writes icp_llm_results; icp-disco-fallback asks DiscoLike
- * about the sites our fetch could not read. icp-llm's `people` mode (D71)
- * answers the owners question for the people queued in
- * topup.site_check_people. Every call returns counts. Nothing here returns
- * a row, a page, a person or a verdict for one domain.
+ * about the sites our fetch could not read. Every call returns counts.
+ * Nothing here returns a row, a page or a verdict for one domain. The
+ * people question lives in sitePeople.ts (D72).
  */
 export interface FetchResult {
   processed: number;
@@ -27,8 +26,6 @@ export interface IcpGate {
   fetchSites(batch: string, n: number, w: number): Promise<FetchResult>;
   /** One call grades up to n fetched sites. ONE call at a time per batch: it does not claim rows. */
   grade(batch: string, model: string, n: number, w: number): Promise<GradeResult>;
-  /** One call answers the owners question for up to n queued people in topup.site_check_people whose site was fetched (D71). One call at a time per batch. */
-  gradePeople(batch: string, model: string, n: number, w: number): Promise<GradeResult>;
   /** Submit the unreadable sites of the batch to DiscoLike. task_id null when there are none. */
   discoSubmit(batch: string, icp: string): Promise<{ task_id: string | null; domains: number }>;
   /** Poll a DiscoLike task; the verdicts land in icp_llm_results as model discolike:website when completed. */
@@ -74,11 +71,6 @@ export class IcpGateClient implements IcpGate {
 
   async grade(batch: string, model: string, n: number, w: number): Promise<GradeResult> {
     const r = await this.call<Partial<GradeResult>>("icp-llm", this.keys.llm, { mode: "run", batch, model, n, w });
-    return { processed: Number(r.processed ?? 0), errors: Number(r.errors ?? 0), last_error: r.last_error == null ? null : String(r.last_error), remaining: Number(r.remaining ?? 0) };
-  }
-
-  async gradePeople(batch: string, model: string, n: number, w: number): Promise<GradeResult> {
-    const r = await this.call<Partial<GradeResult>>("icp-llm", this.keys.llm, { mode: "people", batch, model, n, w });
     return { processed: Number(r.processed ?? 0), errors: Number(r.errors ?? 0), last_error: r.last_error == null ? null : String(r.last_error), remaining: Number(r.remaining ?? 0) };
   }
 

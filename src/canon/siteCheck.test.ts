@@ -3,13 +3,13 @@ import { describe, it } from "node:test";
 import type { CardRow } from "../db/repo.js";
 import { icpWorstCaseCents } from "../stages/icp/index.js";
 import { worstCaseCents } from "../spend/prices.js";
-import { OWNER_LABELS, OWNER_PASS, siteCheck, storeDomainSql, storeNameSql, type SiteCheckDeps } from "./siteCheck.js";
+import { DEFAULT_LOOKING_FOR, questionKey, siteCheck, storeDomainSql, type SiteCheckDeps } from "./siteCheck.js";
 
-/** D71 — the website checker is a verb. Fake database, fake edge functions, fake console; the assertions are on the SQL shape, the ledger and the counts. No vendor is reached. Ask Josh. */
+/** D71, D72 — the website checker is a verb. Fake database, fake edge functions, fake console; the assertions are on the SQL shape, the ledger and the counts. No vendor is reached. Ask Josh. */
 
 interface World {
   icpRows: Array<{ gate: string | null; label: string | null; unreadable: boolean | null; n: string }>;
-  peopleRows: Array<{ choice: string | null; unreadable: boolean | null; n: string }>;
+  peopleRows: Array<{ k: string; n: string }>;
   variant: { jev_variant: string; disco_icp: string | null } | null;
   run: Record<string, unknown> | null;
 }
@@ -29,7 +29,9 @@ function build(w: World) {
       if (text.includes("from information_schema.columns")) return { rows: ["email", "first_name", "last_name", "title", "company_domain", "run_id", "lead_status"].map((column_name) => ({ column_name })) };
       if (text.includes("from topup.icp_variants")) return { rows: w.variant ? [w.variant] : [] };
       if (text.startsWith("select v.fit as gate")) return { rows: w.icpRows };
-      if (text.startsWith("select p.choice")) return { rows: w.peopleRows };
+      if (text.startsWith("select case when a.domain is not null")) return { rows: w.peopleRows };
+      if (text.startsWith("select lower(coalesce(nullif(btrim(p.title)")) return { rows: [{ title: "owner", n: "3" }, { title: "president", n: "1" }] };
+      if (text.startsWith("select d.d, p.title")) return { rows: [{ d: "acme.test", title: "Owner" }] };
       if (text.startsWith("select d.d, v.label")) return { rows: params[params.length - 2] === "no" ? [{ d: "acme.test", label: "general_contractor" }] : [] };
       if (text.includes("sum(cost)")) return { rows: [{ usd: "0.0123" }] };
       return { rows: [], rowCount: 2 };
@@ -87,17 +89,28 @@ function build(w: World) {
         gateCalls.push(`grade:${batch}:${model}`);
         return { processed: 2, errors: 0, last_error: null, remaining: 0 };
       },
-      gradePeople: async (batch: string, model: string) => {
-        gateCalls.push(`people:${batch}:${model}`);
-        return { processed: 3, errors: 0, last_error: null, remaining: 0 };
-      },
       discoSubmit: async (batch: string) => {
         gateCalls.push(`disco:${batch}`);
         return { task_id: null, domains: 0 };
       },
       discoCollect: async () => ({ status: "completed" }),
     },
+    people: {
+      fetchSites: async (batch: string) => {
+        gateCalls.push(`pfetch:${batch}`);
+        return { processed: 3, ok: 3, released: 0, remaining: 0 };
+      },
+      extract: async (batch: string, model: string) => {
+        gateCalls.push(`extract:${batch}:${model}`);
+        return { processed: 3, errors: 0, last_error: null, remaining: 0, people: 7 };
+      },
+      ask: async (batch: string, lookingFor: string, model: string) => {
+        gateCalls.push(`ask:${batch}:${lookingFor}:${model}`);
+        return { processed: 3, errors: 0, last_error: null, remaining: 0, found: 2, nobody_listed: 1 };
+      },
+    },
     jevModel: "typesafe/jev-1.13",
+    geminiModel: "gemini-3.1-flash-lite",
     pollMs: 1,
     deadMs: 100,
     by: "grok",
@@ -109,17 +122,12 @@ function build(w: World) {
 const run = { run_id: "11111111-2222-3333-4444-555555555555", client_tag: "emcor", lane: "lane_e", status: "running" };
 
 describe("D71 — site_check", () => {
-  it("builds a bare host from domain, website and email columns, and a person from the name columns, never `name`", () => {
+  it("builds a bare host from domain, website and email columns", () => {
     const d = storeDomainSql(new Set(["website", "wf_email"]))!;
     assert.match(d, /regexp_replace\(lower\(btrim\(website\)\)/);
     assert.match(d, /split_part\(wf_email, '@', 2\)/);
     assert.match(d, /\\\.\[a-z\]\{2,\}\$/);
     assert.equal(storeDomainSql(new Set(["foo"])), null);
-    const n = storeNameSql(new Set(["first_name", "last_name", "name"]))!;
-    assert.match(n, /concat_ws\(' ', first_name, last_name\)/);
-    assert.doesNotMatch(n, /\bname\b(?!_)/, "D71: `name` is the business on Maps tables");
-    assert.equal(storeNameSql(new Set(["name"])), null);
-    assert.ok(OWNER_PASS.every((l) => (OWNER_LABELS as readonly string[]).includes(l)));
   });
 
   it("refuses without a scope, with both, with a store leftovers does not list, and without the gate", async () => {
@@ -175,57 +183,67 @@ describe("D71 — site_check", () => {
     assert.match(r.reason!, /topup\.icp_variants/);
   });
 
-  it("owners on a job: people are queued server side by a hash of the name, Jev answers per person, counts come back by label", async () => {
-    const w = build({ icpRows: [], peopleRows: [{ choice: "owner_or_founder", unreadable: false, n: "4" }, { choice: "manager_or_lead", unreadable: false, n: "1" }, { choice: null, unreadable: false, n: "3" }, { choice: null, unreadable: true, n: "1" }], variant: null, run });
-    const first = await siteCheck(w.deps, { question: "owners", job_id: run.run_id });
+  it("people on a job: the sites are queued by domain, Gemini lists, Jev picks, counts come back by title; never a name", async () => {
+    const w = build({ icpRows: [], peopleRows: [{ k: "found", n: "4" }, { k: "nobody_listed", n: "1" }, { k: "unchecked", n: "3" }, { k: "unreadable", n: "1" }], variant: null, run });
+    const first = await siteCheck(w.deps, { question: "people", job_id: run.run_id });
     assert.equal(first.status, "waiting_approval");
     assert.equal(first.client_tag, "emcor");
     assert.equal(first.scope, "job:11111111");
-    assert.equal(first.to_check, 3, "D71: the unanswered people whose site is not known to be unreadable");
-    assert.equal(first.worst_case_cents, worstCaseCents("jev", "grade", 3));
+    assert.equal(first.looking_for, DEFAULT_LOOKING_FOR, "D72: no looking_for means the owner");
+    assert.equal(first.question_key, questionKey(DEFAULT_LOOKING_FOR));
+    assert.equal(first.to_check, 3, "D72: the sites with no answer for this question and not known to be unreadable");
+    assert.equal(first.worst_case_cents, worstCaseCents("gemini", "extract", 3) + worstCaseCents("jev", "grade", 3));
     assert.equal(w.cards[0]!.run_id, run.run_id, "the card hangs off the job so job() shows it");
-    const done = await siteCheck(w.deps, { question: "owners", job_id: run.run_id, approved_by: "Cayden" });
+    assert.deepEqual(first.counts, { domains: 9, found: 4, nobody_listed: 1, unreadable: 1, unchecked: 3 });
+    const done = await siteCheck(w.deps, { question: "people", job_id: run.run_id, looking_for: "  the service   manager ", approved_by: "Cayden" });
     assert.equal(done.status, "done");
-    assert.equal(done.model, "jev:typesafe/jev-1.13|owners");
-    assert.deepEqual(done.labels, OWNER_LABELS);
-    assert.equal(done.counts!.people, 9);
-    assert.equal(done.counts!.owner_or_decision_maker, 4);
-    assert.equal(done.by_label!.label_owner_or_founder, 4);
-    const queue = w.seen.find((q) => q.text.includes("insert into topup.site_check_people"));
-    assert.ok(queue, "D71: the people join the queue");
-    assert.match(queue!.text, /md5\(lower\(/, "D71: the key is a hash, not the name");
-    assert.match(queue!.text, /on conflict \(client_tag, domain, person_key\) do update/);
-    assert.match(queue!.text, /where topup\.site_check_people\.choice is null/, "D71: an answered person is never re-asked");
-    assert.match(queue!.text, /run_id = \$1/);
-    assert.doesNotMatch(queue!.text, /returning/i, "D2: names never come back to the service");
-    assert.ok(w.gateCalls.some((c) => c.startsWith("people:check_owners_11111111:") && c.endsWith("|owners")));
-    assert.ok(!w.gateCalls.some((c) => c.startsWith("disco:")), "D71: no DiscoLike on the owners question");
-    assert.equal(w.ledger[0]!.approvedBy, "Cayden");
-    assert.equal(w.ledger[0]!.rows, 3);
+    assert.equal(done.looking_for, "the service manager");
+    assert.equal(done.model, "gemini:gemini-3.1-flash-lite then jev:typesafe/jev-1.13");
+    const queue = w.seen.find((q) => q.text.includes("insert into topup.site_people_text"));
+    assert.ok(queue, "D72: the scope's domains join the batch");
+    assert.match(queue!.text, /select d\.d, \$2 from/, "D72: domains only");
+    assert.match(queue!.text, /not exists \(select 1 from topup\.site_answers a where a\.domain = d\.d and a\.question_key = md5\(lower\(\$3\)\)/, "D72: a site answered for this question is not re-pointed or re-paid");
+    assert.equal(queue!.params[2], "the service manager");
+    assert.doesNotMatch(queue!.text, /returning/i);
+    assert.ok(w.gateCalls.some((c) => c.startsWith("pfetch:check_people_11111111")));
+    assert.ok(w.gateCalls.some((c) => c.startsWith("extract:check_people_11111111:gemini:gemini-3.1-flash-lite")));
+    assert.ok(w.gateCalls.some((c) => c === "ask:check_people_11111111:the service manager:jev:typesafe/jev-1.13"));
+    assert.ok(!w.gateCalls.some((c) => c.startsWith("disco:") || c.startsWith("grade:")), "D72: the people question never calls the ICP grader or DiscoLike");
+    assert.equal(w.ledger.length, 2);
+    assert.deepEqual(w.ledger.map((l) => [l.vendor, l.action, l.approvedBy]), [["gemini", "extract", "Cayden"], ["jev", "grade", "Cayden"]]);
+    assert.equal(done.counts!.people_listed, 7);
+    assert.deepEqual(done.by_title, { owner: 3, president: 1 });
+    assert.deepEqual(done.samples, { flagged: [], passed: ["acme.test (Owner)"] });
+    assert.match(done.next!, /topup\.site_people_found/);
+    assert.match(done.next!, new RegExp(`question_key = '${questionKey("the service manager")}'`));
+    assert.ok(!Object.keys(done).some((k) => /name/.test(k)) && !JSON.stringify(done.counts).match(/name/) && !JSON.stringify(done.by_title).match(/name/), "D2: the answer carries no name field");
   });
 
-  it("owners: nothing to pay for when every person has a verdict; a store with no name column is refused", async () => {
-    const w = build({ icpRows: [], peopleRows: [{ choice: "staff_or_individual_contributor", unreadable: false, n: "6" }], variant: null, run });
-    const r = await siteCheck(w.deps, { question: "owners", job_id: run.run_id });
+  it("people: nothing to pay for when every site has an answer; refused when the function is not configured", async () => {
+    const w = build({ icpRows: [], peopleRows: [{ k: "found", n: "6" }, { k: "nobody_listed", n: "2" }], variant: null, run });
+    const r = await siteCheck(w.deps, { question: "people", job_id: run.run_id });
     assert.equal(r.status, "nothing");
     assert.equal(w.cards.length, 0);
-    assert.equal(r.counts!.owner_or_decision_maker, 0);
-    const noNames = await siteCheck(w.deps, { question: "owners", client_tag: "emcor", table: "client_emcor.contacts" });
-    assert.equal(noNames.status, "refused");
-    assert.match(noNames.reason!, /no name column/);
+    assert.equal(r.counts!.found, 6);
+    assert.match(r.next!, /pull\(client_tag, campaign_id, source="table"/);
+    const off = build({ icpRows: [], peopleRows: [], variant: null, run });
+    off.deps.people = null;
+    const no = await siteCheck(off.deps, { question: "people", job_id: run.run_id });
+    assert.equal(no.status, "refused");
+    assert.match(no.reason!, /SITE_PEOPLE_KEY/);
   });
 
   it("a name given with no open card opens one and taps it; a quote that grew past the approval asks again", async () => {
-    const w = build({ icpRows: [], peopleRows: [{ choice: null, unreadable: false, n: "10" }], variant: null, run });
-    const r = await siteCheck(w.deps, { question: "owners", job_id: run.run_id, approved_by: "Josh" });
+    const w = build({ icpRows: [], peopleRows: [{ k: "unchecked", n: "10" }], variant: null, run });
+    const r = await siteCheck(w.deps, { question: "people", job_id: run.run_id, approved_by: "Josh" });
     assert.equal(r.status, "done");
     assert.equal(w.cards.length, 1);
     assert.equal(w.cards[0]!.status, "resolved");
-    const small = build({ icpRows: [], peopleRows: [{ choice: null, unreadable: false, n: "1000" }], variant: null, run });
-    await siteCheck(small.deps, { question: "owners", job_id: run.run_id });
-    assert.ok(Number(small.cards[0]!.payload.worst_case_cents) >= 11);
+    const small = build({ icpRows: [], peopleRows: [{ k: "unchecked", n: "1000" }], variant: null, run });
+    await siteCheck(small.deps, { question: "people", job_id: run.run_id });
+    assert.ok(Number(small.cards[0]!.payload.worst_case_cents) >= 100);
     small.cards[0]!.payload.worst_case_cents = 1;
-    const again = await siteCheck(small.deps, { question: "owners", job_id: run.run_id, approved_by: "Josh" });
+    const again = await siteCheck(small.deps, { question: "people", job_id: run.run_id, approved_by: "Josh" });
     assert.equal(again.status, "waiting_approval");
     assert.equal(small.cards.length, 2, "D51: the grown quote is a new card");
     assert.equal(small.gateCalls.length, 0);
