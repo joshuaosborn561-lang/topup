@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D69** (2026-10-10). One page. `DECISIONS.md` is the append-only
+Canon as of **D70** (2026-10-10). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -139,7 +139,8 @@ D48).
    counts payload (does not `||` merge). `size` recycle SQL keeps
    `$2` as interested ids; the ICP pool's `$1` / `$2` shift to
    `$11` / `$12` so categories do not collide with `$2::int[]`
-   (D69).
+   (D69). The suppress CTE still names `$1::text` (the plan id)
+   so Postgres can type that slot after the shift (D70).
 22. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
@@ -156,7 +157,7 @@ bears on stated and no verdict (D52).
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
 | `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds, and `net_new`. Under 1,000: the TAM for this campaign is exhausted. |
-| `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
+| `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). The suppress CTE types `$1::text` so the first slot is not unused (D70). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
 | `spend` | Today, thirty days by vendor, month to date, and every spend card waiting. |
@@ -277,7 +278,8 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   through high school on lane E (D68). Never merge a rerun's step
   counts over stale `held_*` keys (D69). Never bind size's ICP
   categories as `$2` — that slot is interested ids; pool binds start
-  at `$11` (D69).
+  at `$11` (D69). Never leave size `$1` untyped after that shift
+  (D70).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).
