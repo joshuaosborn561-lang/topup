@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "migrate": "tsx scripts/migrate.ts",
-    "seed:cities": "tsx scripts/seed-cities.ts"
+    "seed:cities": "tsx scripts/seed-cities.ts",
+    "pilot:emcor-owner": "tsx scripts/emcor-owner-pilot-20261010.ts"
   },
   "engines": {
     "node": ">=20"
