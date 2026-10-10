@@ -6,7 +6,7 @@ import { MIN_NET_NEW } from "../policy/rules.js";
 import { BOUNCE_CATEGORY_ID, DNC_CATEGORY_ID, SUPPRESS_REASONS, WRONG_PERSON_CATEGORY_ID } from "../stages/suppress/index.js";
 import { clientPriorContactSql, DEFAULT_RECYCLE_DAYS, positiveReplySql } from "../stages/suppress/recycle.js";
 import { loadClientMap } from "./clients.js";
-import { countMapsPool, mapsPoolFromFilters, resolveMapsPool, type MapsPoolResolved } from "./mapsPool.js";
+import { countMapsPool, mapsPoolFromFilters, mapsPoolWhere, resolveMapsPool, type MapsPoolResolved } from "./mapsPool.js";
 
 /**
  * Free dry-run sizing (D64, D65). Walks the stored maps pool the way `count`
@@ -45,6 +45,19 @@ export const SIZE_RULE = `This is a dry run of the stored Maps pool: pool, alrea
 
 /** Statement timeout on the aggregate suppress pass (D65). Ask Josh if 45s is wrong. */
 export const SIZE_STATEMENT_TIMEOUT_MS = 45_000;
+
+/**
+ * Recycle SQL hardcodes $2 (interested ids) through $10 (days). The pool
+ * FROM after D68 also binds $1 / $2 (plan_id, categories). Shift those
+ * pool binds past the suppress slots (D69).
+ */
+export const SIZE_SUPPRESS_BIND_OFFSET = 10;
+
+/** Move $n placeholders forward so pool binds do not collide with $2::int[]. */
+export function shiftSqlParams(sql: string, offset: number): string {
+  if (!offset) return sql;
+  return sql.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + offset}`);
+}
 
 const IDENT = /^[a-z][a-z0-9_]*$/;
 
@@ -94,8 +107,9 @@ export async function sizeRead(db: Queryable, input: SizeInput, size_id: string 
     return { ...base, filters_used: input.filters, pool: null, net_new: null, note: counted.error };
   }
   const resolved = await resolveMapsPool(db, input.client_tag, spec);
+  const where = "error" in resolved ? "" : await mapsPoolWhere(db, spec, resolved);
   const removed =
-    "error" in resolved ? emptyRemoved() : await suppressByReason(db, input.client_tag, input.campaign_id, resolved, spec.plan_id);
+    "error" in resolved ? emptyRemoved() : await suppressByReason(db, input.client_tag, input.campaign_id, resolved, spec.plan_id, where);
   const suppressed = Object.values(removed).reduce((a, b) => a + b, 0);
   const net_new = Math.max(0, counted.net_new - suppressed);
   return {
@@ -118,7 +132,9 @@ export async function sizeRead(db: Queryable, input: SizeInput, size_id: string 
  * sets (D65). Correlated EXISTS per email is what timed out at the MCP
  * 60s limit on EMCOR Lane E.
  */
-export function sizeSuppressJoinSql(resolved: MapsPoolResolved, destRef: string | null, whens: string[]): string {
+export function sizeSuppressJoinSql(resolved: MapsPoolResolved, destRef: string | null, whens: string[], where = ""): string {
+  const fromSql = shiftSqlParams(resolved.fromSql, SIZE_SUPPRESS_BIND_OFFSET);
+  const whereSql = shiftSqlParams(where, SIZE_SUPPRESS_BIND_OFFSET);
   return `with p as (
          select $2::int[] as positive, $3::int as dnc, $4::int as wrong_person, $5::int as bounce,
                 $6::bigint as smartlead_client_id, $7::bigint[] as client_campaigns, $8::text[] as offer_keys, $9::text as client_tag,
@@ -126,8 +142,9 @@ export function sizeSuppressJoinSql(resolved: MapsPoolResolved, destRef: string 
        ),
        pool_emails as (
          select distinct lower(nullif(btrim(m.email), '')) as e
-           from ${resolved.fromSql}
+           from ${fromSql}
            left join "${resolved.schema}"."maps_raw" m on m.place_id = pool.place_id
+           ${whereSql}
        ),
        r as (
          select e, split_part(e, '@', 2) as d from pool_emails
@@ -191,6 +208,7 @@ async function suppressByReason(
   campaignId: number,
   resolved: MapsPoolResolved,
   planId: string,
+  where = "",
 ): Promise<Record<string, number>> {
   const zero = emptyRemoved();
   if (!IDENT.test(clientTag)) return zero;
@@ -216,7 +234,7 @@ async function suppressByReason(
     const extra: string[] = [];
     if (!t.suppression) extra.push("false then 'suppression_list'");
     const destRef = IDENT.test(destTable) ? `"lp"."${destTable}"` : null;
-    const sql = sizeSuppressJoinSql(resolved, destRef, extra);
+    const sql = sizeSuppressJoinSql(resolved, destRef, extra, where);
     const params = [
       planId,
       [...INTERESTED_CATEGORY_IDS],
@@ -228,6 +246,7 @@ async function suppressByReason(
       offerKeys,
       clientTag,
       DEFAULT_RECYCLE_DAYS,
+      ...resolved.params,
     ];
     const run = async (q: Queryable) => {
       await q.query(`set local statement_timeout = ${SIZE_STATEMENT_TIMEOUT_MS}`).catch(() => undefined);
@@ -241,8 +260,10 @@ async function suppressByReason(
       if (row.reason in out) out[row.reason] = Number(row.n);
     }
     return out;
-  } catch {
-    return zero;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error("size suppress failed", { client_tag: clientTag, error: message });
+    throw err;
   }
 }
 

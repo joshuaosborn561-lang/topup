@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D68** (2026-10-10). One page. `DECISIONS.md` is the append-only
+Canon as of **D69** (2026-10-10). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -110,7 +110,10 @@ D48).
 17. **A done step reopens when its rules changed, or when force is on.**
    Each step stores a `rules_hash` when it finishes. A later call with a
    different hash (or `force=true`) resets the step and runs it again
-   (D66). Normalize's hash is `d68:hold-city-icp`.
+   (D66). A reopen wipes the step's result counts (keeps
+   `approved_by`) and `finishStep` replaces them, so a stale
+   `held_company_n` cannot survive (D69). Normalize's hash is
+   `d69:hold-recompute-size`.
 18. **Maps company is `maps_raw.name`.** The ingest copy coalesces
    `company`, then `name`, then `title` so an empty `company` column
    does not hide the business name. Normalize joins
@@ -131,7 +134,13 @@ D48).
    bucket). Preschool through high school are excluded on lane E —
    they belong to lane D. This reverses D59's choice not to re-apply
    categories on the companion union (D68).
-21. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+21. **A rerun replaces step counts; size pool binds start at `$11`.**
+   `resetStep` keeps only `approved_by`. `finishStep` replaces the
+   counts payload (does not `||` merge). `size` recycle SQL keeps
+   `$2` as interested ids; the ICP pool's `$1` / `$2` shift to
+   `$11` / `$12` so categories do not collide with `$2::int[]`
+   (D69).
+22. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -147,7 +156,7 @@ bears on stated and no verdict (D52).
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
 | `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds, and `net_new`. Under 1,000: the TAM for this campaign is exhausted. |
-| `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
+| `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
 | `spend` | Today, thirty days by vendor, month to date, and every spend card waiting. |
@@ -265,7 +274,10 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   because the check read empty `company_name` (D68). Never geocode
   the raw `City, ST` city column (D68). Never skip the receipt
   categories on a lane E ICP union, and never leave preschool
-  through high school on lane E (D68).
+  through high school on lane E (D68). Never merge a rerun's step
+  counts over stale `held_*` keys (D69). Never bind size's ICP
+  categories as `$2` — that slot is interested ids; pool binds start
+  at `$11` (D69).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).

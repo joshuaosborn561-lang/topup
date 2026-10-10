@@ -93,7 +93,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "size",
     {
       description:
-        "Free dry-run of the stored Maps pool: already held, suppression drops by reason, net new. Returns a size_id at once (status started); poll size(size_id) until done. Opens no job, spends nothing, does not block the lane. Counts only.",
+        "Free dry-run of the stored Maps pool: already held, suppression drops by reason, net new. ICP pool binds start at $11 so they do not collide with recycle $2. Returns a size_id at once (status started); poll size(size_id) until done. Opens no job, spends nothing, does not block the lane. Counts only.",
       inputSchema: {
         client_tag: snake.optional(),
         campaign_id: z.number().int().optional(),

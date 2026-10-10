@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { SizeRunner, sizeRead, sizeSuppressJoinSql } from "./size.js";
+import { SIZE_SUPPRESS_BIND_OFFSET, SizeRunner, shiftSqlParams, sizeRead, sizeSuppressJoinSql } from "./size.js";
 
 /** D64 — size is a free maps dry-run. Opens no job. Ask Josh. */
 
@@ -47,6 +47,7 @@ describe("D64 — size dry-run", () => {
     assert.match(sql, /left join dnc/);
     assert.match(sql, /count\(\*\)::text as n from classified/);
     assert.doesNotMatch(sql, /when exists \(select 1 from public\.leads l where lower\(l\.email\) = r\.e/, "D65: no correlated exists per email. Ask Josh.");
+    assert.equal(shiftSqlParams("$1::text $2::text[]", SIZE_SUPPRESS_BIND_OFFSET), "$11::text $12::text[]");
     const runner = new SizeRunner(fakeDb() as never);
     const started = await runner.start({
       client_tag: "emcor",

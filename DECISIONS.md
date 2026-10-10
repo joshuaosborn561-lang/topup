@@ -88,6 +88,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D66 | Live; job 46b1c941 after #43: people/email waterfalls read an ingest `_ew` view that exposes `domain` from `company_domain`; a done step reopens when its `rules_hash` changed or `force=true`. Runtime CREATE VIEW in `lp` superseded by D67 |
 | D67 | Live; job 46b1c941 after #44: no runtime DDL — people/email waterfalls read `topup.<tag>_ingested_leads_ew` from one-time migration 0021; normalize fills company from `maps_raw.name` joined on email; ingest coalesces company/name/title |
 | D68 | Live; job 46b1c941 after #45: hold and fill share `company_n`; maps city is parsed from `City, ST`; lane E ICP re-applies `main_category` and drops preschool–high school (reverses D59's no-reapply) |
+| D69 | Live; job 46b1c941 after #46: a step reopen replaces counts (stale held_company_n / company.missing cannot survive); size pool binds start at $11 so categories do not collide with $2::int[] |
 
 ---
 
@@ -2429,3 +2430,40 @@ rows. The 147 already ingested stay until a new pull; this does
 not purge them.
 
 **Guard.** `src/guards/d68_hold_city_icp.test.ts`. Ask Josh.
+
+## D69 — Rerun replaces hold counts; size pool binds start at $11
+
+**Decision.** Two leftovers on job `46b1c941` after D68 shipped
+(`48c937f`).
+
+1. **A reopen replaces step counts.** `finishStep` did
+   `counts = counts || $new`. Normalize only writes `held_*` when
+   the count is > 0, and only writes flags this run produced.
+   After D68, the rows were right (`company_n` filled 147/147,
+   `merge_field_empty` has `company_n` 0, `normalize_flags`
+   `company.missing` 0, location empty 7) but the step still
+   showed `held_company_n` 147 and `company.missing` 147 from the
+   previous hash. `resetStep` now keeps only `approved_by`.
+   `finishStep` replaces the payload. Normalize writes every
+   `held_*` including zeros. The hold RETURNING uses the same
+   coalesce as the check. Hash is `d69:hold-recompute-size`.
+   Read-only: a recompute would report `held_company_n` 0.
+
+2. **`size` pool binds start at `$11`.** Recycle SQL hardcodes
+   `$2::int[]` as interested ids. D68's companion FROM uses
+   `$1::text` and `$2::text[]` for plan_id and categories. One
+   query cannot type `$2` both ways; the suppress pass threw and
+   the catch returned 0 for every reason (old 18,322 pool dropped
+   4,194). Pool `$n` now shifts by 10. A missing table still
+   returns zeros; a bind error fails the size.
+
+**Why.** After #46: geocode holds fell to 7. `job()` still showed
+147 company holds. `size()` on the 8,973 pool reported 0 drops.
+
+**Tradeoff.** `finishStep` no longer accumulates partial count
+keys across attempts — `mergeStepExtra` / `mergeStepCounts` stay
+for in-flight markers. A size query error is `failed` with
+`last_error`, not a silent zero. Ask Josh if a missing ingest
+table should stay a soft zero.
+
+**Guard.** `src/guards/d69_hold_recompute_size.test.ts`. Ask Josh.

@@ -380,9 +380,15 @@ export class Repo {
 
   /** A human tapped Resume on a parked run: the step gets its attempts back, once. */
   async resetStep(runId: string, step: Step): Promise<void> {
+    // D66 dropped rules_hash; D69 wipes every result key so a rerun cannot
+    // merge stale held_* / flag totals. Keep approved_by only.
     await this.db.query(
       `update topup.run_steps set attempts = 0, status = 'pending', last_error = null, useful_output = null,
-         counts = coalesce(counts, '{}'::jsonb) - 'rules_hash'
+         counts = case
+           when coalesce(counts, '{}'::jsonb) ? 'approved_by'
+             then jsonb_build_object('approved_by', counts->'approved_by')
+           else '{}'::jsonb
+         end
        where run_id = $1 and step = $2`,
       [runId, step],
     );
@@ -400,7 +406,14 @@ export class Repo {
          vendor_job_id = coalesce($3, vendor_job_id),
          actual_cents = coalesce($4, actual_cents),
          useful_output = coalesce($5, useful_output),
-         counts = counts || coalesce($6::jsonb, '{}'::jsonb),
+         counts = case
+           when $6::jsonb is null then counts
+           else case
+             when coalesce(counts, '{}'::jsonb) ? 'approved_by' and not ($6::jsonb ? 'approved_by')
+               then jsonb_build_object('approved_by', counts->'approved_by')
+             else '{}'::jsonb
+           end || $6::jsonb
+         end,
          worst_case_cents = coalesce($7, worst_case_cents),
          approved_cents = coalesce($8, approved_cents)
        where run_id = $1 and step = $2`,

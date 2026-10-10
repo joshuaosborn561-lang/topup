@@ -109,5 +109,6 @@ describe("D66 — people domain view and normalize rules-hash rerun", () => {
     assert.match(norm, /withRulesHash\("normalize"/, "D66: normalize writes rules_hash. Ask Josh.");
     const repo = await readFile(new URL("src/db/repo.ts", root), "utf8");
     assert.match(repo, /rules_hash/, "D66: resetStep drops the stale hash. Ask Josh.");
+    assert.match(repo, /jsonb_build_object\('approved_by'/, "D69: resetStep keeps approved_by only. Ask Josh.");
   });
 });
