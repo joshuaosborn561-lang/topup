@@ -8,6 +8,7 @@ import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { attempt, columnsOf, finish, park, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql } from "../puzzle/classify.js";
+import { DISCO_MODEL, fetchAll, gradeAll, LLM_RESULTS, SITE_TEXT } from "./loops.js";
 import { icpLabelSql } from "./parse.js";
 
 /**
@@ -35,17 +36,8 @@ export interface IcpVariant {
 
 /** Statuses a row can be in before anything paid has touched it. */
 export const ICP_STATUSES = ["ingested", "needs_domain", "needs_person", "needs_email", "email_found", "needs_verify"] as const;
-const FETCH_PER_CALL = 100;
-const FETCH_WORKERS = 30;
-const FETCH_PARALLEL = 3;
-const GRADE_PER_CALL = 300;
-const GRADE_WORKERS = 20;
-const MAX_CALLS = 120;
 /** Share of a list the fetch usually cannot read; DiscoLike worst case is priced on this. */
 const UNREADABLE_SHARE = 0.1;
-const SITE_TEXT = "client_salesglider.icp_site_text";
-const LLM_RESULTS = "client_salesglider.icp_llm_results";
-const DISCO_MODEL = "discolike:website";
 
 /** Worst case for n domains: Jev on every one, DiscoLike on the unreadable tenth. */
 export function icpWorstCaseCents(domains: number): number {
@@ -129,30 +121,9 @@ export class IcpStage {
         [run.run_id, batch],
       );
       // 2. Fetch the sites (free). Up to three calls side by side; rows are claimed server side.
-      let fetched = 0;
-      let fetchedOk = 0;
-      let remaining = Number.POSITIVE_INFINITY;
-      for (let calls = 0; remaining > 0 && calls < MAX_CALLS; calls += FETCH_PARALLEL) {
-        const results = await Promise.all(Array.from({ length: FETCH_PARALLEL }, () => this.d.gate!.fetchSites(batch, FETCH_PER_CALL, FETCH_WORKERS)));
-        fetched += results.reduce((a, r) => a + r.processed, 0);
-        fetchedOk += results.reduce((a, r) => a + r.ok, 0);
-        remaining = Math.min(...results.map((r) => r.remaining));
-        if (results.every((r) => r.processed === 0) && remaining > 0) break;
-      }
+      const { fetched, fetched_ok: fetchedOk } = await fetchAll(this.d.gate, batch);
       // 3. Jev picks a category. One call at a time per batch.
-      let graded = 0;
-      let gradeErrors = 0;
-      let lastError: string | null = null;
-      let left = Number.POSITIVE_INFINITY;
-      let idle = 0;
-      for (let calls = 0; left > 0 && calls < MAX_CALLS && idle < 2; calls++) {
-        const r = await this.d.gate.grade(batch, model, GRADE_PER_CALL, GRADE_WORKERS);
-        graded += r.processed;
-        gradeErrors += r.errors;
-        if (r.last_error) lastError = r.last_error;
-        left = r.remaining;
-        idle = r.processed === 0 ? idle + 1 : 0;
-      }
+      const { graded, errors: gradeErrors, last_error: lastError } = await gradeAll((n, w) => this.d.gate!.grade(batch, model, n, w));
       const jevCost = await this.costCents(batch, model);
       await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev", action: "grade", rows: graded, credits: graded, worstCaseCents: worst, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy: null });
       // 4. DiscoLike on what we could not read. One task at a time.

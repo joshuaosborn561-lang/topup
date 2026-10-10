@@ -973,6 +973,16 @@ Three edge functions on campaignintelligence, written for the
   one call at a time per batch. About $0.11 per 1,000 sites. Variants
   are label sets in the function (`choice`, `emcor2`, `deeproots`); a new
   client needs one written there and a row in `topup.icp_variants`.
+* `icp-llm?k=&mode=people&model=jev:<openrouter id>|owners&batch=&n=&w=`
+  (D71) reads the people queued in `topup.site_check_people` for that
+  batch whose site text was fetched, asks Jev one category pick per
+  person (`owner_or_founder`, `executive_decision_maker`,
+  `manager_or_lead`, `staff_or_individual_contributor`) with the site
+  text and the title as state, and writes `choice`, `prob`, `answers`,
+  `cost` and `error` on the queue row. Returns `{processed, errors,
+  last_error, remaining}`. One call at a time per batch. The service
+  (`site_check`) fills the queue with `insert … select` and reads counts
+  by label; a name never returns to it.
 * `icp-disco-fallback?k=&mode=submit&batch=&icp=` sends the sites the
   fetch could not read to DiscoLike `validate/icp` and returns a
   `task_id`; `mode=collect&task=&batch=` polls it and writes the verdicts

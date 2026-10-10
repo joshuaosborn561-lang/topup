@@ -201,6 +201,7 @@ async function main(): Promise<void> {
           now: () => Date.now(),
         },
         size: new SizeRunner(db),
+        siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, jevModel: cfg.ICP_JEV_MODEL, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
       },
     }),
   );

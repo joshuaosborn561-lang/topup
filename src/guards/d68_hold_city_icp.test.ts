@@ -69,7 +69,7 @@ describe("D68 — hold column, city parse, ICP categories + schools", () => {
 
   it("CANON names the hold column, the city split, and the ICP category + school rule", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D69\*\*/, "D69 is current; D68 stays folded. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D(69|[7-9][0-9]|[0-9]{3,})\*\*/, "D69 is current; D68 stays folded. Ask Josh.");
     assert.match(canon, /company_n/, "D68: the hold reads company_n. Ask Josh.");
     assert.match(canon, /main_category/, "D68: ICP categories are main_category. Ask Josh.");
     assert.match(canon, /lane D/, "D68: schools belong to lane D. Ask Josh.");

@@ -12,6 +12,7 @@ import { LEGACY_EMAIL_MAX_TIER_ALIASES, mapEmailMaxTier, mapPersonSource } from 
 import { EMAIL_TIERS } from "../recipes/schema.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
+import { siteCheck, SITE_CHECK_QUESTIONS, type SiteCheckDeps } from "../canon/siteCheck.js";
 
 /**
  * The reads and the verbs for Grok bot (D52). Reads return what Supabase
@@ -27,11 +28,12 @@ export interface GrokDeps {
   count: CountDeps;
   held: HeldDeps | null;
   size: SizeRunner;
+  siteCheck: SiteCheckDeps;
   by: string;
 }
 
 export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
-export const GROK_VERBS = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
+export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
 const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
@@ -196,6 +198,22 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       async ({ job_id, approved_by, force }) => text(await d.jobs.run(job_id, verb, { by: d.by, approved_by: approved_by ?? null, force: force === true })),
     );
   }
+
+  server.registerTool(
+    "site_check",
+    {
+      description:
+        "The website checker (skill icp-website-gate): our own site fetch (free), then one Jev question, about $0.11 per 1,000 answers. question=icp: is each company in the client's ICP (the client's label set; verdict per domain, which icp(job_id) then stamps on a job's rows at no extra cost). question=owners: for each named person, which role Jev reads them into from the title we hold and the company's own site: owner_or_founder, executive_decision_maker, manager_or_lead, staff_or_individual_contributor; the first two are the owners and decision makers. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. Nothing on the rows changes; verdicts are kept per domain and per person so a re-run never pays twice. Jev does not find names: it judges the people the store already holds. Counts and labels only.",
+      inputSchema: {
+        question: z.enum(SITE_CHECK_QUESTIONS),
+        client_tag: snake.optional(),
+        job_id: z.string().optional().describe("A job from pull(): its rows in lp.<tag>_ingested_leads."),
+        table: z.string().optional().describe("schema.table as leftovers lists it (lp.<tag>_…, client_<tag>.…, public.<tag>…_wf_contacts). Needs client_tag."),
+        approved_by: z.string().optional().describe("Name of the person who approved the quoted worst case."),
+      },
+    },
+    async ({ question, client_tag, job_id, table, approved_by }) => text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, approved_by: approved_by ?? null })),
+  );
 
   server.registerTool(
     "write_receipt",
