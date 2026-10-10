@@ -1,5 +1,6 @@
 import type { Repo } from "../db/repo.js";
 import { funnelCounts, MAX_STEP_ATTEMPTS, runIsOpen, type Role, type RunRow, type RunStatus, type Step } from "../domain/runs.js";
+import { withRulesHash } from "../jobs/rules.js";
 import { logger } from "../lib/log.js";
 import { parkedCard } from "../console/cards.js";
 import type { Console } from "../console/console.js";
@@ -142,7 +143,7 @@ export async function finish(
   report?: readonly CampaignReportEntry[],
   actualCents?: number,
 ): Promise<StageOutcome> {
-  const stored: Record<string, unknown> = { ...counts };
+  const stored: Record<string, unknown> = withRulesHash(stage, { ...counts });
   if (report && report.length) stored.campaign_report = report;
   await d.repo.finishStep(run.run_id, stage, {
     useful_output: useful,

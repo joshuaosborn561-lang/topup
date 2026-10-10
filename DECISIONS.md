@@ -85,6 +85,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). That PR writes the live D63 text. This stub keeps the ledger contiguous so D64 can ship off main |
 | D64 | Live; job 46b1c941: enrich approval runs the paid people step; a step that did not run is not done; ICP labels are tokens; spend cards re-quote and record actuals; maps used/net-new includes ingested + contacted; lp_export reads the wrapped payload; verify retry uses the recorded approval and does not park; `size` is the free dry-run; maps pull skips held emails before max_rows |
 | D65 | Live; job 46b1c941 after #42: size is async + aggregate SQL; approval is idempotent per step/approver/amount; QA hold count is this job; a false done with queued rows is reopened; Lane E role-inbox company from Maps name; first_name_fallback defaults off |
+| D66 | Live; job 46b1c941 after #43: people/email waterfalls read an ingest `_ew` view that exposes `domain` from `company_domain`; a done step reopens when its `rules_hash` changed or `force=true` |
 
 ---
 
@@ -2249,3 +2250,54 @@ if the role-inbox local set should grow, or if size should persist
 to a table.
 
 **Guard.** `src/guards/d65_emcor_job_fixes.test.ts`. Ask Josh.
+
+## D66 — People-waterfall domain view, and a step reopens on a rules change
+
+**Decision.** Two leftovers on job `46b1c941` after D65 shipped
+(`1955dad`).
+
+1. **Find Named Person reads a view that exposes `domain`.** Shared RPC
+   `public.ew_read_source` (email-waterfall
+   `supabase/migrations/003_ew_source_rpcs.sql`; used by
+   find-named-person-waterfall `people_waterfall/source.py`) SELECTs the
+   columns it is given. People waterfall's map is `domain` / `website`
+   only, and `count_source_with_domain` hardcodes `domain is not null`.
+   `lp.emcor_ingested_leads` (and the other lane tables) store the host
+   as `company_domain`. Topup CREATE OR REPLACE VIEWs
+   `lp.<tag>_ingested_leads_ew` (`t.*, domainSql as domain`) and hands
+   that name to `resolve_people` / `enrich_waterfall`. No ALTER of the
+   live lane table. Migration `0020_ingested_ew_domain_view.sql` is the
+   durable function; it is **unapplied** until Josh says so. The other
+   repos are not edited. If that side should grow `company_domain` as a
+   domain candidate, the change is
+   `people_waterfall/source.py` `FIELD_CANDIDATES["domain"]` and
+   `count_source_with_domain` (use the mapped column, not the literal
+   `domain`). Ask Josh before touching those files.
+2. **A done step reopens when its rules hash changed, or when
+   `force=true`.** `run_steps.counts.rules_hash` is the version the step
+   last ran under (`STEP_RULES` in `src/jobs/rules.ts`). Normalize's
+   hash is `d66:role-inbox-maps-name`. A call whose stored hash is
+   missing or different resets the step and runs it, so D65's Maps-name
+   company fill reaches the 147 already-done holds. `force=true` on a
+   verb does the same for that verb's steps even when the hash matches.
+   D65's queued / 0-of-N reopen stays.
+
+**Why.** After #43: people waterfall failed with `column "domain" does
+not exist in RPC ew_read_source on lp.emcor_ingested_leads`. Topup
+passed the raw ingest table with no column map; `resolve_people` does
+not accept `map`. Normalize after D65 returned `done` with the same
+147 held — the step was already `done` under the pre-hash contract, so
+the runner skipped (or re-ran the same stored hash) and the new
+company fill never wrote. A rules hash plus `force` is the reopen
+that D65's queued heuristic missed.
+
+**Tradeoff.** The `_ew` view is created at call time; a role that
+cannot CREATE VIEW in `lp` will fail the people step until 0020 is
+applied. Writeback ALTER against the view falls back to the people
+waterfall sidecar (`public.wf_people_status`); names still land in
+`public.<tag>_wf_contacts`. `force` is a named opt-in, not a default.
+Ask Josh if the view should be a generated column on the lane table
+instead, or if people-waterfall should take `map`.
+
+**Guard.** `src/guards/d66_people_domain_normalize_rerun.test.ts`. Ask
+Josh.

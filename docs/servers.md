@@ -456,8 +456,11 @@ deploy 2026-09-09. Python FastMCP over HTTP, no inbound auth. Supabase
 ### Rows
 
 - Table source paged 500 via `ew_read_source` (shares the email-waterfall RPC —
-  `people_waterfall/receipt.py:32`). Count fallback **caps at 50 000**, so a
-  larger source under-reports `total`.
+  `people_waterfall/source.py`; RPC defined in email-waterfall
+  `supabase/migrations/003_ew_source_rpcs.sql`). The map is `domain` /
+  `website` only. leadtopup hands `lp.<tag>_ingested_leads_ew` so
+  `company_domain` is visible as `domain` (D66). Count fallback **caps at
+  50 000**, so a larger source under-reports `total`.
 - Writes people to `public.<tag>_wf_contacts`; source writeback
   `wf_people_count, wf_people_source, wf_people_status`; rejected titles go
   to `public.name_bank`. No tool returns rows.

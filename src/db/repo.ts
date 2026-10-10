@@ -380,7 +380,12 @@ export class Repo {
 
   /** A human tapped Resume on a parked run: the step gets its attempts back, once. */
   async resetStep(runId: string, step: Step): Promise<void> {
-    await this.db.query(`update topup.run_steps set attempts = 0, status = 'pending', last_error = null where run_id = $1 and step = $2`, [runId, step]);
+    await this.db.query(
+      `update topup.run_steps set attempts = 0, status = 'pending', last_error = null, useful_output = null,
+         counts = coalesce(counts, '{}'::jsonb) - 'rules_hash'
+       where run_id = $1 and step = $2`,
+      [runId, step],
+    );
   }
 
   async finishStep(

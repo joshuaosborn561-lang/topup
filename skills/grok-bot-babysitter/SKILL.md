@@ -83,6 +83,10 @@ The rules you apply:
    worst case to a person and call the same verb with
    `approved_by="Their name"`. `parked` means read `job(job_id)` and fix
    or `abort`. QA holds show in `holds`; clear them with `resolve`.
+   A done normalize whose rules changed (or `force=true`) runs again
+   so the Maps-name company fill can write (D66). Do not pass a lead
+   table with no `domain` column to Find Named Person — this service
+   hands it `lp.<tag>_ingested_leads_ew`.
 7. `import(job_id)` only when `loads_paused` is off and a person said so.
 8. `write_receipt(job_id, …)` with the four legs, the filters you used and
    one plain sentence. The next top-up reads it.

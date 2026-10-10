@@ -187,9 +187,13 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       verb,
       {
         description: verbDescription(verb),
-        inputSchema: { job_id: z.string(), approved_by: z.string().optional().describe("Name of the person who approved the spend, when the previous call returned waiting_approval.") },
+        inputSchema: {
+          job_id: z.string(),
+          approved_by: z.string().optional().describe("Name of the person who approved the spend, when the previous call returned waiting_approval."),
+          force: z.boolean().optional().describe("Re-run this verb's steps even if they are already marked done (D66)."),
+        },
       },
-      async ({ job_id, approved_by }) => text(await d.jobs.run(job_id, verb, { by: d.by, approved_by: approved_by ?? null })),
+      async ({ job_id, approved_by, force }) => text(await d.jobs.run(job_id, verb, { by: d.by, approved_by: approved_by ?? null, force: force === true })),
     );
   }
 
@@ -273,11 +277,11 @@ function verbDescription(verb: Exclude<Verb, "pull">): string {
     case "icp":
       return "The ICP website gate (skill icp-website-gate): fetch each distinct domain's site with our own edge function (free), let Jev pick a category (about $0.11 per 1,000 sites), ask DiscoLike about the sites we could not read (about $0.0038 each), and write the verdict onto the rows. Only icp_gate = yes moves on; flagged rows are suppressed with a reason and stay in the table. The first call returns the estimate; approved_by runs it. Rows with no domain are left: enrich(job_id) then icp(job_id) again. Needs a label set for the client in topup.icp_variants.";
     case "enrich":
-      return "Fill the gaps on the job's rows: domains through the domain waterfall, people through the people waterfall, emails through the email waterfall up to the job's max tier. Paid tiers return an estimate first; approved_by runs them (once per step/approver/amount). A step pre-D64 marked done with rows still queued is reopened and run.";
+      return "Fill the gaps on the job's rows: domains through the domain waterfall, people through the people waterfall, emails through the email waterfall up to the job's max tier. Paid tiers return an estimate first; approved_by runs them (once per step/approver/amount). People and email waterfalls read a view that exposes domain from company_domain (D66). A step pre-D64 marked done with rows still queued is reopened and run. force=true re-runs a done step.";
     case "verify":
       return "Verify the job's emails (MillionVerifier, then No2Bounce on the catch-alls). Paid; the first call returns the estimate, approved_by runs it. Returns sendable and reject rate.";
     case "normalize":
-      return "Normalize names, companies and locations and assign the local sports team on the job's rows. Free.";
+      return "Normalize names, companies and locations and assign the local sports team on the job's rows. Free. Role-inbox Maps rows take company from the business name. Re-runs when the step's rules hash changed or force=true (D66).";
     case "qa":
       return "The merge-field QA gate on the job's rows: every field the copy uses is populated or the row is held. Returns held counts by reason.";
     case "stage":

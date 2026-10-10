@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D65** (2026-10-09). One page. `DECISIONS.md` is the append-only
+Canon as of **D66** (2026-10-09). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -97,7 +97,19 @@ D48).
     business name; a first-name/greeting fallback is a recipe key
     (`first_name_fallback`) whose default is unchanged — Josh decides
     the string (D65).
-16. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+16. **People / email waterfalls read a domain view, not the raw ingest
+   column name.** `ew_read_source` (email-waterfall RPC, shared with Find
+   Named Person) SELECTs `domain`. `lp.<tag>_ingested_leads` stores the
+   host as `company_domain`. The service hands those tools
+   `lp.<tag>_ingested_leads_ew`, a view that aliases company_domain /
+   website / the email host as `domain`. No ALTER of the live lane table
+   (D66).
+17. **A done step reopens when its rules changed, or when force is on.**
+   Each step stores a `rules_hash` when it finishes. A later call with a
+   different hash (or `force=true`) resets the step and runs it again.
+   That is how D65's Maps-name company fill reaches the 147 already-
+   normalized holds on job 46b1c941 (D66).
+18. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -131,9 +143,9 @@ Nothing chains. The job is one run row for one campaign (D52).
 | `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits` or `table`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails *before* `max_rows` (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
 | `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
-| `enrich(job_id, approved_by?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). |
-| `verify(job_id, approved_by?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry and is not added again. A third failure does not park. |
-| `normalize(job_id)` | normalize | Names, companies, locations, local sports team. Free. Role-inbox Maps rows take company from the business name; `first_name_fallback` is optional and off by default. Re-runs this job's merge-field holds. |
+| `enrich(job_id, approved_by?, force?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. People and email waterfalls read `lp.<tag>_ingested_leads_ew` so `ew_read_source` sees `domain` (D66). A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). `force=true` re-runs a done step. |
+| `verify(job_id, approved_by?, force?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry and is not added again. A third failure does not park. |
+| `normalize(job_id, force?)` | normalize | Names, companies, locations, local sports team. Free. Role-inbox Maps rows take company from the business name; `first_name_fallback` is optional and off by default. Re-runs this job's merge-field holds. Reopens when the stored `rules_hash` is stale or `force=true` (D66). |
 | `qa(job_id)` | qa | Every merge field populated or the row is held. Hold counts are this job only. Holds show in `holds`. |
 | `stage(job_id)` | route, stage | Rows routed to the campaign and staged. |
 | `import(job_id, approved_by?)` | import, post_import | Through LeadPipe into Smartlead. Refuses while `loads_paused`. Never sets ACTIVE. |
@@ -221,7 +233,10 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   a step was marked done with rows still queued (D65). Never hold a
   Lane E role-inbox for a missing company when the Maps name is there
   (D65). Never invent a greeting; `first_name_fallback` stays off
-  until Josh sets it (D65).
+  until Josh sets it (D65). Never hand `lp.<tag>_ingested_leads` to
+  `ew_read_source` without a `domain` column — use the `_ew` view (D66).
+  Never skip a normalize whose `rules_hash` is stale (D66). Never ALTER
+  a live lane table to add `domain` (D66).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).
