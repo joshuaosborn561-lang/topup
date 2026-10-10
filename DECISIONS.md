@@ -92,6 +92,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D70 | Reserved for PR #49 (`cursor/size-param-type-74ac`). That PR writes the live D70 text. This stub keeps the ledger contiguous so D71 can ship off main |
 | D71 | Superseded by D72 for the people half: the `owners` question (Jev judging names a store already held) is gone; the `icp` question stands as written. `topup.site_check_people` was never written; dropping it is Josh's call |
 | D72 | Live; `site_check("people", …, looking_for?)` crawls each company's homepage and people pages, has Gemini (Josh's key) list every person the site presents, and asks Jev which of them is `looking_for` (default: the owner, or the person who runs the company); sites, people and answers are kept per domain (`topup.site_people_text`, `site_people`, `site_extractions`, `site_answers`); the people found are rows of the view `topup.site_people_found` a table pull reads; estimate first, a name runs it; nothing on the rows changes; a name never returns to the service |
+| D73 | Live; `site_check(people)` fetch / extract / ask fan out (~50 fetch workers, 2 per host; ~28 Gemini and ~28 Jev; backoff on 429/5xx; Gemini RPM limiter 200). Env and tool params override. A deploy does not resume the loop — Topup calls the same verb again; already-extracted and already-answered domains are skipped. Nothing starts on boot (D5). The Gemini ceiling is still unchecked × the table |
 
 ---
 
@@ -2612,3 +2613,58 @@ a client should be small and checked against the real sites, as
 
 **Guard.** `src/guards/d72_site_people.test.ts` (replaces the D71
 guard); unit tests in `src/canon/siteCheck.test.ts`. Ask Josh.
+
+## D73 — `site_check(people)` fans out; a deploy resumes by the same verb
+
+**Decision.** The people loops were three fetch invocations and one
+extract / ask invocation at a time, about 260 extracts per 30 minutes.
+That cannot finish ~3,300 remaining EMCOR sites in 10–15 minutes. Fetch,
+extract and ask now take `parallel` × `workers` from Railway env (and
+optional tool params), defaults **2 × 25 fetch** (~50, **2 per host**),
+**4 × 7 Gemini** and **4 × 7 Jev** (~28 each), Gemini RPM limiter
+**200**. 429 / 5xx retry with exponential backoff and jitter. The
+`site-people` edge function claims extract and ask rows (`FOR UPDATE
+SKIP LOCKED` / an `in_progress` extraction), so fan-out cannot
+double-pay. ICP fetch stays three-wide; ICP grade stays one-wide (it
+still does not claim).
+
+A Railway deploy restarts the container and kills the in-flight HTTP
+call. **Nothing starts on boot** (D5). Topup resumes with the same
+verb, same scope, same `looking_for`, and `approved_by`:
+
+`site_check(question="people", client_tag="emcor", table="client_emcor.owner_netnew_20261010", approved_by="Josh")`
+
+The batch id is stable per scope. Stale `http_status = -1` claims
+older than two minutes, and stale `in_progress` extractions older than
+three, are released. Domains already in `site_extractions` (no error)
+or `site_answers` (this question, no error) are skipped and not paid
+again. The Gemini worst-case quote is still `unchecked ×` the price
+table (D51, D72). No parked job.
+
+**Why.** Josh, 10 Oct 2026, live: remaining ~3,300 sites in 10–15
+minutes (~4–5 / sec). Official Gemini 3.1 Flash-Lite RPM / TPM are not
+published (AI Studio only; a models/quota read would need the key).
+Community free-tier figures are 15 RPM / 250k TPM / 500 RPD — that
+cannot hit the target, so the limiter assumes a paid key. Paid
+Flash-Lite Tier 1 has historically been 4,000 RPM / 4M TPM; 200 RPM
+sits under that. 28 in-flight at 6–8 s/call is about 3.5–4.7 sites/sec
+on extract; ask is the same after. Sequential extract-then-ask on
+~2,500 remaining is about 12–16 minutes if Gemini stays that fast.
+Supabase edge: 150 s idle timeout, 400 s paid wall clock, 2 s CPU, no
+documented project-wide concurrency cap; one DB connection per
+invocation. Peak is four extract connections, well under the project's
+60.
+
+**What it does not do.** It does not auto-resume on boot. It does not
+change the ICP loops' defaults. It does not lower or raise the Gemini
+ceiling. It does not scrape reviews or call a paid vendor for the
+owner-name pilot.
+
+**Tradeoff.** Higher fan-out can 429; backoff handles that. Per-host
+2 is polite and costs little because each domain is its own host. A
+free-tier Gemini key cannot make the 10–15 minute bar — say so and
+stop.
+
+**Guard.** `src/guards/d73_site_people_concurrency.test.ts`; unit
+tests in `src/stages/icp/loops.test.ts`, `src/lib/backoff.test.ts`,
+`src/canon/siteCheck.test.ts`. Ask Josh.

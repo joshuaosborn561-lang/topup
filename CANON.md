@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D72** (2026-10-10). One page. `DECISIONS.md` is the append-only
+Canon as of **D73** (2026-10-10). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -154,7 +154,12 @@ D48).
    for `people`; estimate first, a name runs it; sites, people and
    answers are kept per domain so a re-run never pays twice. Nothing on
    the rows changes; counts, titles and at most ten sample domains come
-   back, never a name (D71, D72).
+   back, never a name (D71, D72). `people` fetch / extract / ask fan out
+   (~50 fetch workers, 2 per host; ~28 Gemini and ~28 Jev; backoff on
+   429/5xx; Gemini RPM limiter 200). A deploy kills the HTTP call;
+   nothing starts on boot. Topup calls the same `site_check` again with
+   the same scope and `approved_by`; already-extracted and
+   already-answered domains are skipped (D73).
 23. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
@@ -189,7 +194,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 | `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits` or `table`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails *before* `max_rows` (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
 | `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
-| `site_check(question, job_id \| client_tag + table, looking_for?, approved_by?)` | — | The website checker on a job or a store `leftovers` named: our own site fetch (free), then a question over what the site says. `icp` grades each company with the client's label set (Jev, about $0.11 per 1,000). `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (about $1.11 per 1,000 sites); the people found are rows of `topup.site_people_found`. First call: estimate and counts so far; `approved_by` runs it. Kept per domain; nothing on the rows changes. Counts, titles, at most ten sample domains; never a name. |
+| `site_check(question, job_id \| client_tag + table, looking_for?, approved_by?)` | — | The website checker on a job or a store `leftovers` named: our own site fetch (free), then a question over what the site says. `icp` grades each company with the client's label set (Jev, about $0.11 per 1,000). `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (about $1.11 per 1,000 sites); the people found are rows of `topup.site_people_found`. First call: estimate and counts so far; `approved_by` runs it. A deploy does not resume it — call the same verb again. Kept per domain; nothing on the rows changes. Counts, titles, at most ten sample domains; never a name. |
 | `enrich(job_id, approved_by?, force?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. People and email waterfalls read `topup.<tag>_ingested_leads_ew` so `ew_read_source` sees `domain` (D67; apply 0021 first). The service never CREATE VIEW. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). `force=true` re-runs a done step. |
 | `verify(job_id, approved_by?, force?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry and is not added again. A third failure does not park. |
 | `normalize(job_id, force?)` | normalize | Names, companies, locations, local sports team. Free. Empty company is filled from `client_<tag>.maps_raw.name` joined on email (D67). The hold reads `company_n`, not the empty raw `company_name` (D68). `City, ST` in city is split before geocode. Role-inbox `title` fill is the fallback. `first_name_fallback` is optional and off by default. Re-runs this job's merge-field holds. Reopens when the stored `rules_hash` is stale or `force=true`. |
@@ -305,6 +310,9 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
 * Never read a name out of `topup.site_people` or `site_people_found`
   into chat; `site_check` returns counts, titles and domains, and a
   table pull moves the rows (D72).
+* Never start `site_check` on boot after a deploy. Resume is the same
+  verb with the same scope and `approved_by`; skip `site_extractions`
+  and `site_answers` that already landed (D73).
 * Never start, pause, stop, edit or delete a Smartlead campaign. The
   service never sets a campaign ACTIVE.
 

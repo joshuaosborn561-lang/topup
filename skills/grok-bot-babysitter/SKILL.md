@@ -63,9 +63,12 @@ The rules you apply:
    people found are rows of `topup.site_people_found`; the answer tells
    you the `pull(source="table", …)` call that brings them into a job.
    The first call is the estimate (about $0.11 per 1,000 for icp, about
-   $1.11 per 1,000 sites for people); a name runs it. Nothing on the
-   rows changes; you read the counts and say what you would do (D71,
-   D72).
+   $1.11 per 1,000 sites for people); a name runs it. A deploy does
+   not resume a running `people` check — call the same verb again with
+   the same `client_tag` / `table` (or `job_id`), the same
+   `looking_for`, and `approved_by`. Already-extracted and
+   already-answered domains are skipped. Nothing on the rows changes;
+   you read the counts and say what you would do (D71, D72, D73).
 3. `count(client_tag, source, filters)` with those filters. getleads is
    free; `ai_ark` needs `approved_by`. BCP records keep industries per
    campaign under `industries_by_campaign`; pass that campaign's list as

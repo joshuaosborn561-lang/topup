@@ -203,7 +203,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "site_check",
     {
       description:
-        "The website checker (skill icp-website-gate): our own site fetch (free), then a question over what the site says. question=icp: is each company in the client's ICP (the client's label set, Jev's category pick, about $0.11 per 1,000; verdict per domain, which icp(job_id) then stamps on a job's rows for free). question=people: crawl each company's homepage and people pages (team, leadership, staff, about, contact), have Gemini list every person the site presents, then ask Jev which of them is looking_for (default: the owner, or the person who runs the company; or say who you want: 'the service manager', 'the person who buys IT'). About $1.11 per 1,000 sites worst case. The people found become rows of topup.site_people_found (first_name, last_name, title, domain, source_url) that pull(source=\"table\") can bring into a job. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. Nothing on the rows changes; sites, people and answers are kept per domain so a re-run never pays twice. Counts and labels only; never a name.",
+        "The website checker (skill icp-website-gate): our own site fetch (free), then a question over what the site says. question=icp: is each company in the client's ICP (the client's label set, Jev's category pick, about $0.11 per 1,000; verdict per domain, which icp(job_id) then stamps on a job's rows for free). question=people: crawl each company's homepage and people pages (team, leadership, staff, about, contact), have Gemini list every person the site presents, then ask Jev which of them is looking_for (default: the owner, or the person who runs the company; or say who you want: 'the service manager', 'the person who buys IT'). About $1.11 per 1,000 sites worst case. The people found become rows of topup.site_people_found (first_name, last_name, title, domain, source_url) that pull(source=\"table\") can bring into a job. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. A deploy does not resume the loop — call this verb again with the same scope and approved_by; already-extracted and already-answered domains are skipped and not paid again. Optional fetch_/extract_/ask_ parallel and workers override the Railway defaults (~50 fetch, ~28 Gemini, ~28 Jev). Nothing on the rows changes. Counts and labels only; never a name.",
       inputSchema: {
         question: z.enum(SITE_CHECK_QUESTIONS),
         client_tag: snake.optional(),
@@ -211,9 +211,16 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         table: z.string().optional().describe("schema.table as leftovers lists it (lp.<tag>_…, client_<tag>.…, public.<tag>…_wf_contacts). Needs client_tag."),
         looking_for: z.string().max(200).optional().describe("people only: who to find on the site, in plain words. Default: the owner, or the person who runs the company."),
         approved_by: z.string().optional().describe("Name of the person who approved the quoted worst case."),
+        fetch_parallel: z.number().int().min(1).max(32).optional().describe("How many site-people fetch invocations to run side by side. Default 2."),
+        fetch_workers: z.number().int().min(1).max(60).optional().describe("Workers inside each fetch invocation. Default 25 (2×25 ≈ 50, 2 per host)."),
+        extract_parallel: z.number().int().min(1).max(32).optional().describe("How many Gemini extract invocations to run side by side. Default 4."),
+        extract_workers: z.number().int().min(1).max(60).optional().describe("Gemini workers inside each extract invocation. Default 7 (4×7 = 28)."),
+        ask_parallel: z.number().int().min(1).max(32).optional().describe("How many Jev ask invocations to run side by side. Default 4."),
+        ask_workers: z.number().int().min(1).max(60).optional().describe("Jev workers inside each ask invocation. Default 7 (4×7 = 28)."),
       },
     },
-    async ({ question, client_tag, job_id, table, looking_for, approved_by }) => text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, looking_for: looking_for ?? null, approved_by: approved_by ?? null })),
+    async ({ question, client_tag, job_id, table, looking_for, approved_by, fetch_parallel, fetch_workers, extract_parallel, extract_workers, ask_parallel, ask_workers }) =>
+      text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, looking_for: looking_for ?? null, approved_by: approved_by ?? null, fetch_parallel, fetch_workers, extract_parallel, extract_workers, ask_parallel, ask_workers })),
   );
 
   server.registerTool(
