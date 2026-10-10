@@ -21,7 +21,7 @@ describe("D69 — rerun replaces hold counts; size suppress binds do not collide
     const norm = await readFile(new URL("src/stages/normalize/index.ts", root), "utf8");
     assert.match(norm, /heldDetail\.map\(\(\[f, n\]\) => \[`held_\$\{f\}`/, "D69: every required field is counted. Ask Josh.");
     assert.doesNotMatch(norm, /filter\(\(\[, n\]\) => n > 0\)[\s\S]*finishStep/, "D69: zeros must be written so held_company_n cannot stick. Ask Josh.");
-    assert.match(norm, /valueSql\(f\) as "\$\{f\}"/, "D69: hold RETURNING is the same expression as the hold check. Ask Josh.");
+    assert.match(norm, /\$\{valueSql\(f\)\} as "\$\{f\}"/, "D69: hold RETURNING is the same expression as the hold check. Ask Josh.");
     assert.equal(STEP_RULES.normalize, "d69:hold-recompute-size", "D69: normalize hash must change so the 147 reopen. Ask Josh.");
     assert.deepEqual(emptyMergeFields({ company_n: "Acme", company_name: "" }, ["company_n"]), []);
   });
