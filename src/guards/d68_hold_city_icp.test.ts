@@ -62,7 +62,7 @@ describe("D68 — hold column, city parse, ICP categories + schools", () => {
     const school = schoolExcludeClause("m", cols);
     assert.match(school, /private school/, "D68: private school is a lane D category. Ask Josh.");
     assert.match(school, /high school/);
-    assert.match(school, LANE_E_SCHOOL_NAME_RE);
+    assert.match(school, new RegExp(LANE_E_SCHOOL_NAME_RE));
     assert.ok(LANE_E_SCHOOL_CATEGORIES.includes("elementary school"));
     assert.ok(!LANE_E_SCHOOL_CATEGORIES.includes("university"), "D68: college stays off the lane E school list. Ask Josh.");
   });
