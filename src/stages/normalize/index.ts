@@ -164,17 +164,18 @@ export class NormalizeStage {
         }
       }
       const held = await this.holdEmptyMergeFields(run, table, recipe);
-      const heldDetail = Object.entries(held.by_field).filter(([, n]) => n > 0);
+      const heldDetail = Object.entries(held.by_field);
       await this.repo.finishStep(run.run_id, "normalize", {
         useful_output: normalized - held.rows,
         counts: withRulesHash("normalize", { normalized, held_merge_field: held.rows, flagged, ...Object.fromEntries(heldDetail.map(([f, n]) => [`held_${f}`, n])), ...flagTotals }),
       });
+      const heldNonzero = heldDetail.filter(([, n]) => n > 0);
       await this.repo.mergeRunCounts(run.run_id, { normalized, held: held.rows });
       const geocodeNote = refs.coords.size === 0 ? " · topup.ref_cities is empty, so every location is NO_GEOCODE: run `npm run seed:cities`" : "";
       await this.console.postInThread(
         run,
         `Normalize done: ${normalized} rows · ${held.rows} held for an empty merge field` +
-          (heldDetail.length ? ` (${heldDetail.map(([f, n]) => `${f} ${n}`).join(", ")})` : "") +
+          (heldNonzero.length ? ` (${heldNonzero.map(([f, n]) => `${f} ${n}`).join(", ")})` : "") +
           ` · ${flagged} carry flags` +
           (Object.keys(flagTotals).length ? ` (${Object.entries(flagTotals).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${k} ${v}`).join(", ")})` : "") +
           geocodeNote +
@@ -220,7 +221,7 @@ export class NormalizeStage {
              lead_status = 'qa_hold', status_changed_at = now(),
              qa_flags = coalesce(qa_flags, '{}'::jsonb) || jsonb_build_object('merge_field_empty', array_remove(array[${emptyList}], null))
            where run_id = $1 and lead_status = 'normalized' and (${anyEmpty})
-           returning ${fields.map((f) => `${col(f)} as "${f}"`).join(", ")}
+           returning ${fields.map((f) => `${valueSql(f)} as "${f}"`).join(", ")}
          )
          select count(*)::text as rows, ${perField} from held`,
         [run.run_id],

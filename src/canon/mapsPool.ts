@@ -249,6 +249,19 @@ export async function resolveMapsPool(
   return { schema, fromSql: `${q(schema)}.${q("maps_raw")} pool`, params, cats, companion: false };
 }
 
+/** WHERE for a non-companion pool (plan + categories + school). Companion SQL already binds those. */
+export async function mapsPoolWhere(db: Queryable, spec: MapsPoolSpec, resolved: MapsPoolResolved): Promise<string> {
+  if (resolved.companion) return "";
+  const rel = spec.icp_view ?? "maps_raw";
+  const cols = await columnsOf(db, resolved.schema, rel);
+  const catParam = resolved.cats.length ? `$${resolved.params.length}` : "";
+  const catsSql = spec.icp_view
+    ? icpCategoryClause("pool", cols, resolved.cats, catParam)
+    : categoryClause("pool", cols, resolved.cats, catParam);
+  const school = spec.icp_view && isLaneEIcp(spec.icp_view) ? schoolExcludeClause("pool", cols) : "";
+  return ` where true${planClause("pool", cols, "$1::text")}${catsSql}${school}${spec.icp_view ? keepClause("pool", cols) : ""}`;
+}
+
 /**
  * Count the stored pool, how many leads this plan already loaded, and net new.
  * SELECT count only. Never a lead column.
@@ -258,17 +271,7 @@ export async function countMapsPool(db: Queryable, clientTag: string, filters: R
   if ("error" in spec) return spec;
   const resolved = await resolveMapsPool(db, clientTag, spec);
   if ("error" in resolved) return resolved;
-  const catParam = resolved.cats.length ? `$${resolved.params.length}` : "";
-  let where = "";
-  if (!resolved.companion) {
-    const rel = spec.icp_view ?? "maps_raw";
-    const cols = await columnsOf(db, resolved.schema, rel);
-    const catsSql = spec.icp_view
-      ? icpCategoryClause("pool", cols, resolved.cats, catParam)
-      : categoryClause("pool", cols, resolved.cats, catParam);
-    const school = spec.icp_view && isLaneEIcp(spec.icp_view) ? schoolExcludeClause("pool", cols) : "";
-    where = ` where true${planClause("pool", cols, "$1::text")}${catsSql}${school}${spec.icp_view ? keepClause("pool", cols) : ""}`;
-  }
+  const where = await mapsPoolWhere(db, spec, resolved);
   const { rows } = await db.query<{ n: string }>(`select count(*)::text as n from ${resolved.fromSql}${where}`, resolved.params);
   const pool = Number(rows[0]?.n ?? 0);
   const used = await countMapsUsedParts(db, clientTag, spec.plan_id, resolved, where);

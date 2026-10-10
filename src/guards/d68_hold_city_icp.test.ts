@@ -37,7 +37,7 @@ describe("D68 — hold column, city parse, ICP categories + schools", () => {
     assert.match(norm, /coalesce\(nullif\(btrim\(company_n::text\), ''\), nullif\(btrim\(company_name::text\), ''\)\)/, "D68: the hold reads company_n first. Ask Josh.");
     const qa = await readFile(new URL("src/stages/qa/index.ts", root), "utf8");
     assert.match(qa, /company_name: "company_n"/, "D68: QA maps company_name to company_n. Ask Josh.");
-    assert.equal(STEP_RULES.normalize, "d68:hold-city-icp", "D68: normalize hash must change so the 147 reopen. Ask Josh.");
+    assert.equal(STEP_RULES.normalize, "d69:hold-recompute-size", "D69 superseded the D68 hash so the 147 reopen. Ask Josh.");
   });
 
   it("City, ST in city geocodes after the split; ingest SQL takes the city token", () => {
@@ -69,7 +69,7 @@ describe("D68 — hold column, city parse, ICP categories + schools", () => {
 
   it("CANON names the hold column, the city split, and the ICP category + school rule", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D68\*\*/, "D68: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D69\*\*/, "D69 is current; D68 stays folded. Ask Josh.");
     assert.match(canon, /company_n/, "D68: the hold reads company_n. Ask Josh.");
     assert.match(canon, /main_category/, "D68: ICP categories are main_category. Ask Josh.");
     assert.match(canon, /lane D/, "D68: schools belong to lane D. Ask Josh.");
