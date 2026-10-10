@@ -11,7 +11,7 @@ MCP: `domain-waterfall` on Railway. Tools: `resolve_domain`, `receipt_test`, `en
 
 ## When this is the right tool
 
-You have a table with `company_name` and a city, and the thing you actually want needs a domain: getleads batch, LeadMagic employee_finder, Smartlead lookup, an email finder, anything.
+You have a table with `company_name` and a city, and the thing you actually want needs a domain: getleads batch, Find Named Person, Smartlead lookup, an email finder, anything. LeadMagic employee_finder is dropped (D58).
 
 Signals in Josh's words: "we have names but no domains", "resolve the domains", "find their websites", "getleads returned nothing on these", "the permit contractors".
 

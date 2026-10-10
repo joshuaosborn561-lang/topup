@@ -40,6 +40,9 @@ export interface CountRead {
   /** Maps stored pool: size after plan_id / categories / ICP view. */
   pool?: number;
   already_used?: number;
+  already_live?: number;
+  already_ingested?: number;
+  already_contacted?: number;
   net_new?: number;
   calls: CountCall[];
   cost_cents: number;
@@ -110,9 +113,12 @@ export async function countSource(
           count: r.pool,
           pool: r.pool,
           already_used: r.already_used,
+          already_live: r.already_live,
+          already_ingested: r.already_ingested,
+          already_contacted: r.already_contacted,
           net_new: r.net_new,
           cost_cents: 0,
-          note: `${MAPS_POOL_NOTE}. ${r.relation}: pool ${r.pool}, already used ${r.already_used}, net new ${r.net_new}.`,
+          note: `${MAPS_POOL_NOTE}. ${r.relation}: pool ${r.pool}, already live ${r.already_live}, already ingested ${r.already_ingested}, already contacted ${r.already_contacted}, used ${r.already_used}, net new ${r.net_new}.`,
         };
       } catch (err) {
         calls.push({ vendor: "supabase", action: "maps_pool", ok: false, count: null, message: (err as Error).message.slice(0, 200) });

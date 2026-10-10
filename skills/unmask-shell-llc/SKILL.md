@@ -21,7 +21,7 @@ One operator often controls dozens of shells from one suite. Resolving the addre
 | Texas Comptroller officer match, general shells | 19% | Single-purpose LLCs list a registered agent, a law firm, not a manager |
 | Comptroller on concentrated owners | 9.5% | Sophisticated owners nest LLCs inside LLCs; 8 of 27 "officers" were themselves LLCs |
 | SERP the entity name | untested, expect near zero | No indexed web presence to find |
-| getleads / AI Ark / LeadMagic | 0% | All LinkedIn-derived; these entities have no LinkedIn |
+| getleads / AI Ark / Prospeo | 0% | All LinkedIn-derived; these entities have no LinkedIn. LeadMagic is dropped (D58). |
 
 Do not spend money on any of these before running the address method.
 

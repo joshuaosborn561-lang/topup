@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps } from "../canon/index.js";
+import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps, type SizeRunner } from "../canon/index.js";
 import type { Repo } from "../db/repo.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import type { Orchestrator } from "../orchestrator.js";
@@ -8,6 +8,7 @@ import { JOB_SOURCES, type JobSpec } from "../jobs/recipe.js";
 import { VERB_ORDER, type JobRunner, type Verb } from "../jobs/runner.js";
 import { loadClientMap } from "../canon/clients.js";
 import { registryRows } from "../canon/registry.js";
+import { LEGACY_EMAIL_MAX_TIER_ALIASES, mapEmailMaxTier, mapPersonSource } from "../recipes/legacyLeadmagic.js";
 import { EMAIL_TIERS } from "../recipes/schema.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
@@ -25,10 +26,11 @@ export interface GrokDeps {
   jobs: JobRunner;
   count: CountDeps;
   held: HeldDeps | null;
+  size: SizeRunner;
   by: string;
 }
 
-export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "jobs", "job", "spend", "leftovers"] as const;
+export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
 export const GROK_VERBS = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
@@ -66,7 +68,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "count",
     {
       description:
-        "A count on one source with the filters you supply, as the record stores them: getleads (free), ai_ark (about five cents; needs approved_by), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
+        "A count on one source with the filters you supply, as the record stores them: getleads (free), ai_ark (about five cents; needs approved_by), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
       inputSchema: { client_tag: snake, source: z.enum(["getleads", "ai_ark", "maps", "permits"]), filters, approved_by: z.string().optional().describe("Name of the person who approved the paid call.") },
     },
     async ({ client_tag, source, filters: f, approved_by }) => text(await countSource(d.count, { client_tag, source, filters: f, approved_by: approved_by ?? null })),
@@ -84,6 +86,28 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
       if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
       return text(await heldRead(d.held, { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
+    },
+  );
+
+  server.registerTool(
+    "size",
+    {
+      description:
+        "Free dry-run of the stored Maps pool: already held, suppression drops by reason, net new. ICP pool binds start at $11 so they do not collide with recycle $2. Returns a size_id at once (status started); poll size(size_id) until done. Opens no job, spends nothing, does not block the lane. Counts only.",
+      inputSchema: {
+        client_tag: snake.optional(),
+        campaign_id: z.number().int().optional(),
+        source: z.enum(["getleads", "ai_ark", "maps", "permits"]).optional(),
+        filters: filters.optional(),
+        size_id: z.string().uuid().optional().describe("Poll a size that already started."),
+      },
+    },
+    async ({ client_tag, campaign_id, source, filters: f, size_id }) => {
+      if (size_id) return text(await d.size.get(size_id));
+      if (!client_tag || campaign_id == null || !source) {
+        return text({ error: "size needs client_tag, campaign_id, source and filters, or a size_id to poll." });
+      }
+      return text(await d.size.start({ client_tag, campaign_id, source, filters: f ?? {} }));
     },
   );
 
@@ -119,7 +143,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "pull",
     {
       description:
-        "Open a job for one campaign and run the pull: the source and filters you read off campaign_record, up to max_rows. The first call returns the spend estimate and a card; the same call with approved_by (the name of the person who said yes) runs it. Then suppress, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id. Pass job_id to continue an open job instead of opening one.",
+        "Open a job for one campaign and start the pull in the background: the source and filters you read off campaign_record, up to max_rows. Returns the job_id at once (status started). Poll job(job_id) until pull/ingest finish. A spend estimate still waits for approved_by on a later pull(job_id). Then suppress, icp, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id.",
       inputSchema: {
         client_tag: snake,
         campaign_id: z.number().int(),
@@ -127,7 +151,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         filters,
         max_rows: z.number().int().min(1).max(MAX_ROWS_PER_JOB).describe(`1 to ${MAX_ROWS_PER_JOB} rows per job.`),
         lane: snake.optional().describe("Defaults to the campaign's registry lane."),
-        email_max_tier: z.enum(EMAIL_TIERS).optional(),
+        email_max_tier: z.enum([...EMAIL_TIERS, ...LEGACY_EMAIL_MAX_TIER_ALIASES]).optional().describe("Live ceiling, or a stored leadmagic / lm / lead_magic alias which maps to aiark (D58)."),
         name_to_email: z.boolean().optional(),
         icp_kind: z.enum(["linkedin_native", "physical"]).optional(),
         approved_by: z.string().optional(),
@@ -143,12 +167,18 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         const name = (await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null)) ?? registry.find((r) => r.campaign_id === campaign_id)?.campaign_name ?? null;
         if (isColdCall(name)) return text({ error: `#${campaign_id} ${name} is marked as cold call; the service ignores it (D54). Ask Josh.` });
         const laneName = lane ?? registry.find((r) => r.campaign_id === campaign_id)?.lane ?? "grok";
-        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(email_max_tier ? { email_max_tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
+        const mappedTier = mapEmailMaxTier(email_max_tier);
+        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(mappedTier.tier ? { email_max_tier: mappedTier.tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
         const opened = await d.jobs.open(spec, d.by);
         if (!opened.ok) return text({ error: opened.message });
         id = opened.job_id;
+        if (mappedTier.warning) {
+          await d.ledger.event({ client_tag, lane: laneName, run_id: id, event: "legacy_tier", line: mappedTier.warning, actor: d.by }).catch(() => undefined);
+        }
+        const begun = await d.jobs.begin(id, "pull", { by: d.by, approved_by: approved_by ?? null });
+        return text(mappedTier.warning ? { ...begun, warning: mappedTier.warning } : begun);
       }
-      return text(await d.jobs.run(id, "pull", { by: d.by, approved_by: approved_by ?? null }));
+      return text(await d.jobs.begin(id, "pull", { by: d.by, approved_by: approved_by ?? null }));
     },
   );
 
@@ -157,9 +187,13 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       verb,
       {
         description: verbDescription(verb),
-        inputSchema: { job_id: z.string(), approved_by: z.string().optional().describe("Name of the person who approved the spend, when the previous call returned waiting_approval.") },
+        inputSchema: {
+          job_id: z.string(),
+          approved_by: z.string().optional().describe("Name of the person who approved the spend, when the previous call returned waiting_approval."),
+          force: z.boolean().optional().describe("Re-run this verb's steps even if they are already marked done (D66)."),
+        },
       },
-      async ({ job_id, approved_by }) => text(await d.jobs.run(job_id, verb, { by: d.by, approved_by: approved_by ?? null })),
+      async ({ job_id, approved_by, force }) => text(await d.jobs.run(job_id, verb, { by: d.by, approved_by: approved_by ?? null, force: force === true })),
     );
   }
 
@@ -188,6 +222,13 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       const run = await d.repo.getRun(input.job_id);
       if (!run) return text({ error: "no such job" });
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === run.client_tag);
+      const person = mapPersonSource(input.person_source);
+      const emailTier = mapEmailMaxTier(input.email_max_tier);
+      if (!person.source) return text({ error: "person_source is required." });
+      if (input.email_max_tier && !emailTier.tier && !emailTier.legacy) {
+        return text({ error: `unknown email_max_tier '${input.email_max_tier}'. Live: ${EMAIL_TIERS.join(", ")}. leadmagic maps to aiark (D58).` });
+      }
+      const warnings = [person.warning, emailTier.warning].filter((w): w is string => Boolean(w));
       const receipt_id = await d.repo.insertPullReceipt({
         written_by: d.by,
         client_tag: run.client_tag,
@@ -199,9 +240,9 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         company_source: input.company_source,
         company_filters: input.company_filters,
         domain_source: input.domain_source,
-        person_source: input.person_source,
+        person_source: person.source,
         email_source: input.email_source,
-        email_max_tier: input.email_max_tier ?? null,
+        email_max_tier: emailTier.tier,
         rows_found: input.rows_found ?? null,
         rows_imported: input.rows_imported ?? null,
         tam_count: input.tam_count ?? null,
@@ -215,7 +256,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         granularity: "build",
       });
       await d.ledger.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "receipt", line: `Receipt ${receipt_id.slice(0, 8)} written by ${d.by}: ${input.how_i_did_it.slice(0, 160)}`, actor: d.by }).catch(() => undefined);
-      return text({ ok: true, receipt_id, job_id: run.run_id });
+      return text({ ok: true, receipt_id, job_id: run.run_id, person_source: person.source, email_max_tier: emailTier.tier, ...(warnings.length ? { warning: warnings.join(" ") } : {}) });
     },
   );
 
@@ -236,11 +277,11 @@ function verbDescription(verb: Exclude<Verb, "pull">): string {
     case "icp":
       return "The ICP website gate (skill icp-website-gate): fetch each distinct domain's site with our own edge function (free), let Jev pick a category (about $0.11 per 1,000 sites), ask DiscoLike about the sites we could not read (about $0.0038 each), and write the verdict onto the rows. Only icp_gate = yes moves on; flagged rows are suppressed with a reason and stay in the table. The first call returns the estimate; approved_by runs it. Rows with no domain are left: enrich(job_id) then icp(job_id) again. Needs a label set for the client in topup.icp_variants.";
     case "enrich":
-      return "Fill the gaps on the job's rows: domains through the domain waterfall, people through the people waterfall, emails through the email waterfall up to the job's max tier. Paid tiers return an estimate first; approved_by runs them.";
+      return "Fill the gaps on the job's rows: domains through the domain waterfall, people through the people waterfall, emails through the email waterfall up to the job's max tier. Paid tiers return an estimate first; approved_by runs them (once per step/approver/amount). People and email waterfalls read topup.<tag>_ingested_leads_ew so ew_read_source sees domain (D67; apply 0021 first). The service never CREATE VIEW. A step pre-D64 marked done with rows still queued is reopened and run. force=true re-runs a done step.";
     case "verify":
       return "Verify the job's emails (MillionVerifier, then No2Bounce on the catch-alls). Paid; the first call returns the estimate, approved_by runs it. Returns sendable and reject rate.";
     case "normalize":
-      return "Normalize names, companies and locations and assign the local sports team on the job's rows. Free.";
+      return "Normalize names, companies and locations and assign the local sports team on the job's rows. Free. Empty company is filled from client_<tag>.maps_raw.name joined on email (D67). The hold reads company_n, not the empty raw company_name (D68). City, ST in city is split before geocode. Role-inbox title fill stays as a fallback. Re-runs when the step's rules hash changed or force=true.";
     case "qa":
       return "The merge-field QA gate on the job's rows: every field the copy uses is populated or the row is held. Returns held counts by reason.";
     case "stage":

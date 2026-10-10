@@ -4,11 +4,13 @@ import type { EmailWaterfall } from "../../clients/emailWaterfall.js";
 import { emailJobState } from "../../clients/emailWaterfall.js";
 import type { NameToEmail } from "../../clients/nameToEmail.js";
 import { nameToEmailSendable } from "../../clients/nameToEmail.js";
+import { liveEmailMaxTier } from "../../recipes/legacyLeadmagic.js";
 import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
-import { usd, worstCaseCents } from "../../spend/prices.js";
+import { usd, worstCaseCents, type Vendor } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { attempt, columnsOf, finish, keepPhones, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 import { domainSql } from "../puzzle/classify.js";
+import { resolveEwDomainSource } from "../puzzle/ewSource.js";
 
 /**
  * Email enrichment, immediately before verify (D29; D36 item 71).
@@ -38,6 +40,17 @@ export class FindEmailsStage {
       const db = this.d.repo.raw();
       const { rows } = await db.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status = 'needs_email'`, [run.run_id]);
       const need = Number(rows[0]?.n ?? 0);
+      const queued = await db.query<{ lead_status: string; n: string }>(
+        `select lead_status, count(*)::text as n from ${table} where run_id = $1 and lead_status in ('needs_person','needs_domain') group by 1`,
+        [run.run_id],
+      );
+      const leftoverPerson = Number(queued.rows.find((r) => r.lead_status === "needs_person")?.n ?? 0);
+      const leftoverDomain = Number(queued.rows.find((r) => r.lead_status === "needs_domain")?.n ?? 0);
+      if (need === 0 && leftoverPerson + leftoverDomain > 0) {
+        const reason = `Find emails will not skip: ${leftoverPerson} rows still need a person and ${leftoverDomain} still need a domain. Puzzle did not finish (D64).`;
+        await this.d.repo.failStep(run.run_id, "find_emails", reason, true);
+        return park(this.d, run, "find_emails", reason, attempts);
+      }
       if (need === 0) {
         return finish(
           this.d,
@@ -130,12 +143,14 @@ export class FindEmailsStage {
 
   private async runWaterfall(run: RunRow, recipe: Recipe, table: string, rows: number): Promise<StageOutcome | { kind: "ran"; resolved: number }> {
     const where = `run_id = '${run.run_id}' and lead_status = 'needs_email'`;
-    const maxTier = recipe.email_finding.max_tier;
+    const maxTier = liveEmailMaxTier(recipe.email_finding.max_tier);
     if (!recipeAuthorises(recipe, "find_emails", maxTier === "fullenrich" ? "fullenrich" : maxTier === "aiark" ? "aiark" : maxTier)) {
       throw new Error(`the recipe does not authorise email finding at max_tier ${maxTier}`);
     }
-    const quote = await this.d.emailWaterfall!.estimate({ client_tag: run.client_tag, source_table: table, where, max_tier: maxTier, need: "email" });
-    const vendor = maxTier === "getleads" || maxTier === "smartlead" ? maxTier : maxTier === "aiark" ? "aiark" : maxTier === "leadmagic" ? "leadmagic" : maxTier === "prospeo" ? "prospeo" : "aiark";
+    const source = await resolveEwDomainSource(this.d.repo, table);
+    const quote = await this.d.emailWaterfall!.estimate({ client_tag: run.client_tag, source_table: source, where, max_tier: maxTier, need: "email" });
+    const vendor: Vendor =
+      maxTier === "getleads" || maxTier === "smartlead" || maxTier === "aiark" || maxTier === "prospeo" || maxTier === "fullenrich" ? maxTier : "aiark";
     const worst = this.d.rails ? worstCaseCents(vendor, "export", rows) : 0;
     if (this.d.rails) {
       const decision = await this.d.rails.gate({
@@ -157,7 +172,7 @@ export class FindEmailsStage {
     }
     const started = await this.d.emailWaterfall!.start({
       client_tag: run.client_tag,
-      source_table: table,
+      source_table: source,
       where,
       max_tier: maxTier,
       need: "email",

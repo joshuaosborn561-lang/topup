@@ -111,11 +111,11 @@ Josh's rulebook, 2026-09-14. Canon as of D37. The six taps he left pending are y
 ## Methods
 
 69. Tell getleads company size as exact band labels. Check industry names against its list.
-70. Order: getleads, then AI Ark for people, then LeadMagic, then FullEnrich last.
+70. Order: getleads, then AI Ark for people, then Prospeo, then FullEnrich last. LeadMagic is dropped (D58).
 71. Name to Email is paused; DiscoLike find emails is the cheap first rung.
 72. The Smartlead email lookup in the waterfall is a real tier. 89% on Peterson GCs.
 73. Audit titles after every AI Ark pull.
-74. LeadMagic: employee finder, filter titles in SQL, then email finder. Prospeo for names, 25x cheaper.
+74. Find Named Person: site_staff, cache, DiscoLike, Prospeo search, then AI Ark people. Do not pull a roster and filter titles in SQL. LeadMagic employee finder is dropped (D58).
 75. Verifier stalls: resume once, split, quarantine. Zero result resume is a stall.
 76. Maps: every brand and subtype its own category, audit the classifier, re filter geography after. Address strategy for LLC domains, not name.
 77. Vacancy signal: backfill job postings, target the peer who inherited, never the empty seat.

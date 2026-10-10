@@ -4,6 +4,7 @@ const log = logger("repo");
 import type { Db, Queryable } from "./pool.js";
 import type { Role, RunRow, RunStepRow, RunStatus, Step } from "../domain/runs.js";
 import { MAX_STEP_ATTEMPTS } from "../domain/runs.js";
+import { isSelfStart } from "../jobs/selfStart.js";
 
 /** How a client's leads are found: on LinkedIn (getleads, AI Ark) or by place (Maps, permits). The registry says; the default is LinkedIn. */
 export type IcpKind = "linkedin_native" | "non_linkedin";
@@ -67,7 +68,10 @@ export class Repo {
     campaign_id: number | null;
     trigger: RunRow["trigger"];
     opened_by: string | null;
-  }): Promise<{ ok: true; run: RunRow } | { ok: false; reason: "already_open" }> {
+  }): Promise<{ ok: true; run: RunRow } | { ok: false; reason: "already_open" | "self_start" }> {
+    if (isSelfStart(input.opened_by, input.trigger)) {
+      return { ok: false, reason: "self_start" };
+    }
     try {
       const { rows } = await this.db.query<RunRow>(
         `insert into topup.runs (recipe_id, client_tag, lane, campaign_id, trigger, opened_by)
@@ -376,7 +380,18 @@ export class Repo {
 
   /** A human tapped Resume on a parked run: the step gets its attempts back, once. */
   async resetStep(runId: string, step: Step): Promise<void> {
-    await this.db.query(`update topup.run_steps set attempts = 0, status = 'pending', last_error = null where run_id = $1 and step = $2`, [runId, step]);
+    // D66 dropped rules_hash; D69 wipes every result key so a rerun cannot
+    // merge stale held_* / flag totals. Keep approved_by only.
+    await this.db.query(
+      `update topup.run_steps set attempts = 0, status = 'pending', last_error = null, useful_output = null,
+         counts = case
+           when coalesce(counts, '{}'::jsonb) ? 'approved_by'
+             then jsonb_build_object('approved_by', counts->'approved_by')
+           else '{}'::jsonb
+         end
+       where run_id = $1 and step = $2`,
+      [runId, step],
+    );
   }
 
   async finishStep(
@@ -387,11 +402,18 @@ export class Repo {
     },
   ): Promise<void> {
     await this.db.query(
-      `update topup.run_steps set status = 'done', finished_at = now(),
+      `update topup.run_steps set status = 'done', finished_at = now(), last_error = null,
          vendor_job_id = coalesce($3, vendor_job_id),
          actual_cents = coalesce($4, actual_cents),
          useful_output = coalesce($5, useful_output),
-         counts = counts || coalesce($6::jsonb, '{}'::jsonb),
+         counts = case
+           when $6::jsonb is null then counts
+           else case
+             when coalesce(counts, '{}'::jsonb) ? 'approved_by' and not ($6::jsonb ? 'approved_by')
+               then jsonb_build_object('approved_by', counts->'approved_by')
+             else '{}'::jsonb
+           end || $6::jsonb
+         end,
          worst_case_cents = coalesce($7, worst_case_cents),
          approved_cents = coalesce($8, approved_cents)
        where run_id = $1 and step = $2`,
@@ -454,10 +476,18 @@ export class Repo {
     ]);
   }
 
-  async approveStep(runId: string, step: Step, approvedCents: number): Promise<void> {
+  /**
+   * Record an approval on the step. Idempotent per step/amount (D65): a
+   * second tap of the same cents does not add. The larger of the stored
+   * amount and this one wins. Approver is the named person on the verb.
+   */
+  async approveStep(runId: string, step: Step, approvedCents: number, approvedBy?: string | null): Promise<void> {
     await this.db.query(
-      `update topup.run_steps set approved_cents = coalesce(approved_cents,0) + $3 where run_id = $1 and step = $2`,
-      [runId, step, approvedCents],
+      `update topup.run_steps
+          set approved_cents = greatest(coalesce(approved_cents, 0), $3),
+              counts = counts || jsonb_build_object('approved_by', coalesce($4::text, counts->>'approved_by'))
+        where run_id = $1 and step = $2`,
+      [runId, step, approvedCents, approvedBy ?? null],
     );
   }
 
@@ -544,6 +574,14 @@ export class Repo {
     await this.db.query(`update topup.cards set payload = payload || jsonb_build_object('blocks', $2::jsonb) where card_id = $1`, [
       cardId,
       JSON.stringify(blocks),
+    ]);
+  }
+
+  /** Re-quote an open card: merge the new estimate into payload (D64). */
+  async updateCardPayload(cardId: string, payload: Record<string, unknown>): Promise<void> {
+    await this.db.query(`update topup.cards set payload = payload || $2::jsonb where card_id = $1 and status = 'open'`, [
+      cardId,
+      JSON.stringify(payload),
     ]);
   }
 

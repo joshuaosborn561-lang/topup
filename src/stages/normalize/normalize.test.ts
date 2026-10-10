@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { normalizeCompany } from "./company.js";
 import { cityKey, geocode, haversineMiles, type CityCoords } from "./geo.js";
 import { normalizeLead, type NormalizeRefs } from "./index.js";
+import { isRoleInbox } from "./roleInbox.js";
 import { conversationalLocation, metroFor } from "./location.js";
 import { normalizeCity, normalizeFirstName, normalizeState } from "./names.js";
 import { assignTeam, assignTeamForLeague } from "./team.js";
@@ -183,6 +184,16 @@ describe("conversational location — port of conversational_location.py + the S
   it("tighter metros win: Orange County beats the LA blanket", () => {
     assert.equal(metroFor({ lat: 33.6846, lon: -117.8265 }), "Orange County");
   });
+  it("City, ST in the city column geocodes after the split (D68)", () => {
+    const city = normalizeCity("Naperville, IL");
+    assert.equal(city.city, "Naperville");
+    assert.ok(city.flags.includes("city_state_split"));
+    const loc = conversationalLocation("Naperville, IL", "IL", coords);
+    assert.equal(loc.location, "Chicagoland");
+    assert.equal(loc.source, "metro");
+    const fromCityOnly = conversationalLocation("Naperville, IL", null, coords);
+    assert.equal(fromCityOnly.source, "metro", "D68: state token in the city column is enough to geocode. Ask Josh.");
+  });
   it("NO_GEOCODE is a blank location, never a broken sentence", () => {
     const r = conversationalLocation("Nowhere", "TX", coords);
     assert.equal(r.location, "");
@@ -269,5 +280,31 @@ describe("normalizeLead — step 7 for one row", () => {
     assert.equal(out.company_n, "ACME INC");
     assert.equal(out.local_sports_team, null);
     assert.equal(out.gift_tier, "airpods");
+  });
+  it("Lane E role-inbox: company from the Maps business name; greeting fallback is off by default (D65)", () => {
+    assert.equal(isRoleInbox("info@example.com"), true);
+    assert.equal(isRoleInbox("office@example.com"), true);
+    assert.equal(isRoleInbox("jane@example.com"), false);
+    const held = normalizeLead(
+      { id: "1", first_name: null, company_name: null, city: "Oakland", state: "CA", email: "info@example.com", title: "Bay Area Electric" },
+      refs,
+      { names_cities: true, company: true, location: false, sports_team: null },
+    );
+    assert.equal(held.first_name_n, null, "D65: default greeting is unchanged (hold). Ask Josh.");
+    assert.equal(held.company_n, "Bay Area Electric");
+    assert.ok(held.flags.company?.includes("maps_business_name"));
+    const greeted = normalizeLead(
+      { id: "1", first_name: null, company_name: null, city: "Oakland", state: "CA", email: "office@example.com", title: "Bay Area Electric" },
+      refs,
+      { names_cities: true, company: true, location: false, sports_team: null, first_name_fallback: "there" },
+    );
+    assert.equal(greeted.first_name_n, "There");
+    assert.ok(greeted.flags.first_name?.includes("role_inbox_fallback"));
+    const fromRaw = normalizeLead(
+      { id: "1", first_name: null, company_name: null, city: "Tahoe", state: "CA", email: "info@example.com", maps_name: "Obexer's Water Sports" },
+      refs,
+      { names_cities: true, company: true, location: false, sports_team: null },
+    );
+    assert.equal(fromRaw.company_n, "Obexer's Water Sports", "D67: maps_raw.name wins when ingest title is empty.");
   });
 });

@@ -81,6 +81,3 @@ export class Overlap {
 export const SIZE_WITHIN_CLIENT = 4;
 export const SIZE_ACROSS_CLIENTS = 8;
 
-/** Lane checks overlap the same way, with a smaller cap so the db pool stays free for a size. */
-export const WATCH_WITHIN_CLIENT = 2;
-export const WATCH_ACROSS_CLIENTS = 4;

@@ -40,7 +40,7 @@ export interface QaRule {
 export const QA_FIELD_COLUMN: Readonly<Record<string, string>> = {
   title: "title",
   job_title: "title",
-  company_name: "company_name",
+  company_name: "company_n",
   company_n: "company_n",
   industry: "industry",
   vertical: "vertical",
@@ -172,11 +172,7 @@ export class QaStage {
   /** Rows still on hold, by hold rule, with up to ten sample company names / titles. */
   private async holdGroups(table: string, runId: string): Promise<Array<{ rule: string; count: number; samples: string[]; fields: string | null }>> {
     const { rows } = await this.d.repo.raw().query<{ rule: string; n: string; samples: string[] | null; fields: string | null }>(
-      `select coalesce(qa_flags->>'hold_rule', 'unknown') as rule, count(*)::text as n,
-              (array_agg(distinct coalesce(nullif(company_n, ''), nullif(company_name, ''), nullif(title, ''), '(blank)')))[1:10] as samples,
-              string_agg(distinct f.x, ', ') as fields
-       from ${table} left join lateral jsonb_array_elements_text(coalesce(qa_flags->'merge_field_empty', '[]'::jsonb)) f(x) on true
-       where run_id = $1 and lead_status = 'qa_hold' group by 1 order by 1`,
+      qaHoldGroupsSql(table),
       [runId],
     );
     return rows.map((r) => ({ rule: r.rule, count: Number(r.n), samples: r.samples ?? [], fields: r.fields }));
@@ -208,6 +204,24 @@ export class QaStage {
       return r.rowCount ?? 0;
     });
   }
+}
+
+/**
+ * QA hold groups for one job (D65). Count is distinct rows of this
+ * run_id, never the whole lane table and never multiplied by the
+ * merge_field_empty array (147 × 4 fields was 588 on card 419e7169).
+ */
+export function qaHoldGroupsSql(table: string): string {
+  return `select coalesce(qa_flags->>'hold_rule', 'unknown') as rule, count(*)::text as n,
+              (array_agg(distinct coalesce(nullif(company_n, ''), nullif(company_name, ''), nullif(title, ''), '(blank)')))[1:10] as samples,
+              string_agg(distinct fields, ', ') as fields
+       from (
+         select qa_flags, company_n, company_name, title,
+                (select string_agg(distinct x, ', ') from jsonb_array_elements_text(coalesce(qa_flags->'merge_field_empty', '[]'::jsonb)) x) as fields
+           from ${table}
+          where run_id = $1 and lead_status = 'qa_hold'
+       ) job_holds
+       group by 1 order by 1`;
 }
 
 function distinct(values: string[], n: number): string[] {

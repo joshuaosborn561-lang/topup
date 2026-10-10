@@ -368,7 +368,7 @@ export class LaneLedger {
       step_owner: step === null ? null : spineStep(step).owner,
       gate_unmet: row?.gate_unmet ?? null,
       run: run ? { run_id: run.run_id, status: run.status, current_step: run.current_step, opened_at: iso(run.opened_at) } : null,
-      next_intent: row?.next_intent ?? (run ? null : "Nothing queued; the runway watch decides when a run opens."),
+      next_intent: row?.next_intent ?? (run ? null : "Nothing queued; Grok calls pull when a person says so."),
       blocked,
       queues: {
         ingested_by_status: ingested,

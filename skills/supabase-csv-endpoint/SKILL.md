@@ -1,6 +1,6 @@
 ---
 name: supabase-csv-endpoint
-description: Serve Supabase table data as a public CSV URL using a SQL RPC plus an edge function, and ingest result CSVs back server to server. Use whenever a tool needs a publicly reachable file_url (Email Verifier Progression start_verification, Smartlead stage_leads_from_url, LeadMagic bulk file_url), or whenever Josh asks for a file of lead data, because rows must never pass through chat context. Grok bot (D39) must use this or LeadPipe instead of pasting CSVs. Also covers reading a signed result CSV back into Postgres with http_get, including the DO block workaround for long signed URLs that break the MCP SQL parser.
+description: Serve Supabase table data as a public CSV URL using a SQL RPC plus an edge function, and ingest result CSVs back server to server. Use whenever a tool needs a publicly reachable file_url (Email Verifier Progression start_verification, Smartlead stage_leads_from_url), or whenever Josh asks for a file of lead data, because rows must never pass through chat context. Grok bot (D39) must use this or LeadPipe instead of pasting CSVs. Also covers reading a signed result CSV back into Postgres with http_get, including the DO block workaround for long signed URLs that break the MCP SQL parser. LeadMagic bulk file_url is dropped (D58).
 ---
 
 # Supabase CSV endpoint
@@ -78,7 +78,7 @@ The verifier run tonight was checked this way before `start_verification` fired.
 - **Email Verifier Progression `start_verification`** takes the URL directly as `file_url`.
 - **File deliverable for Josh**: curl the URL to `/mnt/user-data/outputs/` in the container and
   present the file. Rows reach Josh without ever entering chat text.
-- Same shape works for Smartlead `stage_leads_from_url` and LeadMagic bulk `file_url`.
+- Same shape works for Smartlead `stage_leads_from_url`. LeadMagic bulk `file_url` is dropped (D58).
 
 ### Security note
 

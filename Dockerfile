@@ -1,4 +1,6 @@
-FROM node:22-bookworm-slim
+# ECR Public mirror of Docker Hub library/node. Railway hits Docker Hub
+# 429s on node:22-bookworm-slim; this tag is the same image.
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim
 
 WORKDIR /app
 

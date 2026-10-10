@@ -77,9 +77,18 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D55 | Live; `leftovers` read: where past pulls left rows, per client, as counts (lane table, client schema, waterfall tables, people status, scratch estimates); moves nothing; each store shows its gap (domain, person, email, phone) and the step that fills it |
 | D56 | Live; phones are kept: phone / phone_type / wf_phone / wf_phone_type on every lane table, phone on staging, waterfall phones copied, cellphone from the people contacts, ingest maps vendor phone headers, stage carries phone to Smartlead's phone_number; `leftovers` shows need_phone |
 | D57 | Live; maps `count` and `pull` read `client_<tag>.maps_raw` scoped by `plan_id` and categories, plus the named ICP view (companion `v_*_companies` ∪ `v_*_needs_domain` when present); already used is live `public.leads` on the receipt's campaigns; never `pipeline_stats` by state/client_tag |
-| D58 | Open on PR #35; LeadMagic is dropped and old receipts replay as aiark. Not shipped on this branch |
-| D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories are not applied again on that union |
+| D58 | Live; LeadMagic is dropped. Replay maps `email_max_tier=leadmagic` to `aiark` and a LeadMagic person source to the live Find Named Person order; old receipts are not rewritten |
+| D59 | Live; maps ICP SQL types every bind (`$1::text`); companion views that omit `plan_id` join `maps_raw` so `$1` is used; scrape categories re-applied on the companion union by D68 |
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
+| D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
+| D62 | Live; a background maps pull always ends done or failed with `last_error`; the copy reads the named ICP view (not the companion join), times out, and dedupes with or without a unique email index |
+| D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). That PR writes the live D63 text. This stub keeps the ledger contiguous so D64 can ship off main |
+| D64 | Live; job 46b1c941: enrich approval runs the paid people step; a step that did not run is not done; ICP labels are tokens; spend cards re-quote and record actuals; maps used/net-new includes ingested + contacted; lp_export reads the wrapped payload; verify retry uses the recorded approval and does not park; `size` is the free dry-run; maps pull skips held emails before max_rows |
+| D65 | Live; job 46b1c941 after #42: size is async + aggregate SQL; approval is idempotent per step/approver/amount; QA hold count is this job; a false done with queued rows is reopened; Lane E role-inbox company from Maps name; first_name_fallback defaults off |
+| D66 | Live; job 46b1c941 after #43: people/email waterfalls read an ingest `_ew` view that exposes `domain` from `company_domain`; a done step reopens when its `rules_hash` changed or `force=true`. Runtime CREATE VIEW in `lp` superseded by D67 |
+| D67 | Live; job 46b1c941 after #44: no runtime DDL — people/email waterfalls read `topup.<tag>_ingested_leads_ew` from one-time migration 0021; normalize fills company from `maps_raw.name` joined on email; ingest coalesces company/name/title |
+| D68 | Live; job 46b1c941 after #45: hold and fill share `company_n`; maps city is parsed from `City, ST`; lane E ICP re-applies `main_category` and drops preschool–high school (reverses D59's no-reapply) |
+| D69 | Live; job 46b1c941 after #46: a step reopen replaces counts (stale held_company_n / company.missing cannot survive); size pool binds start at $11 so categories do not collide with $2::int[] |
 
 ---
 
@@ -1879,7 +1888,6 @@ that server needs the one-line mapping.
 
 **Guard.** `src/guards/d56_keep_phones.test.ts`. Ask Josh.
 
-
 ## D57 — Maps count and pull read the stored pool by plan_id
 
 **Decision.** `count` and `pull` with `source=maps` read the stored pool
@@ -1912,17 +1920,53 @@ receipt's `rows_imported`.
 
 **Guard.** `src/guards/d57_maps_plan_id.test.ts`. Ask Josh.
 
+## D58 — LeadMagic is dropped
 
-## D58 — LeadMagic is dropped; replay old receipts as aiark
+**Decision.** Josh dropped LeadMagic on 2026-10-08. This service never
+calls it, never prices it, and never writes its names on a new recipe or
+a new receipt.
 
-**Decision.** Open PR #35 claims this number: LeadMagic is no longer a
-live vendor; old receipts that say `leadmagic` replay as `aiark`. This
-branch does not ship that. Maps ICP binds are D59.
+1. **Email ceiling.** A stored `email_max_tier` of `leadmagic` (or `lm` /
+   `lead_magic`) is a legacy ceiling: replay as `aiark` (the old spend
+   boundary — stop before Prospeo — minus the dead vendor) and warn.
+   New job recipes default to `aiark`. Zod preprocess maps the old name
+   so a new recipe cannot store it. `find_emails` sends the mapped
+   ceiling to the Email Waterfall.
+2. **People.** The puzzle step calls Find Named Person with no
+   `skip_tiers` and no LeadMagic max_tier. That service's default order
+   is `site_staff → cache → discolike → prospeo_search → aiark_people`.
+   A stored person source of `leadmagic_employee_finder` (and the old
+   aliases) maps to `people_waterfall` plus that order, with a warning.
+   The spend gate uses the Prospeo search and AI Ark people prices from
+   the 2026-10-08 receipt, not the old 5¢ LeadMagic row.
+3. **History stays.** `topup.pull_receipts` and `lead_provenance` and
+   their CHECK constraints still allow the old names. Seven historical
+   receipts hold `email_max_tier='leadmagic'`. They are not rewritten.
+   `campaign_record` shows the stored value and a `legacy_warnings`
+   line. `write_receipt` maps before insert so a new row never stores
+   the old names.
+4. **Live recipe SQL is review-only.** `docs/drop-leadmagic.sql` updates
+   `topup.lane_recipes` for `vasco / signal_warranty_admin_hiring` from
+   `max_tier=leadmagic` to `aiark`. It is not run from this PR, from
+   migrate, or from a deploy. It never touches `dl_status`,
+   `sg_exclude`, or `skip_*`.
+5. **Counts only.** Nothing in this change selects a lead column or
+   writes a lead status.
 
-**Why.** Two PRs took D58 the same day. #35 was first.
+**Why.** The LeadMagic key still authenticates with 0.2 credits. The
+people waterfall's default order still named `leadmagic_employee`; a
+missing key fails the whole job. The only latest receipt that would
+replay `email_max_tier=leadmagic` is vasco `signal_warranty_admin_hiring`.
+The Email Waterfall default `max_tier=leadmagic` also stops before
+Prospeo, so the mapped ceiling is `aiark`, not a wider spend.
 
-**Guard.** `src/guards/d58_drop_leadmagic.test.ts` on PR #35. Ask Josh.
+**Tradeoff.** A replay of an old receipt spends on AI Ark / Prospeo /
+DiscoLike instead of LeadMagic. Coverage is the people service's new
+default, not a guessed substitute for a roster pull. The live vasco
+recipe stays `leadmagic` in the database until someone runs the review
+SQL.
 
+**Guard.** `src/guards/d58_drop_leadmagic.test.ts`. Ask Josh.
 
 ## D59 — Maps ICP binds are typed; companions join maps_raw for plan_id
 
@@ -1985,3 +2029,441 @@ project's 60-connection cap with the live Allo hooks; the limits in the
 skill are the limits in the code.
 
 **Guard.** `src/guards/d60_icp_gate.test.ts`. Ask Josh.
+
+## D61 — Maps pull is idempotent; pull returns a job id; nothing opens as the watch
+
+**Decision.** Three things, one rule.
+
+1. **Idempotent maps insert.** `copyMapsPool` writes `lp.<tag>_ingested_leads`
+   with `DISTINCT ON (email)` inside the batch and `ON CONFLICT (email) DO
+   NOTHING` when that table has a unique email index. Skipped rows (batch
+   dups and emails already in the table) are counted as `already_held`.
+   The pull does not fail on `emcor_ingested_leads_email_uidx`. Counts
+   only; no row comes back.
+2. **Pull returns at once.** `pull` opens the job, returns `job_id` with
+   `status` started, and runs pull then ingest in the background. Poll
+   `job(job_id)`. Grok still calls the verb; nothing chains the next one.
+   A spend card still waits for `approved_by` on a later `pull(job_id)`.
+3. **The watch cannot open a run.** `opened_by` of `watch` / `the watch`,
+   or trigger `runway` / `scheduled`, is refused. Boot does not drive
+   leftover watch runs. The old runway watch is gone from this repo
+   (D53); this stops it if a stale image or a leftover caller tries again.
+
+**Why.** Job `89f5708d` (emcor #4037475, maps, plan `custom-1789679826`)
+failed at pull: `duplicate key value violates unique constraint
+"emcor_ingested_leads_email_uidx"`. The same MCP `pull` also timed out
+waiting for the 2,000-row copy. Separately, run `dc241965` opened today
+with `opened_by=watch`, trigger `runway`, event *"opened by the watch
+(client-wide runway low, still working)"*, then the old size/pull
+pipeline. That violates canon rule 5. `src/watch` is already deleted;
+the live Railway image at 13:19 UTC still opened ~20 watch runs.
+
+**Tradeoff.** A maps pull of 2,000 unique emails that are already in the
+ingest table inserts 0 and reports `already_held` 2000; it does not keep
+scanning for more new ones past `max_rows`. `pull` no longer returns the
+final pull counts on the first call — `job(job_id)` does. Railway cron
+and a second replica cannot be turned off from this repo; they are
+named in the PR.
+
+**Guard.** `src/guards/d61_maps_pull_async_watch.test.ts`. Ask Josh.
+
+## D62 — A background maps pull cannot hang
+
+**Decision.** Four things, one rule.
+
+1. **The copy is a short query.** `copyMapsPool` reads the named ICP view
+   (or `maps_raw`) with `plan_id`, `keep_final` when present, and
+   `LIMIT`. It does not join companion `v_*_companies` ∪
+   `v_*_needs_domain` for the insert. Those companions stay on the count
+   path (D57, D59).
+2. **Dedupe works without a unique index.** The batch is `DISTINCT ON
+   (email)`. Emails already in `lp.<tag>_ingested_leads` are skipped with
+   `NOT EXISTS`. `ON CONFLICT (email) DO NOTHING` is added only when a
+   unique email index exists. Skipped rows stay `already_held`.
+3. **The copy has a statement timeout.** The write transaction does
+   `SET LOCAL statement_timeout` to 45 seconds
+   (`MAPS_COPY_STATEMENT_TIMEOUT_MS`). The cancel writes through as an
+   error. Ask Josh if 45s is wrong.
+4. **A background verb always ends.** `JobRunner.begin` no longer only
+   logs. A throw or a 90 second job timeout (`VERB_BACKGROUND_TIMEOUT_MS`)
+   writes `last_error` on the running step, closes the job as `failed`,
+   and leaves a lane event. A job already `failed` is not rewritten to
+   `done`. Ask Josh if 90s is wrong.
+
+**Why.** Job `44fa45d9` (emcor #4037475, plan `custom-1789679826`, ICP
+`v_lane_e_final`, `max_rows` 2000) sat at `pull=running` for 12+ minutes
+with empty counts and no `last_error`. Railway logs went silent after
+`run_opened` and the legacy-tier event. The unique email index on
+`lp.emcor_ingested_leads` exists; `leadtopup_app` has no
+`statement_timeout`; `lock_timeout` is 0. After abort, `pg_stat_activity`
+still showed the windowed CTE as `active` with no `wait_event` — CPU, not
+a lock, not pool exhaustion. EXPLAIN of the companion insert is a
+Parallel Seq Scan of `maps_raw` with the ICP regex evaluated twice, then
+joined back to `maps_raw`; `LIMIT 2000` cannot stop that. `begin()`
+caught errors only to log them, so a hung query left the step running.
+
+**Tradeoff.** Count still uses the companion union (companies ∪ needing
+domain). Copy from the named view with `keep_final` may include more
+place_ids than that union (it is not `DISTINCT ON` domain). A maps pull
+of 2,000 rows that are already held still reports `already_held` 2000
+and does not keep scanning. The 45s / 90s numbers are ours until Josh
+names others. Abort still does not `pg_cancel_backend` an in-flight
+query; the statement timeout is what stops it.
+
+**Guard.** `src/guards/d62_maps_pull_timeout.test.ts` and the PGlite
+cases in `src/canon/mapsPool.pg.test.ts`. Ask Josh.
+
+## D63 — Suppression recycle and POD inbox exclusion (reserved)
+
+**Decision.** Reserved for PR #40 (`cursor/suppress-client-inbox-a879`).
+That PR owns D63 (client-only suppress, 6-month recycle, POD inbox
+exclusion). This stub exists so D64 can land on a branch off main
+without a gap in the ledger. Do not implement D63 here.
+
+**Why.** #40 is open and unmerged. Meta requires contiguous numbers.
+
+**Tradeoff.** Two D63 headers will collide if #40 merges without
+replacing this stub. #40 should take this number; this PR does not
+ship suppress behaviour.
+
+**Guard.** None on this branch. Ask Josh.
+
+## D64 — Job 46b1c941: approve, label, used, export, size, pull
+
+**Decision.** Seven things, one rule, from job `46b1c941` (emcor maps
+#4037475).
+
+1. **`approved_by` runs the paid step.** Puzzle waits as
+   `spend_approval`, not a parked card. The gate sees `approvedCents`.
+   `approved_by` records the amount, closes the spend card and any
+   leftover parked card for that step, and runs Find Named Person. The
+   queue is what is on the table now, not only this attempt's updates
+   from `needs_email`. A step that did not run, or processed 0 of N
+   queued rows, is failed/blocked with `last_error`, never `done`.
+   `find_emails` does not skip while `needs_person` or `needs_domain`
+   remain.
+2. **ICP labels are tokens.** Jev's `answers.category.choice` (then
+   `reason` if it is a snake_case token `/^[a-z][a-z0-9_]{2,80}$/`) is
+   the label. An unparseable sentence is `null` plus
+   `icp_label_unparseable`. Never the raw sentence, never slugged.
+3. **The spend card follows the estimate.** A re-quote updates the open
+   card's `rows` and `worst_case_cents`. Completion writes
+   `actual_cents`. A successful finish clears `last_error`.
+4. **Maps used is a union.** `count` reports `already_live` (receipt
+   campaigns), `already_ingested` (`lp.<tag>_ingested_leads`),
+   `already_contacted` (this-client sends in 90 days +
+   `public.suppression`), `already_used` as the distinct union, and
+   `net_new`. Counts only. 90 days matches suppress on main; ask Josh
+   if D63's six months should replace it.
+5. **`lp_export` unwraps `{ok, tool, result}`.** Read
+   `result.signed_url` / `result.row_count`; still accept the flat
+   shape. A recorded verify approval is reused on retry. A third
+   verify failure does not park the job when that approval is on the
+   step; `verify(job_id)` resumes.
+6. **`size(client_tag, campaign_id, source, filters)`** is a free
+   dry-run read. It walks the entire maps pool the way `count` does,
+   reports already held, suppression drops by reason, and net new.
+   Opens no job, spends nothing, does not block the lane. Counts only.
+7. **Maps pull skips held emails before `max_rows`.** Successive pulls
+   advance through the pool instead of re-windowing the same already-held
+   slice.
+
+**Why.** Job `46b1c941`: `enrich(approved_by='Josh')` for a $0.67 Find
+Named Person estimate marked puzzle done on attempt 2 with 0 people /
+0 domains, never recorded the approval, left `last_error` 'over the
+auto cap, Ask Josh', left parked card `f19dbfae` open, and skipped
+`find_emails` while 19 rows sat at `needs_person`. Cap check ran
+without `approvedCents`; classify only looked at `needs_email`;
+`finish()` reported done. ICP stored Jev's raw sentence on 24 rows
+(`coalesce(reason, model)`). The ICP spend card kept $0.41 after the
+estimate fell to $0.17; `actual_cents` stayed unset (about 13¢). Maps
+count said 12,305 net new; a 2,000 pull gave 815 new and 333 survived
+suppression (473 already contacted) because used ignored ingested and
+this-client prior contact, and `LIMIT` ran before the held skip.
+Verify failed twice on `lp_export returned no signed_url/row_count:
+["ok","tool","result"]` with Josh's $1.40 already on the step.
+
+**Tradeoff.** Maps used components need `maps_raw.email`; without it
+the count falls back to live campaign leads only. `size` is maps-only;
+getleads still uses `count` + `held`. Verify with a recorded approval
+never parks on attempt cap — a broken vendor can retry indefinitely
+until someone aborts. Ask Josh if that should be a card instead.
+Pull of 2,000 now prefers unseen emails; `already_held` is the
+pre-insert dest∩pool count, not `windowed - inserted`.
+
+**Guard.** `src/guards/d64_enrich_icp_count.test.ts`. Ask Josh.
+
+## D65 — Job 46b1c941 after #42: size, approve, QA count, reopen, Lane E
+
+**Decision.** Five things, one rule, from the same EMCOR job after D64
+shipped (`da77102`).
+
+1. **`size` is async and the suppress pass is one aggregate JOIN.** The
+   MCP call returns a `size_id` at once (`status` started). Poll
+   `size(size_id)`. Opens no job, spends nothing, does not block the
+   lane. The suppress-by-reason SQL LEFT JOINs the positive / DNC /
+   wrong-person / list / bounce / prior-contact / offer sets and
+   `count(*)`s. It does not run a correlated EXISTS per pool email.
+   The query has a 45s statement timeout
+   (`SIZE_STATEMENT_TIMEOUT_MS`). Ask Josh if 45s is wrong. A restart
+   loses an in-flight size — call `size` again.
+2. **Approval is idempotent per step / approver / amount.**
+   `approveStep` stores `greatest(approved_cents, this amount)`. A
+   second `approved_by` of the same person and the same cents does not
+   add and does not write a second lane event. Two Josh taps of $1.40
+   stay $1.40, not $2.80.
+3. **A QA hold count is this job.** Groups are `run_id = $1` and
+   `lead_status = 'qa_hold'`. The count is distinct rows of the job,
+   never the lane table and never multiplied by the
+   `merge_field_empty` array (147 rows × 4 empty fields was 588 on
+   card `419e7169`).
+4. **A pre-D64 false `done` can be reopened.** If a step is `done` but
+   rows are still queued for it (`needs_person` / `needs_domain` on
+   puzzle, `needs_email` on find_emails, merge-field `qa_hold` on
+   normalize), or it is `done` with 0 of N processed, the verb resets
+   the step, closes its leftover parked card, and runs. Job
+   `46b1c941` may call `enrich` again for the 19 `needs_person` rows
+   and close parked card `f19dbfae`.
+5. **Lane E role-inbox.** `info@`, `office@` and the listed locals take
+   company from the Maps business name (`title` on the ingest row;
+   maps copy also picks `title` for `company_name` when `company` /
+   `name` are absent). First-name / greeting fallback is
+   `recipe.normalize.first_name_fallback`. Default is unset: the hold
+   for a missing first name is unchanged. Josh decides the string.
+   Normalize re-processes this job's `qa_hold` rows that carry
+   `merge_field_empty`.
+
+**Why.** After #42: `size` for EMCOR Lane E (~18k pool, 404 ZIPs × 25
+categories) hit the ~60s MCP limit on the correlated EXISTS walk.
+Two `verify(approved_by='Josh')` calls added $1.40 + $1.40 on the
+step (`approveStep` was `approved_cents + $3`). QA card `419e7169`
+said 588 leads on a 147-row job because `holdGroups` joined
+laterally to `merge_field_empty` and `count(*)`d the explosion.
+`enrich` refused with *every step already done* while 19 rows sat at
+`needs_person` and parked card `f19dbfae` stayed open — pre-D64
+puzzle had finished as done. Normalize held all 147 for empty
+`first_name_n` + `company_n`: Maps business name landed in `title`,
+not `company_name`, and role inboxes have no person.
+
+**Tradeoff.** Size results live in the one replica's memory; a
+restart loses an in-flight `size_id`. The greeting is not filled
+until Josh sets `first_name_fallback`. Reopening a false done still
+needs Grok to call the verb; nothing starts on its own. Ask Josh
+if the role-inbox local set should grow, or if size should persist
+to a table.
+
+**Guard.** `src/guards/d65_emcor_job_fixes.test.ts`. Ask Josh.
+
+## D66 — People-waterfall domain view, and a step reopens on a rules change
+
+**Decision.** Two leftovers on job `46b1c941` after D65 shipped
+(`1955dad`).
+
+1. **Find Named Person reads a view that exposes `domain`.** Shared RPC
+   `public.ew_read_source` (email-waterfall
+   `supabase/migrations/003_ew_source_rpcs.sql`; used by
+   find-named-person-waterfall `people_waterfall/source.py`) SELECTs the
+   columns it is given. People waterfall's map is `domain` / `website`
+   only, and `count_source_with_domain` hardcodes `domain is not null`.
+   `lp.emcor_ingested_leads` (and the other lane tables) store the host
+   as `company_domain`. Topup CREATE OR REPLACE VIEWs
+   `lp.<tag>_ingested_leads_ew` (`t.*, domainSql as domain`) and hands
+   that name to `resolve_people` / `enrich_waterfall`. No ALTER of the
+   live lane table. Migration `0020_ingested_ew_domain_view.sql` is the
+   durable function; it is **unapplied** until Josh says so. The other
+   repos are not edited. If that side should grow `company_domain` as a
+   domain candidate, the change is
+   `people_waterfall/source.py` `FIELD_CANDIDATES["domain"]` and
+   `count_source_with_domain` (use the mapped column, not the literal
+   `domain`). Ask Josh before touching those files.
+2. **A done step reopens when its rules hash changed, or when
+   `force=true`.** `run_steps.counts.rules_hash` is the version the step
+   last ran under (`STEP_RULES` in `src/jobs/rules.ts`). Normalize's
+   hash is `d66:role-inbox-maps-name`. A call whose stored hash is
+   missing or different resets the step and runs it, so D65's Maps-name
+   company fill reaches the 147 already-done holds. `force=true` on a
+   verb does the same for that verb's steps even when the hash matches.
+   D65's queued / 0-of-N reopen stays.
+
+**Why.** After #43: people waterfall failed with `column "domain" does
+not exist in RPC ew_read_source on lp.emcor_ingested_leads`. Topup
+passed the raw ingest table with no column map; `resolve_people` does
+not accept `map`. Normalize after D65 returned `done` with the same
+147 held — the step was already `done` under the pre-hash contract, so
+the runner skipped (or re-ran the same stored hash) and the new
+company fill never wrote. A rules hash plus `force` is the reopen
+that D65's queued heuristic missed.
+
+**Tradeoff.** The `_ew` view is created at call time; a role that
+cannot CREATE VIEW in `lp` will fail the people step until 0020 is
+applied. Writeback ALTER against the view falls back to the people
+waterfall sidecar (`public.wf_people_status`); names still land in
+`public.<tag>_wf_contacts`. `force` is a named opt-in, not a default.
+Ask Josh if the view should be a generated column on the lane table
+instead, or if people-waterfall should take `map`.
+
+**Guard.** `src/guards/d66_people_domain_normalize_rerun.test.ts`. Ask
+Josh.
+
+## D67 — No runtime DDL; Maps company is `maps_raw.name`
+
+**Decision.** Two leftovers on job `46b1c941` after D66 shipped
+(`eb62bf6`).
+
+1. **The service never CREATE / DROP / ALTER.** D66's
+   `ensureEwDomainSource` ran `DROP VIEW` / `CREATE VIEW` in schema
+   `lp`. `leadtopup_app` cannot CREATE there (`permission denied for
+   schema lp`). We do not grant CREATE or USAGE extras on `lp`.
+   `ew_read_source` (and `dw_read_source`) SELECTs identifier columns
+   only — no aliases — so we cannot hand `company_domain AS domain`.
+   People waterfall does not accept `map`. The fix is a one-time,
+   non-destructive migration `0021_ingested_ew_domain_views.sql` that
+   creates `topup.<tag>_ingested_leads_ew` (`select t.*, company_domain
+   / email host as domain`) for every existing `lp.*_ingested_leads`
+   that has no `domain` column, plus SELECT/UPDATE on those views to
+   `leadtopup_app`. **Unapplied until Josh says so.** The service
+   looks the view up (`to_regclass` / `information_schema.tables`) and
+   fails with "apply 0021, ask Josh" when it is missing. 0020 is a
+   no-op that drops `topup.ensure_ingested_ew_view` if it ever landed.
+   The other-repo alternative, if Josh prefers that to applying 0021:
+   `people_waterfall/source.py` add `company_domain` to
+   `FIELD_CANDIDATES['domain']` and make `count_source_with_domain`
+   use the mapped column. This repo does not edit that file.
+
+2. **Normalize fills company from `maps_raw.name`.** After D66's
+   rules-hash reopen the Maps-name fill matched 0 of 147. Read-only
+   counts on `lp.emcor_ingested_leads` (job `46b1c941`): every held
+   row has empty `title` and empty `company_name`. Ingest has no
+   `place_id`, no `source_url_hash`, no `content_hash`. All 147 join
+   `client_emcor.maps_raw` on `lower(email)`; `maps_raw.name` is
+   populated on every join; `maps_raw.company` and `title` are empty.
+   Sample names (10, no emails): Obexer's Water Sports; Howell Mountain
+   Ace Hardware; American Canyon High School; American Canyon Middle
+   School; Utica Park FitLot Outdoor Fitness Park; Bret Harte Theater;
+   Dainty Montessori School by Olivina Educ; Haven Humane Society
+   Adoption Center; Auberge du Soleil; The Pines Resort. Root cause of
+   the empty ingest: `copyMapsPool` picked the first *existing* column
+   (`company`) and `nullif` emptied it, never falling through to
+   `name`. The copy now coalesces `company`, then `name`, then
+   `title`. Normalize left-joins `maps_raw` on `lower(email)` and
+   fills empty company from `name` (any row, not only role-inbox —
+   `name` is the business). Role-inbox `title` fill stays as a
+   fallback. Role-inbox locals grow by the generic roles on this job
+   (`staff`, `customerservice`, `concierge`, `boxoffice`, `events`,
+   `rentals`, `orders`, `recruiting`, `inquire`, `reservations`,
+   `adoptions`, `parties`, `storage`). Brand-as-local and person
+   locals are not added. First-name fallback stays off. Normalize's
+   `rules_hash` is `d67:maps-raw-name-join` so the 147 reopen.
+
+**Why.** After #44: Find Named Person failed with `permission denied
+for schema lp` on the runtime CREATE VIEW. The 147 still held —
+ingest never stored the Maps business name, so title→company wrote
+nothing. 54 of 147 locals were already on the role-inbox list; the
+company miss was the empty ingest columns, not the list. `ew_read_source`
+cannot alias; a SECURITY DEFINER read function in topup would not be
+called by people-waterfall (it hardcodes that RPC).
+
+**Tradeoff.** 0021 covers the 17 `lp.*_ingested_leads` tables that
+exist at apply time. A client added later needs another view in the
+same shape — ask Josh; the service will not CREATE it. Writeback
+UPDATEs the view (auto-updatable; `domain` is computed and is not
+written). Applying 0021 is Josh's call. The other-repo FIELD_CANDIDATES
+change is documented, not shipped here.
+
+**Guard.** `src/guards/d67_no_runtime_ddl_maps_name.test.ts`. Ask Josh.
+
+## D68 — Hold reads `company_n`; maps city is parsed; lane E ICP re-applies categories and drops schools
+
+**Decision.** Three leftovers on job `46b1c941` after D67 shipped
+(`2bf9f7c`).
+
+1. **Hold and fill share `company_n`.** After normalize the merge
+   value is `company_n` (recipe `required_fields`, staging copies it
+   to Smartlead `company_name`). `MERGE_FIELD_COLUMN` and
+   `QA_FIELD_COLUMN` map `company_name` → `company_n` (and
+   `first_name` → `first_name_n`). The hold SQL coalesces
+   `company_n` then `company_name`. An empty raw `company_name` is
+   filled from `company_n` so a later check cannot read the empty
+   source column. Read-only on the 147 `qa_hold` rows: `company_n`
+   filled 147, `company_name` empty 147, `merge_field_empty` has
+   `company_n` 0 / `company_name` 0 (they stay held for
+   `first_name_n` 147, `location` 147, `job_title` 147).
+
+2. **Maps city is parsed.** `maps_raw.city` is `City, ST` (147 of
+   147 holds have a comma; the state column is already set). Ingest
+   writes the city token and keeps/derives state. Normalize splits
+   the same shape before geocode (`city_state_split`). Against
+   `topup.ref_cities`: raw city geocodes 0 of 147; after the split,
+   140 of 147.
+
+3. **Lane E ICP re-applies `main_category` and drops schools.**
+   D59 left scrape categories off the companion union (pool 18,322
+   vs ~8,972 with the receipt's 25). The 147 include 10
+   preschool–high school rows (lane D) plus strays whose ingest
+   industry is outside that 25. On `v_lane_e_*`, categories match
+   `maps_raw.main_category` (not `source_category`, the scrape
+   bucket). Preschool through high school are excluded by an
+   explicit category list plus name keywords (`montessori`,
+   `charter school`, `junior high` included; bare `school` and
+   college are not). Lane D views are untouched. `private school`
+   stays on the receipt list and is still dropped on lane E.
+   Size-equivalent read-only SQL (companion ∪, plan
+   `custom-1789679826`, 25 cats, school exclude): pool 8,973
+   (was 18,322); distinct emails 3,616; already live 2,434;
+   already ingested 486; already contacted 1,827; used union
+   2,625; email net-new 991. Count-style `pool − used` net-new
+   6,348. Full `size()` suppress-by-reason was not replayed.
+   Normalize's `rules_hash` is `d68:hold-city-icp` so the 147
+   reopen.
+
+**Why.** After #45: company fill wrote `company_n` and left
+`company_name` empty. Every hold still failed geocode because the
+city column carried `City, ST`. The ICP companion had no category
+filter, so schools and off-list industries entered the 147.
+
+**Tradeoff.** Re-applying the 25 on lane E cuts the companion pool
+from 18,322 to 8,973 (D59 named this cut and left it for Josh;
+this entry takes it). Email net-new on that pool is 991, under
+the 1,000 TAM floor — ask Josh whether to pull, widen, or stop.
+School exclude is lane E only; a lane D campaign keeps those
+rows. The 147 already ingested stay until a new pull; this does
+not purge them.
+
+**Guard.** `src/guards/d68_hold_city_icp.test.ts`. Ask Josh.
+
+## D69 — Rerun replaces hold counts; size pool binds start at $11
+
+**Decision.** Two leftovers on job `46b1c941` after D68 shipped
+(`48c937f`).
+
+1. **A reopen replaces step counts.** `finishStep` did
+   `counts = counts || $new`. Normalize only writes `held_*` when
+   the count is > 0, and only writes flags this run produced.
+   After D68, the rows were right (`company_n` filled 147/147,
+   `merge_field_empty` has `company_n` 0, `normalize_flags`
+   `company.missing` 0, location empty 7) but the step still
+   showed `held_company_n` 147 and `company.missing` 147 from the
+   previous hash. `resetStep` now keeps only `approved_by`.
+   `finishStep` replaces the payload. Normalize writes every
+   `held_*` including zeros. The hold RETURNING uses the same
+   coalesce as the check. Hash is `d69:hold-recompute-size`.
+   Read-only: a recompute would report `held_company_n` 0.
+
+2. **`size` pool binds start at `$11`.** Recycle SQL hardcodes
+   `$2::int[]` as interested ids. D68's companion FROM uses
+   `$1::text` and `$2::text[]` for plan_id and categories. One
+   query cannot type `$2` both ways; the suppress pass threw and
+   the catch returned 0 for every reason (old 18,322 pool dropped
+   4,194). Pool `$n` now shifts by 10. A missing table still
+   returns zeros; a bind error fails the size.
+
+**Why.** After #46: geocode holds fell to 7. `job()` still showed
+147 company holds. `size()` on the 8,973 pool reported 0 drops.
+
+**Tradeoff.** `finishStep` no longer accumulates partial count
+keys across attempts — `mergeStepExtra` / `mergeStepCounts` stay
+for in-flight markers. A size query error is `failed` with
+`last_error`, not a silent zero. Ask Josh if a missing ingest
+table should stay a soft zero.
+
+**Guard.** `src/guards/d69_hold_recompute_size.test.ts`. Ask Josh.

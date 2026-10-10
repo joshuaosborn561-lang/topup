@@ -59,16 +59,28 @@ The rules you apply:
    campaign under `industries_by_campaign`; pass that campaign's list as
    `industries`. Every other key stays as stored. Maps keeps `plan_id`
    and the categories list (D57); it never scopes by ZIP or `client_tag`
-   alone. Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
+   alone.    Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
    when those exist. Companions that omit `plan_id` join `maps_raw`
-   so the bind is `$1::text` (D59). Already used is live `public.leads`
-   on the receipt's campaigns.
+   so the bind is `$1::text` (D59). On `v_lane_e_*` the receipt
+   categories match `main_category` and preschool–high school are
+   dropped (D68). Already used is the union of live
+   `public.leads` on the receipt's campaigns, emails already in
+   `lp.<tag>_ingested_leads`, and this-client prior contact /
+   suppression (D64). `size(client_tag, campaign_id, source, filters)`
+   is the free dry-run of that pool plus suppression by reason. It
+   returns a `size_id` at once; poll `size(size_id)` (D65). Pool
+   binds are `$11` / `$12` so they do not collide with recycle `$2`
+   (D69). A normalize reopen replaces step counts; do not trust a
+   leftover `held_company_n` from a prior hash.
 4. `held(client_tag, campaign_id, filters, tam)`. If `net_new` < 1,000:
    *the TAM for this campaign is exhausted.* Stop there. If Josh asks for
    options, give each option with its count.
 5. Tell Cayden or Josh: campaign, source, filters, count, net new, rows
    you will pull, worst-case cost. Wait for the yes.
-6. `pull(client_tag, campaign_id, source, filters, max_rows)`. Then
+6. `pull(client_tag, campaign_id, source, filters, max_rows)`. It returns
+   the `job_id` at once (`status` started). Poll `job(job_id)` until pull
+   is done or failed. If it failed, read `last_error` and stop; do not
+   wait on an empty running step. Then
    `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage`, each
    with the `job_id`. `icp` is the website gate from `icp-website-gate`:
    it costs about $0.25 per 1,000 domains, needs a name, and reports the
@@ -76,6 +88,11 @@ The rules you apply:
    worst case to a person and call the same verb with
    `approved_by="Their name"`. `parked` means read `job(job_id)` and fix
    or `abort`. QA holds show in `holds`; clear them with `resolve`.
+   A done normalize whose rules changed (or `force=true`) runs again
+   so the Maps-name company fill can write. Do not pass a lead
+   table with no `domain` column to Find Named Person — this service
+   hands it `topup.<tag>_ingested_leads_ew` (apply migration 0021
+   first; the service never CREATE VIEW).
 7. `import(job_id)` only when `loads_paused` is off and a person said so.
 8. `write_receipt(job_id, …)` with the four legs, the filters you used and
    one plain sentence. The next top-up reads it.
@@ -96,7 +113,7 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 ## Allow list (you may call these)
 
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
-`campaign_record`, `sources`, `count`, `held`, `jobs`, `job`, `spend`,
+`campaign_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
 `leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `suppress`, `enrich`, `verify`,
 `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
 `resolve`, `note`.
@@ -130,6 +147,8 @@ re-reads a list.
   and stop.
 * A verb says `refused`: read `why`. A job the service opened on its own
   cannot exist any more; if you see one, `abort` it and say so.
+* `job(job_id)` shows pull `failed`: read `last_error`. Do not wait on a
+  running step with empty counts.
 * `loads_paused` is on: nothing imports. Say who can flip it.
 * Anything else: `note(client_tag, lane, line)` what you did and what you
   meant to do next, and ask.

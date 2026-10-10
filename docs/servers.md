@@ -456,20 +456,26 @@ deploy 2026-09-09. Python FastMCP over HTTP, no inbound auth. Supabase
 ### Rows
 
 - Table source paged 500 via `ew_read_source` (shares the email-waterfall RPC —
-  `people_waterfall/receipt.py:32`). Count fallback **caps at 50 000**, so a
-  larger source under-reports `total`.
+  `people_waterfall/source.py`; RPC defined in email-waterfall
+  `supabase/migrations/003_ew_source_rpcs.sql`). The map is `domain` /
+  `website` only. leadtopup hands `topup.<tag>_ingested_leads_ew` so
+  `company_domain` is visible as `domain` (D67; apply 0021 first; no
+  runtime CREATE VIEW). Count fallback **caps at
+  50 000**, so a larger source under-reports `total`.
 - Writes people to `public.<tag>_wf_contacts`; source writeback
   `wf_people_count, wf_people_source, wf_people_status`; rejected titles go
   to `public.name_bank`. No tool returns rows.
 
 ### Prices
 
-Per row attempt: cache / getleads / smartlead 0; leadmagic_employee 0.05 credit
-(≈ $0.0005–0.0012 by plan); aiark 0.5 credit (≈ $0.001–0.0049); serp 0.0045;
-prospeo 1 credit `free_on_miss`; leadmagic_role 2 credits. Default order cache
-→ getleads → smartlead → leadmagic_employee → aiark → serp → prospeo →
-leadmagic_role. leadmagic_employee and aiark book $0 on a miss; a vendor retry
-can bill the same row twice.
+Per row attempt (live, D58): cache / site_staff 0; DiscoLike per company;
+prospeo_search 1 credit per page (~$0.0148); aiark_people 0.5 credit per
+result (~$0.00183), title required, cap 3. Default order site_staff → cache
+→ discolike → prospeo_search → aiark_people. LeadMagic employee/role tiers
+are dropped; leadtopup does not pass `skip_tiers` or a LeadMagic max_tier.
+A stored LeadMagic person source maps to this order. Historical audit (Sep
+2026) still named leadmagic_employee as the paid default — that is no longer
+what this service sends.
 
 ### Breakage
 
@@ -535,8 +541,9 @@ Credits only, no dollars: 1.0 credit per attempt (aiark 1.5; email 1.0, phone
 0.5), LeadMagic / AI Ark mobile 5 credits on hit, FullEnrich 1 credit on hit.
 `estimated_cost_usd` is hardcoded `0.0` (`email_waterfall/waterfall.py:875`)
 and the estimate's `spend` is `0`. Cascade getleads → smartlead → aiark →
-leadmagic → prospeo → fullenrich; FullEnrich is unreachable at the default
-`max_tier`, which matches the non-negotiable. No PDL anywhere.
+prospeo → fullenrich (LeadMagic dropped, D58). leadtopup maps a stored
+`max_tier=leadmagic` to `aiark` before the call. FullEnrich is unreachable
+at the default `max_tier`, which matches the non-negotiable. No PDL anywhere.
 
 ### Breakage
 
@@ -912,8 +919,8 @@ is a decision for Josh (D18: unclear → judgement column).
 | PermitStack | `metrics_monthly` (size only: `total_permits`; omit `months` so the API default window applies; do not keep `series`) | `search_permits`, `export_permits`, `sync_permits`, and every other tool |
 | Property Owners | `pull`, `build_operators`, `sync_to_supabase`, `score_*`, `match_*`, `estimate_credits`, `sample_*` (n ≤ 10) | `export_*_csv`, `query_*` beyond samples, `lookup_line_type` without a card |
 | Domain Waterfall | `resolve_domain` (estimate first; `approve_cost_usd` explicit; ≤ 500 rows/batch until redeploy), `get_job_status`, `get_profile`, `health` | `receipt_test` without a card |
-| Find Named Person | `resolve_people` (estimate first; explicit ceiling), `get_job_status`, `get_profile` | `resolve_people` with `approve_cost_usd < 0` |
-| Email Finder Waterfall | `enrich_waterfall` with `source_table` (estimate first; `max_tier` ≤ leadmagic unless `owner_approved_at`), `get_job_status`, `ensure_client`, `describe_client` | `enrich_waterfall` with inline `rows` |
+| Find Named Person | `resolve_people` (estimate first; explicit ceiling; live default `site_staff → cache → discolike → prospeo_search → aiark_people`, D58), `get_job_status`, `get_profile` | `resolve_people` with `approve_cost_usd < 0`; do not pass a LeadMagic `skip_tiers` or `max_tier` |
+| Email Finder Waterfall | `enrich_waterfall` with `source_table` (estimate first; `max_tier` ≤ `aiark` unless the record says Prospeo or Josh stamped FullEnrich; a stored `leadmagic` maps to `aiark`, D58), `get_job_status`, `ensure_client`, `describe_client` | `enrich_waterfall` with inline `rows` |
 | Name to Email | `verify_person` (single, on a card), `get_run` | `start_run` (inline rows), `export_run` |
 | Email Verifier Progression | `start_verification`, `get_verification_status`, `get_verification_results`, `resume_verification`, `list_verification_runs` | `export_all_sendable` (aggregate is a judgement) |
 | Smartlead server | `stage_leads_from_url`, `start_lead_import`, `get_lead_*_status`, `list_lead_*_runs`, `list_campaigns`, `get_campaign*`, `get_sequences`, `list_campaign_mailboxes`, analytics/statistics, `get_lead_by_email`, `add_to_block_list`, `list_email_accounts` | `update_campaign_status`, `delete_campaign`, `start_lead_purge`, `unsubscribe_lead`, `pause_lead`, `unlink_mailboxes`, `import_leads`, `list_campaign_leads`, `export_campaign_leads`, `smartlead_request` |
