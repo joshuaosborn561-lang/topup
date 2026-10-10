@@ -46,7 +46,7 @@ export interface CampaignRecord {
 }
 
 export const HOW_TO_READ =
-  "receipts are what was written at pull time, newest first; builds are the same facts joined to the campaign; leads_by_leg counts the stamped lead rows by where their company, domain, person and email came from. Repeat the legs that fed most of the leads, with the company_filters of the receipt that earned the replies. A missing leg or an empty company_filters is a question for Josh, not a guess. A stored email_max_tier of leadmagic replays as aiark; a stored LeadMagic person source replays as people_waterfall with the live Find Named Person order. The stored row is not rewritten (D58).";
+  "receipts are what was written at pull time, newest first; builds are the same facts joined to the campaign; leads_by_label and leads_by_leg count the stamped lead rows of this campaign only (not twins or a shared build). Repeat the legs that fed most of the leads, with the company_filters of the receipt that earned the replies. A missing leg or an empty company_filters is a question for Josh, not a guess. A stored email_max_tier of leadmagic replays as aiark; a stored LeadMagic person source replays as people_waterfall with the live Find Named Person order. The stored row is not rewritten (D58).";
 
 const RECEIPT_KEYS = [
   "written_by", "written_at", "lane", "campaign_ids", "icp_kind", "persona", "granularity", "build_label",
@@ -66,17 +66,37 @@ const BUILD_KEYS = [
   "company_filters", "method", "leads", "interested", "traced", "rows_found", "rows_imported", "tam_count", "pulled_at", "reconstructed", "receipt_granularity", "suppression_scope",
 ] as const;
 
-export async function leadsByLeg(db: Queryable, clientTag: string, buildLabels: readonly string[]): Promise<LegCount[]> {
+export async function leadsByLeg(db: Queryable, clientTag: string, buildLabels: readonly string[], campaignId?: number): Promise<LegCount[]> {
   const labels = [...new Set(buildLabels.filter((l) => l.length > 0))];
   if (labels.length === 0) return [];
   try {
+    const scoped = Number.isInteger(campaignId);
+    if (scoped) {
+      const { rows: has } = await db.query<{ leads: boolean; campaigns: boolean }>(
+        `select to_regclass('public.leads') is not null as leads, to_regclass('public.campaigns') is not null as campaigns`,
+      );
+      if (!has[0]?.leads || !has[0].campaigns) return [];
+    }
     const { rows } = await db.query<Record<string, unknown>>(
-      `select company_source, domain_source, person_source, email_source, count(*)::text as leads
-         from topup.lead_provenance
-        where client_tag = $1 and build_label = any($2::text[])
-        group by 1, 2, 3, 4
-        order by count(*) desc`,
-      [clientTag, labels],
+      scoped
+        ? `select p.company_source, p.domain_source, p.person_source, p.email_source, count(*)::text as leads
+             from topup.lead_provenance p
+            where p.client_tag = $1 and p.build_label = any($2::text[])
+              and exists (
+                select 1
+                  from public.leads l
+                  join public.campaigns c on c.id = l.campaign_id
+                 where lower(l.email) = lower(p.email)
+                   and c.smartlead_campaign_id = $3::bigint
+              )
+            group by 1, 2, 3, 4
+            order by count(*) desc`
+        : `select company_source, domain_source, person_source, email_source, count(*)::text as leads
+             from topup.lead_provenance
+            where client_tag = $1 and build_label = any($2::text[])
+            group by 1, 2, 3, 4
+            order by count(*) desc`,
+      scoped ? [clientTag, labels, campaignId] : [clientTag, labels],
     );
     return rows.map((r) => ({
       company_source: (r.company_source as string | null) ?? null,
@@ -104,7 +124,10 @@ export async function campaignRecord(db: Queryable, repo: RecordRepo, clientTag:
   const receipts = receiptRows.map((r) => pick(r, RECEIPT_KEYS)).sort((a, b) => String(b.written_at ?? "").localeCompare(String(a.written_at ?? "")));
   const builds = buildRows.map((r) => pick(r, BUILD_KEYS));
   const labels = [...receipts, ...builds].map((r) => r.build_label).filter((l): l is string => typeof l === "string" && l.length > 0);
-  const [byLabel, byLeg] = await Promise.all([provenanceCounts(db, clientTag, labels), leadsByLeg(db, clientTag, labels)]);
+  const [byLabel, byLeg] = await Promise.all([
+    provenanceCounts(db, clientTag, labels, campaignId),
+    leadsByLeg(db, clientTag, labels, campaignId),
+  ]);
   const p = perf.get(campaignId) ?? { sends: 0, positives: 0 };
   const rate = Math.round(ratePer2000(p.sends, p.positives) * 100) / 100;
   const legs = (k: string) => [...receipts, ...builds, ...byLeg].map((r) => (r as Record<string, unknown>)[k] as string | null | undefined);

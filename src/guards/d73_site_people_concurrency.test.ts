@@ -42,7 +42,7 @@ describe("D73 — site-people concurrency and resume", () => {
       assert.match(env, new RegExp(`^${k}=`, "m"), `D3/D73: ${k} is named, never valued in the repo`);
     }
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D73\*\*/, "D73: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D(73|[7-9][0-9]|[0-9]{3,})\*\*/, "D73: fold into CANON. Ask Josh.");
     assert.match(canon, /~50 fetch workers/, "D73: CANON names the fetch default");
     const skill = await readFile(new URL("skills/grok-bot-babysitter/SKILL.md", root), "utf8");
     assert.match(skill, /does not resume|same verb again/, "D73: the babysitter tells Grok how to continue after a deploy");

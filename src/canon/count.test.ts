@@ -6,6 +6,7 @@ import { countSource } from "./count.js";
 
 function deps(over: Partial<Parameters<typeof countSource>[0]> = {}) {
   const recorded: unknown[] = [];
+  const seen: unknown[] = [];
   const rails = {
     gate: async (req: { approvedCents?: number }) => (req.approvedCents && req.approvedCents > 0 ? { kind: "proceed", worstCaseCents: 5, reason: "approved" } : { kind: "ask", worstCaseCents: 5, reason: "worst case $0.05 is over the $0.00 auto cap; needs an owner tap" }),
     record: async (r: unknown) => {
@@ -13,8 +14,9 @@ function deps(over: Partial<Parameters<typeof countSource>[0]> = {}) {
     },
   };
   return {
+    seen,
     d: {
-      getleads: { count: async () => ({ total_matching: 816, exportable_rows: 816 }) },
+      getleads: { count: async (f: unknown) => { seen.push(f); return { total_matching: 816, exportable_rows: 816 }; } },
       aiArk: { count: async () => ({ total_matching: 2231 }) },
       maps: { scopedBusinesses: async ({ category }: { category: string }) => (category === "roofing" ? 120 : 30) },
       permits: { monthlyTotal: async () => ({ total: 50, months: 1, state: "TX" }) },
@@ -43,7 +45,47 @@ describe("D52 — count", () => {
     assert.equal(r.count, 816);
     assert.equal(r.cost_cents, 0);
     assert.ok(!("max_per_company" in r.filters_used));
+    assert.match(r.note ?? "", /export cap/);
     assert.match(r.rule, /TAM for this campaign is exhausted/);
+  });
+
+  it("D74 — maps stored getleads keys and fails on an unmapped key", async () => {
+    const { d, seen } = deps();
+    const r = await countSource(d, {
+      client_tag: "bcp",
+      source: "getleads",
+      filters: {
+        job_titles: ["Partner"],
+        countries: ["United States"],
+        industries: ["Truck Transportation", "Transportation, Logistics, Supply Chain and Storage"],
+        company_description: "private equity",
+        purged_titles: ["Analyst", "Associate"],
+        max_per_company: 3,
+      },
+    });
+    assert.equal(r.count, 816);
+    assert.deepEqual(r.filters_used.industries, ["Truck Transportation", "Transportation; Logistics; Supply Chain and Storage"]);
+    assert.equal(r.filters_used.company_description, "private equity");
+    assert.deepEqual(r.filters_used.exclude_job_titles, ["Analyst", "Associate"]);
+    assert.ok(!("max_per_company" in r.filters_used));
+    assert.ok(!("purged_titles" in r.filters_used));
+    const sent = seen[0] as { industries: string[]; company_description: string; exclude_job_titles: string[] };
+    assert.deepEqual(sent.industries, r.filters_used.industries);
+    assert.equal(sent.company_description, "private equity");
+    const dropped = await countSource(d, {
+      client_tag: "bcp",
+      source: "getleads",
+      filters: { job_titles: ["Partner"], industries_by_campaign: { "3763801": ["Hospitals"] } },
+    });
+    assert.equal(dropped.count, null);
+    assert.match(dropped.note ?? "", /unmapped getleads filter keys: industries_by_campaign/);
+    const badIndustry = await countSource(d, {
+      client_tag: "bcp",
+      source: "getleads",
+      filters: { job_titles: ["Partner"], industries: ["Not A Real Industry"] },
+    });
+    assert.equal(badIndustry.count, null);
+    assert.match(badIndustry.note ?? "", /not a getleads industry/);
   });
 
   it("an AI Ark count is not sent without a name, and is sent and recorded with one", async () => {

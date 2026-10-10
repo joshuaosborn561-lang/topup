@@ -9,7 +9,7 @@ import { isLegacyEmailMaxTier, LIVE_EMAIL_TIERS } from "./legacyLeadmagic.js";
  * fails the suite instead of shredding a pull:
  *
  *   - company_size is exact band labels ("51 to 200"), never numeric bounds
- *   - industry names may not contain commas (they silently shred to nothing)
+ *   - industry names are official getleads values (LinkedIn commas map; D74)
  *   - email_status is optional: omit it to pull every status (D35 item 15)
  *   - fullenrich may not be true without owner_approved_at
  *   - detect_job_change is never a step; PDL / BillionVerifier / Clay never a vendor
@@ -66,6 +66,8 @@ const getleadsParams = z
     companyIndustry: z.array(noComma).optional(),
     /** About-text wording. Specialties and company_headline are not sent. */
     company_description: z.string().min(1).optional(),
+    /** Stored as purged_titles on BCP receipts; count_contacts takes exclude_job_titles. */
+    exclude_job_titles: z.array(z.string().min(1)).min(1).optional(),
     email_status: z.array(z.enum(GETLEADS_EMAIL_STATUSES)).min(1).optional(),
     max_per_company: z.number().int().min(1).optional(),
   })

@@ -50,4 +50,21 @@ describe("D49 — campaignintelligence tags as counts", () => {
     }
     assert.deepEqual(await provenanceCounts(db as never, "vasco", []), []);
   });
+
+  it("D74 — a campaign id scopes the stamp count to that campaign", async () => {
+    const sql: string[] = [];
+    const db = {
+      query: async (text: string) => {
+        sql.push(text);
+        if (text.includes("to_regclass")) return { rows: [{ leads: true, campaigns: true }] };
+        return { rows: [{ build_label: "itdm_501_1000", confidence: "traced", leads: "200" }] };
+      },
+    };
+    const counts = await provenanceCounts(db as never, "bcp", ["itdm_501_1000"], 3763801);
+    assert.deepEqual(counts, [{ build_label: "itdm_501_1000", confidence: "traced", leads: 200 }]);
+    assert.ok(sql.some((q) => q.includes("smartlead_campaign_id") && q.includes("exists")), "D74: twins sharing a build are not one count");
+    for (const text of sql) {
+      assert.doesNotMatch(text, /select\s+p\.email\b/i, "D2/D74: the campaign scope is an EXISTS, never a selected email");
+    }
+  });
 });

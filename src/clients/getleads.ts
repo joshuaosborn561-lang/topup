@@ -10,8 +10,9 @@ import { McpHttpClient } from "./mcpHttp.js";
  * Grok bot must not call these (D39) — the Railway service does, server-side.
  *
  * The brief's getleads rules are enforced by the recipe schema before a
- * filter reaches this file: headcount is band labels, industries carry no
- * commas, `email_status` omitted pulls every status (D35 item 15).
+ * filter reaches this file: headcount is band labels, industries are
+ * official getleads names (LinkedIn commas map to semicolons; D74),
+ * `email_status` omitted pulls every status (D35 item 15).
  * `assertGetleadsFilters` also refuses band labels plus a numeric
  * employee bound (D34). `outboundFilters` sends count keys only:
  * exact band labels, never `max_per_company` (D43).
@@ -232,6 +233,7 @@ export const GETLEADS_COUNT_KEYS = [
   "cities",
   "industries",
   "company_description",
+  "exclude_job_titles",
   "email_status",
   "employee_profiles_on_linkedin_min",
   "employee_profiles_on_linkedin_max",

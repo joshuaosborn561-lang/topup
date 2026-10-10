@@ -93,6 +93,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D71 | Superseded by D72 for the people half: the `owners` question (Jev judging names a store already held) is gone; the `icp` question stands as written. `topup.site_check_people` was never written; dropping it is Josh's call |
 | D72 | Live; `site_check("people", …, looking_for?)` crawls each company's homepage and people pages, has Gemini (Josh's key) list every person the site presents, and asks Jev which of them is `looking_for` (default: the owner, or the person who runs the company); sites, people and answers are kept per domain (`topup.site_people_text`, `site_people`, `site_extractions`, `site_answers`); the people found are rows of the view `topup.site_people_found` a table pull reads; estimate first, a name runs it; nothing on the rows changes; a name never returns to the service |
 | D73 | Live; `site_check(people)` fetch / extract / ask fan out (~50 fetch workers, 2 per host; ~28 Gemini and ~28 Jev; backoff on 429/5xx; Gemini RPM limiter 200). Env and tool params override. A deploy does not resume the loop — Topup calls the same verb again; already-extracted and already-answered domains are skipped. Nothing starts on boot (D5). The Gemini ceiling is still unchecked × the table |
+| D74 | Live; getleads `count`/`held` map every stored key (official industry names, `company_description`, `purged_titles` → `exclude_job_titles`) and fail on an unmapped key; `filters_used` is what was applied; `campaign_record` stamp counts are this campaign; `held` `net_new` is the pool minus held (sends / live / suppressed) |
 
 ---
 
@@ -2668,3 +2669,49 @@ stop.
 **Guard.** `src/guards/d73_site_people_concurrency.test.ts`; unit
 tests in `src/stages/icp/loops.test.ts`, `src/lib/backoff.test.ts`,
 `src/canon/siteCheck.test.ts`. Ask Josh.
+
+## D74 — getleads count maps every stored key; stamps are this campaign
+
+**Decision.** `count` and `held` were silently dropping stored getleads
+filters. `industryNames` threw away any value with a comma, so
+`Transportation, Logistics, Supply Chain and Storage` vanished while
+`Truck Transportation` stayed; sent alone the comma form is not a
+getleads industry and the vendor ignores it. `company_description` and
+`purged_titles` never left the receipt. A BCP PE count then looked like
+every US partner.
+
+Every stored key now maps or the parse fails. Official industry names
+come from `get_available_values` field=industries (2026-10-10, 0
+credits): getleads uses semicolons where LinkedIn stores commas.
+`purged_titles` is `exclude_job_titles`. `company_description` is sent.
+`max_per_company` stays an export cap (D43) and is not in
+`filters_used`. `filters_used` is exactly `outboundFilters` — what
+`count_contacts` received. `industries_by_campaign` and other receipt
+meta fail with the key named.
+
+`campaign_record` `leads_by_label` and `leads_by_leg` count
+`topup.lead_provenance` rows whose email is on this campaign
+(`public.leads` × `public.campaigns.smartlead_campaign_id`). A shared
+build label is not one number for every twin.
+
+`held` `net_new` is `max(0, tam - held)`. `held` is the share of this
+pool already on this client's 90-day sends, live campaigns, or
+`public.suppression` (sample scaled when the export page is shorter
+than the pool). The note says that. The old line "The client total was
+not subtracted" is gone — that total is not the held figure, and the
+pool overlap is subtracted.
+
+**Why.** Josh, 10 Oct 2026, BCP sizing test: three silent count bugs.
+Counts only.
+
+**What it does not do.** It does not send `max_per_company` to
+`count_contacts` (D43). It does not invent an industry. It does not
+SELECT a lead row.
+
+**Tradeoff.** A stale official-industry snapshot fails an industry
+getleads added after 2026-10-10 — say so and ask Josh, do not drop it.
+
+**Guard.** `src/guards/d74_count_filters.test.ts`; unit tests in
+`src/jobs/filters.test.ts`, `src/canon/count.test.ts`,
+`src/canon/held.test.ts`, `src/canon/record.test.ts`,
+`src/builds/tags.test.ts`. Ask Josh.

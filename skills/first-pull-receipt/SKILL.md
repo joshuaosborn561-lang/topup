@@ -50,7 +50,7 @@ If you only have the export size, put it in `rows_found` and leave `tam_count` n
 
 ## getleads and physical filters
 
-**getleads `company_filters`:** titles, exact band labels, countries, industries (no commas), every email status (omit `email_status`; D35 item 15), and `export_caps.max_per_company` if you capped the export. Do not put `max_per_company` in the count filters.
+**getleads `company_filters`:** titles, exact band labels, countries, industries (official getleads names; LinkedIn commas map), `company_description`, `purged_titles`, every email status (omit `email_status`; D35 item 15), and `export_caps.max_per_company` if you capped the export. Do not put `max_per_company` in the count filters.
 
 **physical `company_filters`:** store the scrape recipe and the ICP slice separately.
 

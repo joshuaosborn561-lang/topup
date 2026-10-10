@@ -815,7 +815,7 @@ Those `leadtopup` calls; everything else on the server is out of scope.
 
 | Tool | Arguments (required in bold) | Sync / job | Returns |
 |---|---|---|---|
-| `count_contacts` | the contact filters: `job_titles[]`, `company_size[]` (**band labels** — `"11 to 50"`, `"51 to 200"`, …), `countries[]`, `states[]`, `cities[]`, `industries[]` (no commas — they shred silently), `email_status[]` (omit to pull every status; D35 item 15). **Never** `max_per_company` (export cap only; D43) and never numeric `employees_min` / `company_size_min`. | sync, **free, always** | `{total_matching, exportable_rows}` |
+| `count_contacts` | the contact filters: `job_titles[]`, `company_size[]` (**band labels** — `"11 to 50"`, `"51 to 200"`, …), `countries[]`, `states[]`, `cities[]`, `industries[]` (official getleads names; LinkedIn commas map to semicolons — D74), `company_description`, `exclude_job_titles` (stored as `purged_titles`), `email_status[]` (omit to pull every status; D35 item 15). **Never** `max_per_company` (export cap only; D43) and never numeric `employees_min` / `company_size_min`. An unmapped stored key fails. | sync, **free, always** | `{total_matching, exportable_rows}` |
 | `export_contacts` | same filters + `columns[]`, `max_per_company` (1–50), `max_rows` (1–50 000), **`confirmed: true`** (refused without it) | **export id** | `{export_id}`; later `cap_reason ∈ per_company \| max_rows \| hard_ceiling \| fair_use \| credits \| filtered` says why fewer rows than asked |
 | `check_contact_export` | **export_id** | sync poll | `{job_status, export_url, rows_exported, rows_available, cap_reason, cap_message}` |
 | `get_fair_use` | — | sync, free | remaining daily/monthly budget, `resets_at` |
