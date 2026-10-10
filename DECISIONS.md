@@ -89,7 +89,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D67 | Live; job 46b1c941 after #44: no runtime DDL — people/email waterfalls read `topup.<tag>_ingested_leads_ew` from one-time migration 0021; normalize fills company from `maps_raw.name` joined on email; ingest coalesces company/name/title |
 | D68 | Live; job 46b1c941 after #45: hold and fill share `company_n`; maps city is parsed from `City, ST`; lane E ICP re-applies `main_category` and drops preschool–high school (reverses D59's no-reapply) |
 | D69 | Live; job 46b1c941 after #46: a step reopen replaces counts (stale held_company_n / company.missing cannot survive); size pool binds start at $11 so categories do not collide with $2::int[] |
-| D70 | Reserved for PR #49 (`cursor/size-param-type-74ac`). That PR writes the live D70 text. This stub keeps the ledger contiguous so D71 can ship off main |
+| D70 | Live; size() after D69: the suppress CTE types `$1::text` so Postgres can type the first slot after the $11/$12 shift (size_id 33e8f595) |
 | D71 | Superseded by D72 for the people half: the `owners` question (Jev judging names a store already held) is gone; the `icp` question stands as written. `topup.site_check_people` was never written; dropping it is Josh's call |
 | D72 | Live; `site_check("people", …, looking_for?)` crawls each company's homepage and people pages, has Gemini (Josh's key) list every person the site presents, and asks Jev which of them is `looking_for` (default: the owner, or the person who runs the company); sites, people and answers are kept per domain (`topup.site_people_text`, `site_people`, `site_extractions`, `site_answers`); the people found are rows of the view `topup.site_people_found` a table pull reads; estimate first, a name runs it; nothing on the rows changes; a name never returns to the service |
 | D73 | Live; `site_check(people)` fetch / extract / ask fan out (~50 fetch workers, 2 per host; ~28 Gemini and ~28 Jev; backoff on 429/5xx; Gemini RPM limiter 200). Env and tool params override. A deploy does not resume the loop — Topup calls the same verb again; already-extracted and already-answered domains are skipped. Nothing starts on boot (D5). The Gemini ceiling is still unchecked × the table |
@@ -2473,14 +2473,27 @@ table should stay a soft zero.
 
 **Guard.** `src/guards/d69_hold_recompute_size.test.ts`. Ask Josh.
 
-## D70 — `size()` `$1` type after the `$11`/`$12` shift (reserved)
+## D70 — Size types `$1` after the `$11` shift
 
-**Decision.** Reserved for PR #49 (`cursor/size-param-type-74ac`). That
-PR owns D70 (typing `size()`'s `$1` after D69 moved the pool binds).
-This stub exists so D71 can land on a branch off main without a gap in
-the ledger. Do not implement D70 here.
+**Decision.** After D69 shipped (`7b6d2a7`), `size()` on the
+strict ICP path failed: `could not determine data type of
+parameter $1` (`size_id` `33e8f595`). Recycle SQL uses `$2`–
+`$10`. Pool `$1` / `$2` shift to `$11` / `$12`. `$1` then
+never appeared in the query. Postgres still requires a type
+for `$1` when `$2` is used (same class of failure as D59).
+The suppress CTE now selects `$1::text as plan_id`. The
+value is the same plan id already in params[0]. A PGlite
+test runs `size()` end to end on the companion ICP path.
 
-**Why.** #49 is open and unmerged. Meta requires contiguous numbers.
+**Why.** D69 fixed the `$2` collision and then left `$1`
+unused. Live size on lane E died in the suppress pass.
+
+**Tradeoff.** `plan_id` is bound twice (`$1` and `$11`).
+That is cheaper than renumbering recycle SQL. Ask Josh
+before dropping the dummy `$1`.
+
+**Guard.** `src/guards/d70_size_typed_param.test.ts` and
+`src/canon/size.pg.test.ts`. Ask Josh.
 
 ## D71 — The website checker is a verb: `site_check`, two questions
 
