@@ -13,7 +13,7 @@ export const LIST_BUILD_TRANSCRIPTS_BUCKET = "list-build-transcripts";
 export const TRANSCRIPT_PAGE_DEFAULT = 12_000;
 export const TRANSCRIPT_PAGE_MAX = 24_000;
 
-export const HOW_TO_READ =
+export const BUILD_RECORD_HOW_TO_READ =
   "Read the narrative first. Receipts (campaign_record) stay the at-a-glance source of record. Fetch the transcript only for an edge case: pass fetch_transcript=true (or offset/limit) and page with offset/limit. The path is a storage object name, never a file URL.";
 
 const RECORD_SELECT = `id, client_tag, campaign_ids, receipt_ids, lanes, narrative,
@@ -184,7 +184,7 @@ export async function buildRecord(deps: BuildRecordDeps, input: BuildRecordInput
     client_tag: input.client_tag,
     campaign_id: input.campaign_id,
     records,
-    how_to_read: HOW_TO_READ,
+    how_to_read: BUILD_RECORD_HOW_TO_READ,
     note,
   };
 
