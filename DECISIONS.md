@@ -94,6 +94,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D72 | Live; `site_check("people", …, looking_for?)` crawls each company's homepage and people pages, has Gemini (Josh's key) list every person the site presents, and asks Jev which of them is `looking_for` (default: the owner, or the person who runs the company); sites, people and answers are kept per domain (`topup.site_people_text`, `site_people`, `site_extractions`, `site_answers`); the people found are rows of the view `topup.site_people_found` a table pull reads; estimate first, a name runs it; nothing on the rows changes; a name never returns to the service |
 | D73 | Live; `site_check(people)` fetch / extract / ask fan out (~50 fetch workers, 2 per host; ~28 Gemini and ~28 Jev; backoff on 429/5xx; Gemini RPM limiter 200). Env and tool params override. A deploy does not resume the loop — Topup calls the same verb again; already-extracted and already-answered domains are skipped. Nothing starts on boot (D5). The Gemini ceiling is still unchecked × the table |
 | D74 | Live; getleads `count`/`held` map every stored key (official industry names, `company_description`, `purged_titles` → `exclude_job_titles`) and fail on an unmapped key; `filters_used` is what was applied; `campaign_record` stamp counts are this campaign; `held` `net_new` is the pool minus held (sends / live / suppressed) |
+| D75 | Live; `build_record` is a read-only read of `topup.list_build_records` (narrative, receipt_ids, campaign ids, transcript path) plus an optional paged transcript from private Storage `list-build-transcripts`; operators read the narrative first, transcript for edge cases; receipts stay the at-a-glance source of record; no DDL, no write, no spend |
 
 ---
 
@@ -2728,3 +2729,34 @@ getleads added after 2026-10-10 — say so and ask Josh, do not drop it.
 `src/jobs/filters.test.ts`, `src/canon/count.test.ts`,
 `src/canon/held.test.ts`, `src/canon/record.test.ts`,
 `src/builds/tags.test.ts`. Ask Josh.
+
+## D75 — operators read the build record before sizing or pulling
+
+**Decision.** `topup.list_build_records` and the private Storage bucket
+`list-build-transcripts` already exist on campaignintelligence
+(`azpapwtnrbzywlnxxecz`). The service exposes them as a read:
+`build_record(client_tag, campaign_id)`. It returns the matching rows
+(narrative, receipt_ids, campaign ids, transcript path) and, when asked,
+pages the transcript text (`fetch_transcript` or `offset`/`limit`;
+default 12,000 characters, max 24,000). Operators read the narrative
+first and fetch the transcript only for an edge case. Receipts
+(`campaign_record`) stay the at-a-glance source of record.
+
+The call is read-only. No DDL. No write. No spend. A missing table
+fails and asks Josh. A transcript path that is not on a matching row
+is refused. The path is a storage object name, never a signed URL.
+Cold-call campaigns are ignored (D54).
+
+**Why.** Josh, Saturday 10 Oct 2026, 6:06pm CT: the write-ups and
+transcripts are how a list was actually built; Grok was sizing from
+receipts alone.
+
+**What it does not do.** It does not CREATE / DROP / ALTER. It does
+not insert or update `list_build_records`. It does not upload to
+Storage. It does not open a job. It does not return a lead row.
+
+**Tradeoff.** A 2 MB transcript is paged, not dumped. The official
+industry / filter facts still live on the receipt.
+
+**Guard.** `src/guards/d75_build_record.test.ts`; unit tests in
+`src/canon/buildRecord.test.ts`. Ask Josh.

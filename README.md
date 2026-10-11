@@ -49,6 +49,7 @@ Reads (counts, ids, labels, notes; the rule stated; no verdict):
 | `canon` | The canon page. |
 | `campaigns` | Every ACTIVE campaign with sends, positives, rate per 2,000, leads left, `passes_reply_bar`. |
 | `campaign_record` | Every receipt, build row, lead stamp count, registry row and note for one campaign. |
+| `build_record` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Optional paged transcript. Receipts stay the at-a-glance source of record. |
 | `sources` | The source vocabulary. |
 | `count` | A count on getleads (free), AI Ark (paid, needs a name), Maps (stored pool by `plan_id`; used is live + ingested + contacted) or permits with the filters you pass. |
 | `held` | How much of a getleads pool the client already holds, and net new. |

@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D74** (2026-10-10). One page. `DECISIONS.md` is the append-only
+Canon as of **D75** (2026-10-11). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -169,7 +169,14 @@ D48).
    `campaign_record` stamp counts are this campaign, not a shared build.
    `held` `net_new` is the pool minus held (this client's 90-day sends,
    live campaigns, and suppression on the sampled page) (D74).
-24. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+24. **Operators read the build record before sizing or pulling a top-up.**
+   `build_record(client_tag, campaign_id)` returns the matching
+   `topup.list_build_records` rows (narrative, receipt_ids, campaign ids,
+   transcript path). Read the narrative first. Fetch the transcript only
+   for an edge case (`fetch_transcript` or `offset`/`limit`; the file can
+   be large). Receipts stay the at-a-glance source of record. Read-only:
+   no DDL, no write, no spend (D75).
+25. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -182,6 +189,7 @@ bears on stated and no verdict (D52).
 | `canon` | This page. Also the MCP server's instructions. |
 | `campaigns(client_tag?, include_inactive?)` | Every ACTIVE email campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. Cold call campaigns are left off. |
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg **for this campaign**, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. |
+| `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). Receipts stay the at-a-glance source of record. Read-only; no spend. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
 | `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free; every stored key is mapped or the call fails; `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (90-day sends, live campaigns, suppression on the sampled page), and `net_new` as the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
@@ -228,7 +236,11 @@ call next.
    came from: the receipt or build with the most `rows_imported`, and the
    `leads_by_leg` counts. Those four legs and that `company_filters` are
    the method. Read `how_i_did_it` and `notes`. A missing leg or an empty
-   `company_filters` is a question for Josh, not a guess. `leftovers(client_tag)`
+   `company_filters` is a question for Josh, not a guess.
+   `build_record(client_tag, campaign_id)` is the operator write-up of
+   that same list: read the narrative first; fetch the transcript only
+   for an edge case. Receipts stay the at-a-glance source of record (D75).
+   `leftovers(client_tag)`
    shows rows earlier pulls left in the stores; name the store to the person
    who approves before reusing one.
    Before paying for emails or phones on a store, `site_check("icp",
@@ -317,6 +329,11 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   (D70). Never drop a stored getleads filter (a comma industry,
   `company_description`, `purged_titles`) and never count
   `lead_provenance` across twin campaigns that share a build (D74).
+  Never size or pull a top-up without reading the build record
+  (narrative first; transcript only for an edge case). Never CREATE /
+  DROP / ALTER `list_build_records`, never write that table, never
+  return a signed URL for a transcript, and never fetch a storage path
+  that is not on a matching row (D75).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).
@@ -335,7 +352,8 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
 * Data: Supabase `azpapwtnrbzywlnxxecz`, schema `topup` (`runs`,
   `run_steps`, `cards`, `spend_ledger`, `pull_receipts`,
   `campaign_builds`, `campaign_registry`, `client_map`,
-  `lead_provenance`, `lane_events`).
+  `lead_provenance`, `lane_events`, `list_build_records`) and private
+  Storage bucket `list-build-transcripts`.
 * Code: `src/canon` (the reads), `src/jobs` (the verbs), `src/stages` (the
   twelve stages), `src/console` (cards and roles), `src/spend` (the gate
   and the ledger), `src/mcp` (the surface), `src/guards` (the tests that

@@ -15,7 +15,7 @@ For humans and coding agents alike.
    it redacts.
 5. **Grok bot does the reasoning (D39, D53).** The service is the dumb
    half. Read `skills/grok-bot-babysitter` and `CANON.md`. Grok reads
-   `campaigns` and `campaign_record`, counts with `count` and `held`, and
+   `campaigns`, `campaign_record` and `build_record`, counts with `count` and `held`, and
    runs the verbs one at a time with a person's name on every spend. Lead
    rows move MCP → Supabase → LeadPipe → Smartlead. They do not enter Grok
    bot context. No `export_contacts`, no `get-dataset-items`, no

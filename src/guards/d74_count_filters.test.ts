@@ -44,7 +44,7 @@ describe("D74 — getleads count maps; stamps are this campaign", () => {
     const count = await readFile(new URL("src/canon/count.ts", root), "utf8");
     assert.match(count, /outboundFilters/, "D74: filters_used is what count_contacts received");
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D74\*\*/, "D74: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D(74|[7-9][0-9]|[0-9]{3,})\*\*/, "D74: fold into CANON. Ask Josh.");
     assert.match(canon, /unmapped or\s+unknown key fails/, "D74: CANON names the fail-loud rule");
   });
 });

@@ -47,6 +47,10 @@ The rules you apply:
    four legs and its `company_filters` are the method. Read
    `how_i_did_it` and `notes`. `sources` tells you what a leg value means
    and how to repeat it. A missing leg or empty filters: ask Josh.
+   `build_record(client_tag, campaign_id)` is the operator write-up of
+   that same list. Read the narrative first. Fetch the transcript only
+   for an edge case (`fetch_transcript` or `offset`/`limit`; it can be
+   large). Receipts stay the at-a-glance source of record (D75).
    `leftovers(client_tag)` shows rows earlier pulls left in the stores
    (lane table, client schema, waterfall tables) as counts, and for each
    store the obvious gap: `need_domain`, `need_person`, `need_email`,
@@ -131,7 +135,7 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 ## Allow list (you may call these)
 
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
-`campaign_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
+`campaign_record`, `build_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
 `leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `site_check`, `suppress`, `enrich`, `verify`,
 `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
 `resolve`, `note`.
@@ -143,8 +147,9 @@ On LeadPipe (Context Saver), for a CSV Josh hands you: `lp_plan`,
 
 On Supabase: `COUNT`, `GROUP BY` over `topup.pull_receipts`,
 `topup.campaign_builds`, `topup.campaign_registry`, `topup.lead_provenance`
-by `build_label` and the four legs. Never SELECT `email`, `first_name`,
-`last_name`, `phone`, `linkedin_url`.
+by `build_label` and the four legs. `build_record` reads
+`topup.list_build_records` (narrative, ids, path). Never SELECT `email`,
+`first_name`, `last_name`, `phone`, `linkedin_url`.
 
 ## Ban list (you must not call these)
 

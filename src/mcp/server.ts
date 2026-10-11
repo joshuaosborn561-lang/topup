@@ -29,6 +29,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   canon: "operator",
   campaigns: "operator",
   campaign_record: "operator",
+  build_record: "operator",
   sources: "operator",
   count: "operator",
   held: "operator",
