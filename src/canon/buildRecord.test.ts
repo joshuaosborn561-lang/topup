@@ -122,7 +122,7 @@ describe("D75 — build_record", () => {
 
     const calls: Array<{ url: string; method?: string }> = [];
     const text = await downloadListBuildTranscript({
-      supabaseUrl: "https://azpapwtnrbzywlnxxecz.supabase.co",
+      supabaseUrl: "https://project.example",
       serviceRoleKey: "test-key",
       path: "parlay/a.md",
       fetchImpl: (async (url, init) => {
