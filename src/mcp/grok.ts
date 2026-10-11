@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps, type SizeRunner } from "../canon/index.js";
+import { buildRecord, campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps, type SizeRunner } from "../canon/index.js";
 import type { Repo } from "../db/repo.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import type { Orchestrator } from "../orchestrator.js";
@@ -29,10 +29,12 @@ export interface GrokDeps {
   held: HeldDeps | null;
   size: SizeRunner;
   siteCheck: SiteCheckDeps;
+  /** D75: GET a list-build-transcripts object. Path must already be on a matching row. */
+  readTranscript?: (path: string) => Promise<string>;
   by: string;
 }
 
-export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
+export const GROK_READS = ["campaigns", "campaign_record", "build_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
 export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
@@ -58,6 +60,24 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       inputSchema: { client_tag: snake, campaign_id: z.number().int() },
     },
     async ({ client_tag, campaign_id }) => text(await campaignRecord(d.repo.raw(), d.repo, client_tag, campaign_id)),
+  );
+
+  server.registerTool(
+    "build_record",
+    {
+      description:
+        "The operator write-up of how this list was built, from topup.list_build_records: narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Receipts (campaign_record) stay the at-a-glance source of record. Pass fetch_transcript=true (or offset/limit) to page the transcript text from the private list-build-transcripts bucket — transcripts can be large. The path is a storage object name, never a file URL. Read-only; no spend.",
+      inputSchema: {
+        client_tag: snake,
+        campaign_id: z.number().int(),
+        fetch_transcript: z.boolean().optional().describe("Page the transcript text. Default off; read the narrative first."),
+        transcript_path: z.string().optional().describe("Required when the matching rows name more than one path."),
+        offset: z.number().int().min(0).optional().describe("Character offset into the transcript."),
+        limit: z.number().int().min(1).max(24_000).optional().describe("Characters to return. Default 12,000; max 24,000."),
+      },
+    },
+    async ({ client_tag, campaign_id, fetch_transcript, transcript_path, offset, limit }) =>
+      text(await buildRecord({ db: d.repo.raw(), readTranscript: d.readTranscript }, { client_tag, campaign_id, fetch_transcript, transcript_path, offset, limit })),
   );
 
   server.registerTool(

@@ -19,6 +19,7 @@ import { VerifierClient } from "./clients/verifier.js";
 import { assertSupabaseProject, loadConfig } from "./config.js";
 import { Console } from "./console/console.js";
 import { loadClientTags } from "./canon/clients.js";
+import { downloadListBuildTranscript } from "./canon/buildRecord.js";
 import { SizeRunner } from "./canon/size.js";
 import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
@@ -218,6 +219,10 @@ async function main(): Promise<void> {
         },
         size: new SizeRunner(db),
         siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, people: sitePeople, jevModel: cfg.ICP_JEV_MODEL, geminiModel: cfg.SITE_PEOPLE_GEMINI_MODEL, peopleLoops, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
+        readTranscript:
+          cfg.SUPABASE_URL && cfg.SUPABASE_SERVICE_ROLE_KEY
+            ? (path) => downloadListBuildTranscript({ supabaseUrl: cfg.SUPABASE_URL, serviceRoleKey: cfg.SUPABASE_SERVICE_ROLE_KEY, path })
+            : undefined,
       },
     }),
   );

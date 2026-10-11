@@ -8,7 +8,7 @@
 export const GROK_SAMPLE_MAX = 10;
 
 /** The reads (D52). Each returns counts, ids, labels and the written notes, with the rule stated. */
-export const CANON_READS = ["canon", "campaigns", "campaign_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers", "holds", "loads_paused"] as const;
+export const CANON_READS = ["canon", "campaigns", "campaign_record", "build_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers", "holds", "loads_paused"] as const;
 
 /** The verbs (D52). Each runs one or two stages on a job, once, and returns counts. */
 export const CANON_VERBS = ["pull", "suppress", "icp", "site_check", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort", "resolve", "note"] as const;
@@ -74,4 +74,4 @@ export const GROK_RECEIPT_TAGS = [
  * Tables Grok may read tags from. Counts, keys, and method names only.
  * `lead_provenance` is the per-lead stamp — COUNT tags, never SELECT email.
  */
-export const GROK_TAG_TABLES = ["topup.pull_receipts", "topup.campaign_method", "topup.campaign_registry", "topup.lead_provenance", "topup.campaign_builds"] as const;
+export const GROK_TAG_TABLES = ["topup.pull_receipts", "topup.campaign_method", "topup.campaign_registry", "topup.lead_provenance", "topup.campaign_builds", "topup.list_build_records"] as const;
