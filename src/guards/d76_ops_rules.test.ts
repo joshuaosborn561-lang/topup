@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 /**
- * D76–D94 — ops rules Josh settled live 12 Oct 2026. Docs only. Ask Josh or Cayden.
+ * D76–D95 — ops rules Josh settled live 12 Oct 2026. Docs only. Ask Josh or Cayden.
  */
 
 const root = new URL("../../", import.meta.url);
@@ -30,11 +30,12 @@ describe("D76–D89 — ops rules in the canon", () => {
     assert.match(canon, /jev_openrouter_key/, "D91");
     assert.match(canon, /Cayden is a full approver/, "D92");
     assert.match(canon, /Owners attach by the job's places/, "D94");
+    assert.match(canon, /Replay the hand search/, "D95");
     assert.match(canon, /negative_class/, "D81 classify is live");
     assert.match(canon, /lower\(current_title\) IN/, "D82 is live");
     assert.match(canon, /count\(source="prospeo"\)/, "D83 is live");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
-    for (const n of [76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94]) {
+    for (const n of [76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95]) {
       assert.match(ledger, new RegExp(`^\\| D${n} \\|`, "m"), `D${n} index row`);
       assert.match(ledger, new RegExp(`^## D${n} — `, "m"), `D${n} entry`);
     }

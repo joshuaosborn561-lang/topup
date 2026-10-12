@@ -114,6 +114,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D92 | Live; Cayden is a full approver equal to Josh on paid steps and backfill-filter confirmation; awaiting_owner (awaiting_josh still works); industries_by_campaign bucket keys resolve from the campaign name; icp_gate is receipt meta; stamps stay on the registry lane |
 | D93 | Live; site_owners count and pull are job-scoped; never the shared owner view; batch-as-attach-key superseded by D94; industries_by_campaign buckets come from the stored map; lane-mismatch retag is generic |
 | D94 | Live; site_owners scopes by the job's place_id or normalized domain, not the site_people_text batch; cached owners on this job's businesses belong to the job |
+| D95 | Live; replay the hand search (read record → same search → exact held join → net new + cost → pull/verify/stage on approval); hide stamps / lane meta / key formats / sampling from callers; filters_applied lists every filter that ran; held never samples or falls back to a lane total; no per-client constants or canon steps |
 
 ---
 
@@ -3078,3 +3079,38 @@ does not open, abort or rewind a job. It does not invent a client
 recipe. Josh still flips ACTIVE by hand (D5, D14).
 
 **Guard.** `src/guards/d94_job_place_owners.test.ts`. Ask Josh or Cayden.
+
+## D95 — Replay the hand search; hide internals
+
+**Decision.** The service exists to replay what a person did by hand.
+The caller flow is five steps: read the campaign's build record or
+receipt (exact filters, titles, industries, headcount, source); rerun
+that same search; subtract everything already held for that client
+with an exact full-list join; show net new plus cost; pull, verify
+and stage on a named approval.
+
+Caller-facing answers hide stamps, lane meta, key formats and
+sampling caps. `count` returns `filters_applied` with every filter
+that actually ran, including keys rewritten for the vendor
+(`where_sql`, a resolved `industries_by_campaign` bucket, omitted
+`email_status`). `filters_used` stays what the vendor received.
+`held` always does the exact full-list join of the exported
+pool to this client's unsubscribes, hard bounces and DNC
+list. A failed export is an error. It never samples and never falls
+back to a lane total. No per-client constants, no per-client canon
+steps, no client facts on this page.
+
+**Why.** Josh, 12 Oct 2026, live. The service had grown caller-visible
+internals so operators had to reason about bookkeeping instead of
+replaying the search. A held sample that failed used a lane total
+and reported net new of zero. A count applied a rewritten filter
+without listing it.
+
+**What it does not do.** It does not invent filters. It does not
+confirm a backfilled title set. It does not retag or skip a registry
+lane. It does not rewrite receipts. It does not duplicate job-scoped
+owner count/pull (D93, D94) or the generic lane-mismatch fixer. It does
+not unsuppress, and it does not write `dl_status`, `sg_exclude`, or
+`skip_*`. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d95_replay_hand_search.test.ts`. Ask Josh or Cayden.

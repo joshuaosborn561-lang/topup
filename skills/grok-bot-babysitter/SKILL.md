@@ -40,6 +40,9 @@ The rules you apply:
 
 ## The loop (one campaign at a time)
 
+Replicate the hand search. Do not reason about stamps, lane meta, key
+formats, or sampling (D95).
+
 1. `campaigns(client_tag)`. Keep `passes_reply_bar: true` and
    `never_top_up: false`. One line on the rest and why.
 2. `campaign_record(client_tag, campaign_id)`. Find the receipt or build
@@ -84,8 +87,7 @@ The rules you apply:
    stays as stored and is mapped, or count fails (D74). Titles are exact
    (`lower(current_title) IN`) unless the receipt says
    `title_match=substring` (D82). AI Ark counts use STRICT unless that
-   same receipt key asks for substring. `filters_used` is
-   what was applied. Maps keeps `plan_id`
+   same receipt key asks for substring.    `filters_applied` lists every filter that actually ran. Maps keeps `plan_id`
    and the categories list (D57); it never scopes by ZIP or `client_tag`
    alone.    Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
    when those exist. Companions that omit `plan_id` join `maps_raw`
