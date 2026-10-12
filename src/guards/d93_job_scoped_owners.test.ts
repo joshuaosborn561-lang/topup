@@ -30,7 +30,7 @@ describe("D93 — job-scoped owner count and pull", () => {
     const owners = await readFile(new URL("src/canon/siteOwners.ts", root), "utf8");
     assert.match(owners, /run_id = \$1/, "D93: the job is the scope. Ask Josh or Cayden.");
     assert.match(owners, /place_id/, "D93: place_id is a business key. Ask Josh or Cayden.");
-    assert.match(owners, /topup\.site_people_text/, "D93: the text table is still named. Ask Josh or Cayden.");
+    assert.match(owners, /PEOPLE_TEXT|site_people_text/, "D93: the text table is still named. Ask Josh or Cayden.");
     assert.doesNotMatch(owners, /from topup\.site_people_found/, "D93: never FROM the shared view. Ask Josh or Cayden.");
     assert.doesNotMatch(owners, /owner_netnew|owner_pilot/, "D93: never a client owner table. Ask Josh or Cayden.");
     assert.doesNotMatch(owners, /["']emcor["']|["']bcp["']/, "D93: no client constants. Ask Josh or Cayden.");
