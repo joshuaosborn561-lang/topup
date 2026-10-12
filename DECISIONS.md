@@ -97,13 +97,13 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D75 | Live; `build_record` is a read-only read of `topup.list_build_records` (narrative, receipt_ids, campaign ids, transcript path) plus an optional paged transcript from private Storage `list-build-transcripts`; operators read the narrative first, transcript for edge cases; receipts stay the at-a-glance source of record; no DDL, no write, no spend |
 | D76 | Live; size the whole usable pool first and present all usable leads with full cost; the approver cuts by cost; a job still pulls 1 to 2,000 |
 | D77 | Live; VALID email is a quality filter, not a TAM cap; count all email statuses; TAM = receipt filters minus email_status; verify after with MillionVerifier then No2Bounce |
-| D78 | Live; TAM cross-check GetLeads then AI Ark and Prospeo on a matched basis; within 10% TAM is right; more than 10% apart means switch source (not widening). Prospeo count: code pending. AI Ark exact-title mode is live (D82) |
+| D78 | Live; TAM cross-check GetLeads then AI Ark and Prospeo on a matched basis; within 10% TAM is right; more than 10% apart means switch source (not widening). Prospeo count is live (D83). AI Ark exact-title mode is live (D82) |
 | D79 | Live; take a ~50-person overlap sample of the second source against GetLeads / held |
 | D80 | Live; held / contacted / suppressed subtraction is an exact full-list join, never a sampled page (qualifies D74) |
 | D81 | Live; suppression is real unsubscribes only, permanently, per client; 6-month expiry is out (supersedes D63); not-interested is not suppressed; classify Smartlead negatives (code pending); hard bounces stay blocked pending Josh; never unsuppress in Smartlead |
 | D82 | Live; GetLeads titles exact-match by default (`lower(current_title) IN`); substring only when the receipt says so; AI Ark counts use STRICT exact-title mode |
-| D83 | Live as rule; code pending; Prospeo count is page 1 of search-person (1 credit, pagination.total_count); ~1.5¢/credit; needs approved_by |
-| D84 | Live; count honors max_per_company, industries_by_campaign, over_1k_campaign on every source (qualifies D43 / D74) |
+| D83 | Live; count(source=prospeo) is page 1 of search-person (1 credit, pagination.total_count); no-result and 30-day repeats free; ~1.5¢/credit; needs approved_by; industries mapped to official names with inexact flags; honors D84 receipt keys |
+| D84 | Live; count honors max_per_company, industries_by_campaign, over_1k_campaign on every source including prospeo (qualifies D43 / D74) |
 | D85 | Live; local-business owner finder: site_check people (owner by default), then email waterfall, then generic inbox fallback (info@ / office@, not support@ / payroll@) |
 | D86 | Live; read list_build_records (narrative first, transcript for edge cases) before sizing or rebuilding (same as D75) |
 | D87 | Live; a method Josh settles in chat is written into CANON.md and DECISIONS.md so every operator's bot follows it |

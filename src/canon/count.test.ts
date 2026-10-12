@@ -7,6 +7,7 @@ import { countSource } from "./count.js";
 function deps(over: Partial<Parameters<typeof countSource>[0]> = {}) {
   const recorded: unknown[] = [];
   const seen: unknown[] = [];
+  const prospeoSeen: unknown[] = [];
   const rails = {
     gate: async (req: { approvedCents?: number }) => (req.approvedCents && req.approvedCents > 0 ? { kind: "proceed", worstCaseCents: 5, reason: "approved" } : { kind: "ask", worstCaseCents: 5, reason: "worst case $0.05 is over the $0.00 auto cap; needs an owner tap" }),
     record: async (r: unknown) => {
@@ -18,6 +19,7 @@ function deps(over: Partial<Parameters<typeof countSource>[0]> = {}) {
     d: {
       getleads: { count: async (f: unknown) => { seen.push(f); return { total_matching: 816, exportable_rows: 816 }; } },
       aiArk: { count: async () => ({ total_matching: 2231 }) },
+      prospeo: { count: async (f: unknown) => { prospeoSeen.push(f); return { total_matching: 4812, free: false }; } },
       maps: { scopedBusinesses: async ({ category }: { category: string }) => (category === "roofing" ? 120 : 30) },
       permits: { monthlyTotal: async () => ({ total: 50, months: 1, state: "TX" }) },
       rails,
@@ -35,6 +37,7 @@ function deps(over: Partial<Parameters<typeof countSource>[0]> = {}) {
       ...over,
     } as never,
     recorded,
+    prospeoSeen,
   };
 }
 
@@ -116,6 +119,32 @@ describe("D52 — count", () => {
     assert.match(sub.note ?? "", /WORD/);
   });
 
+  it("D83 — a Prospeo count estimates first, maps industries, and records a named approval", async () => {
+    const { d, recorded } = deps();
+    const filters = {
+      job_titles: ["Owner"],
+      industries: ["Truck Transportation", "Outpatient Care Centers", "Hospitals and Health Care"],
+      countries: ["United States"],
+    };
+    const no = await countSource(d, { client_tag: "bcp", source: "prospeo", filters });
+    assert.equal(no.count, null);
+    assert.match(no.note ?? "", /approved_by/);
+    assert.ok((no.estimate_cents ?? 0) > 0);
+    const truck = no.industry_mappings?.find((m) => m.input === "Truck Transportation");
+    assert.equal(truck?.match, "inexact");
+    assert.equal(truck?.prospeo, "Truck and Railroad Transportation");
+    const none = no.industry_mappings?.find((m) => m.input === "Outpatient Care Centers");
+    assert.equal(none?.match, "none");
+    const yes = await countSource(d, { client_tag: "bcp", source: "prospeo", filters, approved_by: "Josh" });
+    assert.equal(yes.count, 4812);
+    assert.equal((recorded[0] as { approvedBy: string }).approvedBy, "Josh");
+    assert.deepEqual(yes.filters_used.industries, ["Truck and Railroad Transportation", "Hospitals and Health Care"]);
+    assert.match(yes.note ?? "", /Truck Transportation/);
+    const unpaid = await countSource(d, { client_tag: "bcp", source: "prospeo", filters: { job_titles: ["Owner"], industries: ["Outpatient Care Centers"] }, approved_by: "Josh" });
+    assert.equal(unpaid.count, null);
+    assert.match(unpaid.note ?? "", /none of the industries map/);
+  });
+
   it("maps reads the stored pool by plan_id and is not zero when rows exist; permits still sum by type and state", async () => {
     const { d } = deps();
     const maps = await countSource(d, {
@@ -186,5 +215,37 @@ describe("D52 — count", () => {
     assert.equal(permits.filters_used.max_per_company, 2);
     assert.deepEqual(permits.filters_used.industries, ["Hospitals"]);
     assert.equal(permits.filters_used.over_1k_campaign, true);
+    const { d: pd, prospeoSeen } = deps();
+    const pro = await countSource(pd, {
+      client_tag: "bcp",
+      source: "prospeo",
+      filters: receipt,
+      campaign_id: 3763802,
+      approved_by: "Josh",
+    });
+    assert.equal(pro.count, 4812);
+    assert.equal(pro.filters_used.max_per_company, 2);
+    assert.deepEqual(pro.filters_used.industries, ["Truck and Railroad Transportation"]);
+    assert.deepEqual(pro.filters_used.industries_by_campaign, { "3763802": ["Truck Transportation"] });
+    assert.equal(pro.filters_used.over_1k_campaign, true);
+    assert.deepEqual(pro.filters_used.company_size, ["1001 to 5000", "5001 to 10000", "10001+"]);
+    assert.deepEqual(pro.filters_used.company_headcount_range, ["1001-2000", "2001-5000", "5001-10000", "10000+"]);
+    assert.match(pro.note ?? "", /max_per_company 2 honored \(D84\)/);
+    assert.match(pro.note ?? "", /count is uncapped/);
+    assert.ok(!("max_per_company" in (prospeoSeen[0] as object)), "search-person does not receive the cap");
+    const storedBands = await countSource(pd, {
+      client_tag: "bcp",
+      source: "prospeo",
+      filters: {
+        job_titles: ["Partner"],
+        industries: ["Hospitals and Health Care"],
+        company_size: ["1001 to 5000"],
+        over_1k_campaign: true,
+        max_per_company: 2,
+      },
+      approved_by: "Josh",
+    });
+    assert.deepEqual(storedBands.filters_used.company_size, ["1001 to 5000"]);
+    assert.deepEqual(storedBands.filters_used.company_headcount_range, ["1001-2000", "2001-5000"]);
   });
 });

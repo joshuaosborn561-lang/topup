@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { AiArkPreviewClient } from "./clients/aiArkPreview.js";
+import { ProspeoSearchClient } from "./canon/prospeoSearch.js";
 import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
 import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
 import { GetleadsClient } from "./clients/getleads.js";
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
   const leadpipe = new LeadPipeClient(cfg.LEADPIPE_MCP_URL, cfg.LEADPIPE_TOKEN);
   const getleads = new GetleadsClient(cfg.GETLEADS_MCP_URL, cfg.GETLEADS_TOKEN);
   const aiArk = cfg.AI_ARK_TOKEN ? new AiArkPreviewClient(cfg.AI_ARK_TOKEN, cfg.AI_ARK_PREVIEW_URL) : null;
+  const prospeo = cfg.PROSPEO_API_KEY ? new ProspeoSearchClient(cfg.PROSPEO_API_KEY, cfg.PROSPEO_SEARCH_URL) : null;
   const maps = cfg.MAPS_MCP_URL ? new MapsStatsClient(cfg.MAPS_MCP_URL) : null;
   const permitCounts = cfg.PERMITSTACK_MCP_URL ? new PermitCountsClient(cfg.PERMITSTACK_MCP_URL) : null;
   const smartlead = new SmartleadClient(cfg.SMARTLEAD_MCP_URL, cfg.SMARTLEAD_TOKEN);
@@ -204,7 +206,7 @@ async function main(): Promise<void> {
         ledger,
         orchestrator,
         jobs: new JobRunner({ repo, stages, console: console_, ledger }),
-        count: { getleads, aiArk, maps, permits: permitCounts, rails, db },
+        count: { getleads, aiArk, prospeo, maps, permits: permitCounts, rails, db },
         held: {
           db,
           getleads,
