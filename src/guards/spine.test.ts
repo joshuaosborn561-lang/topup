@@ -24,6 +24,7 @@ describe("the spine — D24", () => {
   it("owners are as Josh assigned them: code runs 3–12, Josh owns 1 and 13, Cayden clears 8, Josh taps 9 when copy is needed", () => {
     const by = (n: number) => SPINE[n - 1];
     assert.equal(by(1).owner, "josh");
+    assert.equal(by(1).also?.who, "cayden", "D92: Cayden is a full approver on step 1");
     assert.equal(by(13).owner, "josh");
     for (let n = 3; n <= 12; n++) assert.equal(by(n).owner, "code", `D24: step ${n} is run by code`);
     assert.equal(by(5).also, null, "D34: step 5 heading stays (code); the customer-list card is a wait, not a second owner");
@@ -102,6 +103,7 @@ describe("the spine — D24", () => {
       const alsoText = k.ownerText.toLowerCase();
       if (s.owner === "code" && alsoText.includes("cayden")) assert.equal(s.also?.who, "cayden", `D25: step ${s.n} heading names Cayden`);
       if (s.owner === "code" && alsoText.includes("josh")) assert.equal(s.also?.who, "josh", `D25: step ${s.n} heading names Josh`);
+      if (s.owner === "josh" && alsoText.includes("cayden")) assert.equal(s.also?.who, "cayden", `D92: step ${s.n} heading names Cayden as equal approver`);
     }
   });
 });

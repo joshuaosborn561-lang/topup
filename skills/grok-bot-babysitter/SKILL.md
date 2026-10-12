@@ -121,7 +121,10 @@ The rules you apply:
    first; the service never CREATE VIEW).
 7. `import(job_id)` only when `loads_paused` is off and a person said so.
 8. `write_receipt(job_id, …)` with the four legs, the filters you used and
-   one plain sentence. The next top-up reads it.
+   one plain sentence. The next top-up reads it. A backfill row that still
+   says "Josh to confirm" or "Cayden to confirm" is a proposal until
+   `confirm_filters(receipt_id, approved_by)` stamps it. Pass Josh or
+   Cayden. Do not confirm it yourself.
 9. Post counts and ids: campaign, pulled, net new after suppression,
    sendable, staged, imported, spend by vendor, job id. Josh flips ACTIVE.
 
@@ -141,7 +144,7 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
 `campaign_record`, `build_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
 `leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `site_check`, `classify_leftover`, `suppress`, `enrich`, `verify`,
-`normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
+`normalize`, `qa`, `stage`, `import`, `write_receipt`, `confirm_filters`, `abort`,
 `resolve`, `note`.
 
 On LeadPipe (Context Saver), for a CSV Josh hands you: `lp_plan`,

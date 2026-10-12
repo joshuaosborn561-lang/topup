@@ -18,7 +18,7 @@ Write only on Supabase project `azpapwtnrbzywlnxxecz` (campaignintelligence), ta
 
 The lane row is the filter book. The build rows are the yield. When proposing a top-up, pick the **build with the best measured imported count**, not the method on the lane row.
 
-Until Josh confirms a backfill row (`owner_confirmed_at` set, or the notes no longer say "Josh to confirm"), **propose it, do not scale**.
+Until Josh or Cayden confirms a backfill row (`owner_confirmed_at` set, or the notes no longer say "Josh to confirm" / "Cayden to confirm"), **propose it, do not scale**. `confirm_filters(receipt_id, approved_by)` accepts either name (D92).
 
 If the latest receipt on the lane is `claude_backfill` or `claude_backfill_build`, **recount** (`count_contacts` or the Maps/permit company count) before proposing. Those rows have `tam_count` null and `rows_found` equal to the original export, not the pool. A blank `tam_count` is not TAM.
 

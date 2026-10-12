@@ -457,7 +457,7 @@ export const GETLEADS_INDUSTRY_ALIASES: Record<string, string> = {
 
 export function mapGetleadsIndustry(name: string): { ok: true; value: string } | { ok: false; error: string } {
   const trimmed = name.trim();
-  if (!trimmed) return { ok: false, error: "industry is empty. Ask Josh." };
+  if (!trimmed) return { ok: false, error: "industry is empty. Ask Josh or Cayden." };
   if (OFFICIAL.has(trimmed)) return { ok: true, value: trimmed };
   const aliased = GETLEADS_INDUSTRY_ALIASES[trimmed];
   if (aliased && OFFICIAL.has(aliased)) return { ok: true, value: aliased };
@@ -465,7 +465,7 @@ export function mapGetleadsIndustry(name: string): { ok: true; value: string } |
   if (semi !== trimmed && OFFICIAL.has(semi)) return { ok: true, value: semi };
   return {
     ok: false,
-    error: `industry ${JSON.stringify(trimmed)} is not a getleads industry (get_available_values field=industries). Ask Josh.`,
+    error: `industry ${JSON.stringify(trimmed)} is not a getleads industry (get_available_values field=industries). Ask Josh or Cayden.`,
   };
 }
 

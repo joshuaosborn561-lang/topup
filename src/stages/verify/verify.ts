@@ -276,7 +276,7 @@ export class VerifyStage {
       })());
     const resolved = await repo.getCard(card.card_id);
     if (!resolved || resolved.status === "open") {
-      await repo.setRunStatus(run.run_id, "awaiting_josh", "verify");
+      await repo.setRunStatus(run.run_id, "awaiting_owner", "verify");
       await repo.setStepWaiting(run.run_id, "verify", worst);
       return "waiting";
     }
@@ -418,7 +418,7 @@ export class VerifyStage {
         }),
       expiresAt: new Date(this.now() + this.d.cfg.cardTimeoutMs),
     });
-    await repo.setRunStatus(run.run_id, splitWorst > rails.cfg.autoCapCents ? "awaiting_josh" : "awaiting_operator", "verify");
+    await repo.setRunStatus(run.run_id, splitWorst > rails.cfg.autoCapCents ? "awaiting_owner" : "awaiting_operator", "verify");
     await repo.setStepWaiting(run.run_id, "verify", splitWorst);
     const resolved = await slack.awaitCard(card.card_id, { pollMs: Math.min(this.d.cfg.pollMs, 15000), timeoutMs: this.d.cfg.cardTimeoutMs, sleep: this.sleep });
     await repo.setStepRunning(run.run_id, "verify");

@@ -12,6 +12,7 @@ import { LEGACY_EMAIL_MAX_TIER_ALIASES, mapEmailMaxTier, mapPersonSource } from 
 import { EMAIL_TIERS } from "../recipes/schema.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
+import { confirmFiltersApprover } from "../recipes/receipt.js";
 import { siteCheck, SITE_CHECK_QUESTIONS, type SiteCheckDeps } from "../canon/siteCheck.js";
 import { classifyLeftover, type LeftoverAiDeps } from "../replies/leftoverAi.js";
 
@@ -37,7 +38,7 @@ export interface GrokDeps {
 }
 
 export const GROK_READS = ["campaigns", "campaign_record", "build_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
-export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "classify_leftover", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
+export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "classify_leftover", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "confirm_filters", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
 const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
@@ -196,10 +197,10 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
         const registry = registryRows(await d.repo.campaignRegistry(client_tag).catch(() => []));
         const name = (await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null)) ?? registry.find((r) => r.campaign_id === campaign_id)?.campaign_name ?? null;
-        if (isColdCall(name)) return text({ error: `#${campaign_id} ${name} is marked as cold call; the service ignores it (D54). Ask Josh.` });
+        if (isColdCall(name)) return text({ error: `#${campaign_id} ${name} is marked as cold call; the service ignores it (D54). Ask Josh or Cayden.` });
         const laneName = lane ?? registry.find((r) => r.campaign_id === campaign_id)?.lane ?? "grok";
         const mappedTier = mapEmailMaxTier(email_max_tier);
-        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(mappedTier.tier ? { email_max_tier: mappedTier.tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
+        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(name ? { campaign_name: name } : {}), ...(mappedTier.tier ? { email_max_tier: mappedTier.tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
         const opened = await d.jobs.open(spec, d.by);
         if (!opened.ok) return text({ error: opened.message });
         id = opened.job_id;
@@ -324,6 +325,35 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       });
       await d.ledger.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "receipt", line: `Receipt ${receipt_id.slice(0, 8)} written by ${d.by}: ${input.how_i_did_it.slice(0, 160)}`, actor: d.by }).catch(() => undefined);
       return text({ ok: true, receipt_id, job_id: run.run_id, person_source: person.source, email_max_tier: emailTier.tier, ...(warnings.length ? { warning: warnings.join(" ") } : {}) });
+    },
+  );
+
+  server.registerTool(
+    "confirm_filters",
+    {
+      description:
+        "Stamp owner_confirmed_at on a backfilled pull receipt so the next top-up may scale it. Josh or Cayden only (D92). Pass approved_by with their name. Does not rewrite filters. Counts and ids only.",
+      inputSchema: {
+        receipt_id: z.string().uuid(),
+        approved_by: z.string().describe("Josh or Cayden."),
+      },
+    },
+    async ({ receipt_id, approved_by }) => {
+      const who = confirmFiltersApprover(approved_by);
+      if (!who.ok) return text({ error: who.error });
+      const stamped = await d.repo.confirmPullReceipt(receipt_id, who.by);
+      if (!stamped) return text({ error: "no such receipt" });
+      await d.ledger
+        .event({
+          client_tag: "canon",
+          lane: "confirm",
+          run_id: null,
+          event: "approved",
+          line: `Receipt ${receipt_id.slice(0, 8)} filters confirmed by ${who.by}${stamped.already ? " (already stamped)" : ""}.`,
+          actor: d.by,
+        })
+        .catch(() => undefined);
+      return text({ ok: true, receipt_id: stamped.receipt_id, confirmed_by: who.by, already: stamped.already });
     },
   );
 

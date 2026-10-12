@@ -138,8 +138,8 @@ export async function classifyLeftover(d: LeftoverAiDeps, input: { approved_by?:
   if (worst > LEFTOVER_AI_HARD_CAP_CENTS) {
     return result("refused", queued.length, no_body, worst, {
       still_unclassified: queued.length + no_body,
-      note: `Jev worst case ${usd(worst)} is over the ${usd(LEFTOVER_AI_HARD_CAP_CENTS)} hard cap. Not sent. Ask Josh.`,
-      next: "Ask Josh. The leftover AI cap is $0.05.",
+      note: `Jev worst case ${usd(worst)} is over the ${usd(LEFTOVER_AI_HARD_CAP_CENTS)} hard cap. Not sent. Ask Josh or Cayden.`,
+      next: "Ask Josh or Cayden. The leftover AI cap is $0.05.",
     });
   }
 
@@ -157,8 +157,8 @@ export async function classifyLeftover(d: LeftoverAiDeps, input: { approved_by?:
   if (!d.jev) {
     return result("refused", queued.length, no_body, worst, {
       still_unclassified: queued.length + no_body,
-      note: "Jev is not configured (ICP_JEV_MODEL / topup.jev_openrouter_key, the same secret icp-llm uses). Ask Josh.",
-      next: "Ask Josh.",
+      note: "Jev is not configured (ICP_JEV_MODEL / topup.jev_openrouter_key, the same secret icp-llm uses). Ask Josh or Cayden.",
+      next: "Ask Josh or Cayden.",
     });
   }
 
@@ -177,7 +177,7 @@ export async function classifyLeftover(d: LeftoverAiDeps, input: { approved_by?:
     return result(decision.kind === "blocked" ? "refused" : "waiting_approval", queued.length, no_body, decision.worstCaseCents, {
       still_unclassified: queued.length + no_body,
       note: `Not sent: ${decision.reason}`,
-      next: decision.kind === "ask" ? `classify_leftover(approved_by="Name")` : "Ask Josh.",
+      next: decision.kind === "ask" ? `classify_leftover(approved_by="Name")` : "Ask Josh or Cayden.",
     });
   }
 

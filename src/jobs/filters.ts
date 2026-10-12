@@ -1,4 +1,5 @@
 import { mapGetleadsIndustry } from "./getleadsIndustries.js";
+import { ASK } from "../policy/rules.js";
 import { geoFenceRef } from "../recipes/geoFence.js";
 import { GETLEADS_BANDS, GETLEADS_EMAIL_STATUSES } from "../recipes/schema.js";
 
@@ -48,6 +49,12 @@ export const OVER_1K_BANDS = ["1001 to 5000", "5001 to 10000", "10001+"] as cons
 /** Receipt meta count honors on every source (D84). Not sent to count_contacts. */
 export const RECEIPT_COUNT_KEYS = ["max_per_company", "industries_by_campaign", "over_1k_campaign"] as const;
 
+/**
+ * Stored on the receipt as notes / gates, never sent to count_contacts.
+ * Stripped so a later D74 parse does not fail them as unmapped (D92).
+ */
+export const RECEIPT_META_KEYS = ["icp_gate"] as const;
+
 export type ReceiptCountHonor =
   | { ok: true; filters: Record<string, unknown>; honored: Record<string, unknown> }
   | { ok: false; error: string };
@@ -63,31 +70,69 @@ export function campaignIdFrom(filters: Record<string, unknown>, campaignId?: nu
   return campaignIdKey(campaignId) ?? campaignIdKey(filters.campaign_id);
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * D84 stored this as a map of campaign id → industries. The BCP IT lane
+ * receipt stored bucket names (`healthcare`, `logistics`) instead of ids.
+ * Resolve by id first, then by a bucket word in the campaign name.
+ */
 function pickIndustriesByCampaign(
   byCampaign: unknown,
   campaignId: string | null,
-): { ok: true; campaign_id: string; values: unknown } | { ok: false; error: string } {
-  if (byCampaign == null) return { ok: false, error: "industries_by_campaign is missing. Ask Josh." };
+  campaignName?: string | null,
+): { ok: true; campaign_id: string; values: unknown; key: string } | { ok: false; error: string } {
+  if (byCampaign == null) return { ok: false, error: `industries_by_campaign is missing. ${ASK}` };
   if (typeof byCampaign !== "object" || Array.isArray(byCampaign)) {
-    return { ok: false, error: "industries_by_campaign must be a map of campaign id to industries. Ask Josh." };
+    return { ok: false, error: `industries_by_campaign must be a map of campaign id to industries. ${ASK}` };
   }
   const map = byCampaign as Record<string, unknown>;
   const keys = Object.keys(map);
-  if (keys.length === 0) return { ok: false, error: "industries_by_campaign is empty. Ask Josh." };
+  if (keys.length === 0) return { ok: false, error: `industries_by_campaign is empty. ${ASK}` };
   let id = campaignId;
   if (!id && keys.length === 1) id = keys[0]!;
+  if (id) {
+    const raw = map[id] ?? map[String(Number(id))];
+    if (raw !== undefined) {
+      const values = asStringArray(raw);
+      if (values.length === 0) {
+        return { ok: false, error: `industries_by_campaign for campaign ${id} is empty. ${ASK}` };
+      }
+      return { ok: true, campaign_id: id, values, key: id };
+    }
+  }
+  const name = (campaignName ?? "").trim();
+  if (name) {
+    const buckets = keys.filter((k) => !/^\d+$/.test(k));
+    const hits = buckets.filter((k) => {
+      const token = k.toLowerCase().replace(/[_-]+/g, " ").trim();
+      if (!token) return false;
+      return new RegExp(`\\b${escapeRe(token)}\\b`, "i").test(name);
+    });
+    if (hits.length === 1) {
+      const key = hits[0]!;
+      const values = asStringArray(map[key]);
+      if (values.length === 0) {
+        return { ok: false, error: `industries_by_campaign bucket ${JSON.stringify(key)} is empty. ${ASK}` };
+      }
+      return { ok: true, campaign_id: id ?? key, values, key };
+    }
+    if (hits.length > 1) {
+      return {
+        ok: false,
+        error: `industries_by_campaign matched more than one bucket (${hits.join(", ")}) on this campaign name. ${ASK}`,
+      };
+    }
+  }
   if (!id) {
-    return { ok: false, error: "industries_by_campaign has more than one campaign; pass campaign_id. Ask Josh." };
+    return { ok: false, error: `industries_by_campaign has more than one campaign; pass campaign_id. ${ASK}` };
   }
-  const raw = map[id] ?? map[String(Number(id))];
-  if (raw === undefined) {
-    return { ok: false, error: `industries_by_campaign has no list for campaign ${id}. Ask Josh.` };
-  }
-  const values = asStringArray(raw);
-  if (values.length === 0) {
-    return { ok: false, error: `industries_by_campaign for campaign ${id} is empty. Ask Josh.` };
-  }
-  return { ok: true, campaign_id: id, values };
+  return {
+    ok: false,
+    error: `industries_by_campaign has no list for campaign ${id}. Stored keys: ${keys.join(", ")}. ${ASK}`,
+  };
 }
 
 /**
@@ -98,26 +143,27 @@ function pickIndustriesByCampaign(
 export function honorReceiptCountKeys(
   filters: Record<string, unknown>,
   campaignId?: number | string | null,
+  campaignName?: string | null,
 ): ReceiptCountHonor {
   const next: Record<string, unknown> = { ...filters };
   const honored: Record<string, unknown> = {};
   const id = campaignIdFrom(filters, campaignId);
 
   if ("industries_by_campaign" in next) {
-    const picked = pickIndustriesByCampaign(next.industries_by_campaign, id);
+    const picked = pickIndustriesByCampaign(next.industries_by_campaign, id, campaignName);
     if (!picked.ok) return picked;
     const mapped = mapIndustries(picked.values);
     if (!mapped.ok) return mapped;
     next.industries = mapped.values;
     honored.industries = mapped.values;
-    honored.industries_by_campaign = { [picked.campaign_id]: mapped.values };
+    honored.industries_by_campaign = { [picked.key]: mapped.values };
     delete next.industries_by_campaign;
   }
 
   if ("over_1k_campaign" in next) {
     const flag = next.over_1k_campaign;
     if (typeof flag !== "boolean") {
-      return { ok: false, error: "over_1k_campaign must be true or false. Ask Josh." };
+      return { ok: false, error: `over_1k_campaign must be true or false. ${ASK}` };
     }
     const existing = asStringArray(next.company_size);
     const over = new Set<string>(OVER_1K_BANDS);
@@ -127,7 +173,7 @@ export function honorReceiptCountKeys(
     } else if (existing.length > 0) {
       const under = existing.filter((band) => !over.has(band));
       if (under.length === 0) {
-        return { ok: false, error: "over_1k_campaign is false and company_size has only 1001+ bands. Ask Josh." };
+        return { ok: false, error: `over_1k_campaign is false and company_size has only 1001+ bands. ${ASK}` };
       }
       next.company_size = under;
     }
@@ -146,6 +192,7 @@ export function honorReceiptCountKeys(
   }
 
   delete next.campaign_id;
+  for (const k of RECEIPT_META_KEYS) delete next[k];
   return { ok: true, filters: next, honored };
 }
 
@@ -197,16 +244,16 @@ function parseTitleMatch(filters: Record<string, unknown>): { ok: true; value: "
   const raw = filters.title_match ?? filters.title_match_mode;
   if (raw !== undefined && raw !== null && raw !== "") {
     if (typeof raw !== "string") {
-      return { ok: false, error: `title_match ${JSON.stringify(raw)} is not exact or substring (D82). Ask Josh.` };
+      return { ok: false, error: `title_match ${JSON.stringify(raw)} is not exact or substring (D82). ${ASK}` };
     }
     const s = raw.trim().toLowerCase();
     if (s === "exact") return { ok: true, value: "exact" };
     if (s === "substring") return { ok: true, value: "substring" };
-    return { ok: false, error: `title_match ${JSON.stringify(raw)} is not exact or substring (D82). Ask Josh.` };
+    return { ok: false, error: `title_match ${JSON.stringify(raw)} is not exact or substring (D82). ${ASK}` };
   }
   if (filters.exact_title === false) return { ok: true, value: "substring" };
   if (filters.exact_title === true || filters.exact_title === undefined) return { ok: true, value: "exact" };
-  return { ok: false, error: `exact_title ${JSON.stringify(filters.exact_title)} is not a boolean (D82). Ask Josh.` };
+  return { ok: false, error: `exact_title ${JSON.stringify(filters.exact_title)} is not a boolean (D82). ${ASK}` };
 }
 
 function mapIndustries(v: unknown): { ok: true; values: string[] } | { ok: false; error: string } {
@@ -216,7 +263,7 @@ function mapIndustries(v: unknown): { ok: true; values: string[] } | { ok: false
   const seen = new Set<string>();
   for (const name of raw) {
     if (/sibling industries|adjacent set/i.test(name)) {
-      return { ok: false, error: `industry ${JSON.stringify(name)} is a note, not a getleads industry. Ask Josh.` };
+      return { ok: false, error: `industry ${JSON.stringify(name)} is a note, not a getleads industry. ${ASK}` };
     }
     const mapped = mapGetleadsIndustry(name);
     if (!mapped.ok) return mapped;
@@ -230,15 +277,16 @@ function mapIndustries(v: unknown): { ok: true; values: string[] } | { ok: false
 export function getleadsParamsFromFilters(
   filters: Record<string, unknown>,
   campaignId?: number | string | null,
+  campaignName?: string | null,
 ): GetleadsFilterParse {
-  const honored = honorReceiptCountKeys(filters, campaignId);
+  const honored = honorReceiptCountKeys(filters, campaignId, campaignName);
   if (!honored.ok) return honored;
   filters = honored.filters;
   const extra = unknownKeys(filters);
   if (extra.length) {
     return {
       ok: false,
-      error: `unmapped getleads filter keys: ${extra.join(", ")}. Every stored key must map to the getleads API (D74). Ask Josh.`,
+      error: `unmapped getleads filter keys: ${extra.join(", ")}. Every stored key must map to the getleads API (D74). ${ASK}`,
     };
   }
   const titles = asStringArray(filters.job_titles ?? filters.titles);

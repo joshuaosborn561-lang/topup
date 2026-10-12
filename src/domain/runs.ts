@@ -14,6 +14,7 @@ export const RUN_STATUSES = [
   "qa",
   "routing",
   "awaiting_josh",
+  "awaiting_owner",
   "awaiting_operator",
   "staging",
   "importing",
@@ -44,6 +45,15 @@ export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
 
 export function runIsOpen(status: RunStatus): boolean {
   return !TERMINAL_RUN_STATUSES.includes(status);
+}
+
+/** Waiting on a named owner. `awaiting_josh` is the pre-D92 spelling and still counts (D92). */
+export function isAwaitingOwner(status: RunStatus | string | null | undefined): boolean {
+  return status === "awaiting_owner" || status === "awaiting_josh";
+}
+
+export function awaitingOwnerStatus(): RunStatus {
+  return "awaiting_owner";
 }
 
 /**

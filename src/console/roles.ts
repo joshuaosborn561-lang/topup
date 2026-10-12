@@ -27,4 +27,4 @@ export const CHOICE_ROLE: Readonly<Record<string, Role>> = {
 /** Choices that spend (D18: judgement). Each is owner-only; the guard holds this list against CHOICE_ROLE. */
 export const JUDGEMENT_CHOICES: readonly string[] = ["approve_spend", "decline_spend", "split"];
 
-export const NEEDS_JOSH = "This needs Josh.";
+export const NEEDS_JOSH = "This needs Josh or Cayden.";

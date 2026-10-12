@@ -64,7 +64,7 @@ export class Console {
           lane: input.run.lane,
           run_id: input.run.run_id,
           event: "card_opened",
-          line: `${input.kind} card opened for ${input.audience === "owner" ? "Josh" : "Cayden"}: ${input.text.slice(0, 160)}`,
+          line: `${input.kind} card opened for ${input.audience === "owner" ? "Josh or Cayden" : "Cayden"}: ${input.text.slice(0, 160)}`,
           next_intent: `Wait for the ${input.kind} card.`,
           actor: "service",
           detail: { card_id: card.card_id },

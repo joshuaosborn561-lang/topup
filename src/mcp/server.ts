@@ -52,6 +52,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   stage: "operator",
   import: "operator",
   write_receipt: "operator",
+  confirm_filters: "operator",
   abort: "operator",
   resolve: "operator",
   note: "operator",

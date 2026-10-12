@@ -3,15 +3,15 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 /**
- * D76–D89 — ops rules Josh settled live 12 Oct 2026. Docs only. Ask Josh.
+ * D76–D92 — ops rules Josh settled live 12 Oct 2026. Docs only. Ask Josh or Cayden.
  */
 
 const root = new URL("../../", import.meta.url);
 
 describe("D76–D89 — ops rules in the canon", () => {
-  it("CANON is as of D91 and names each rule", async () => {
+  it("CANON is as of D92 and names each rule", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D91\*\*/, "D91: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D92\*\*/, "D92: fold into CANON. Ask Josh or Cayden.");
     assert.match(canon, /whole usable pool/, "D76");
     assert.match(canon, /VALID email is a quality filter/, "D77");
     assert.match(canon, /TAM cross-check/, "D78");
@@ -28,11 +28,12 @@ describe("D76–D89 — ops rules in the canon", () => {
     assert.match(canon, /Cayden has full authority/, "D89");
     assert.match(canon, /classify_leftover/, "D90");
     assert.match(canon, /jev_openrouter_key/, "D91");
+    assert.match(canon, /Cayden is a full approver/, "D92");
     assert.match(canon, /negative_class/, "D81 classify is live");
     assert.match(canon, /lower\(current_title\) IN/, "D82 is live");
     assert.match(canon, /count\(source="prospeo"\)/, "D83 is live");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
-    for (const n of [76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91]) {
+    for (const n of [76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92]) {
       assert.match(ledger, new RegExp(`^\\| D${n} \\|`, "m"), `D${n} index row`);
       assert.match(ledger, new RegExp(`^## D${n} — `, "m"), `D${n} entry`);
     }

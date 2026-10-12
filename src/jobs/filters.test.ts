@@ -22,8 +22,10 @@ describe("D74 — getleads filter mapping", () => {
 
   it("fails loud on an unmapped key or an unknown industry", () => {
     const meta = getleadsParamsFromFilters({ job_titles: ["Partner"], icp_gate: "yes", over_1k_campaign: true });
-    assert.equal(meta.ok, false);
-    if (!meta.ok) assert.match(meta.error, /icp_gate/);
+    assert.ok(meta.ok, "D92: icp_gate is receipt meta and is stripped");
+    const extra = getleadsParamsFromFilters({ job_titles: ["Partner"], mystery_key: 1 });
+    assert.equal(extra.ok, false);
+    if (!extra.ok) assert.match(extra.error, /mystery_key/);
     const unknown = getleadsParamsFromFilters({ job_titles: ["Partner"], industries: ["Not A Real Industry"] });
     assert.equal(unknown.ok, false);
     if (!unknown.ok) assert.match(unknown.error, /not a getleads industry/);
@@ -55,6 +57,60 @@ describe("D74 — getleads filter mapping", () => {
     });
     assert.equal(needId.ok, false);
     if (!needId.ok) assert.match(needId.error, /pass campaign_id/);
+    const bucketMiss = getleadsParamsFromFilters(
+      {
+        job_titles: ["CIO"],
+        industries_by_campaign: {
+          logistics: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
+          healthcare: ["Hospitals and Health Care", "Medical Practices"],
+        },
+      },
+      3921852,
+    );
+    assert.equal(bucketMiss.ok, false);
+    if (!bucketMiss.ok) {
+      assert.match(bucketMiss.error, /no list for campaign 3921852/);
+      assert.match(bucketMiss.error, /Stored keys: logistics, healthcare/);
+    }
+    const logistics = getleadsParamsFromFilters(
+      {
+        job_titles: ["CIO"],
+        industries_by_campaign: {
+          logistics: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
+          healthcare: ["Hospitals and Health Care", "Medical Practices"],
+        },
+      },
+      3921852,
+      "BCP Logistics IT (AirPods)",
+    );
+    assert.ok(logistics.ok, (logistics as { error?: string }).error);
+    if (logistics.ok) {
+      assert.deepEqual(logistics.params.industries, ["Transportation; Logistics; Supply Chain and Storage", "Truck Transportation"]);
+    }
+    const healthcare = getleadsParamsFromFilters(
+      {
+        job_titles: ["CIO"],
+        industries_by_campaign: {
+          logistics: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
+          healthcare: ["Hospitals and Health Care", "Medical Practices"],
+        },
+      },
+      3921850,
+      "BCP Healthcare IT (AirPods)",
+    );
+    assert.ok(healthcare.ok);
+    if (healthcare.ok) assert.deepEqual(healthcare.params.industries, ["Hospitals and Health Care", "Medical Practices"]);
+    const peMeta = getleadsParamsFromFilters(
+      {
+        job_titles: ["Partner"],
+        company_description: "private equity",
+        icp_gate: { required: true, cut_labels: ["venture_capital_firm"] },
+      },
+      3763808,
+      "BCP PE Firms (With Team)",
+    );
+    assert.ok(peMeta.ok, (peMeta as { error?: string }).error);
+    if (peMeta.ok) assert.equal(peMeta.params.company_description, "private equity");
     const over = honorReceiptCountKeys({ job_titles: ["Partner"], over_1k_campaign: true });
     assert.ok(over.ok);
     if (over.ok) {

@@ -7,6 +7,7 @@ import type { ProspeoIndustryMapping } from "../jobs/prospeoIndustries.js";
 import { countMapsPool, MAPS_POOL_NOTE, mapsPoolFiltersUsed, mapsPoolFromFilters } from "./mapsPool.js";
 import { searchPersonBody, type ProspeoSearch } from "./prospeoSearch.js";
 import type { SpendRails } from "../spend/rails.js";
+import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
 
 /**
@@ -76,13 +77,17 @@ export async function countSource(
 ): Promise<CountRead> {
   const calls: CountCall[] = [];
   const base = { source: input.source, calls, rule: COUNT_RULE };
-  const honored = honorReceiptCountKeys(input.filters, input.campaign_id);
+  const campaignName =
+    input.campaign_id != null && d.db
+      ? await campaignNameBySmartleadId(d.db, Number(input.campaign_id)).catch(() => null)
+      : null;
+  const honored = honorReceiptCountKeys(input.filters, input.campaign_id, campaignName);
   if (!honored.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: honored.error };
   const filters = honored.filters;
   const withHonored = (used: Record<string, unknown>): Record<string, unknown> => ({ ...used, ...honored.honored });
   switch (input.source) {
     case "getleads": {
-      const parsed = getleadsParamsFromFilters(filters, input.campaign_id);
+      const parsed = getleadsParamsFromFilters(filters, input.campaign_id, campaignName);
       if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
       const { max_per_company: cap, ...countFilters } = parsed.params;
       const applied = withHonored(outboundFilters(countFilters as GetleadsFilters));
@@ -105,7 +110,7 @@ export async function countSource(
       }
     }
     case "ai_ark": {
-      const parsed = getleadsParamsFromFilters(filters, input.campaign_id);
+      const parsed = getleadsParamsFromFilters(filters, input.campaign_id, campaignName);
       if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
       const params = parsed.params;
       const used = withHonored({ ...params } as Record<string, unknown>);
@@ -130,7 +135,7 @@ export async function countSource(
       }
     }
     case "prospeo": {
-      const parsed = getleadsParamsFromFilters(filters, input.campaign_id);
+      const parsed = getleadsParamsFromFilters(filters, input.campaign_id, campaignName);
       if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
       const { max_per_company: cap, ...countFilters } = parsed.params;
       const rawIndustries = strings(filters.industries ?? filters.companyIndustry);

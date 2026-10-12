@@ -76,6 +76,7 @@ Verbs (one stage each, counts back):
 | `stage` | Route and stage. |
 | `import` | LeadPipe into Smartlead. Refuses while loads are paused. |
 | `write_receipt` | The receipt the next top-up reads. |
+| `confirm_filters` | Stamp `owner_confirmed_at` on a backfill receipt. Josh or Cayden only. Does not rewrite filters. |
 | `abort` | Stop a job and release its rows. |
 | `resolve` | Resolve a card by id (QA choices, resume, abort; spend needs the owner token or `approved_by` on the verb). |
 | `note` | One line in a lane's event log. |
