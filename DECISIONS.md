@@ -82,7 +82,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 | D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
 | D62 | Live; a background maps pull always ends done or failed with `last_error`; the copy reads the named ICP view (not the companion join), times out, and dedupes with or without a unique email index |
-| D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). That PR writes the live D63 text. This stub keeps the ledger contiguous so D64 can ship off main |
+| D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). Six-month expiry in that stub is superseded by D81 |
 | D64 | Live; job 46b1c941: enrich approval runs the paid people step; a step that did not run is not done; ICP labels are tokens; spend cards re-quote and record actuals; maps used/net-new includes ingested + contacted; lp_export reads the wrapped payload; verify retry uses the recorded approval and does not park; `size` is the free dry-run; maps pull skips held emails before max_rows |
 | D65 | Live; job 46b1c941 after #42: size is async + aggregate SQL; approval is idempotent per step/approver/amount; QA hold count is this job; a false done with queued rows is reopened; Lane E role-inbox company from Maps name; first_name_fallback defaults off |
 | D66 | Live; job 46b1c941 after #43: people/email waterfalls read an ingest `_ew` view that exposes `domain` from `company_domain`; a done step reopens when its `rules_hash` changed or `force=true`. Runtime CREATE VIEW in `lp` superseded by D67 |
@@ -95,6 +95,20 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D73 | Live; `site_check(people)` fetch / extract / ask fan out (~50 fetch workers, 2 per host; ~28 Gemini and ~28 Jev; backoff on 429/5xx; Gemini RPM limiter 200). Env and tool params override. A deploy does not resume the loop — Topup calls the same verb again; already-extracted and already-answered domains are skipped. Nothing starts on boot (D5). The Gemini ceiling is still unchecked × the table |
 | D74 | Live; getleads `count`/`held` map every stored key (official industry names, `company_description`, `purged_titles` → `exclude_job_titles`) and fail on an unmapped key; `filters_used` is what was applied; `campaign_record` stamp counts are this campaign; `held` `net_new` is the pool minus held (sends / live / suppressed) |
 | D75 | Live; `build_record` is a read-only read of `topup.list_build_records` (narrative, receipt_ids, campaign ids, transcript path) plus an optional paged transcript from private Storage `list-build-transcripts`; operators read the narrative first, transcript for edge cases; receipts stay the at-a-glance source of record; no DDL, no write, no spend |
+| D76 | Live; size the whole usable pool first and present all usable leads with full cost; the approver cuts by cost; a job still pulls 1 to 2,000 |
+| D77 | Live; VALID email is a quality filter, not a TAM cap; count all email statuses; TAM = receipt filters minus email_status; verify after with MillionVerifier then No2Bounce |
+| D78 | Live; TAM cross-check GetLeads then AI Ark and Prospeo on a matched basis; within 10% TAM is right; more than 10% apart means switch source (not widening). Prospeo count and AI Ark exact-title mode: code pending |
+| D79 | Live; take a ~50-person overlap sample of the second source against GetLeads / held |
+| D80 | Live; held / contacted / suppressed subtraction is an exact full-list join, never a sampled page (qualifies D74) |
+| D81 | Live; suppression is real unsubscribes only, permanently, per client; 6-month expiry is out (supersedes D63); not-interested is not suppressed; classify Smartlead negatives (code pending); hard bounces stay blocked pending Josh; never unsuppress in Smartlead |
+| D82 | Live as rule; code pending; GetLeads titles exact-match by default; AI Ark counts use exact-title match mode |
+| D83 | Live as rule; code pending; Prospeo count is page 1 of search-person (1 credit, pagination.total_count); ~1.5¢/credit; needs approved_by |
+| D84 | Live as rule; code pending; count honors max_per_company, industries_by_campaign, over_1k_campaign (qualifies D43 / D74) |
+| D85 | Live; local-business owner finder: site_check people (owner by default), then email waterfall, then generic inbox fallback (info@ / office@, not support@ / payroll@) |
+| D86 | Live; read list_build_records (narrative first, transcript for edge cases) before sizing or rebuilding (same as D75) |
+| D87 | Live; a method Josh settles in chat is written into CANON.md and DECISIONS.md so every operator's bot follows it |
+| D88 | Live; no self-initiated runs on weekends or 8pm–6am CT unless Josh or Cayden asks live |
+| D89 | Live; Cayden has full authority over the top-up service and the canon |
 
 ---
 
@@ -2760,3 +2774,161 @@ industry / filter facts still live on the receipt.
 
 **Guard.** `src/guards/d75_build_record.test.ts`; unit tests in
 `src/canon/buildRecord.test.ts`. Ask Josh.
+
+## D76 — Size the whole usable pool; the approver cuts by cost
+
+**Decision.** Size the whole usable pool first and present every usable
+lead with the full cost. Do not stop at one 2,000-row batch. A job
+still pulls 1 to 2,000 (D52, D54). The approver cuts the pool by cost.
+
+**Why.** Josh, 12 Oct 2026, live: the 2,000 cap is a pull size, not a
+size ceiling.
+
+**What it does not do.** It does not raise `max_rows` past 2,000.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D77 — VALID is a quality filter, not a TAM cap
+
+**Decision.** Count every email status. TAM = the receipt filters with
+`email_status` removed. After the pull, verify with MillionVerifier
+then No2Bounce. VALID is a quality filter, not a cap on the TAM.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D78 — TAM cross-check: GetLeads, then AI Ark and Prospeo
+
+**Decision.** Count GetLeads first, then AI Ark and Prospeo on a
+matched basis: exact titles, ICP industries mapped to each vendor's
+official names, same headcount bands, all email statuses, same
+max-per-company cap, same post-pull gates. Within 10%: the TAM is
+right. More than 10% apart: GetLeads is the wrong source — source
+from the one that fits. Dropping VALID or switching source is not
+widening. Prospeo count and AI Ark exact-title mode: *code pending,
+follow-up PR*.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D79 — ~50-person overlap sample of the second source
+
+**Decision.** Take about 50 people from the second source and join
+them against GetLeads / held. Counts and ids only.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D80 — Held is an exact full-list join
+
+**Decision.** Held / contacted / suppressed subtraction is an exact
+full-list join. Never a sampled page. Qualifies D74's "sampled page"
+wording.
+
+**Why.** Josh, 12 Oct 2026, live. A page scaled to the pool was
+under-subtracting.
+
+**What it does not do.** The `held` verb's code is not rewritten in
+this PR (*docs only*; follow-up if the join is still a sample).
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D81 — Suppression is unsubscribes only, permanently, per client
+
+**Decision.** Suppression covers only real unsubscribes (explicit
+do-not-contact), permanently, per client. The 6-month expiry is out
+(supersedes D63). Not-interested and other negatives are not
+suppressed. Smartlead marks all negatives as do-not-contact, so they
+must be classified (unsubscribe vs `not_interested`) and backfilled —
+*code pending, follow-up PR*. Hard bounces stay blocked pending Josh
+(open question). Never unsuppress anything in Smartlead itself.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D82 — Title filters are exact match (code pending)
+
+**Decision.** GetLeads title filters use exact match by default
+(substring only if the receipt says so). AI Ark counts use an
+exact-title match mode. *Code pending, follow-up PR.*
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D83 — Prospeo count source (code pending)
+
+**Decision.** Prospeo count: page 1 of search-person = 1 credit and
+returns `pagination.total_count`. No-result and 30-day repeat
+searches are free. About 1.5 cents per credit; needs `approved_by`.
+Map industries to Prospeo's official names and flag inexact
+mappings. *Code pending, follow-up PR.*
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D84 — Count honors stored receipt keys (code pending)
+
+**Decision.** Count honors `max_per_company`, `industries_by_campaign`
+and `over_1k_campaign` when the receipt carries them. Qualifies D43
+(export-only `max_per_company`) and D74 (fail-loud mapping). *Code
+pending, follow-up PR.*
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D85 — Local-business owner finder
+
+**Decision.** For a local-business / physical list: `site_check("people")`
+(owner by default), then the email waterfall on the people found,
+then the generic inbox fallback (`info@` / `office@`, not `support@`
+/ `payroll@`).
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D86 — Read the build record before sizing or rebuilding
+
+**Decision.** Operators read `list_build_records` (narrative first,
+transcript for edge cases) before sizing or rebuilding a list. Same
+read as D75; this entry restates it as a sizing gate.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D87 — Chat method decisions land in the canon
+
+**Decision.** A method Josh settles in chat is written into `CANON.md`
+and `DECISIONS.md` in the same PR so every operator's bot follows it.
+A new rule is still a new decision (D-meta).
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D88 — No self-initiated runs nights or weekends
+
+**Decision.** Nothing starts on its own on a weekend or from 8pm to
+6am CT unless Josh or Cayden asks live. Daytime still follows D51
+(nothing starts on its own; Grok calls the next verb).
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D89 — Cayden has full authority
+
+**Decision.** Cayden has full authority over the top-up service and
+the canon: he can change, use or direct it however he wants.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
