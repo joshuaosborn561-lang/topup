@@ -7,8 +7,9 @@ import { hasNegativeClassColumn, writeNegativeClass } from "./store.js";
 
 /**
  * D90 — leftover-negative AI runner. Text/category already ran (D81).
- * Jev (same OpenRouter path as icp-llm) classifies each leftover inbound
- * body. Estimate first; approved_by runs it; $0.05 hard cap. Idempotent.
+ * Jev (same OpenRouter path as icp-llm; key via topup.jev_openrouter_key,
+ * D91) classifies each leftover inbound body. Estimate first; approved_by
+ * runs it; $0.05 hard cap. Idempotent.
  * No body stays unclassified. Counts only; bodies never leave this file.
  */
 
@@ -43,6 +44,7 @@ export interface LeftoverAiResult {
   hard_cap_cents: number;
   cost_cents: number;
   vendor: "jev";
+  last_error: string | null;
   note: string;
   next: string;
 }
@@ -110,6 +112,7 @@ function result(
     hard_cap_cents: LEFTOVER_AI_HARD_CAP_CENTS,
     cost_cents: extra.cost_cents ?? 0,
     vendor: LEFTOVER_AI_VENDOR,
+    last_error: extra.last_error ?? null,
     note: extra.note,
     next: extra.next,
   };
@@ -154,7 +157,7 @@ export async function classifyLeftover(d: LeftoverAiDeps, input: { approved_by?:
   if (!d.jev) {
     return result("refused", queued.length, no_body, worst, {
       still_unclassified: queued.length + no_body,
-      note: "Jev is not configured (ICP_JEV_MODEL / vault openrouter_api_key, the same secret icp-llm uses). Ask Josh.",
+      note: "Jev is not configured (ICP_JEV_MODEL / topup.jev_openrouter_key, the same secret icp-llm uses). Ask Josh.",
       next: "Ask Josh.",
     });
   }
@@ -181,11 +184,13 @@ export async function classifyLeftover(d: LeftoverAiDeps, input: { approved_by?:
   const write = d.write ?? writeNegativeClass;
   const counts = { ...EMPTY_COUNTS };
   let classified = 0;
+  let last_error: string | null = null;
   for (const row of queued) {
     try {
       const hit = await d.jev.classify(row.body);
       if (!hit.class) {
         counts.errors += 1;
+        last_error ??= "jev choice unparseable";
         continue;
       }
       const n = await write(d.db, row.id, hit.class, "ai");
@@ -194,8 +199,9 @@ export async function classifyLeftover(d: LeftoverAiDeps, input: { approved_by?:
         if (hit.class === "unsubscribe") counts.wrote_unsubscribe += 1;
         else counts.wrote_not_interested += 1;
       }
-    } catch {
+    } catch (err) {
       counts.errors += 1;
+      last_error ??= String((err as Error).message ?? "failed").slice(0, 120);
     }
   }
 
@@ -222,10 +228,12 @@ export async function classifyLeftover(d: LeftoverAiDeps, input: { approved_by?:
     ...counts,
     still_unclassified: still,
     cost_cents: cost,
+    last_error,
     note:
       `Jev classified ${classified} of ${queued.length} leftovers (source=ai). ` +
       `${counts.wrote_unsubscribe} unsubscribe, ${counts.wrote_not_interested} not_interested. ` +
-      `${no_body} no-body stay unclassified. ${counts.errors} unparseable or failed. Cost ${usd(cost)}.`,
+      `${no_body} no-body stay unclassified. ${counts.errors} unparseable or failed. Cost ${usd(cost)}.` +
+      (last_error ? ` last_error=${last_error}` : ""),
     next: still > no_body ? `classify_leftover(approved_by="${by}")` : "Nothing to call.",
   });
 }

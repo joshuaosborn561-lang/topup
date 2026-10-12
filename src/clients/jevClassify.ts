@@ -5,6 +5,7 @@ import type { NegativeClass } from "../replies/classify.js";
 /**
  * D90 — Jev via OpenRouter Decisions, the same provider icp-llm / site_check
  * already uses (vault `openrouter_api_key`, model ICP_JEV_MODEL). No new vendor.
+ * Key via topup.jev_openrouter_key() (D91). Never SELECT vault.
  * Returns a class or null. Never logs the body or the key.
  */
 
@@ -16,16 +17,15 @@ export interface JevClassify {
 }
 
 export async function loadOpenRouterKey(db: Queryable): Promise<string> {
-  const { rows } = await db.query<{ s: string | null }>(
-    `select decrypted_secret as s from vault.decrypted_secrets where name = $1`,
-    [OPENROUTER_VAULT_SECRET],
-  );
+  const { rows } = await db.query<{ s: string | null }>(`select topup.jev_openrouter_key() as s`);
   const s = (rows[0]?.s ?? "").trim();
-  if (!s) throw new Error("vault openrouter_api_key is empty; icp-llm uses the same secret. Ask Josh.");
+  if (!s) throw new Error("topup.jev_openrouter_key() is empty; icp-llm uses the same secret. Ask Josh.");
   return s;
 }
 
 export class JevClassifyClient implements JevClassify {
+  private cachedKey: string | null = null;
+
   constructor(
     private readonly opts: {
       loadKey: () => Promise<string>;
@@ -36,7 +36,7 @@ export class JevClassifyClient implements JevClassify {
   ) {}
 
   async classify(body: string): Promise<{ class: NegativeClass | null }> {
-    const key = await this.opts.loadKey();
+    const key = this.cachedKey ?? (this.cachedKey = await this.opts.loadKey());
     const fetchImpl = this.opts.fetchImpl ?? fetch;
     const url = this.opts.url ?? OPENROUTER_DECISIONS_URL;
     let last = "jev leftover classify failed";

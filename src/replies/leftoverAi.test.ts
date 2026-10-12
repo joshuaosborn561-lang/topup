@@ -95,6 +95,7 @@ describe("D90 — leftover AI runner", () => {
       ["1", "unsubscribe", "ai"],
       ["2", "not_interested", "ai"],
     ]);
+    assert.equal(first.last_error, null);
     assert.equal(d.r.gates.length, 1);
     assert.equal(d.r.gates[0]!.approvedCents, LEFTOVER_AI_HARD_CAP_CENTS);
     assert.equal(d.r.records, 1);
@@ -129,6 +130,23 @@ describe("D90 — leftover AI runner", () => {
     assert.equal(d.writes.length, 0);
     assert.equal(d.r.gates.length, 0);
     assert.match(out.note, /hard cap/);
+  });
+
+  it("records last_error and does not write when Jev throws", async () => {
+    const d = deps({
+      rows: [{ id: "1", body: "please stop" }],
+      jev: {
+        async classify() {
+          throw new Error("permission denied for function _crypto_aead_det_decrypt");
+        },
+      },
+    });
+    const out = await classifyLeftover(d, { approved_by: "Josh" });
+    assert.equal(out.status, "done");
+    assert.equal(out.errors, 1);
+    assert.equal(out.wrote_unsubscribe, 0);
+    assert.equal(out.last_error, "permission denied for function _crypto_aead_det_decrypt");
+    assert.equal(d.writes.length, 0);
   });
 
   it("prices leftover Jev at the same grade unit as ICP", () => {

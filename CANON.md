@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D90** (2026-10-12). One page. `DECISIONS.md` is the append-only
+Canon as of **D91** (2026-10-12). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -245,6 +245,9 @@ D48).
    stays unclassified. Estimate first; `approved_by` runs it. Hard cap
    $0.05. Writes `negative_class_source='ai'`. Idempotent (already
    classed rows are left alone). Counts only; bodies never return (D90).
+   The OpenRouter key is `topup.jev_openrouter_key()` (security definer).
+   The service never SELECTs `vault.decrypted_secrets`. leadtopup_app is
+   not granted on schema vault (D91).
 39. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
@@ -419,7 +422,9 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   `dl_status`, `sg_exclude`, or `skip_*` (D81). Never run
   `classify_leftover` without a name, never over the $0.05 hard cap,
   never invent a Jev prompt, never classify an empty body, never add
-  a new LLM vendor (D90). Never start a run on a weekend or
+  a new LLM vendor (D90). Never SELECT `vault.decrypted_secrets` from
+  this service. Never grant leadtopup_app on schema vault (D91). Never
+  start a run on a weekend or
   8pm–6am CT unless Josh or Cayden asked live (D88). Never send
   GetLeads `job_titles` as a substring match unless the receipt asks
   for `title_match=substring` (D82). Never count AI Ark titles in
