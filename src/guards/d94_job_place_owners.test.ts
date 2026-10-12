@@ -9,7 +9,7 @@ const root = new URL("../../", import.meta.url);
 describe("D94 — owners attach by this job's places", () => {
   it("CANON names place_id or normalized domain and forbids the shared owner table", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D94\*\*/, "D94: fold into CANON.md in the same PR. Ask Josh or Cayden.");
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/, "D94: CANON still has a header. Ask Josh or Cayden.");
     assert.match(canon, /place_id or normalized domain/, "D94: the job's places are the scope. Ask Josh or Cayden.");
     assert.match(canon, /Owners attach by the job's places/, "D94. Ask Josh or Cayden.");
     assert.match(canon, /Never read the shared owner table/, "D93/D94. Ask Josh or Cayden.");

@@ -51,7 +51,9 @@ describe("D52 — count", () => {
     assert.match(r.note ?? "", /max_per_company 2 honored \(D84\)/);
     assert.match(r.note ?? "", /lower\(current_title\) IN/);
     assert.equal(r.filters_used.where_sql, "lower(current_title) IN ('cio')");
-    assert.ok(!("job_titles" in r.filters_used));
+    assert.deepEqual(r.filters_applied.job_titles, ["CIO"]);
+    assert.equal(r.filters_applied.where_sql, r.filters_used.where_sql);
+    assert.equal(r.filters_applied.title_match, "exact");
     assert.match(r.rule, /TAM for this campaign is exhausted/);
     const sub = await countSource(d, {
       client_tag: "bcp",
@@ -96,6 +98,8 @@ describe("D52 — count", () => {
     assert.equal(byCampaign.count, 816);
     assert.deepEqual(byCampaign.filters_used.industries, ["Hospitals"]);
     assert.deepEqual(byCampaign.filters_used.industries_by_campaign, { "3763801": ["Hospitals"] });
+    assert.deepEqual(byCampaign.filters_applied.industries_by_campaign, { "3763801": ["Hospitals"] });
+    assert.deepEqual(byCampaign.filters_applied.job_titles, ["Partner"]);
     const badIndustry = await countSource(d, {
       client_tag: "bcp",
       source: "getleads",
@@ -247,5 +251,28 @@ describe("D52 — count", () => {
     });
     assert.deepEqual(storedBands.filters_used.company_size, ["1001 to 5000"]);
     assert.deepEqual(storedBands.filters_used.company_headcount_range, ["1001-2000", "2001-5000"]);
+  });
+
+  it("D95 — filters_applied lists every filter that ran, including rewritten keys", async () => {
+    const { d, seen } = deps();
+    const r = await countSource(d, {
+      client_tag: "acme",
+      source: "getleads",
+      campaign_id: 3921850,
+      filters: {
+        job_titles: ["CIO"],
+        email_status: ["VALID"],
+        industries_by_campaign: { "3921850": ["Hospitals and Health Care"] },
+      },
+    });
+    assert.equal(r.count, 816);
+    assert.deepEqual(r.filters_applied.job_titles, ["CIO"]);
+    assert.equal(r.filters_applied.where_sql, "lower(current_title) IN ('cio')");
+    assert.deepEqual(r.filters_applied.industries, ["Hospitals and Health Care"]);
+    assert.deepEqual(r.filters_applied.industries_by_campaign, { "3921850": ["Hospitals and Health Care"] });
+    assert.equal(r.filters_applied.email_status_omitted, true);
+    assert.deepEqual(r.filters_applied.email_status_on_receipt, ["VALID"]);
+    assert.ok(!("email_status" in (seen[0] as object)), "TAM count omits VALID");
+    assert.match(r.note ?? "", /email_status omitted/);
   });
 });

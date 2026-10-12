@@ -5,16 +5,15 @@ import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
 import { countSlices, loadGeoFenceCities, type GeoCity, type GeoFenceRef } from "../recipes/geoFence.js";
 import type { SpendRails } from "../spend/rails.js";
-import { getleadsParamsFromFilters } from "../jobs/filters.js";
+import { filtersApplied, getleadsParamsFromFilters, honorReceiptCountKeys } from "../jobs/filters.js";
 
 const log = logger("held");
 
 /**
- * How much of a getleads pool the client already holds (D52): a page of
- * the pool is matched against what the client sent in the recycle window
- * and its live campaigns, and the share is scaled to the count Grok gives.
- * The answer is a count and the method; the rule is stated; Grok applies it.
- * The page's addresses stay in memory and are never logged or stored.
+ * How much of a getleads pool the client already holds (D80, D95): the
+ * full held set (unsubscribes, hard bounces, DNC) joined to the exported
+ * pool. Never a sample, never a lane total. Addresses stay in memory and
+ * are never logged.
  */
 export interface HeldDeps {
   db: Queryable;
@@ -29,22 +28,18 @@ export interface HeldDeps {
 export interface HeldRead {
   source: "getleads";
   filters_used: Record<string, unknown>;
+  filters_applied: Record<string, unknown>;
   tam: number;
   held: number;
   net_new: number;
-  method: HeldMethod;
-  sampled: number;
-  matched: number;
   note: string;
   rule: string;
 }
 
-export type HeldMethod = "overlap" | "sample" | "lane";
-
 export const HELD_RULE = `net_new is the count minus what the client already holds. Under ${MIN_NET_NEW}, the TAM for this campaign is exhausted.`;
 
-const SAMPLE_ROWS = 100;
-const SAMPLE_DEADLINE_MS = 20_000;
+const EXPORT_DEADLINE_MS = 60_000;
+const EXPORT_PAGE = 50_000;
 
 export async function heldRead(
   d: HeldDeps,
@@ -58,109 +53,50 @@ export async function heldRead(
   if (!Number.isFinite(input.tam) || input.tam < 0) return { error: 'tam must be the count from count(source="getleads", ...).' };
   const { max_per_company: _cap, ...filters } = parsed.params;
   const tam = Math.floor(input.tam);
-  const days = input.days ?? 90;
-  const sample = await sampleEmails(d, input.client_tag, filters as GetleadsFilters);
-  let held: number;
-  let method: HeldMethod;
-  let matched: number;
-  let note: string;
-  if (sample.length > 0) {
-    matched = await countHeldEmails(d.db, input.smartlead_client_id, input.campaign_ids, days, true, sample);
-    const scaled = scaleOverlap(tam, sample.length, matched);
-    held = scaled.held;
-    method = scaled.method;
-    note =
-      method === "overlap"
-        ? `${held} of this pool are already held (export page matched this client's unsubscribes, hard bounces, or the DNC list). net_new is the pool minus that held count.`
-        : `${matched} of ${sample.length} sampled rows are already held (unsubscribes, hard bounces, or the DNC list), scaled to ${held} of ${tam}. net_new is the pool minus that held estimate.`;
-  } else {
-    matched = await countHeldEmails(d.db, input.smartlead_client_id, input.campaign_ids, days, true, null);
-    held = Math.min(tam, matched);
-    method = "lane";
-    note = `${held} addresses already held on this lane (unsubscribes, hard bounces, DNC list; capped at the pool). The pool could not be sampled, so this is the lane total, not a pool-overlap. net_new is the pool minus that count.`;
+  const honored = honorReceiptCountKeys(input.filters, campaignId, campaignName);
+  const applied = filtersApplied(parsed.params, outboundFilters(filters as GetleadsFilters), honored.ok ? honored.honored : {});
+  if (tam === 0) {
+    return {
+      source: "getleads",
+      filters_used: applied,
+      filters_applied: applied,
+      tam: 0,
+      held: 0,
+      net_new: 0,
+      note: "Pool is 0. net_new is the pool minus held.",
+      rule: HELD_RULE,
+    };
   }
+  const heldSet = await loadHeldEmails(d.db, input.smartlead_client_id);
+  const pool = await exportPoolEmails(d, input.client_tag, filters as GetleadsFilters, tam);
+  if ("error" in pool) return pool;
+  let matched = 0;
+  for (const email of pool.emails) if (heldSet.has(email)) matched += 1;
+  const held = matched;
   return {
     source: "getleads",
-    filters_used: outboundFilters(filters as GetleadsFilters),
+    filters_used: applied,
+    filters_applied: applied,
     tam,
     held,
     net_new: Math.max(0, tam - held),
-    method,
-    sampled: sample.length,
-    matched,
-    note,
+    note: `${held} of this pool are already held (exact full-list join of the exported pool to this client's unsubscribes, hard bounces, and the DNC list). net_new is the pool minus that held count.`,
     rule: HELD_RULE,
   };
 }
 
-/**
- * A sample that covers the TAM is the overlap. A shorter sample is scaled.
- * `matched` is how many sample rows are already held.
- */
-export function scaleOverlap(tam: number, sampleSize: number, matched: number): { held: number; method: "overlap" | "sample" } {
-  const total = Math.max(0, Math.floor(tam));
-  const size = Math.max(0, Math.floor(sampleSize));
-  const hits = Math.max(0, Math.min(size, Math.floor(matched)));
-  if (size === 0) return { held: 0, method: "sample" };
-  if (size >= total) return { held: Math.min(total, hits), method: "overlap" };
-  return { held: Math.min(total, Math.round((hits / size) * total)), method: "sample" };
-}
-
-/** One export page of the pool. The addresses are returned to the caller and never logged. */
-async function sampleEmails(d: HeldDeps, clientTag: string, filters: GetleadsFilters): Promise<string[]> {
-  try {
-    let slice: GetleadsFilters = filters;
-    if (filters.geo_fence) {
-      const cities = await (d.loadGeo ?? ((ref: GeoFenceRef) => loadGeoFenceCities(d.db, ref)))(filters.geo_fence);
-      slice = (countSlices(filters, cities)[0] as GetleadsFilters | undefined) ?? filters;
-    } else if ((filters.cities?.length ?? 0) > 45) {
-      slice = { ...filters, cities: filters.cities!.slice(0, 45) };
-    }
-    const got = await exportPage(d, clientTag, slice);
-    return got ? emailsFromCsv(got.text) : [];
-  } catch (err) {
-    log.warn("overlap sample failed", { error: (err as Error).message });
-    return [];
-  }
-}
-
-/** Wait for a getleads export and read its CSV. Free; one ledger row. */
-async function exportPage(d: HeldDeps, clientTag: string, filters: GetleadsFilters): Promise<{ text: string; rows: number } | null> {
-  const started = await d.getleads.startExport(filters, { max_rows: SAMPLE_ROWS });
-  const deadline = d.now() + SAMPLE_DEADLINE_MS;
-  let url: string | null = null;
-  let rows = 0;
-  while (d.now() < deadline) {
-    const status = await d.getleads.checkExport(started.export_id);
-    if (EXPORT_FAILED.includes(status.job_status)) return null;
-    if (status.export_url && (EXPORT_DONE.includes(status.job_status) || status.rows_exported !== null)) {
-      url = status.export_url;
-      rows = status.rows_exported ?? 0;
-      break;
-    }
-    await d.sleep(2000);
-  }
-  if (!url) return null;
-  await d.rails
-    .record({ runId: "canon", clientTag, step: "size", vendor: "getleads", action: "overlap_sample", rows, credits: 0, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: started.export_id, approvedBy: null })
-    .catch((err) => log.warn("ledger row failed", { vendor: "getleads", action: "overlap_sample", error: (err as Error).message }));
-  return { text: await d.fetchText(url), rows };
-}
-
-/** Distinct addresses this client holds under D81: unsubscribes, hard bounces, DNC list. A sample limits it to those emails. */
-export async function countHeldEmails(db: Queryable, clientId: number, campaignIds: readonly number[], _days: number, _excludeLive: boolean, emails: string[] | null): Promise<number> {
-  if (campaignIds.length === 0) return 0;
+/** Distinct addresses this client holds under D81. Never logged. */
+export async function loadHeldEmails(db: Queryable, clientId: number): Promise<Set<string>> {
   const { rows: has } = await db.query<{ leads: boolean; sends: boolean; suppression: boolean }>(
     `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends,
             to_regclass('public.suppression') is not null as suppression`,
   );
-  if (!has[0]?.leads) return 0;
+  if (!has[0]?.leads) return new Set();
   const { rows: col } = await db.query<{ n: string }>(
     `select count(*)::text as n from information_schema.columns
       where table_schema = 'public' and table_name = 'leads' and column_name = 'negative_class'`,
   );
   const hasClass = Number(col[0]?.n ?? 0) > 0;
-  const sample = emails !== null && emails.length > 0;
   const unsub = hasClass
     ? `select lower(l.email) as e from public.leads l
         where l.smartlead_client_id = $1 and l.email is not null
@@ -180,16 +116,100 @@ export async function countHeldEmails(db: Queryable, clientId: number, campaignI
     ? `union
        select lower(s.email) as e from public.suppression s where s.email is not null`
     : "";
-  const { rows } = await db.query<{ n: string }>(
-    `select count(distinct e)::text as n from (
+  const { rows } = await db.query<{ e: string }>(
+    `select distinct e from (
        ${unsub}
        ${bounce}
        ${dnc}
-     ) x
-     ${sample ? "where e = any($2::text[])" : ""}`,
-    sample ? [clientId, emails] : [clientId],
+     ) x`,
+    [clientId],
   );
-  return Number(rows[0]?.n ?? 0);
+  return new Set(rows.map((r) => r.e).filter((e) => e.includes("@")));
+}
+
+/** Count of held emails, optionally limited to a list. Used by maps/size. */
+export async function countHeldEmails(
+  db: Queryable,
+  clientId: number,
+  campaignIds: readonly number[],
+  _days: number,
+  _excludeLive: boolean,
+  emails: string[] | null,
+): Promise<number> {
+  if (campaignIds.length === 0) return 0;
+  const all = await loadHeldEmails(db, clientId);
+  if (emails !== null && emails.length > 0) {
+    const want = new Set(emails.map((e) => e.trim().toLowerCase()));
+    let n = 0;
+    for (const e of all) if (want.has(e)) n += 1;
+    return n;
+  }
+  return all.size;
+}
+
+async function exportPoolEmails(
+  d: HeldDeps,
+  clientTag: string,
+  filters: GetleadsFilters,
+  tam: number,
+): Promise<{ emails: string[] } | { error: string }> {
+  try {
+    let slice: GetleadsFilters = filters;
+    if (filters.geo_fence) {
+      const cities = await (d.loadGeo ?? ((ref: GeoFenceRef) => loadGeoFenceCities(d.db, ref)))(filters.geo_fence);
+      slice = (countSlices(filters, cities)[0] as GetleadsFilters | undefined) ?? filters;
+    } else if ((filters.cities?.length ?? 0) > 45) {
+      slice = { ...filters, cities: filters.cities!.slice(0, 45) };
+    }
+    const got = await exportPage(d, clientTag, slice, Math.min(Math.max(tam, 1), EXPORT_PAGE));
+    if (!got) {
+      return { error: "held could not export the pool for an exact full-list join. No fallback. Ask Josh or Cayden." };
+    }
+    return { emails: emailsFromCsv(got.text) };
+  } catch (err) {
+    log.warn("exact join export failed", { error: (err as Error).message });
+    return { error: "held could not export the pool for an exact full-list join. No fallback. Ask Josh or Cayden." };
+  }
+}
+
+async function exportPage(
+  d: HeldDeps,
+  clientTag: string,
+  filters: GetleadsFilters,
+  maxRows: number,
+): Promise<{ text: string; rows: number } | null> {
+  const started = await d.getleads.startExport(filters, { max_rows: maxRows, columns: ["email"] });
+  const deadline = d.now() + EXPORT_DEADLINE_MS;
+  let url: string | null = null;
+  let rows = 0;
+  while (d.now() < deadline) {
+    const status = await d.getleads.checkExport(started.export_id);
+    if (EXPORT_FAILED.includes(status.job_status)) return null;
+    if (status.export_url && (EXPORT_DONE.includes(status.job_status) || status.rows_exported !== null)) {
+      url = status.export_url;
+      rows = status.rows_exported ?? 0;
+      break;
+    }
+    await d.sleep(2000);
+  }
+  if (!url) return null;
+  await d.rails
+    .record({
+      runId: "canon",
+      clientTag,
+      step: "size",
+      vendor: "getleads",
+      action: "held_join",
+      rows,
+      credits: 0,
+      worstCaseCents: 0,
+      balanceBefore: null,
+      balanceAfter: null,
+      vendorJobId: started.export_id,
+      approvedBy: null,
+    })
+    .catch((err) => log.warn("ledger row failed", { vendor: "getleads", action: "held_join", error: (err as Error).message }));
+  return { text: await d.fetchText(url), rows };
 }
 
 /** Emails from an export page. The header must name an email column. */

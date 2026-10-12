@@ -341,3 +341,28 @@ export function getleadsParamsFromFilters(
     },
   };
 }
+
+/**
+ * Every filter that actually ran, including keys rewritten for the vendor
+ * (titles → where_sql, industries_by_campaign → industries). Callers read
+ * this instead of guessing from stamps or key formats (D95).
+ */
+export function filtersApplied(
+  params: GetleadsCountParams,
+  outbound: Record<string, unknown>,
+  honored: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...outbound, ...honored };
+  if (params.job_titles?.length) out.job_titles = params.job_titles;
+  if (params.exclude_job_titles?.length) out.exclude_job_titles = params.exclude_job_titles;
+  if (params.title_match) out.title_match = params.title_match;
+  if (params.company_description) out.company_description = params.company_description;
+  if (params.industries?.length) out.industries = params.industries;
+  if (params.company_size?.length) out.company_size = params.company_size;
+  if (params.countries?.length) out.countries = params.countries;
+  if (params.email_status?.length) {
+    out.email_status_on_receipt = params.email_status;
+    out.email_status_omitted = true;
+  }
+  return out;
+}
