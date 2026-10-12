@@ -34,6 +34,9 @@ export const GETLEADS_STORED_KEYS = [
   "employee_profiles_on_linkedin",
   "employee_profiles_on_linkedin_min",
   "employee_profiles_on_linkedin_max",
+  "title_match",
+  "title_match_mode",
+  "exact_title",
 ] as const;
 
 const KNOWN = new Set<string>(GETLEADS_STORED_KEYS);
@@ -55,6 +58,8 @@ export interface GetleadsCountParams {
   employee_profiles_on_linkedin?: { min?: number; max?: number };
   employee_profiles_on_linkedin_min?: number;
   employee_profiles_on_linkedin_max?: number;
+  /** Exact (default) or substring title match (D82). */
+  title_match?: "exact" | "substring";
 }
 
 export type GetleadsFilterParse =
@@ -78,6 +83,22 @@ function jobFunctionName(v: unknown): string | null {
 
 function unknownKeys(filters: Record<string, unknown>): string[] {
   return Object.keys(filters).filter((k) => !KNOWN.has(k)).sort();
+}
+
+function parseTitleMatch(filters: Record<string, unknown>): { ok: true; value: "exact" | "substring" } | { ok: false; error: string } {
+  const raw = filters.title_match ?? filters.title_match_mode;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    if (typeof raw !== "string") {
+      return { ok: false, error: `title_match ${JSON.stringify(raw)} is not exact or substring (D82). Ask Josh.` };
+    }
+    const s = raw.trim().toLowerCase();
+    if (s === "exact") return { ok: true, value: "exact" };
+    if (s === "substring") return { ok: true, value: "substring" };
+    return { ok: false, error: `title_match ${JSON.stringify(raw)} is not exact or substring (D82). Ask Josh.` };
+  }
+  if (filters.exact_title === false) return { ok: true, value: "substring" };
+  if (filters.exact_title === true || filters.exact_title === undefined) return { ok: true, value: "exact" };
+  return { ok: false, error: `exact_title ${JSON.stringify(filters.exact_title)} is not a boolean (D82). Ask Josh.` };
 }
 
 function mapIndustries(v: unknown): { ok: true; values: string[] } | { ok: false; error: string } {
@@ -136,6 +157,8 @@ export function getleadsParamsFromFilters(filters: Record<string, unknown>): Get
     .filter((status): status is (typeof GETLEADS_EMAIL_STATUSES)[number] => EMAIL_STATUSES.has(status));
   const epl = filters.employee_profiles_on_linkedin;
   const eplObj = epl && typeof epl === "object" && !Array.isArray(epl) ? (epl as { min?: number; max?: number }) : null;
+  const titleMatch = parseTitleMatch(filters);
+  if (!titleMatch.ok) return titleMatch;
   return {
     ok: true,
     params: {
@@ -154,6 +177,7 @@ export function getleadsParamsFromFilters(filters: Record<string, unknown>): Get
       ...(eplObj && (eplObj.min != null || eplObj.max != null) ? { employee_profiles_on_linkedin: eplObj } : {}),
       ...(typeof filters.employee_profiles_on_linkedin_min === "number" ? { employee_profiles_on_linkedin_min: filters.employee_profiles_on_linkedin_min } : {}),
       ...(typeof filters.employee_profiles_on_linkedin_max === "number" ? { employee_profiles_on_linkedin_max: filters.employee_profiles_on_linkedin_max } : {}),
+      title_match: titleMatch.value,
     },
   };
 }

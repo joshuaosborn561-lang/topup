@@ -34,4 +34,19 @@ describe("D74 — getleads filter mapping", () => {
     assert.equal(unknown.ok, false);
     if (!unknown.ok) assert.match(unknown.error, /not a getleads industry/);
   });
+
+  it("D82 — title_match defaults to exact and refuses an unknown mode", () => {
+    const def = getleadsParamsFromFilters({ job_titles: ["Partner"] });
+    assert.ok(def.ok);
+    if (def.ok) assert.equal(def.params.title_match, "exact");
+    const sub = getleadsParamsFromFilters({ job_titles: ["Partner"], title_match: "substring" });
+    assert.ok(sub.ok);
+    if (sub.ok) assert.equal(sub.params.title_match, "substring");
+    const alias = getleadsParamsFromFilters({ job_titles: ["Partner"], exact_title: false });
+    assert.ok(alias.ok);
+    if (alias.ok) assert.equal(alias.params.title_match, "substring");
+    const bad = getleadsParamsFromFilters({ job_titles: ["Partner"], title_match: "fuzzy" });
+    assert.equal(bad.ok, false);
+    if (!bad.ok) assert.match(bad.error, /D82/);
+  });
 });

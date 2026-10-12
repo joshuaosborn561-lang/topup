@@ -70,6 +70,8 @@ const getleadsParams = z
     exclude_job_titles: z.array(z.string().min(1)).min(1).optional(),
     email_status: z.array(z.enum(GETLEADS_EMAIL_STATUSES)).min(1).optional(),
     max_per_company: z.number().int().min(1).optional(),
+    /** Exact (default) or substring title match. Substring only when the receipt says so (D82). */
+    title_match: z.enum(["exact", "substring"]).optional(),
   })
   .strict()
   .refine((p) => !("employee_count_min" in p) && !("employee_count_max" in p), {
