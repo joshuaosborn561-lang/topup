@@ -117,6 +117,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D95 | Live; replay the hand search (read record → same search → exact held join → net new + cost → pull/verify/stage on approval); hide stamps / lane meta / key formats / sampling from callers; filters_applied lists every filter that ran; held never samples or falls back to a lane total; no per-client constants or canon steps |
 | D96 | Live; build transcript / narrative is the source of truth for how a list was built; a backfilled receipt that disagrees or is thinner is corrected to match (a backfill fix, not widening); generic diff then --apply; skip registry lane unassigned and never retag onto or off it |
 | D97 | Live; held returns a held_id and runs the free GetLeads pool export in the background; every split export_id is polled; a miss names its class (timeout / export_failed / fair_use / count_timeout / paid_export); never a paid export |
+| D98 | Live; held is every lead this client already has (lead store, Smartlead history and mirror, sends, provenance, plus suppressions); match by email, else LinkedIn URL, else normalized name+company; generic exact join (D80); net new splits has_email vs needs_enrich |
 
 ---
 
@@ -3177,3 +3178,35 @@ It does not write `dl_status`, `sg_exclude`, or `skip_*`. It does not
 unsuppress. Josh still flips ACTIVE by hand (D5, D14).
 
 **Guard.** `src/guards/d97_held_chunked_export.test.ts`. Ask Josh or Cayden.
+
+## D98 — held is every lead this client already has
+
+**Decision.** `held` subtracts every lead this client already has, not
+only unsubscribes, hard bounces and the DNC list. The set is the lead
+store (`lp.<tag>_ingested_leads`, `client_<tag>.leads` / `contacts`,
+waterfall contacts), the Smartlead history and mirror (`public.leads`
+for this `smartlead_client_id`), staging for this client's campaigns,
+sends (via the mirror), past receipts and provenance
+(`topup.lead_provenance` for this `client_tag`), plus suppressions.
+Match by email. For a row with no email, match by LinkedIn URL or
+normalized name+company. Generic for every client. Exact full-list
+join (D80). The pool export carries identifier columns
+(`work_email`, `linkedin_url`, `first_name`, `last_name`,
+`company_name`). The answer splits net new as `has_email` vs
+`needs_enrich`. `maps_raw` is the scrape pool, not a held store.
+Qualifies D81's held line.
+
+**Why.** Josh / Topup, 12 Oct 2026, after #66. Healthcare IT 3921850
+showed 76 held of 4,643 against suppressions only, after about 2,228
+had already matched the client's loaded leads. The suppression-only
+set under-subtracted people already in any of that client's
+campaigns.
+
+**What it does not do.** It does not sample. It does not fall back to
+a lane total. It does not spend. It does not page `search_contacts`.
+It does not write `dl_status`, `sg_exclude`, or `skip_*`. It does not
+unsuppress. It does not change the suppress verb (still unsubscribes
+only). It does not treat `maps_raw` as held. Josh still flips ACTIVE
+by hand (D5, D14). Pulls stay held until a person says yes.
+
+**Guard.** `src/guards/d98_held_all_client_leads.test.ts`. Ask Josh or Cayden.
