@@ -74,21 +74,21 @@ describe("D74 — held net_new", () => {
         filters: {
           job_titles: ["CIO"],
           industries_by_campaign: {
-            logistics: ["Transportation, Logistics, Supply Chain and Storage"],
-            healthcare: ["Hospitals and Health Care"],
+            alpha: ["Transportation, Logistics, Supply Chain and Storage"],
+            omega: ["Hospitals and Health Care"],
           },
         },
         tam: 1000,
       },
     );
     assert.ok("error" in it);
-    assert.match(it.error, /Stored keys: logistics, healthcare/);
+    assert.match(it.error, /Stored keys: alpha, omega/);
 
     const named = await heldRead(
       {
         ...deps,
         db: { query: async (sql: string) => {
-          if (sql.includes("from public.campaigns")) return { rows: [{ name: "BCP Logistics IT (AirPods)" }] };
+          if (sql.includes("from public.campaigns")) return { rows: [{ name: "North Alpha IT" }] };
           return { rows: [{ n: "0" }] };
         } },
       } as never,
@@ -99,8 +99,8 @@ describe("D74 — held net_new", () => {
         filters: {
           job_titles: ["CIO"],
           industries_by_campaign: {
-            logistics: ["Transportation, Logistics, Supply Chain and Storage"],
-            healthcare: ["Hospitals and Health Care"],
+            alpha: ["Transportation, Logistics, Supply Chain and Storage"],
+            omega: ["Hospitals and Health Care"],
           },
         },
         tam: 1000,

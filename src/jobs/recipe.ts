@@ -1,5 +1,6 @@
 import { getleadsParamsFromFilters } from "./filters.js";
 import { icpViewOf, mapsPoolFromFilters } from "../canon/mapsPool.js";
+import { refuseSharedOwnerTable, siteOwnersNeedJobId } from "../canon/siteOwners.js";
 import { MAX_ROWS_PER_JOB } from "../policy/rules.js";
 import { liveEmailMaxTier, mapEmailMaxTier } from "../recipes/legacyLeadmagic.js";
 import { EMAIL_TIERS, parseRecipe, type Recipe } from "../recipes/schema.js";
@@ -11,7 +12,7 @@ import { EMAIL_TIERS, parseRecipe, type Recipe } from "../recipes/schema.js";
  * inputs, the rest are the service defaults every list gets (suppression,
  * verify split, normalize, required fields).
  */
-export type JobSource = "getleads" | "maps" | "permits" | "table";
+export type JobSource = "getleads" | "maps" | "permits" | "table" | "site_owners";
 
 export interface JobSpec {
   client_tag: string;
@@ -31,7 +32,7 @@ export interface JobSpec {
   name_to_email?: boolean;
 }
 
-export const JOB_SOURCES: readonly JobSource[] = ["getleads", "maps", "permits", "table"];
+export const JOB_SOURCES: readonly JobSource[] = ["getleads", "maps", "permits", "table", "site_owners"];
 
 function strings(v: unknown): string[] {
   if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -70,8 +71,12 @@ function sourceFor(spec: JobSpec): Recipe["source"] {
       const table = typeof f.table === "string" ? f.table : typeof f.schema === "string" && typeof f.name === "string" ? `${f.schema}.${f.name}` : null;
       const where = typeof f.where === "string" && f.where.trim() ? f.where.trim() : "true";
       if (!table) throw new Error("table needs table as schema.table (and an optional where).");
+      const shared = refuseSharedOwnerTable(table);
+      if (shared) throw new Error(shared);
       return { kind: "supabase_table", table, where } as Recipe["source"];
     }
+    case "site_owners":
+      throw new Error(siteOwnersNeedJobId());
   }
 }
 

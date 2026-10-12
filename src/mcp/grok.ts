@@ -14,6 +14,7 @@ import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
 import { confirmFiltersApprover } from "../recipes/receipt.js";
 import { siteCheck, SITE_CHECK_QUESTIONS, type SiteCheckDeps } from "../canon/siteCheck.js";
+import { attachSiteOwners, countSiteOwners, refuseSharedOwnerTable, SITE_OWNERS_SOURCE, siteOwnersNeedJobId } from "../canon/siteOwners.js";
 import { classifyLeftover, type LeftoverAiDeps } from "../replies/leftoverAi.js";
 
 /**
@@ -93,17 +94,25 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "count",
     {
       description:
-        "A count on one source with the filters you supply, as the record stores them: getleads (free; exact titles by default via lower(current_title) IN, substring only when the receipt says title_match=substring; every stored key is mapped or the call fails; honors max_per_company, industries_by_campaign and over_1k_campaign (D84); filters_used is what was applied), ai_ark (about five cents; needs approved_by; exact-title STRICT unless the receipt asks for substring), prospeo (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs approved_by; industries mapped to Prospeo's official names with inexact flags; honors the same D84 receipt keys; search-person does not apply max_per_company so that count is uncapped), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
+        "A count on one source with the filters you supply, as the record stores them: getleads (free; exact titles by default via lower(current_title) IN, substring only when the receipt says title_match=substring; every stored key is mapped or the call fails; honors max_per_company, industries_by_campaign and over_1k_campaign (D84); filters_used is what was applied), ai_ark (about five cents; needs approved_by; exact-title STRICT unless the receipt asks for substring), prospeo (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs approved_by; industries mapped to Prospeo's official names with inexact flags; honors the same D84 receipt keys; search-person does not apply max_per_company so that count is uncapped), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly), site_owners (free dry-run of this job's site_check people: job ingest rows ∩ this job's batch, keyed by place_id; pass job_id; never reads the shared owner view). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
       inputSchema: {
-        client_tag: snake,
-        source: z.enum(["getleads", "ai_ark", "prospeo", "maps", "permits"]),
+        client_tag: snake.optional(),
+        source: z.enum(["getleads", "ai_ark", "prospeo", "maps", "permits", "site_owners"]),
         filters,
         campaign_id: z.number().int().optional().describe("Needed when industries_by_campaign names more than one campaign (D84)."),
+        job_id: z.string().optional().describe("Required for source=site_owners: the job whose batch and ingest rows are counted (D93)."),
         approved_by: z.string().optional().describe("Name of the person who approved the paid call."),
       },
     },
-    async ({ client_tag, source, filters: f, campaign_id, approved_by }) =>
-      text(await countSource(d.count, { client_tag, source, filters: f, campaign_id: campaign_id ?? null, approved_by: approved_by ?? null })),
+    async ({ client_tag, source, filters: f, campaign_id, job_id, approved_by }) => {
+      if (source === SITE_OWNERS_SOURCE) {
+        if (!job_id) return text({ error: siteOwnersNeedJobId() });
+        const looking = typeof f.looking_for === "string" ? f.looking_for : null;
+        return text(await countSiteOwners({ db: d.repo.raw(), repo: d.repo }, { job_id, client_tag: client_tag ?? null, looking_for: looking }));
+      }
+      if (!client_tag) return text({ error: "count needs client_tag." });
+      return text(await countSource(d.count, { client_tag, source, filters: f, campaign_id: campaign_id ?? null, approved_by: approved_by ?? null }));
+    },
   );
 
   server.registerTool(
@@ -175,13 +184,13 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "pull",
     {
       description:
-        "Open a job for one campaign and start the pull in the background: the source and filters you read off campaign_record, up to max_rows. Returns the job_id at once (status started). Poll job(job_id) until pull/ingest finish. A spend estimate still waits for approved_by on a later pull(job_id). Then suppress, icp, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id.",
+        "Open a job for one campaign and start the pull in the background: the source and filters you read off campaign_record, up to max_rows. Returns the job_id at once (status started). Poll job(job_id) until pull/ingest finish. A spend estimate still waits for approved_by on a later pull(job_id). source=site_owners attaches site_check people to an existing job only (pass job_id; job_id + batch + place_id); it never opens a job and never reads topup.site_people_found or a client owner table. Then suppress, icp, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id.",
       inputSchema: {
-        client_tag: snake,
-        campaign_id: z.number().int(),
+        client_tag: snake.optional(),
+        campaign_id: z.number().int().optional(),
         source: z.enum(JOB_SOURCES as unknown as [string, ...string[]]),
-        filters,
-        max_rows: z.number().int().min(1).max(MAX_ROWS_PER_JOB).describe(`1 to ${MAX_ROWS_PER_JOB} rows per job.`),
+        filters: filters.optional(),
+        max_rows: z.number().int().min(1).max(MAX_ROWS_PER_JOB).optional().describe(`1 to ${MAX_ROWS_PER_JOB} rows per job. Not used for source=site_owners.`),
         lane: snake.optional().describe("Defaults to the campaign's registry lane."),
         email_max_tier: z.enum([...EMAIL_TIERS, ...LEGACY_EMAIL_MAX_TIER_ALIASES]).optional().describe("Live ceiling, or a stored leadmagic / lm / lead_magic alias which maps to aiark (D58)."),
         name_to_email: z.boolean().optional(),
@@ -190,7 +199,21 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         job_id: z.string().optional(),
       },
     },
-    async ({ client_tag, campaign_id, source, filters: f, max_rows, lane, email_max_tier, name_to_email, icp_kind, approved_by, job_id }) => {
+    async ({ client_tag, campaign_id, source, filters: rawFilters, max_rows, lane, email_max_tier, name_to_email, icp_kind, approved_by, job_id }) => {
+      const f = rawFilters ?? {};
+      if (source === "table") {
+        const table = typeof f.table === "string" ? f.table : typeof f.schema === "string" && typeof f.name === "string" ? `${f.schema}.${f.name}` : null;
+        const shared = refuseSharedOwnerTable(table);
+        if (shared) return text({ error: shared });
+      }
+      if (source === SITE_OWNERS_SOURCE) {
+        if (!job_id) return text({ error: siteOwnersNeedJobId() });
+        const looking = typeof f.looking_for === "string" ? f.looking_for : null;
+        return text(await attachSiteOwners({ db: d.repo.raw(), repo: d.repo }, { job_id, looking_for: looking, apply: true }));
+      }
+      if (!client_tag || campaign_id == null || max_rows == null) {
+        return text({ error: "pull needs client_tag, campaign_id and max_rows, or job_id with source=site_owners." });
+      }
       let id = job_id ?? null;
       if (!id) {
         const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
@@ -233,7 +256,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "site_check",
     {
       description:
-        "The website checker (skill icp-website-gate): our own site fetch (free), then a question over what the site says. question=icp: is each company in the client's ICP (the client's label set, Jev's category pick, about $0.11 per 1,000; verdict per domain, which icp(job_id) then stamps on a job's rows for free). question=people: crawl each company's homepage and people pages (team, leadership, staff, about, contact), have Gemini list every person the site presents, then ask Jev which of them is looking_for (default: the owner, or the person who runs the company; or say who you want: 'the service manager', 'the person who buys IT'). About $1.11 per 1,000 sites worst case. The people found become rows of topup.site_people_found (first_name, last_name, title, domain, source_url) that pull(source=\"table\") can bring into a job. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. A deploy does not resume the loop — call this verb again with the same scope and approved_by; already-extracted and already-answered domains are skipped and not paid again. Optional fetch_/extract_/ask_ parallel and workers override the Railway defaults (~50 fetch, ~28 Gemini, ~28 Jev). Nothing on the rows changes. Counts and labels only; never a name.",
+        "The website checker (skill icp-website-gate): our own site fetch (free), then a question over what the site says. question=icp: is each company in the client's ICP (the client's label set, Jev's category pick, about $0.11 per 1,000; verdict per domain, which icp(job_id) then stamps on a job's rows for free). question=people: crawl each company's homepage and people pages (team, leadership, staff, about, contact), have Gemini list every person the site presents, then ask Jev which of them is looking_for (default: the owner, or the person who runs the company; or say who you want: 'the service manager', 'the person who buys IT'). About $1.11 per 1,000 sites worst case. The people found stay in topup.site_answers / site_people; pull(job_id, source=\"site_owners\") attaches them to this job's businesses only (job_id + place_id). Never pull the shared view topup.site_people_found or a client owner table. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. A deploy does not resume the loop — call this verb again with the same scope and approved_by; already-extracted and already-answered domains are skipped and not paid again. Optional fetch_/extract_/ask_ parallel and workers override the Railway defaults (~50 fetch, ~28 Gemini, ~28 Jev). Nothing on the rows changes. Counts and labels only; never a name.",
       inputSchema: {
         question: z.enum(SITE_CHECK_QUESTIONS),
         client_tag: snake.optional(),

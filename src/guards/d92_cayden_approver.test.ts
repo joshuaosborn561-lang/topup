@@ -18,7 +18,7 @@ const root = new URL("../../", import.meta.url);
 describe("D92 — Cayden is a full approver", () => {
   it("CANON names the rule, the verb, the bucket keys, and the lane filter", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D92\*\*/, "D92: fold into CANON. Ask Josh or Cayden.");
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/, "D92: CANON still has a header. Ask Josh or Cayden.");
     assert.match(canon, /Cayden is a full approver equal to Josh/, "D92. Ask Josh or Cayden.");
     assert.match(canon, /awaiting_owner/, "D92: the write status. Ask Josh or Cayden.");
     assert.match(canon, /`confirm_filters/, "D92: the confirm verb is on the page. Ask Josh or Cayden.");
@@ -60,9 +60,9 @@ describe("D92 — Cayden is a full approver", () => {
   });
 
   it("the retag script is dry-run first and never writes banned columns", async () => {
-    const src = await readFile(new URL("scripts/retag-bcp-pe-it-stamps.ts", root), "utf8");
+    const src = await readFile(new URL("scripts/retag-lane-mismatch.ts", root), "utf8");
     assert.match(src, /--apply/, "D92: apply is opt-in after merge. Ask Josh or Cayden.");
-    assert.match(src, /if \(!apply\) return/, "D92: dry-run returns before any write. Ask Josh or Cayden.");
+    assert.match(src, /if \(!args\.apply\) return/, "D92: dry-run returns before any write. Ask Josh or Cayden.");
     assert.doesNotMatch(src, /\b(set|update)\s+dl_status|\b(set|update)\s+sg_exclude|\bskip_[a-z0-9_]+\s*=/, "D92: never write banned columns. Ask Josh or Cayden.");
     assert.doesNotMatch(src, /update_campaign_status/, "D92: never flip Smartlead. Ask Josh or Cayden.");
     assert.match(src, /ALLOWED_SUPABASE_PROJECT_REF/, "D92: refuse another project. Ask Josh or Cayden.");

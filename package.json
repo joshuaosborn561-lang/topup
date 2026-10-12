@@ -15,7 +15,7 @@
     "pilot:emcor-owner": "tsx scripts/emcor-owner-pilot-20261010.ts",
     "backfill:send-sender": "tsx scripts/backfill-send-sender.ts",
     "audit:negative-class": "tsx scripts/audit-negative-class.ts",
-    "retag:bcp-pe-it-stamps": "tsx scripts/retag-bcp-pe-it-stamps.ts"
+    "retag:lane-mismatch": "tsx scripts/retag-lane-mismatch.ts"
   },
   "engines": {
     "node": ">=20"

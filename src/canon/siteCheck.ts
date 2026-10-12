@@ -34,9 +34,10 @@ import { discoverStores } from "./leftovers.js";
  *           every person the site presents into topup.site_people, and
  *           Jev picks which of them is `looking_for` (default: the owner,
  *           or the person who runs the company) into topup.site_answers.
- *           The people found are rows of the view topup.site_people_found
- *           (first_name, last_name, title, domain, source_url) that a
- *           table pull can bring into a job.
+ *           Those answers stay under the job's batch. count / pull with
+ *           source=site_owners attaches them to this job only (job_id,
+ *           batch, place_id). Never pull the shared view
+ *           topup.site_people_found.
  *
  * The first call returns the estimate and the counts so far; the same
  * call with approved_by runs it and records who said yes (D51). Nothing
@@ -63,7 +64,7 @@ const TITLES_SHOWN = 10;
 export const SITE_CHECK_RULE =
   "The website checker: our own site fetch (free), then a question over what the site says (D71, D72). " +
   "question=icp grades each company against the client's label set (Jev, about $0.11 per 1,000). " +
-  "question=people crawls the site's people pages, has Gemini list every person it presents, and asks Jev which of them is looking_for (about $1.11 per 1,000 sites worst case); the people found are rows of topup.site_people_found. " +
+  "question=people crawls the site's people pages, has Gemini list every person it presents, and asks Jev which of them is looking_for (about $1.11 per 1,000 sites worst case); the people found stay in topup.site_answers / site_people and pull(job_id, source=\"site_owners\") attaches them to this job's businesses only (job_id + place_id). Never pull the shared view topup.site_people_found. " +
   "The first call is the estimate; approved_by=\"Name\" runs it. Sites, people and answers are kept per domain, so a re-run pays only for what is new. A deploy does not resume the loop — call the same verb again (D5, D73). Nothing on the rows changes; you read the counts and decide (D53).";
 
 export interface SiteCheckDeps {
@@ -457,7 +458,7 @@ export async function siteCheck(d: SiteCheckDeps, input: SiteCheckInput): Promis
   const before = await peopleTally(d, scope, dsql, lookingFor);
   const counts = (t: PeopleTally): SiteCheckCounts => ({ domains: t.domains, found: t.found, nobody_listed: t.nobody_listed, unreadable: t.unreadable, unchecked: t.unchecked });
   const tail = { batch, model: `${gModel} then ${jModel}`, looking_for: lookingFor, question_key: qkey };
-  const pullHint = `the people found are rows of ${FOUND_VIEW} (first_name, last_name, title, domain, source_url); pull(client_tag, campaign_id, source="table", filters={"table":"${FOUND_VIEW}","where":"question_key = '${qkey}'"}, max_rows) brings them into a job`;
+  const pullHint = `the people found stay in topup.site_answers / site_people; pull(job_id, source="site_owners") attaches them to this job's businesses only (job_id + place_id). Never pull the shared view ${FOUND_VIEW}`;
   if (before.unchecked === 0) {
     const titles = await peopleTitles(d, scope, dsql, lookingFor);
     return { ...out, ...tail, status: "nothing", to_check: 0, counts: counts(before), by_title: titles.by_title, samples: { flagged: [], passed: titles.samples }, next: before.domains === 0 ? "no domains in scope" : `every site in scope has an answer for "${lookingFor}"; ${pullHint}` };

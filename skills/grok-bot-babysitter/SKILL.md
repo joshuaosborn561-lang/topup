@@ -64,8 +64,10 @@ The rules you apply:
    site's people pages, has Gemini list everyone the site presents and
    asks Jev who is `looking_for` (the owner by default; say who you want
    in plain words: "the service manager", "the person who buys IT"). The
-   people found are rows of `topup.site_people_found`; the answer tells
-   you the `pull(source="table", …)` call that brings them into a job.
+   people found stay in `topup.site_answers` / `site_people`; the answer
+   tells you `pull(job_id, source="site_owners")` attaches them to this
+   job's businesses only (job_id + place_id). Never pull the shared
+   view `topup.site_people_found` or a client owner table (D93).
    The first call is the estimate (about $0.11 per 1,000 for icp, about
    $1.11 per 1,000 sites for people); a name runs it. A deploy does
    not resume a running `people` check — call the same verb again with
