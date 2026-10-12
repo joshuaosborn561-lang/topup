@@ -78,9 +78,10 @@ D48).
     while `needs_person` or `needs_domain` remain. Jev's ICP label is a
     token from the allowed set, never the raw sentence; unparseable is
     null + flag. A spend card is re-quoted when the estimate changes and
-    records `actual_cents` on completion. Maps `count` used/net-new is
-    the union of already-live, already-ingested and already-contacted
-    (90-day this client + suppression), each reported. `size` is the
+    records `actual_cents` on completion.    Maps `count` used/net-new is
+   the union of already-live, already-ingested and already-contacted
+   (this client's unsubscribes, hard bounces pending Josh, and the
+   existing DNC list), each reported. `size` is the
     free dry-run of that pool plus suppression by reason; it opens no
     job. `lp_export` reads `result.signed_url` / `result.row_count`. A
     verify retry uses a recorded approval and does not park on a third
@@ -168,8 +169,9 @@ D48).
    `max_per_company`, `industries_by_campaign` and `over_1k_campaign`
    are honored when stored (D84; qualifies D43 / D74). `campaign_record` stamp counts are this
    campaign, not a shared build. `held` `net_new` is the pool minus
-   held (this client's 90-day sends, live campaigns, and suppression)
-   as an exact full-list join, never a sampled page (D74, D80).
+   held (this client's unsubscribes, hard bounces pending Josh, and
+   the existing DNC list) as an exact full-list join, never a sampled
+   page (D74, D80, D81).
 24. **Operators read the build record before sizing or pulling a top-up.**
    `build_record(client_tag, campaign_id)` returns the matching
    `topup.list_build_records` rows (narrative, receipt_ids, campaign ids,
@@ -196,11 +198,17 @@ D48).
    a sampled page (D80).
 30. **Suppression is real unsubscribes only**, permanently, per client.
    The 6-month expiry is out (supersedes D63). Not-interested and other
-   negatives are not suppressed. Smartlead marks all negatives as
-   do-not-contact, so they must be classified (unsubscribe vs
-   `not_interested`) and backfilled — *code pending, follow-up PR*.
-   Hard bounces stay blocked pending Josh. Never unsuppress anything
-   in Smartlead itself (D81).
+   negatives are not suppressed. Every negative is classified
+   `unsubscribe` vs `not_interested` and stored on `public.leads`
+   (`negative_class`). Text and category first; AI only on the leftover
+   (dry-run audit estimates Jev and does not run it). Future negatives
+   classify as they arrive (trigger + the next `suppress`). Suppression
+   views (`v_master_suppression`, `lp.reply_suppression`,
+   `response_based_v1`) use only the unsubscribe class.
+   `suppress` / `count` / `size` / `held` use per-client unsubscribes,
+   hard bounces (kept pending Josh), and the existing DNC list.
+   `public.sends.sender` records the sending inbox (migration 0024,
+   unapplied). Never unsuppress anything in Smartlead itself (D81).
 31. **Title filters are exact match** on GetLeads by default
     (`lower(current_title) IN (...)` on count and pull). Substring
     (`job_titles`) only when the receipt says `title_match=substring`.
@@ -245,7 +253,7 @@ bears on stated and no verdict (D52).
 | `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). Receipts stay the at-a-glance source of record. Read-only; no spend. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
 | `count(client_tag, source, filters, approved_by?, campaign_id?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; honors `max_per_company`, `industries_by_campaign` and `over_1k_campaign` (D84); `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new), `prospeo` (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs `approved_by`; industries mapped to official names with inexact flags; honors the same D84 receipt keys; search-person does not apply `max_per_company`, so that count is uncapped) or `permits` with the filters you pass. Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
-| `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (90-day sends, live campaigns, suppression) as an **exact full-list join**, never a sampled page (D80), and `net_new` as the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
+| `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (per-client unsubscribes, hard bounces pending Josh, existing DNC list) as an **exact full-list join**, never a sampled page (D80, D81), and `net_new` as the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
 | `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). The suppress CTE types `$1::text` so the first slot is not unused (D70). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
@@ -262,7 +270,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 | Verb | Stage(s) | Notes |
 |---|---|---|
 | `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits` or `table`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails *before* `max_rows` (`already_held`). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
-| `suppress(job_id)` | suppress | Response-based global list, the client's prior contacts (90 days), bounces, the public list, the client's domain list. Returns raw, dropped by reason, net new. |
+| `suppress(job_id)` | suppress | Per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list (`public.suppression`). Classifies arriving negatives (text/category; no AI). Not-interested is not suppressed. Returns raw, dropped by reason, net new (D81). |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
 | `site_check(question, job_id \| client_tag + table, looking_for?, approved_by?)` | — | The website checker on a job or a store `leftovers` named: our own site fetch (free), then a question over what the site says. `icp` grades each company with the client's label set (Jev, about $0.11 per 1,000). `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (about $1.11 per 1,000 sites); the people found are rows of `topup.site_people_found`. First call: estimate and counts so far; `approved_by` runs it. A deploy does not resume it — call the same verb again. Kept per domain; nothing on the rows changes. Counts, titles, at most ten sample domains; never a name. |
 | `enrich(job_id, approved_by?, force?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. People and email waterfalls read `topup.<tag>_ingested_leads_ew` so `ew_read_source` sees `domain` (D67; apply 0021 first). The service never CREATE VIEW. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). `force=true` re-runs a done step. |
@@ -394,8 +402,12 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   2,000 batch (D76). Never treat VALID as a TAM cap (D77). Never call
   dropping VALID or switching the matched source "widening" (D78).
   Never subtract held from a sampled page (D80). Never suppress
-  not-interested. Never expire an unsubscribe at 6 months. Never
-  unsuppress in Smartlead (D81).   Never start a run on a weekend or
+  not-interested. Never treat Smartlead category Do Not Contact as an
+  unsubscribe. Never expire an unsubscribe at 6 months. Never
+  unsuppress in Smartlead. Never run the negative-class AI leftover
+  without a name. Never apply `0024_sends_sender.sql` or
+  `0025_d81_negative_class.sql` until Josh says so. Never write
+  `dl_status`, `sg_exclude`, or `skip_*` (D81). Never start a run on a weekend or
   8pm–6am CT unless Josh or Cayden asked live (D88). Never send
   GetLeads `job_titles` as a substring match unless the receipt asks
   for `title_match=substring` (D82). Never count AI Ark titles in

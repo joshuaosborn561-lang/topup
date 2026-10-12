@@ -26,7 +26,9 @@ describe("D76–D89 — ops rules in the canon", () => {
     assert.match(canon, /method Josh settles in chat/, "D87");
     assert.match(canon, /8pm to 6am CT/, "D88");
     assert.match(canon, /Cayden has full authority/, "D89");
-    assert.match(canon, /code pending, follow-up PR/, "pending items are marked");
+    assert.match(canon, /negative_class/, "D81 classify is live");
+    assert.match(canon, /lower\(current_title\) IN/, "D82 is live");
+    assert.match(canon, /count\(source="prospeo"\)/, "D83 is live");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     for (const n of [76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]) {
       assert.match(ledger, new RegExp(`^\\| D${n} \\|`, "m"), `D${n} index row`);

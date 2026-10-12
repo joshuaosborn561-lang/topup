@@ -107,7 +107,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "held",
     {
       description:
-        "How much of a getleads pool the client already holds: a page of the pool is matched against this client's 90-day sends, live campaigns, and suppression, scaled to the tam you pass from count. net_new is the pool minus that held count. Under 1,000 net new, the TAM for this campaign is exhausted.",
+        "How much of a getleads pool the client already holds: per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list, as an exact full-list join (D80, D81). net_new is the pool minus that held count. Under 1,000 net new, the TAM for this campaign is exhausted.",
       inputSchema: { client_tag: snake, campaign_id: z.number().int(), filters, tam: z.number().int().min(0), days: z.number().int().min(1).max(365).optional() },
     },
     async ({ client_tag, campaign_id, filters: f, tam, days }) => {
@@ -326,7 +326,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
 function verbDescription(verb: Exclude<Verb, "pull">): string {
   switch (verb) {
     case "suppress":
-      return "Run suppression on the job's rows: the response-based global list, the client's prior contacts, bounces, the public list and the client's own domain list. Returns raw, dropped by reason, net new.";
+      return "Run suppression on the job's rows (D81): this client's classified unsubscribes, hard bounces (pending Josh), and the existing DNC list. Not-interested is not suppressed. Smartlead Do Not Contact is not a class. Returns raw, dropped by reason, net new.";
     case "icp":
       return "The ICP website gate (skill icp-website-gate): fetch each distinct domain's site with our own edge function (free), let Jev pick a category (about $0.11 per 1,000 sites), ask DiscoLike about the sites we could not read (about $0.0038 each), and write the verdict onto the rows. Only icp_gate = yes moves on; flagged rows are suppressed with a reason and stay in the table. The first call returns the estimate; approved_by runs it. Rows with no domain are left: enrich(job_id) then icp(job_id) again. Needs a label set for the client in topup.icp_variants.";
     case "enrich":

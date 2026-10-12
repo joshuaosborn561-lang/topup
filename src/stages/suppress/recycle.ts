@@ -1,13 +1,11 @@
 /**
- * Prior contact (D35 item 2). Do not load anyone this client *sent to*
- * in the last N days (default 90). Past that window, with no DNC or
- * wrong-person response, they are fair game.
+ * D81 suppress set: per-client unsubscribes, the existing DNC list
+ * (`public.suppression`), and hard bounces (kept pending Josh).
+ * Not-interested is not suppressed. Smartlead category Do Not Contact
+ * is not a class. No 6-month expiry. Never unsuppress in Smartlead.
  *
- * Positive replies are global and expire 90 days after the reply (D37).
- * DNC and wrong person stay blocked forever in the reason CASE.
- *
- * Never put someone in two live campaigns of the same client at once
- * (D36 item 2 addition). `exclude_other_live_campaigns` defaults true.
+ * Recycle / positive-reply SQL below is kept for D35/D37 tests. Suppress,
+ * size, count and held no longer use a 90-day send window.
  */
 
 export const DEFAULT_RECYCLE_DAYS = 90;
@@ -90,4 +88,23 @@ export function clientPriorContactSql(daysParam: string, includeLiveCampaigns: b
   const sent = recentClientSendSql(daysParam);
   if (!includeLiveCampaigns) return sent;
   return `(${sent} or ${liveCampaignSql()})`;
+}
+
+/** This client's classified unsubscribes (and Smartlead status unsubscribed). Permanent (D81). */
+export function thisClientUnsubscribeSql(hasClass: boolean): string {
+  const cls = hasClass ? `l.negative_class = 'unsubscribe' or ` : "";
+  return `exists (select 1 from public.leads l where lower(l.email) = r.e and l.smartlead_client_id = $6 and (${cls}lower(coalesce(l.status, '')) = 'unsubscribed'))`;
+}
+
+/** Existing DNC list. Not Smartlead category 4 (D81). */
+export function dncListSql(): string {
+  return `exists (select 1 from public.suppression s where lower(s.email) = r.e)`;
+}
+
+/** Hard bounces stay blocked pending Josh (D81). */
+export function hardBounceSql(hasSends: boolean): string {
+  const send = hasSends
+    ? `exists (select 1 from public.leads l join public.sends s on s.lead_id = l.id where lower(l.email) = r.e and s.bounced)`
+    : "false";
+  return `(exists (select 1 from public.leads l where lower(l.email) = r.e and l.category_id = $5) or ${send})`;
 }

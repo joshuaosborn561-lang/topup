@@ -51,7 +51,8 @@ async function seedStrictIcp(db: Q): Promise<void> {
       ('c', 'custom-1', 'church', 'C', 'c@example.test'),
       ('d', 'other', 'church', 'D', 'd@example.test');
     create table public.leads (
-      id int, email text, campaign_id int, category_id int, smartlead_client_id bigint
+      id int, email text, campaign_id int, category_id int, smartlead_client_id bigint,
+      status text, negative_class text
     );
     create table public.sends (
       lead_id int, bounced boolean, sent boolean, sent_at timestamptz,
