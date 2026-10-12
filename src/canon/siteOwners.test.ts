@@ -12,7 +12,7 @@ import {
 import { DEFAULT_LOOKING_FOR, FOUND_VIEW, questionKey, siteCheckBatch } from "./siteCheck.js";
 import type { RunRow } from "../domain/runs.js";
 
-/** D93 — job-scoped owner count and pull. Counts and ids; never a name. Ask Josh or Cayden. */
+/** D94 — owners attach by this job's place_id or normalized domain. Counts and ids; never a name. Ask Josh or Cayden. */
 
 const run: RunRow = {
   run_id: "11111111-2222-3333-4444-555555555555",
@@ -38,13 +38,11 @@ function fakeDb(opts?: { counts?: Record<string, string>; applyN?: string }) {
   const counts = {
     job_rows: "80",
     job_domains: "80",
-    batch_domains: "70",
-    found_in_batch: "40",
-    found_outside_batch: "19",
-    with_place: "40",
+    job_places: "70",
+    found_on_job: "59",
+    cached_other_batch: "19",
     already_named: "0",
-    no_place: "0",
-    attachable: "40",
+    attachable: "59",
     ...(opts?.counts ?? {}),
   };
   const db = {
@@ -64,7 +62,7 @@ function fakeDb(opts?: { counts?: Record<string, string>; applyN?: string }) {
         return { rows: ["place_id", "email", "domain"].map((column_name) => ({ column_name })) };
       }
       if (text.includes("as attachable")) return { rows: [counts] };
-      if (text.includes("select count(*)::text as n from upd")) return { rows: [{ n: opts?.applyN ?? "40" }] };
+      if (text.includes("select count(*)::text as n from upd")) return { rows: [{ n: opts?.applyN ?? "59" }] };
       return { rows: [] };
     },
     withRun: async <T>(_runId: string, fn: (tx: typeof db) => Promise<T>): Promise<T> => fn(db),
@@ -72,7 +70,7 @@ function fakeDb(opts?: { counts?: Record<string, string>; applyN?: string }) {
   return db;
 }
 
-describe("D93 — job-scoped owner count and pull", () => {
+describe("D94 — owners attach by this job's places", () => {
   it("refuses the shared owner view and client owner tables", () => {
     assert.equal(isSharedOwnerTable(FOUND_VIEW), true);
     assert.equal(isSharedOwnerTable("topup.site_people_found"), true);
@@ -82,67 +80,62 @@ describe("D93 — job-scoped owner count and pull", () => {
     assert.equal(isSharedOwnerTable("client_acme.dealers"), false);
     assert.equal(isSharedOwnerTable("lp.acme_ingested_leads"), false);
     const refused = refuseSharedOwnerTable(FOUND_VIEW);
-    assert.match(refused!, /D93/);
+    assert.match(refused!, /D94/);
     assert.match(refused!, /site_owners/);
-    assert.match(refused!, /batch/);
+    assert.match(refused!, /place_id or normalized domain/);
     assert.match(siteOwnersNeedJobId(), /job_id/);
     assert.equal(siteOwnersBatch(run.run_id), siteCheckBatch("people", run.run_id));
   });
 
-  it("count is the dry-run: this job's batch only", async () => {
+  it("count is the dry-run: this job's place_id or normalized domain", async () => {
     const db = fakeDb();
     const out = await countSiteOwners({ db: db as never, repo: { getRun: async () => run } }, { job_id: run.run_id });
     assert.equal(out.status, "done");
     assert.equal(out.source, SITE_OWNERS_SOURCE);
     assert.equal(out.apply, false);
-    assert.equal(out.batch, "check_people_11111111");
     assert.equal(out.looking_for, DEFAULT_LOOKING_FOR);
     assert.equal(out.question_key, questionKey(DEFAULT_LOOKING_FOR));
     assert.deepEqual(out.counts, {
       job_rows: 80,
       job_domains: 80,
-      batch_domains: 70,
-      found_in_batch: 40,
-      found_outside_batch: 19,
-      with_place: 40,
+      job_places: 70,
+      found_on_job: 59,
+      cached_other_batch: 19,
       already_named: 0,
-      no_place: 0,
       attached: 0,
     });
-    assert.match(out.next!, /40/);
+    assert.match(out.next!, /59/);
     assert.match(out.next!, /does not abort/);
     const sql = db.seen.map((s) => s.text).join("\n");
-    assert.match(sql, /run_id = \$1/, "D93: the job is the scope");
-    assert.match(sql, /t\.batch = \(select batch from looking\)/, "D93: this job's batch");
-    assert.match(sql, /place_id/, "D93: businesses are keyed by place_id");
-    assert.match(sql, /topup\.site_people_text/, "D93: the batch lives on the text table");
+    assert.match(sql, /run_id = \$1/, "D94: the job is the scope");
+    assert.match(sql, /place_id/, "D94: businesses may key by place_id");
+    assert.match(sql, /a\.domain = p\.domain/, "D94: or by normalized domain");
     assert.match(sql, /topup\.site_answers/);
     assert.match(sql, /topup\.site_people/);
-    assert.doesNotMatch(sql, /site_people_found/, "D93: never the shared view");
-    assert.doesNotMatch(sql, /owner_netnew|owner_pilot|_owner_/, "D93: never a client owner table");
+    assert.doesNotMatch(sql, /and f\.in_batch/, "D94: the text batch is not the attach filter");
+    assert.doesNotMatch(sql, /where t\.batch = \(select batch from looking\)\s+\)/, "D94: found does not require this job's text batch");
+    assert.doesNotMatch(sql, /site_people_found/, "D94: never the shared view");
+    assert.doesNotMatch(sql, /owner_netnew|owner_pilot|_owner_/, "D94: never a client owner table");
     assert.doesNotMatch(sql, /dl_status|sg_exclude|skip_/);
     assert.ok(!JSON.stringify(out).includes("full_name"));
-    assert.equal(db.seen.some((s) => s.params?.includes("check_people_11111111")), true);
   });
 
-  it("apply updates this job's in-batch rows only and does not reopen the job", async () => {
-    const db = fakeDb({ applyN: "39" });
+  it("apply updates this job's own places only and does not reopen the job", async () => {
+    const db = fakeDb({ applyN: "58" });
     const out = await attachSiteOwners(
       { db: db as never, repo: { getRun: async () => run } },
       { job_id: run.run_id, apply: true },
     );
     assert.equal(out.status, "done");
-    assert.equal(out.counts.attached, 39);
+    assert.equal(out.counts.attached, 58);
     assert.match(out.next!, /unchanged/);
     const upd = db.seen.find((s) => s.text.includes("update lp.acme_ingested_leads"));
     assert.ok(upd);
     assert.match(upd!.text, /i\.run_id = \$1/);
-    assert.match(upd!.text, /f\.in_batch/);
-    assert.match(upd!.text, /f\.place_id is not null/);
+    assert.doesNotMatch(upd!.text, /f\.in_batch/, "D94: cached owners on this job's places attach");
     assert.doesNotMatch(upd!.text, /site_people_found/);
     assert.doesNotMatch(upd!.text, /set lead_status|set icp_gate|abort/);
     assert.equal(upd!.params?.[0], run.run_id);
-    assert.equal(upd!.params?.[2], "check_people_11111111");
   });
 
   it("refuses a missing job, a tag mismatch, and a job with no ingest rows", async () => {
@@ -158,12 +151,10 @@ describe("D93 — job-scoped owner count and pull", () => {
       counts: {
         job_rows: "0",
         job_domains: "0",
-        batch_domains: "0",
-        found_in_batch: "0",
-        found_outside_batch: "0",
-        with_place: "0",
+        job_places: "0",
+        found_on_job: "0",
+        cached_other_batch: "0",
         already_named: "0",
-        no_place: "0",
         attachable: "0",
       },
     });

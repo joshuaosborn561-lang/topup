@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D93** (2026-10-12). One page. `DECISIONS.md` is the append-only
+Canon as of **D94** (2026-10-12). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -150,10 +150,11 @@ D48).
    homepage and the people pages, have Gemini list every person the site
    presents, and ask Jev which of them is `looking_for` (plain words;
    empty means the owner, or the person who runs the company). The
-   people found stay in `topup.site_answers` / `site_people` under the
-   job's batch. `count(source="site_owners", job_id)` is the dry-run;
+   people found stay in `topup.site_answers` / `site_people`.
+   `count(source="site_owners", job_id)` is the dry-run;
    `pull(job_id, source="site_owners")` attaches them to this job's
-   businesses only (job_id, batch and place_id). Never pull the shared
+   businesses only (place_id or normalized domain). Owners cached by an
+   earlier check on those businesses belong to the job. Never pull the shared
    view `topup.site_people_found`. About $0.11 per 1,000 for `icp`, about $1.11 per 1,000 sites
    for `people`; estimate first, a name runs it; sites, people and
    answers are kept per domain so a re-run never pays twice. Nothing on
@@ -260,12 +261,15 @@ D48).
    name. No bucket list is hardcoded. Receipt-only keys such as `icp_gate` are stripped, not failed.
    A build whose lane does not match the campaign's registry lane is
    not attached to that campaign (D92).
-40. **Owners attach by job and batch.** `count(source="site_owners",
+40. **Owners attach by the job's places.** `count(source="site_owners",
    job_id)` is the free dry-run; `pull(job_id, source="site_owners")`
    writes first_name / last_name / title on this job's ingest rows.
-   Scope is this job's rows ∩ this job's `site_check` batch, keyed by
-   place_id. It never opens a job, never reads `topup.site_people_found`
-   or a client owner table, and does not abort or rewind the job (D93).
+   Scope is this job's `place_id`s and normalized domains. Owners cached
+   by an earlier `site_check` on those businesses belong to the job. An
+   owner whose domain or place is not on this job does not attach. It
+   never opens a job, never reads `topup.site_people_found` or a client
+   owner table, never another job or client, and does not abort or
+   rewind the job (D93, D94).
 41. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh or Cayden (D-meta).
 
@@ -281,7 +285,7 @@ bears on stated and no verdict (D52).
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg **for this campaign**, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. Receipts and builds whose lane does not match the campaign's registry lane are left off (D92). |
 | `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). Receipts stay the at-a-glance source of record. Read-only; no spend. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
-| `count(client_tag, source, filters, approved_by?, campaign_id?, job_id?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; honors `max_per_company`, `industries_by_campaign` and `over_1k_campaign` (D84); `industries_by_campaign` keys may be campaign ids or any non-id token on the stored map, matched as a word in the campaign name (D92, D93); `icp_gate` is receipt meta and is stripped (D92); `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new), `prospeo` (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs `approved_by`; industries mapped to official names with inexact flags; honors the same D84 receipt keys; search-person does not apply `max_per_company`, so that count is uncapped), `permits` with the filters you pass, or `site_owners` (free; pass `job_id`; this job's ingest rows ∩ this job's batch, keyed by place_id; never the shared owner view) (D93). Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
+| `count(client_tag, source, filters, approved_by?, campaign_id?, job_id?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; honors `max_per_company`, `industries_by_campaign` and `over_1k_campaign` (D84); `industries_by_campaign` keys may be campaign ids or any non-id token on the stored map, matched as a word in the campaign name (D92, D93); `icp_gate` is receipt meta and is stripped (D92); `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new), `prospeo` (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs `approved_by`; industries mapped to official names with inexact flags; honors the same D84 receipt keys; search-person does not apply `max_per_company`, so that count is uncapped), `permits` with the filters you pass, or `site_owners` (free; pass `job_id`; this job's ingest rows by place_id or normalized domain; cached owners on those businesses belong to the job; never the shared owner view) (D94). Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (per-client unsubscribes, hard bounces pending Josh, existing DNC list) as an **exact full-list join**, never a sampled page (D80, D81), and `net_new` as the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
 | `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). The suppress CTE types `$1::text` so the first slot is not unused (D70). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
@@ -298,10 +302,10 @@ Nothing chains. The job is one run row for one campaign (D52).
 
 | Verb | Stage(s) | Notes |
 |---|---|---|
-| `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits`, `table` or `site_owners`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails *before* `max_rows` (`already_held`). `site_owners` needs `job_id`: it attaches this job's batch to this job's rows (job_id, batch and place_id) and does not open a job or rewind one (D93). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
+| `pull(client_tag, campaign_id, source, filters, max_rows, …)` | pull, ingest | Opens the job and returns the `job_id` at once (`status` started). Pull and ingest run in the background; poll `job(job_id)`. A hang or throw ends `failed` with `last_error` (D62). `source` is `getleads`, `maps`, `permits`, `table` or `site_owners`. Maps copies the named ICP view or `maps_raw` into `lp.<tag>_ingested_leads` and skips held emails *before* `max_rows` (`already_held`). `site_owners` needs `job_id`: it attaches owners whose place_id or normalized domain is on this job's ingest rows and does not open a job or rewind one (D94). `max_rows` 1 to 2,000. Pass `job_id` to continue one. |
 | `suppress(job_id)` | suppress | Per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list (`public.suppression`). Classifies arriving negatives (text/category; no AI). Not-interested is not suppressed. Returns raw, dropped by reason, net new (D81). |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
-| `site_check(question, job_id \| client_tag + table, looking_for?, approved_by?)` | — | The website checker on a job or a store `leftovers` named: our own site fetch (free), then a question over what the site says. `icp` grades each company with the client's label set (Jev, about $0.11 per 1,000). `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (about $1.11 per 1,000 sites); the people found stay in `topup.site_answers` / `site_people` under the job's batch. `count(source="site_owners", job_id)` then `pull(job_id, source="site_owners")` attaches them (D93). First call: estimate and counts so far; `approved_by` runs it. A deploy does not resume it — call the same verb again. Kept per domain; nothing on the rows changes. Counts, titles, at most ten sample domains; never a name. |
+| `site_check(question, job_id \| client_tag + table, looking_for?, approved_by?)` | — | The website checker on a job or a store `leftovers` named: our own site fetch (free), then a question over what the site says. `icp` grades each company with the client's label set (Jev, about $0.11 per 1,000). `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (about $1.11 per 1,000 sites); the people found stay in `topup.site_answers` / `site_people`. `count(source="site_owners", job_id)` then `pull(job_id, source="site_owners")` attaches them by this job's place_id or normalized domain (D94). First call: estimate and counts so far; `approved_by` runs it. A deploy does not resume it — call the same verb again. Kept per domain; nothing on the rows changes. Counts, titles, at most ten sample domains; never a name. |
 | `classify_leftover(approved_by?)` | — | Leftover Smartlead negatives that text/category could not class. Jev (same OpenRouter path as icp-llm) reads each inbound body. Explicit stop/remove = unsubscribe; anything else = not_interested; no body stays unclassified. Estimate first; `approved_by` runs it. Hard cap $0.05. Writes `negative_class_source='ai'`. Idempotent. Counts only (D90). |
 | `enrich(job_id, approved_by?, force?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. People and email waterfalls read `topup.<tag>_ingested_leads_ew` so `ew_read_source` sees `domain` (D67; apply 0021 first). The service never CREATE VIEW. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). `force=true` re-runs a done step. |
 | `verify(job_id, approved_by?, force?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry and is not added again. A third failure does not park. |
@@ -342,7 +346,7 @@ call next.
    each is an estimate until a person says yes. After
    `site_check("people", job_id)`, `count(source="site_owners", job_id)`
    then `pull(job_id, source="site_owners")` attaches the people found
-   on this job's batch only (D93).
+   on this job's places (place_id or normalized domain) (D94).
 3. Size the **whole usable pool** first (D76). `count` with the receipt
    filters, every email status (VALID is not a TAM cap; TAM = those
    filters minus `email_status`) (D77). Cross-check AI Ark and Prospeo
@@ -453,8 +457,9 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh or Cayden
   `icp_gate`. Never attach a receipt or build whose lane does not match
   the campaign's registry lane (D92). Never read the shared owner table
   (`topup.site_people_found` or a client owner table) across clients.
-  Never attach site_check people without job_id, batch and place_id
-  (D93). Never start a run on a weekend or
+  Never attach site_check people without job_id and a place_id or
+  normalized domain on this job (D94). Never attach an owner whose domain or place is not on this job.
+  Never start a run on a weekend or
   8pm–6am CT unless Josh or Cayden asked live (D88). Never send
   GetLeads `job_titles` as a substring match unless the receipt asks
   for `title_match=substring` (D82). Never count AI Ark titles in

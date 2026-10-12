@@ -12,11 +12,10 @@ const root = new URL("../../", import.meta.url);
 describe("D93 — job-scoped owner count and pull", () => {
   it("CANON names the generic count and pull and forbids the shared owner table", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D93\*\*/, "D93: fold into CANON.md in the same PR. Ask Josh or Cayden.");
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/, "D93: CANON still has a header. Ask Josh or Cayden.");
     assert.match(canon, /site_owners/, "D93: the job-scoped source is on the page. Ask Josh or Cayden.");
     assert.match(canon, /place_id/, "D93: businesses are keyed by place_id. Ask Josh or Cayden.");
     assert.match(canon, /Never read the shared owner table/, "D93. Ask Josh or Cayden.");
-    assert.match(canon, /job_id, batch and place_id|job_id \+ batch \+ place_id/, "D93: job, batch and place. Ask Josh or Cayden.");
     assert.doesNotMatch(canon, /emcor|bcp|pe_firms|it_dm_airpods|healthcare|logistics/, "D93: no client facts on the page. Ask Josh or Cayden.");
   });
 
@@ -30,9 +29,8 @@ describe("D93 — job-scoped owner count and pull", () => {
     assert.match(grok, /refuseSharedOwnerTable/, "D93: a table pull of the shared view is refused. Ask Josh or Cayden.");
     const owners = await readFile(new URL("src/canon/siteOwners.ts", root), "utf8");
     assert.match(owners, /run_id = \$1/, "D93: the job is the scope. Ask Josh or Cayden.");
-    assert.match(owners, /t\.batch = \(select batch from looking\)/, "D93: this job's batch. Ask Josh or Cayden.");
-    assert.match(owners, /place_id/, "D93: place_id is the business key. Ask Josh or Cayden.");
-    assert.match(owners, /topup\.site_people_text/, "D93: batch lives on the text table. Ask Josh or Cayden.");
+    assert.match(owners, /place_id/, "D93: place_id is a business key. Ask Josh or Cayden.");
+    assert.match(owners, /PEOPLE_TEXT|site_people_text/, "D93: the text table is still named. Ask Josh or Cayden.");
     assert.doesNotMatch(owners, /from topup\.site_people_found/, "D93: never FROM the shared view. Ask Josh or Cayden.");
     assert.doesNotMatch(owners, /owner_netnew|owner_pilot/, "D93: never a client owner table. Ask Josh or Cayden.");
     assert.doesNotMatch(owners, /["']emcor["']|["']bcp["']/, "D93: no client constants. Ask Josh or Cayden.");

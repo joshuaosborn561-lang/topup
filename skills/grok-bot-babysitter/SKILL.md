@@ -66,8 +66,9 @@ The rules you apply:
    in plain words: "the service manager", "the person who buys IT"). The
    people found stay in `topup.site_answers` / `site_people`; the answer
    tells you `pull(job_id, source="site_owners")` attaches them to this
-   job's businesses only (job_id + place_id). Never pull the shared
-   view `topup.site_people_found` or a client owner table (D93).
+   job's businesses only (place_id or normalized domain). Cached owners
+   on those businesses belong to the job. Never pull the shared
+   view `topup.site_people_found` or a client owner table (D94).
    The first call is the estimate (about $0.11 per 1,000 for icp, about
    $1.11 per 1,000 sites for people); a name runs it. A deploy does
    not resume a running `people` check — call the same verb again with
