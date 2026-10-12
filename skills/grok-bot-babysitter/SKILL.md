@@ -74,9 +74,10 @@ The rules you apply:
    already-answered domains are skipped. Nothing on the rows changes;
    you read the counts and say what you would do (D71, D72, D73).
 3. `count(client_tag, source, filters)` with those filters. getleads is
-   free; `ai_ark` needs `approved_by`. BCP records keep industries per
-   campaign under `industries_by_campaign`; pass that campaign's list as
-   `industries` — do not pass the parent object. Every other getleads key
+   free; `ai_ark` needs `approved_by`. Honor `max_per_company`,
+   `industries_by_campaign` and `over_1k_campaign` when the receipt
+   carries them (D84). Pass `campaign_id` when the industries map names
+   more than one campaign. Every other getleads key
    stays as stored and is mapped, or count fails (D74). Titles are exact
    (`lower(current_title) IN`) unless the receipt says
    `title_match=substring` (D82). AI Ark counts use STRICT unless that

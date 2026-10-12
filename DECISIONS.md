@@ -103,7 +103,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D81 | Live; suppression is real unsubscribes only, permanently, per client; 6-month expiry is out (supersedes D63); not-interested is not suppressed; classify Smartlead negatives (code pending); hard bounces stay blocked pending Josh; never unsuppress in Smartlead |
 | D82 | Live; GetLeads titles exact-match by default (`lower(current_title) IN`); substring only when the receipt says so; AI Ark counts use STRICT exact-title mode |
 | D83 | Live as rule; code pending; Prospeo count is page 1 of search-person (1 credit, pagination.total_count); ~1.5¢/credit; needs approved_by |
-| D84 | Live as rule; code pending; count honors max_per_company, industries_by_campaign, over_1k_campaign (qualifies D43 / D74) |
+| D84 | Live; count honors max_per_company, industries_by_campaign, over_1k_campaign on every source (qualifies D43 / D74) |
 | D85 | Live; local-business owner finder: site_check people (owner by default), then email waterfall, then generic inbox fallback (info@ / office@, not support@ / payroll@) |
 | D86 | Live; read list_build_records (narrative first, transcript for edge cases) before sizing or rebuilding (same as D75) |
 | D87 | Live; a method Josh settles in chat is written into CANON.md and DECISIONS.md so every operator's bot follows it |

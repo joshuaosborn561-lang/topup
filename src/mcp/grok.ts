@@ -90,10 +90,17 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "count",
     {
       description:
-        "A count on one source with the filters you supply, as the record stores them: getleads (free; exact titles by default via lower(current_title) IN, substring only when the receipt says title_match=substring; every stored key is mapped or the call fails; filters_used is what was applied), ai_ark (about five cents; needs approved_by; exact-title STRICT unless the receipt asks for substring), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
-      inputSchema: { client_tag: snake, source: z.enum(["getleads", "ai_ark", "maps", "permits"]), filters, approved_by: z.string().optional().describe("Name of the person who approved the paid call.") },
+        "A count on one source with the filters you supply, as the record stores them: getleads (free; exact titles by default via lower(current_title) IN, substring only when the receipt says title_match=substring; every stored key is mapped or the call fails; honors max_per_company, industries_by_campaign and over_1k_campaign (D84); filters_used is what was applied), ai_ark (about five cents; needs approved_by; exact-title STRICT unless the receipt asks for substring), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
+      inputSchema: {
+        client_tag: snake,
+        source: z.enum(["getleads", "ai_ark", "maps", "permits"]),
+        filters,
+        campaign_id: z.number().int().optional().describe("Needed when industries_by_campaign names more than one campaign (D84)."),
+        approved_by: z.string().optional().describe("Name of the person who approved the paid call."),
+      },
     },
-    async ({ client_tag, source, filters: f, approved_by }) => text(await countSource(d.count, { client_tag, source, filters: f, approved_by: approved_by ?? null })),
+    async ({ client_tag, source, filters: f, campaign_id, approved_by }) =>
+      text(await countSource(d.count, { client_tag, source, filters: f, campaign_id: campaign_id ?? null, approved_by: approved_by ?? null })),
   );
 
   server.registerTool(

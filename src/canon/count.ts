@@ -2,7 +2,7 @@ import { outboundFilters, type Getleads, type GetleadsFilters } from "../clients
 import type { MapsStats } from "../clients/mapsStats.js";
 import type { PermitCounts } from "../clients/permits.js";
 import type { Queryable } from "../db/pool.js";
-import { getleadsParamsFromFilters } from "../jobs/filters.js";
+import { getleadsParamsFromFilters, honorReceiptCountKeys } from "../jobs/filters.js";
 import { countMapsPool, MAPS_POOL_NOTE, mapsPoolFiltersUsed, mapsPoolFromFilters } from "./mapsPool.js";
 import type { SpendRails } from "../spend/rails.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
@@ -59,22 +59,32 @@ function strings(v: unknown): string[] {
 
 export async function countSource(
   d: CountDeps,
-  input: { client_tag: string; source: CountSource; filters: Record<string, unknown>; approved_by?: string | null },
+  input: {
+    client_tag: string;
+    source: CountSource;
+    filters: Record<string, unknown>;
+    approved_by?: string | null;
+    campaign_id?: number | null;
+  },
 ): Promise<CountRead> {
   const calls: CountCall[] = [];
   const base = { source: input.source, calls, rule: COUNT_RULE };
+  const honored = honorReceiptCountKeys(input.filters, input.campaign_id);
+  if (!honored.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: honored.error };
+  const filters = honored.filters;
+  const withHonored = (used: Record<string, unknown>): Record<string, unknown> => ({ ...used, ...honored.honored });
   switch (input.source) {
     case "getleads": {
-      const parsed = getleadsParamsFromFilters(input.filters);
+      const parsed = getleadsParamsFromFilters(filters, input.campaign_id);
       if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
-      const { max_per_company: exportCap, ...countFilters } = parsed.params;
-      const applied = outboundFilters(countFilters as GetleadsFilters);
+      const { max_per_company: cap, ...countFilters } = parsed.params;
+      const applied = withHonored(outboundFilters(countFilters as GetleadsFilters));
       try {
         const r = await d.getleads.count(countFilters as GetleadsFilters);
         calls.push({ vendor: "getleads", action: "count_contacts", ok: true, count: r.total_matching, message: null });
         const bits = [
           r.exportable_rows != null && r.exportable_rows !== r.total_matching ? `exportable_rows ${r.exportable_rows}` : null,
-          exportCap != null ? `max_per_company ${exportCap} is an export cap; count_contacts does not apply it (D43).` : null,
+          cap != null ? `max_per_company ${cap} honored (D84).` : null,
           parsed.params.title_match === "substring"
             ? "title_match substring as the receipt asked (D82)."
             : applied.where_sql
@@ -88,10 +98,10 @@ export async function countSource(
       }
     }
     case "ai_ark": {
-      const parsed = getleadsParamsFromFilters(input.filters);
+      const parsed = getleadsParamsFromFilters(filters, input.campaign_id);
       if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
       const params = parsed.params;
-      const used = { ...params } as Record<string, unknown>;
+      const used = withHonored({ ...params } as Record<string, unknown>);
       if (!d.aiArk) return { ...base, filters_used: used, count: null, cost_cents: 0, note: "AI_ARK_TOKEN is not set on the service." };
       const decision = await d.rails.gate({ runId: "canon", clientTag: input.client_tag, step: "size", vendor: "aiark", action: "people_preview", rows: 1, recipeAuthorised: true, approvedCents: input.approved_by ? 100 : 0 });
       if (decision.kind !== "proceed") {
@@ -113,19 +123,19 @@ export async function countSource(
       }
     }
     case "maps": {
-      const spec = mapsPoolFromFilters(input.filters, input.client_tag);
+      const spec = mapsPoolFromFilters(filters, input.client_tag);
       if ("error" in spec) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: spec.error };
-      if (!d.db) return { ...base, filters_used: mapsPoolFiltersUsed(spec), count: null, cost_cents: 0, note: "maps count reads client_<tag>.maps_raw on the database; it is not wired." };
+      if (!d.db) return { ...base, filters_used: withHonored(mapsPoolFiltersUsed(spec)), count: null, cost_cents: 0, note: "maps count reads client_<tag>.maps_raw on the database; it is not wired." };
       try {
-        const r = await countMapsPool(d.db, input.client_tag, input.filters);
+        const r = await countMapsPool(d.db, input.client_tag, filters);
         if ("error" in r) {
           calls.push({ vendor: "supabase", action: "maps_pool", ok: false, count: null, message: r.error });
-          return { ...base, filters_used: mapsPoolFiltersUsed(spec), count: null, cost_cents: 0, note: r.error };
+          return { ...base, filters_used: withHonored(mapsPoolFiltersUsed(spec)), count: null, cost_cents: 0, note: r.error };
         }
         calls.push({ vendor: "supabase", action: "maps_pool", ok: true, count: r.pool, message: r.relation });
         return {
           ...base,
-          filters_used: r.filters_used,
+          filters_used: withHonored(r.filters_used),
           count: r.pool,
           pool: r.pool,
           already_used: r.already_used,
@@ -138,13 +148,13 @@ export async function countSource(
         };
       } catch (err) {
         calls.push({ vendor: "supabase", action: "maps_pool", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
-        return { ...base, filters_used: mapsPoolFiltersUsed(spec), count: null, cost_cents: 0, note: "maps pool count failed; see calls" };
+        return { ...base, filters_used: withHonored(mapsPoolFiltersUsed(spec)), count: null, cost_cents: 0, note: "maps pool count failed; see calls" };
       }
     }
     case "permits": {
-      const types = strings(input.filters.permit_types ?? input.filters.permits ?? input.filters.permit_type);
-      const states = strings(input.filters.states);
-      if (!d.permits) return { ...base, filters_used: { permit_types: types, states }, count: null, cost_cents: 0, note: "PERMITSTACK_MCP_URL is not set on the service." };
+      const types = strings(filters.permit_types ?? filters.permits ?? filters.permit_type);
+      const states = strings(filters.states);
+      if (!d.permits) return { ...base, filters_used: withHonored({ permit_types: types, states }), count: null, cost_cents: 0, note: "PERMITSTACK_MCP_URL is not set on the service." };
       if (types.length === 0 || states.length === 0) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: "permits needs permit_types and states." };
       let total = 0;
       for (const category of types) {
@@ -159,7 +169,7 @@ export async function countSource(
           }
         }
       }
-      return { ...base, filters_used: { permit_types: types, states }, count: calls.some((c) => c.ok) ? total : null, cost_cents: 0, note: "permits in the last month on PermitStack; the stored pool is in the client's permit tables" };
+      return { ...base, filters_used: withHonored({ permit_types: types, states }), count: calls.some((c) => c.ok) ? total : null, cost_cents: 0, note: "permits in the last month on PermitStack; the stored pool is in the client's permit tables" };
     }
   }
 }
