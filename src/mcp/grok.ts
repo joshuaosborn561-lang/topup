@@ -13,6 +13,7 @@ import { EMAIL_TIERS } from "../recipes/schema.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
 import { siteCheck, SITE_CHECK_QUESTIONS, type SiteCheckDeps } from "../canon/siteCheck.js";
+import { classifyLeftover, type LeftoverAiDeps } from "../replies/leftoverAi.js";
 
 /**
  * The reads and the verbs for Grok bot (D52). Reads return what Supabase
@@ -29,13 +30,14 @@ export interface GrokDeps {
   held: HeldDeps | null;
   size: SizeRunner;
   siteCheck: SiteCheckDeps;
+  leftoverAi: LeftoverAiDeps;
   /** D75: GET a list-build-transcripts object. Path must already be on a matching row. */
   readTranscript?: (path: string) => Promise<string>;
   by: string;
 }
 
 export const GROK_READS = ["campaigns", "campaign_record", "build_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
-export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
+export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "classify_leftover", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
 const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
@@ -248,6 +250,18 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     },
     async ({ question, client_tag, job_id, table, looking_for, approved_by, fetch_parallel, fetch_workers, extract_parallel, extract_workers, ask_parallel, ask_workers }) =>
       text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, looking_for: looking_for ?? null, approved_by: approved_by ?? null, fetch_parallel, fetch_workers, extract_parallel, extract_workers, ask_parallel, ask_workers })),
+  );
+
+  server.registerTool(
+    "classify_leftover",
+    {
+      description:
+        "D90 leftover-negative AI: Jev (same OpenRouter path as icp-llm) classifies each unclassified Smartlead negative's inbound body as unsubscribe vs not_interested. Text and category already ran. No body stays unclassified. First call is the estimate; approved_by runs it. Hard cap $0.05. Writes negative_class_source=ai. Idempotent. Counts only; never a body or a name.",
+      inputSchema: {
+        approved_by: z.string().optional().describe("Name of the person who approved the quoted worst case."),
+      },
+    },
+    async ({ approved_by }) => text(await classifyLeftover(d.leftoverAi, { approved_by: approved_by ?? null })),
   );
 
   server.registerTool(

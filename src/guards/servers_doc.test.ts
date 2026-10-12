@@ -25,6 +25,7 @@ const CLIENT_SERVER: Readonly<Record<string, string>> = {
   "mapsStats.ts": "Google Maps Scraper",
   "permits.ts": "PermitStack",
   "icpGate.ts": "ICP gate",
+  "jevClassify.ts": "ICP gate",
   "sitePeople.ts": "Site people",
 };
 

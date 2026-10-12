@@ -984,6 +984,14 @@ hooks; the service never runs more than three fetch calls or one Jev
 call at once. No cancel on any of the three; a batch that is abandoned
 simply stops being polled.
 
+Leftover-negative AI (`classify_leftover`, D90) uses the same Jev
+OpenRouter Decisions path (`https://openrouter.ai/api/alpha/decisions`)
+and the same vault secret (`openrouter_api_key`) that `icp-llm` already
+reads. Model is `ICP_JEV_MODEL` (`typesafe/jev-1.13`). The call lives
+in this service (`src/clients/jevClassify.ts`) so reply bodies never
+enter Grok context and never write `icp_llm_results`. No new vendor
+and no new Railway key.
+
 ## Site people (site-people)
 
 One edge function on campaignintelligence, written for `site_check`'s

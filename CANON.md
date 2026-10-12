@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D89** (2026-10-12). One page. `DECISIONS.md` is the append-only
+Canon as of **D90** (2026-10-12). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -201,8 +201,8 @@ D48).
    negatives are not suppressed. Every negative is classified
    `unsubscribe` vs `not_interested` and stored on `public.leads`
    (`negative_class`). Text and category first; AI only on the leftover
-   (dry-run audit estimates Jev and does not run it). Future negatives
-   classify as they arrive (trigger + the next `suppress`). Suppression
+   via `classify_leftover` (D90). Future negatives classify as they
+   arrive (trigger + the next `suppress`; text/category, no AI). Suppression
    views (`v_master_suppression`, `lp.reply_suppression`,
    `response_based_v1`) use only the unsubscribe class.
    `suppress` / `count` / `size` / `held` use per-client unsubscribes,
@@ -237,7 +237,15 @@ D48).
    Josh or Cayden asks live (D88).
 37. **Cayden has full authority** over this service and this page: he
    can change, use or direct it however he wants (D89).
-38. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+38. **Leftover-negative AI is `classify_leftover`.** Jev on OpenRouter
+   Decisions — the same provider and vault secret (`openrouter_api_key`)
+   icp-llm / site_check already use, model `ICP_JEV_MODEL`. No new
+   vendor. A fixed prompt: explicit request to stop or remove =
+   `unsubscribe`; anything else = `not_interested`; no inbound body
+   stays unclassified. Estimate first; `approved_by` runs it. Hard cap
+   $0.05. Writes `negative_class_source='ai'`. Idempotent (already
+   classed rows are left alone). Counts only; bodies never return (D90).
+39. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -273,6 +281,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 | `suppress(job_id)` | suppress | Per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list (`public.suppression`). Classifies arriving negatives (text/category; no AI). Not-interested is not suppressed. Returns raw, dropped by reason, net new (D81). |
 | `icp(job_id, approved_by?)` | icp | The ICP website gate: our own site fetch (free), Jev picks a category (about $0.11 per 1,000 sites), DiscoLike on the sites we could not read (about $0.0038 each). Estimate first; `approved_by` runs it. Writes `icp_gate` yes / no / unknown on every row; the label is a token from the allowed set, never Jev's raw sentence (unparseable → null + flag). The spend card is re-quoted when the estimate changes and records `actual_cents` on completion. No and unknown are suppressed with a reason. Rows with no domain are left: `enrich` then `icp` again. |
 | `site_check(question, job_id \| client_tag + table, looking_for?, approved_by?)` | — | The website checker on a job or a store `leftovers` named: our own site fetch (free), then a question over what the site says. `icp` grades each company with the client's label set (Jev, about $0.11 per 1,000). `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (about $1.11 per 1,000 sites); the people found are rows of `topup.site_people_found`. First call: estimate and counts so far; `approved_by` runs it. A deploy does not resume it — call the same verb again. Kept per domain; nothing on the rows changes. Counts, titles, at most ten sample domains; never a name. |
+| `classify_leftover(approved_by?)` | — | Leftover Smartlead negatives that text/category could not class. Jev (same OpenRouter path as icp-llm) reads each inbound body. Explicit stop/remove = unsubscribe; anything else = not_interested; no body stays unclassified. Estimate first; `approved_by` runs it. Hard cap $0.05. Writes `negative_class_source='ai'`. Idempotent. Counts only (D90). |
 | `enrich(job_id, approved_by?, force?)` | puzzle, find_emails | Domains, people, emails through the waterfalls up to the job's max tier. Paid tiers estimate first. `approved_by` records the approval (once per step/approver/amount), closes the card, and runs the paid people waterfall. People and email waterfalls read `topup.<tag>_ingested_leads_ew` so `ew_read_source` sees `domain` (D67; apply 0021 first). The service never CREATE VIEW. A step that did not run (or processed 0 of N queued) is failed/blocked, not done. A pre-D64 false `done` with rows still queued is reopened and run (D65). `force=true` re-runs a done step. |
 | `verify(job_id, approved_by?, force?)` | verify | MillionVerifier, then No2Bounce on catch-alls. Paid; estimate first. A recorded approval is reused on retry and is not added again. A third failure does not park. |
 | `normalize(job_id, force?)` | normalize | Names, companies, locations, local sports team. Free. Empty company is filled from `client_<tag>.maps_raw.name` joined on email (D67). The hold reads `company_n`, not the empty raw `company_name` (D68). `City, ST` in city is split before geocode. Role-inbox `title` fill is the fallback. `first_name_fallback` is optional and off by default. Re-runs this job's merge-field holds. Reopens when the stored `rules_hash` is stale or `force=true`. |
@@ -407,7 +416,10 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   unsuppress in Smartlead. Never run the negative-class AI leftover
   without a name. Never apply `0024_sends_sender.sql` or
   `0025_d81_negative_class.sql` until Josh says so. Never write
-  `dl_status`, `sg_exclude`, or `skip_*` (D81). Never start a run on a weekend or
+  `dl_status`, `sg_exclude`, or `skip_*` (D81). Never run
+  `classify_leftover` without a name, never over the $0.05 hard cap,
+  never invent a Jev prompt, never classify an empty body, never add
+  a new LLM vendor (D90). Never start a run on a weekend or
   8pm–6am CT unless Josh or Cayden asked live (D88). Never send
   GetLeads `job_titles` as a substring match unless the receipt asks
   for `title_match=substring` (D82). Never count AI Ark titles in
