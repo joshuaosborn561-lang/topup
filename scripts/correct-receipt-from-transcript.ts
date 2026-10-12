@@ -168,6 +168,7 @@ export async function attachTranscripts(
       transcript: texts.length ? texts.join("\n\n") : null,
       campaign_ids: b.campaign_ids,
       receipt_ids: b.receipt_ids,
+      lanes: b.lanes,
     };
   });
 }
@@ -214,6 +215,7 @@ export async function runCorrectReceipt(
     transcript: null,
     campaign_ids: b.campaign_ids,
     receipt_ids: b.receipt_ids,
+    lanes: b.lanes,
   }));
   const plan = planReceiptTranscript(receipts, withText, names);
   if (!args.apply) return { plan };

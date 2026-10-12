@@ -27,6 +27,7 @@ export interface BuildSource {
   transcript?: string | null;
   campaign_ids: number[];
   receipt_ids: string[] | null;
+  lanes?: string[] | null;
 }
 
 export interface FilterPatch {
@@ -63,7 +64,7 @@ const INDUSTRIES_BY_LEN = [...GETLEADS_INDUSTRIES].sort((a, b) => b.length - a.l
 const INCLUDE_HEAD = /(?:job[_\s-]?titles?|(?<!purged_)titles?|personas?|looking[_\s-]?for)\s*[:\-]/gi;
 const PURGE_HEAD = /(?:purged?[_\s-]?titles?|exclude[_\s-]?(?:job[_\s-]?)?titles?)\s*[:\-]/gi;
 const TITLE_PHRASE =
-  /\b(?:Chief [A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)* Officer|Director of [A-Z][A-Za-z0-9]+(?: (?:and|&) [A-Z][A-Za-z0-9]+)*|Head of [A-Z][A-Za-z0-9]+(?: [A-Z][A-Za-z0-9]+)*|Small Business Owner|Vice President|Managing Director|Managing Partner|Operating Partner)\b/g;
+  /\b(?:Chief [A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)* Officer|Director of [A-Z][A-Za-z0-9]+(?: (?:and|&) [A-Z][A-Za-z0-9]+)*|Head of [A-Z][A-Za-z0-9]+(?: [A-Z][A-Za-z0-9]+)*|Small Business Owner|Vice President|Managing Director|Managing Partner|Operating Partner|Founder|Investor)\b/g;
 const C_LEVEL = /\bC[A-Z]{1,3}O\b/g;
 
 export function strings(v: unknown): string[] {
@@ -192,6 +193,49 @@ export interface ExtractedFilters {
   explicit_purge: boolean;
 }
 
+const LANE_STOP = new Set(["lane", "the", "and", "for", "with", "from"]);
+
+function laneTokens(lane: string, campaignNames: string[]): string[] {
+  return uniq([
+    lane,
+    ...lane.split(/[_-]+/).filter((w) => w.length >= 2 && !LANE_STOP.has(w.toLowerCase())),
+    ...campaignNames.flatMap((n) => n.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 3 && !LANE_STOP.has(w.toLowerCase()))),
+  ]);
+}
+
+/**
+ * A multi-lane write-up names titles per lane. Keep clauses that mention
+ * this receipt's lane or campaign, drop clauses that only mention another
+ * stored lane, and keep shared clauses only when they overlap the
+ * receipt's current titles (D96).
+ */
+export function scopeTitleSource(
+  text: string,
+  lane: string,
+  campaignNames: string[],
+  otherLanes: string[],
+  hintTitles: string[],
+): string {
+  const mine = laneTokens(lane, campaignNames);
+  const others = uniq(
+    otherLanes.filter((l) => l.trim().toLowerCase() !== lane.trim().toLowerCase()).flatMap((l) => laneTokens(l, [])),
+  );
+  const namedLanes = [...text.matchAll(/for the\s+([A-Za-z0-9_-]+)\s+lane/gi)].map((m) => m[1]!);
+  const multi = uniq(otherLanes.map((l) => l.trim().toLowerCase()).filter(Boolean)).length > 1 || namedLanes.length > 0;
+  const parts = text.split(/(?<=[.;])\s+|\s+and for the\s+/i).map((p) => p.trim()).filter(Boolean);
+  if (!multi || parts.length <= 1) return text;
+  const hint = new Set(hintTitles.map((t) => t.toLowerCase()));
+  const kept = parts.filter((part) => {
+    const hasMine = mine.some((t) => new RegExp(`\\b${escapeRe(t)}\\b`, "i").test(part));
+    const hasOther = others.some((t) => new RegExp(`\\b${escapeRe(t)}\\b`, "i").test(part));
+    if (hasMine) return true;
+    if (hasOther) return false;
+    const words = part.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 3);
+    return words.some((w) => hint.has(w.toLowerCase()));
+  });
+  return kept.length ? kept.join(" ") : text;
+}
+
 export function extractFiltersFromSource(text: string, hintTitles: string[] = []): ExtractedFilters {
   const explicit = extractExplicitTitles(text, INCLUDE_HEAD);
   const purged = extractExplicitTitles(text, PURGE_HEAD);
@@ -233,6 +277,13 @@ export function namesForBuckets(bucketKeys: string[], idToName: Record<string, s
   return out;
 }
 
+function mentionForms(official: string): string[] {
+  const aliases = Object.entries(GETLEADS_INDUSTRY_ALIASES)
+    .filter(([, mapped]) => mapped === official)
+    .map(([alias]) => alias);
+  return uniq([official, ...aliases]);
+}
+
 function bucketTokens(key: string, campaignNames: Record<string, string>): string[] {
   return uniq([
     key,
@@ -247,7 +298,7 @@ function nearestBucket(
   keys: string[],
   campaignNames: Record<string, string>,
 ): string | null {
-  const mentions = [...text.matchAll(new RegExp(escapeRe(industry), "ig"))];
+  const mentions = mentionForms(industry).flatMap((form) => [...text.matchAll(new RegExp(escapeRe(form), "ig"))]);
   const hits = new Set<string>();
   for (const mention of mentions) {
     const pos = mention.index ?? 0;
@@ -255,6 +306,27 @@ function nearestBucket(
     for (const key of keys) {
       if (bucketTokens(key, campaignNames).some((token) => new RegExp(`\\b${escapeRe(token)}\\b`, "i").test(sentence))) {
         hits.add(key);
+      }
+    }
+  }
+  if (hits.size === 1) return [...hits][0]!;
+  return null;
+}
+
+function parentheticalBucket(
+  text: string,
+  industry: string,
+  keys: string[],
+  campaignNames: Record<string, string>,
+): string | null {
+  const hits = new Set<string>();
+  const forms = mentionForms(industry);
+  for (const key of keys) {
+    for (const token of bucketTokens(key, campaignNames)) {
+      const re = new RegExp(`${escapeRe(token)}\\s*\\(([^)]*)\\)`, "ig");
+      for (const m of text.matchAll(re)) {
+        const inner = m[1] ?? "";
+        if (forms.some((form) => new RegExp(escapeRe(form), "i").test(inner))) hits.add(key);
       }
     }
   }
@@ -275,9 +347,13 @@ export function placeIndustries(
   for (const industry of extracted) {
     const already = keys.filter((k) => buckets[k]!.some((v) => v.toLowerCase() === industry.toLowerCase()));
     if (already.length) continue;
-    const hit = nearestBucket(sourceText, industry, keys, campaignNames);
-    if (hit) buckets[hit] = uniq([...buckets[hit]!, industry]);
-    else if (keys.length === 1) buckets[keys[0]!] = uniq([...buckets[keys[0]!]!, industry]);
+    const hit =
+      parentheticalBucket(sourceText, industry, keys, campaignNames) ??
+      nearestBucket(sourceText, industry, keys, campaignNames);
+    const official = mapGetleadsIndustry(industry).ok ? mapGetleadsIndustry(industry).value : industry;
+    const normalize = (v: string) => (mapGetleadsIndustry(v).ok ? mapGetleadsIndustry(v).value : v);
+    if (hit) buckets[hit] = uniq([...buckets[hit]!.map(normalize), official]);
+    else if (keys.length === 1) buckets[keys[0]!] = uniq([...buckets[keys[0]!]!.map(normalize), official]);
     else unplaced.push(industry);
   }
   return { buckets, unplaced: uniq(unplaced) };
@@ -338,7 +414,7 @@ export function diffReceiptFilters(
       });
       next.industries_by_campaign = placed.buckets;
     }
-  } else if (extracted.industries.length) {
+  } else if (extracted.industries.length && strings(filters.industries).length) {
     const current = strings(filters.industries);
     const after = uniq([...current, ...extracted.industries]);
     if (!sameSet(current, after)) {
@@ -346,16 +422,16 @@ export function diffReceiptFilters(
       next.industries = after;
     }
   }
-  if (extracted.company_size.length) {
-    const current = strings(filters.company_size);
-    const after = uniq([...current, ...extracted.company_size]);
+  const currentSize = strings(filters.company_size);
+  if (extracted.company_size.length && currentSize.length) {
+    const after = uniq([...currentSize, ...extracted.company_size]);
     const ordered = BANDS.filter((b) => after.some((x) => x.toLowerCase() === b.toLowerCase()));
-    if (!sameSet(current, ordered)) {
-      patches.push({ key: "company_size", before: current, after: ordered, reason: "thinner" });
+    if (!sameSet(currentSize, ordered)) {
+      patches.push({ key: "company_size", before: currentSize, after: ordered, reason: "thinner" });
       next.company_size = ordered;
     }
   }
-  if (extracted.over_1k_campaign && filters.over_1k_campaign !== true) {
+  if (extracted.over_1k_campaign && currentSize.length && filters.over_1k_campaign !== true) {
     patches.push({ key: "over_1k_campaign", before: filters.over_1k_campaign ?? null, after: true, reason: "thinner" });
     next.over_1k_campaign = true;
   }
@@ -379,7 +455,13 @@ export function planReceiptCorrection(
   const text = (build.transcript && build.transcript.trim()) || build.narrative;
   if (!text.trim()) return { skip: "matching build has an empty narrative and transcript" };
   const hint = strings(receipt.company_filters.job_titles ?? receipt.company_filters.titles);
-  const extracted = extractFiltersFromSource(text, hint);
+  const otherLanes = [...new Set([build.lanes ?? [], receipt.lane].flat().filter(Boolean))];
+  const titleText = scopeTitleSource(text, receipt.lane, Object.values(campaignNames), otherLanes, hint);
+  const extracted = extractFiltersFromSource(titleText, hint);
+  const industries = extractFiltersFromSource(text, hint);
+  extracted.industries = industries.industries;
+  extracted.company_size = industries.company_size;
+  extracted.over_1k_campaign = industries.over_1k_campaign;
   const byCampaign = asRecord(receipt.company_filters.industries_by_campaign);
   const names = namesForBuckets(byCampaign ? Object.keys(byCampaign) : [], campaignNames);
   const { next, patches, unplaced } = diffReceiptFilters(receipt.company_filters, extracted, text, names);

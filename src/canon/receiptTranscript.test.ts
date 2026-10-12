@@ -53,6 +53,18 @@ describe("D96 — extract official names from a build source", () => {
 });
 
 describe("D96 — place industries on stored buckets", () => {
+  it("puts a new industry inside a bucket's parentheses on that bucket", () => {
+    const { buckets, unplaced } = placeIndustries(
+      ["Hospitals", "Warehousing and Storage", "Transportation; Logistics; Supply Chain and Storage"],
+      { healthcare: ["Hospitals and Health Care"], logistics: ["Truck Transportation"] },
+      "industries Healthcare (Hospitals and Health Care, Medical Practices, Hospitals), Logistics (Transportation, Logistics, Supply Chain and Storage, Warehousing and Storage)",
+    );
+    assert.ok(buckets.healthcare!.includes("Hospitals"));
+    assert.ok(buckets.logistics!.includes("Warehousing and Storage"));
+    assert.ok(buckets.logistics!.includes("Transportation; Logistics; Supply Chain and Storage"));
+    assert.deepEqual(unplaced, []);
+  });
+
   it("puts a new industry on the bucket whose key or campaign name sits next to it", () => {
     const { buckets, unplaced } = placeIndustries(
       ["Hospitals", "Warehousing and Storage"],
@@ -114,6 +126,37 @@ describe("D96 — plan a correction", () => {
     const titles = planned.patches.find((p) => p.key === "job_titles");
     assert.equal(titles?.reason, "disagrees");
     assert.deepEqual(titles?.after, ["Partner", "Investor", "CEO", "Founder", "COO"]);
+  });
+
+  it("does not copy a for-the-other-lane title onto a receipt", () => {
+    const planned = planReceiptCorrection(
+      {
+        receipt_id: "44444444-4444-4444-4444-444444444444",
+        client_tag: "acme",
+        lane: "lane_a",
+        campaign_ids: [10],
+        company_filters: { job_titles: ["Partner", "Managing Partner"] },
+        written_by: "claude_backfill",
+      },
+      {
+        id: 3,
+        narrative:
+          "personas Partner, Investor, CEO, Founder, COO, Small Business Owner, and for the lane_b lane CIO, CTO, Director of IT and Security. lane_a keeps operating partner titles.",
+        campaign_ids: [10],
+        receipt_ids: null,
+        lanes: ["lane_a", "lane_b"],
+      },
+    );
+    assert.ok(!("skip" in planned));
+    if ("skip" in planned) return;
+    const titles = planned.patches.find((p) => p.key === "job_titles");
+    assert.ok(titles);
+    const after = titles?.after as string[];
+    assert.ok(after.includes("CEO"));
+    assert.ok(after.includes("Investor"));
+    assert.ok(after.includes("Small Business Owner"));
+    assert.ok(!after.includes("CTO"));
+    assert.ok(!after.includes("Director of IT and Security"));
   });
 
   it("adds missing industries, bands and a CTO without inventing a client list", () => {
