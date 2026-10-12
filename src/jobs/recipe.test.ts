@@ -42,4 +42,23 @@ describe("D52 — job recipe", () => {
     assert.throws(() => jobRecipe({ ...base, max_rows: 0 }), /max_rows/);
     assert.throws(() => jobRecipe({ ...base, max_rows: 2001 }), /max_rows/, "D53: a job pulls 1 to 2,000 rows");
   });
+
+  it("D92 — industries_by_campaign bucket keys resolve from campaign_name", () => {
+    const r = jobRecipe({
+      ...base,
+      campaign_id: 3921852,
+      campaign_name: "BCP Logistics IT (AirPods)",
+      filters: {
+        job_titles: ["CIO"],
+        industries_by_campaign: {
+          logistics: ["Transportation, Logistics, Supply Chain and Storage"],
+          healthcare: ["Hospitals and Health Care"],
+        },
+      },
+    });
+    assert.equal(r.source.kind, "getleads");
+    if (r.source.kind === "getleads") {
+      assert.deepEqual(r.source.params.industries, ["Transportation; Logistics; Supply Chain and Storage"]);
+    }
+  });
 });

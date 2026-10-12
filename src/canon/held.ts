@@ -1,6 +1,7 @@
 import { EXPORT_DONE, EXPORT_FAILED, outboundFilters, type Getleads, type GetleadsFilters } from "../clients/getleads.js";
 import type { Queryable } from "../db/pool.js";
 import { logger } from "../lib/log.js";
+import { campaignNameBySmartleadId } from "../ledger/health.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
 import { countSlices, loadGeoFenceCities, type GeoCity, type GeoFenceRef } from "../recipes/geoFence.js";
 import type { SpendRails } from "../spend/rails.js";
@@ -49,7 +50,10 @@ export async function heldRead(
   d: HeldDeps,
   input: { client_tag: string; smartlead_client_id: number; campaign_ids: readonly number[]; filters: Record<string, unknown>; tam: number; days?: number },
 ): Promise<HeldRead | { error: string }> {
-  const parsed = getleadsParamsFromFilters(input.filters, input.campaign_ids[0] ?? null);
+  const campaignId = input.campaign_ids[0] ?? null;
+  const campaignName =
+    campaignId != null ? await campaignNameBySmartleadId(d.db, campaignId).catch(() => null) : null;
+  const parsed = getleadsParamsFromFilters(input.filters, campaignId, campaignName);
   if (!parsed.ok) return { error: parsed.error };
   if (!Number.isFinite(input.tam) || input.tam < 0) return { error: 'tam must be the count from count(source="getleads", ...).' };
   const { max_per_company: _cap, ...filters } = parsed.params;

@@ -111,6 +111,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D89 | Live; Cayden has full authority over the top-up service and the canon |
 | D90 | Live; leftover-negative AI is classify_leftover: Jev on the existing OpenRouter path (vault openrouter_api_key / ICP_JEV_MODEL, same as icp-llm); key path is D91; fixed prompt (stop/remove = unsubscribe, anything else = not_interested, no body stays unclassified); approved_by; estimate first; $0.05 hard cap; source=ai; idempotent |
 | D91 | Live; leftover AI reads the existing OpenRouter secret via topup.jev_openrouter_key() (security definer); the service never SELECTs vault.decrypted_secrets; leadtopup_app is not granted on schema vault |
+| D92 | Live; Cayden is a full approver equal to Josh on paid steps and backfill-filter confirmation; awaiting_owner (awaiting_josh still works); industries_by_campaign bucket keys resolve from the campaign name; icp_gate is receipt meta; stamps stay on the registry lane |
 
 ---
 
@@ -2984,3 +2985,36 @@ not put the key in Railway. It does not change icp-llm. It does not
 log the key or a body.
 
 **Guard.** `src/guards/d91_leftover_ai_key.test.ts`. Ask Josh.
+
+## D92 — Cayden is a full approver equal to Josh
+
+**Decision.** Cayden approves paid steps and confirms backfilled
+filters the same as Josh. `ASK` is "Ask Josh or Cayden." Owner cards
+wait on "Josh or Cayden". Run status `awaiting_owner` is the write;
+`awaiting_josh` still counts as waiting on an owner. Step 1 of the
+spine names both. `confirm_filters(receipt_id, approved_by)` stamps
+`owner_confirmed_at` when the name is Josh or Cayden; it does not
+rewrite filters and this PR does not stamp any receipt.
+
+Stored `industries_by_campaign` may use campaign ids or bucket names
+(`healthcare`, `logistics`). Count and held resolve a bucket from the
+campaign name. Receipt-only keys such as `icp_gate` are stripped so
+held/count do not fail them as unmapped. A receipt or
+`campaign_builds` row whose lane does not match the campaign's
+registry lane is not attached to that campaign.
+
+**Why.** Josh, 12 Oct 2026, live. D89 already gave Cayden authority;
+the service still asked only Josh, keyed BCP IT industries as
+`healthcare`/`logistics` instead of campaign ids, and `held()` failed
+on those keys and on PE `icp_gate`. The BCP PE SEG campaign (3897344)
+showed 576 leads stamped `getleads_bcp_u50_expansion_20260903` /
+`it_dm_airpods` because `stamp_provenance` and `campaign_ids = any()`
+attached an IT build to PE campaigns.
+
+**What it does not do.** It does not confirm any backfill row. It does
+not run the PE/IT retag script until merge (`--apply`).
+`campaign_builds` is a view; the script never writes it. It does not
+unsuppress, and it does not write `dl_status`, `sg_exclude`, or
+`skip_*`. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d92_cayden_approver.test.ts`. Ask Josh or Cayden.

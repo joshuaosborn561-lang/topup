@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   bestYieldBuild,
   companySourceFromRecipeKind,
+  confirmFiltersApprover,
   parsePullReceipt,
   proposedTam,
   receiptConfirmed,
@@ -44,6 +45,16 @@ describe("D31/D32/D33 pull receipts", () => {
     assert.equal(r.icp_kind, "linkedin_native");
     assert.equal(r.tam_count, 36810);
     assert.equal(receiptConfirmed(r), false);
+  });
+
+  it("D92 — Cayden may confirm backfilled filters; an agent name may not", () => {
+    const caydenNote = parsePullReceipt({ ...parlay, notes: "Cayden to confirm bands and titles." });
+    assert.equal(receiptConfirmed(caydenNote), false);
+    assert.equal(receiptConfirmed({ owner_confirmed_at: "2026-10-12T00:00:00Z", notes: "Josh to confirm." }), true);
+    assert.ok(confirmFiltersApprover("Cayden").ok);
+    assert.ok(confirmFiltersApprover("Josh").ok);
+    assert.equal(confirmFiltersApprover("Grok").ok, false);
+    if (!confirmFiltersApprover("Grok").ok) assert.match(confirmFiltersApprover("Grok").error, /Josh or Cayden/);
   });
 
   it("accepts a Peterson physical lane whose maps_runs reconstruct company counts", () => {

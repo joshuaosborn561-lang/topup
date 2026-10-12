@@ -9,7 +9,7 @@ const root = new URL("../../", import.meta.url);
 describe("D91 — leftover AI key path", () => {
   it("CANON names the definer and forbids a vault SELECT", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D91\*\*/, "D91: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D(91|92|[9][3-9]|[0-9]{3,})\*\*/, "D91: fold into CANON. Ask Josh.");
     assert.match(canon, /jev_openrouter_key/, "D91: the definer is on the page. Ask Josh.");
     assert.match(canon, /never SELECTs `vault\.decrypted_secrets`/, "D91. Ask Josh.");
     assert.match(canon, /not granted on schema vault/, "D91. Ask Josh.");

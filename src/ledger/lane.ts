@@ -482,9 +482,9 @@ function cardLine(c: CardRow): string {
   }
 }
 
-/** Who a card is waiting on, in the words the addendum uses. */
+/** Who a card is waiting on. Owner spend and confirmations are Josh or Cayden (D92). */
 export function audienceName(who: Role | BlockedOn): string {
-  if (who === "owner") return "Josh";
+  if (who === "owner") return "Josh or Cayden";
   if (who === "operator") return "Cayden";
   return who;
 }

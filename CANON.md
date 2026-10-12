@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D91** (2026-10-12). One page. `DECISIONS.md` is the append-only
+Canon as of **D92** (2026-10-12). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -248,8 +248,18 @@ D48).
    The OpenRouter key is `topup.jev_openrouter_key()` (security definer).
    The service never SELECTs `vault.decrypted_secrets`. leadtopup_app is
    not granted on schema vault (D91).
-39. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
-   here, write a guard that names it. Ask Josh (D-meta).
+39. **Cayden is a full approver equal to Josh.** Paid steps, spend cards,
+   and backfilled-filter confirmation accept `approved_by="Cayden"` the
+   same as Josh. Ask strings say "Josh or Cayden". Owner wait status is
+   `awaiting_owner` (`awaiting_josh` still counts). `confirm_filters`
+   stamps `owner_confirmed_at` for either name and does not rewrite
+   filters. Stored `industries_by_campaign` keys may be campaign ids or
+   bucket names (`healthcare`, `logistics`) resolved from the campaign
+   name. Receipt-only keys such as `icp_gate` are stripped, not failed.
+   A build whose lane does not match the campaign's registry lane is
+   not attached to that campaign (D92).
+40. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+   here, write a guard that names it. Ask Josh or Cayden (D-meta).
 
 ## The reads
 
@@ -260,10 +270,10 @@ bears on stated and no verdict (D52).
 |---|---|
 | `canon` | This page. Also the MCP server's instructions. |
 | `campaigns(client_tag?, include_inactive?)` | Every ACTIVE email campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. Cold call campaigns are left off. |
-| `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg **for this campaign**, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. |
+| `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg **for this campaign**, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. Receipts and builds whose lane does not match the campaign's registry lane are left off (D92). |
 | `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). Receipts stay the at-a-glance source of record. Read-only; no spend. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
-| `count(client_tag, source, filters, approved_by?, campaign_id?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; honors `max_per_company`, `industries_by_campaign` and `over_1k_campaign` (D84); `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new), `prospeo` (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs `approved_by`; industries mapped to official names with inexact flags; honors the same D84 receipt keys; search-person does not apply `max_per_company`, so that count is uncapped) or `permits` with the filters you pass. Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
+| `count(client_tag, source, filters, approved_by?, campaign_id?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; honors `max_per_company`, `industries_by_campaign` and `over_1k_campaign` (D84); `industries_by_campaign` keys may be campaign ids or bucket names resolved from the campaign name; `icp_gate` is receipt meta and is stripped (D92); `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new), `prospeo` (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs `approved_by`; industries mapped to official names with inexact flags; honors the same D84 receipt keys; search-person does not apply `max_per_company`, so that count is uncapped) or `permits` with the filters you pass. Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (per-client unsubscribes, hard bounces pending Josh, existing DNC list) as an **exact full-list join**, never a sampled page (D80, D81), and `net_new` as the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
 | `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). The suppress CTE types `$1::text` so the first slot is not unused (D70). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
@@ -292,6 +302,7 @@ Nothing chains. The job is one run row for one campaign (D52).
 | `stage(job_id)` | route, stage | Rows routed to the campaign and staged. |
 | `import(job_id, approved_by?)` | import, post_import | Through LeadPipe into Smartlead. Refuses while `loads_paused`. Never sets ACTIVE. |
 | `write_receipt(job_id, company_source, …, how_i_did_it)` | — | The receipt the next top-up reads. The four legs, `company_filters`, the note. |
+| `confirm_filters(receipt_id, approved_by)` | — | Stamp `owner_confirmed_at` on a backfill receipt. Josh or Cayden only (D92). Does not rewrite filters. |
 | `abort(job_id)` | — | Stops the job, releases claimed rows, closes its cards. |
 | `resolve(card_id, choice)` | — | Resolve a card by id: a QA hold (`accept`, `purge`, `reroute`), a parked job (`resume_run`), `abort`. Spend needs the owner token or `approved_by` on the verb. |
 | `note(client_tag, lane, line, next_intent?)` | — | One line in the lane's event log. No lead data. |
@@ -363,7 +374,7 @@ call next.
 (D58). `email_source`: `getleads`,
 `email_waterfall`, `name_to_email`, `site_scrape`, `already`. A stored
 `email_max_tier=leadmagic` maps to `aiark`. `sources`
-has the full lines. A value not in the vocabulary is unknown; ask Josh.
+has the full lines. A value not in the vocabulary is unknown; ask Josh or Cayden.
 
 ## Never
 
@@ -424,7 +435,12 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   never invent a Jev prompt, never classify an empty body, never add
   a new LLM vendor (D90). Never SELECT `vault.decrypted_secrets` from
   this service. Never grant leadtopup_app on schema vault (D91). Never
-  start a run on a weekend or
+  refuse Cayden as an approver on a paid step or a backfill-filter
+  confirm. Never treat `awaiting_josh` as unknown after `awaiting_owner`
+  exists. Never fail `industries_by_campaign` when the stored key is a
+  bucket word in the campaign name. Never fail a getleads parse on
+  `icp_gate`. Never attach a receipt or build whose lane does not match
+  the campaign's registry lane (D92). Never start a run on a weekend or
   8pm–6am CT unless Josh or Cayden asked live (D88). Never send
   GetLeads `job_titles` as a substring match unless the receipt asks
   for `title_match=substring` (D82). Never count AI Ark titles in

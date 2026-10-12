@@ -33,8 +33,16 @@ export function isColdCall(name: string | null | undefined): boolean {
   return label.length > 0 && COLD_CALL_NAME_PATTERNS.some((re) => re.test(label));
 }
 
-/** One place to ask. Every refusal names it. */
-export const ASK = "Ask Josh.";
+/** One place to ask. Every refusal names it. Cayden is a full approver (D92). */
+export const ASK = "Ask Josh or Cayden.";
+
+/** Named owners who may approve spend and confirm backfilled filters (D92). */
+export const OWNER_APPROVER_NAMES = ["josh", "cayden"] as const;
+
+export function isOwnerApprover(name: string | null | undefined): boolean {
+  const n = (name ?? "").trim().toLowerCase();
+  return (OWNER_APPROVER_NAMES as readonly string[]).includes(n);
+}
 
 export function isNeverTopUp(id: number, name?: string | null): boolean {
   if (NEVER_TOPUP_CAMPAIGN_IDS.includes(id)) return true;

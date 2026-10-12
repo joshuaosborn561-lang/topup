@@ -46,7 +46,7 @@ export interface CampaignRecord {
 }
 
 export const HOW_TO_READ =
-  "receipts are what was written at pull time, newest first; builds are the same facts joined to the campaign; leads_by_label and leads_by_leg count the stamped lead rows of this campaign only (not twins or a shared build). Repeat the legs that fed most of the leads, with the company_filters of the receipt that earned the replies. A missing leg or an empty company_filters is a question for Josh, not a guess. A stored email_max_tier of leadmagic replays as aiark; a stored LeadMagic person source replays as people_waterfall with the live Find Named Person order. The stored row is not rewritten (D58).";
+  "receipts are what was written at pull time, newest first; builds are the same facts joined to the campaign; leads_by_label and leads_by_leg count the stamped lead rows of this campaign only (not twins or a shared build). A build whose lane does not match the campaign's registry lane is left off. Repeat the legs that fed most of the leads, with the company_filters of the receipt that earned the replies. A missing leg or an empty company_filters is a question for Josh or Cayden, not a guess. A stored email_max_tier of leadmagic replays as aiark; a stored LeadMagic person source replays as people_waterfall with the live Find Named Person order. The stored row is not rewritten (D58).";
 
 const RECEIPT_KEYS = [
   "written_by", "written_at", "lane", "campaign_ids", "icp_kind", "persona", "granularity", "build_label",
@@ -120,7 +120,7 @@ export async function campaignRecord(db: Queryable, repo: RecordRepo, clientTag:
   ]);
   const regRow = registryRows(registry).find((r) => r.campaign_id === campaignId) ?? null;
   const name = mirrorName ?? regRow?.campaign_name ?? null;
-  if (isColdCall(name)) return { error: `#${campaignId} ${name} is marked as cold call; the service ignores it (D54). Ask Josh.` };
+  if (isColdCall(name)) return { error: `#${campaignId} ${name} is marked as cold call; the service ignores it (D54). Ask Josh or Cayden.` };
   const receipts = receiptRows.map((r) => pick(r, RECEIPT_KEYS)).sort((a, b) => String(b.written_at ?? "").localeCompare(String(a.written_at ?? "")));
   const builds = buildRows.map((r) => pick(r, BUILD_KEYS));
   const labels = [...receipts, ...builds].map((r) => r.build_label).filter((l): l is string => typeof l === "string" && l.length > 0);

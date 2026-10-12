@@ -18,6 +18,8 @@ export interface JobSpec {
   smartlead_client_id: number;
   lane: string;
   campaign_id: number;
+  /** Mirror name. Used to resolve industries_by_campaign bucket keys (D92). */
+  campaign_name?: string | null;
   source: JobSource;
   /** The vendor filters as the receipt stored them (job_titles, company_size, industries, countries, categories, permit_types, states, schema/table/where). */
   filters: Record<string, unknown>;
@@ -40,7 +42,7 @@ function sourceFor(spec: JobSpec): Recipe["source"] {
   const f = spec.filters;
   switch (spec.source) {
     case "getleads": {
-      const parsed = getleadsParamsFromFilters(f, spec.campaign_id);
+      const parsed = getleadsParamsFromFilters(f, spec.campaign_id, spec.campaign_name);
       if (!parsed.ok) throw new Error(parsed.error);
       return { kind: "getleads", params: parsed.params, widening_candidates: [] } as Recipe["source"];
     }

@@ -772,8 +772,9 @@ export class Repo {
         where client_tag = $1
           and ($2::text is null or lane = $2)
           and ($3::bigint is null or $3 = any(campaign_ids))
+          and ($4::text is null or lane = $4)
         order by written_at desc`,
-      [input.clientTag, input.lane ?? null, input.campaignId ?? null],
+      [input.clientTag, input.lane ?? null, input.campaignId ?? null, await this.registryLane(input.clientTag, input.campaignId)],
     );
     return rows.map((r) => ({
       written_by: r.written_by,
@@ -799,6 +800,22 @@ export class Repo {
       tam_count: r.tam_count == null ? null : Number(r.tam_count),
       build_label: r.build_label,
     }));
+  }
+
+  /** Registry lane only. Null if the campaign has no row — do not infer from a bloated receipt list (D92). */
+  async registryLane(clientTag: string, campaignId?: number | null): Promise<string | null> {
+    if (campaignId == null) return null;
+    try {
+      const { rows } = await this.db.query<{ lane: string | null }>(
+        `select lane from topup.campaign_registry
+          where client_tag = $1 and campaign_id = $2 and lane is not null
+          limit 1`,
+        [clientTag, campaignId],
+      );
+      return rows[0]?.lane ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async listReceiptLanes(clientTag?: string): Promise<Array<{ client_tag: string; lane: string }>> {
@@ -850,19 +867,26 @@ export class Repo {
     if (campaignIds.length === 0) return [];
     try {
       const { rows } = await this.db.query(
-        `select * from topup.campaign_builds where client_tag = $1 and smartlead_campaign_id = any($2::bigint[])`,
+        `select cb.*
+           from topup.campaign_builds cb
+           left join topup.campaign_registry cr
+             on cr.client_tag = cb.client_tag and cr.campaign_id = cb.smartlead_campaign_id
+          where cb.client_tag = $1 and cb.smartlead_campaign_id = any($2::bigint[])
+            and (cr.lane is null or cb.lane is null or cb.lane = cr.lane)`,
         [clientTag, campaignIds],
       );
-      if (rows.length) return rows;
+      return rows;
     } catch {
       /* the view is not on every database; the receipt rows below are the same facts */
     }
+    const registryLane = campaignIds.length === 1 ? await this.registryLane(clientTag, campaignIds[0]!) : null;
     const { rows } = await this.db.query(
         `select r.build_label, r.company_source, r.company_filters, r.written_at, r.rows_found, c.campaign_id
          from topup.pull_receipts r
          cross join lateral unnest(r.campaign_ids) as c(campaign_id)
-        where r.client_tag = $1 and c.campaign_id = any($2::bigint[])`,
-      [clientTag, campaignIds],
+        where r.client_tag = $1 and c.campaign_id = any($2::bigint[])
+          and ($3::text is null or r.lane = $3)`,
+      [clientTag, campaignIds, registryLane],
     );
     return rows;
   }
@@ -1053,6 +1077,26 @@ export class Repo {
       ],
     );
     return rows[0]!.receipt_id;
+  }
+
+  /**
+   * Stamp owner_confirmed_at on a backfill receipt. Josh or Cayden (D92).
+   * Does not rewrite filters. Insert-only still holds for the receipt body (D32).
+   */
+  async confirmPullReceipt(receiptId: string, approvedBy: string): Promise<{ receipt_id: string; already: boolean } | null> {
+    const { rows: found } = await this.db.query<{ receipt_id: string; owner_confirmed_at: string | null }>(
+      `select receipt_id::text, owner_confirmed_at::text from topup.pull_receipts where receipt_id = $1`,
+      [receiptId],
+    );
+    if (!found[0]) return null;
+    if (found[0].owner_confirmed_at) return { receipt_id: found[0].receipt_id, already: true };
+    await this.db.query(
+      `update topup.pull_receipts
+          set owner_confirmed_at = now()
+        where receipt_id = $1 and owner_confirmed_at is null`,
+      [receiptId],
+    );
+    return { receipt_id: found[0].receipt_id, already: false };
   }
 
   async clientDomainListConfirmedEmpty(clientTag: string): Promise<boolean> {
