@@ -16,7 +16,7 @@ const root = new URL("../../", import.meta.url);
 describe("D90 — leftover-negative AI", () => {
   it("CANON names the verb, the hard cap, the prompt, and no new vendor", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D90\*\*/, "D90: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D9[01]\*\*/, "D90: fold into CANON. Ask Josh.");
     assert.match(canon, /`classify_leftover/, "D90: the verb is on the page. Ask Josh.");
     assert.match(canon, /\$0\.05/, "D90: hard cap. Ask Josh.");
     assert.match(canon, /openrouter_api_key/, "D90: same vault secret as icp-llm. Ask Josh.");

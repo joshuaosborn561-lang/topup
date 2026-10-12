@@ -109,7 +109,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D87 | Live; a method Josh settles in chat is written into CANON.md and DECISIONS.md so every operator's bot follows it |
 | D88 | Live; no self-initiated runs on weekends or 8pm–6am CT unless Josh or Cayden asks live |
 | D89 | Live; Cayden has full authority over the top-up service and the canon |
-| D90 | Live; leftover-negative AI is classify_leftover: Jev on the existing OpenRouter path (vault openrouter_api_key / ICP_JEV_MODEL, same as icp-llm); fixed prompt (stop/remove = unsubscribe, anything else = not_interested, no body stays unclassified); approved_by; estimate first; $0.05 hard cap; source=ai; idempotent |
+| D90 | Live; leftover-negative AI is classify_leftover: Jev on the existing OpenRouter path (vault openrouter_api_key / ICP_JEV_MODEL, same as icp-llm); key path is D91; fixed prompt (stop/remove = unsubscribe, anything else = not_interested, no body stays unclassified); approved_by; estimate first; $0.05 hard cap; source=ai; idempotent |
+| D91 | Live; leftover AI reads the existing OpenRouter secret via topup.jev_openrouter_key() (security definer); the service never SELECTs vault.decrypted_secrets; leadtopup_app is not granted on schema vault |
 
 ---
 
@@ -2960,3 +2961,26 @@ vendor. It does not change icp-llm. It does not classify an empty
 body. It does not overwrite a class. It does not run without a name.
 
 **Guard.** `src/guards/d90_leftover_ai.test.ts`. Ask Josh.
+
+## D91 — Leftover AI key is the definer function
+
+**Decision.** `classify_leftover` reads the existing OpenRouter secret
+through `topup.jev_openrouter_key()` (security definer, execute granted
+to `leadtopup_app`). The service never SELECTs `vault.decrypted_secrets`.
+`leadtopup_app` is not granted USAGE on schema vault and is not granted
+SELECT on `vault.decrypted_secrets`. A direct vault SELECT from the
+Railway role fails (`permission denied for schema vault`, then
+`permission denied for function _crypto_aead_det_decrypt`). The secret
+is still `openrouter_api_key`, the same one icp-llm uses. No new vendor
+and no new Railway key. The key is cached for the process. The verb
+returns `last_error` (message only, never a body) when a leftover fails.
+
+**Why.** Josh, 12 Oct 2026: run the leftover AI on the 55 after #59
+deployed. Production `6c56390` classified 0 of 52: the app role cannot
+decrypt vault. The definer function returns a key (`key_ok`).
+
+**What it does not do.** It does not grant vault to the app. It does
+not put the key in Railway. It does not change icp-llm. It does not
+log the key or a body.
+
+**Guard.** `src/guards/d91_leftover_ai_key.test.ts`. Ask Josh.
