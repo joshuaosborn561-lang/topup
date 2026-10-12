@@ -108,8 +108,12 @@ formats, or sampling (D95).
    leftover `held_company_n` from a prior hash.
 4. `held(client_tag, campaign_id, filters, tam)`. It returns a
    `held_id` at once (`status` started). Poll `held(held_id)` until
-   done or failed. A failed export names its class; do not invent a
-   sample or a lane total. If `net_new` < 1,000: *the TAM for this
+   done or failed. Held is every lead this client already has (lead
+   store, Smartlead history and mirror, sends, provenance, plus
+   suppressions), matched by email, else LinkedIn URL or normalized
+   name+company (D98). A failed export names its class; do not invent a
+   sample or a lane total. Net new splits `has_email` vs
+   `needs_enrich`. If `net_new` < 1,000: *the TAM for this
    campaign is exhausted.* Stop there. If Josh asks for options, give
    each option with its count.
 5. Tell Cayden or Josh: campaign, source, filters, count, net new, rows

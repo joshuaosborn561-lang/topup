@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D97** (2026-10-12). One page. `DECISIONS.md` is the append-only
+Canon as of **D98** (2026-10-12). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -172,9 +172,9 @@ D48).
    `max_per_company`, `industries_by_campaign` and `over_1k_campaign`
    are honored when stored (D84; qualifies D43 / D74). `campaign_record` stamp counts are this
    campaign, not a shared build. `held` `net_new` is the pool minus
-   held (this client's unsubscribes, hard bounces pending Josh, and
-   the existing DNC list) as an exact full-list join, never a sampled
-   page (D74, D80, D81).
+   held (every lead this client already has: lead store, Smartlead
+   history and mirror, sends, provenance, and suppressions) as an
+   exact full-list join, never a sampled page (D74, D80, D81, D98).
 24. **Operators read the build record before sizing or pulling a top-up.**
    `build_record(client_tag, campaign_id)` returns the matching
    `topup.list_build_records` rows (narrative, receipt_ids, campaign ids,
@@ -198,15 +198,21 @@ D48).
 28. **Overlap sample.** Take about 50 people from the second source and
    join them against GetLeads / held (D79).
 29. **Held / contacted / suppressed is an exact full-list join.** Never
-    a sampled page (D80). `held` returns a `held_id` at once (`status`
+    a sampled page (D80). `held` is every lead this client already has:
+    the lead store, Smartlead history and mirror, sends, past receipts
+    and provenance, plus suppressions. Match by email, and for rows with
+    no email, by LinkedIn URL or normalized name+company. Generic for
+    every client (D98). `held` returns a `held_id` at once (`status`
     started); poll `held(held_id)`. The pool is a free chunked GetLeads
-    export (0 credits, fair-use, `work_email` column). Every `export_id` from a split is
-    polled. A slice that outruns its deadline is `timeout`. A failed
-    export names its class (`timeout`, `export_failed`, `fair_use`,
-    `count_timeout`, `paid_export`). Never a paid export
-    (`search_contacts` is 1 credit/row). If the only remaining path is
-    paid, refuse and quote the exact cost. Addresses stay in memory
-    (D97).
+    export (0 credits, fair-use, identifier columns: `work_email`,
+    `linkedin_url`, `first_name`, `last_name`, `company_name`). Every
+    `export_id` from a split is polled. A slice that outruns its
+    deadline is `timeout`. A failed export names its class (`timeout`,
+    `export_failed`, `fair_use`, `count_timeout`, `paid_export`). Never
+    a paid export (`search_contacts` is 1 credit/row). If the only
+    remaining path is paid, refuse and quote the exact cost. Addresses
+    stay in memory. The answer splits net new as `has_email` vs
+    `needs_enrich` (D97, D98).
 30. **Suppression is real unsubscribes only**, permanently, per client.
    The 6-month expiry is out (supersedes D63). Not-interested and other
    negatives are not suppressed. Every negative is classified
@@ -216,8 +222,9 @@ D48).
    arrive (trigger + the next `suppress`; text/category, no AI). Suppression
    views (`v_master_suppression`, `lp.reply_suppression`,
    `response_based_v1`) use only the unsubscribe class.
-   `suppress` / `count` / `size` / `held` use per-client unsubscribes,
-   hard bounces (kept pending Josh), and the existing DNC list.
+   `suppress` / `count` / `size` use per-client unsubscribes, hard bounces pending Josh, existing DNC list.
+   `held` uses every lead this client already has, plus those
+   suppressions (D98).
    `public.sends.sender` records the sending inbox (migration 0024,
    unapplied). Never unsuppress anything in Smartlead itself (D81).
 31. **Title filters are exact match** on GetLeads by default
@@ -298,7 +305,13 @@ D48).
     MCP call returns `held_id` at once. Background work splits the
     widest OR-list, starts a free export per slice, and polls every
     id. No sample, no lane total, no paid export (D97).
-45. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+45. **held is every lead this client already has.** Not only
+    unsubscribes, bounces and DNC. The set is the lead store, Smartlead
+    history and mirror, sends, provenance, and suppressions, for this
+    client, on every client. Match by email, else LinkedIn URL, else
+    normalized name+company. Exact full-list join (D80). Net new splits
+    `has_email` vs `needs_enrich` (D98).
+46. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh or Cayden (D-meta).
 
 ## The reads
@@ -314,7 +327,7 @@ bears on stated and no verdict (D52).
 | `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). The transcript / narrative is the source of truth when a backfilled receipt disagrees or is thinner (D96). Receipts stay the at-a-glance source of record after that fix. Read-only; no spend. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
 | `count(client_tag, source, filters, approved_by?, campaign_id?, job_id?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; honors `max_per_company`, `industries_by_campaign` and `over_1k_campaign` (D84); `industries_by_campaign` keys may be campaign ids or any non-id token on the stored map, matched as a word in the campaign name (D92, D93); `icp_gate` is receipt meta and is stripped (D92); `filters_used` is what the vendor received; `filters_applied` lists every filter that actually ran, including rewritten keys (D95); VALID is omitted — it is not a TAM cap (D77)), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new), `prospeo` (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs `approved_by`; industries mapped to official names with inexact flags; honors the same D84 receipt keys; search-person does not apply `max_per_company`, so that count is uncapped), `permits` with the filters you pass, or `site_owners` (free; pass `job_id`; this job's ingest rows by place_id or normalized domain; cached owners on those businesses belong to the job; never the shared owner view) (D94). Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
-| `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (per-client unsubscribes, hard bounces pending Josh, existing DNC list) as an **exact full-list join**, never a sampled page and never a lane-total fallback (D80, D81, D95, D97). Returns a `held_id` at once (`status` started); poll `held(held_id)`. Free chunked export; every split id is polled. A failed export names its class. Never a paid export. `net_new` is the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
+| `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds — **every lead this client already has** (lead store, Smartlead history and mirror, sends, provenance, plus suppressions) as an **exact full-list join**, never a sampled page and never a lane-total fallback (D80, D81, D95, D97, D98). Match by email, else LinkedIn URL or normalized name+company. Returns a `held_id` at once (`status` started); poll `held(held_id)`. Free chunked export of identifier columns; every split id is polled. A failed export names its class. Never a paid export. `net_new` is the pool minus that held count, split as `has_email` vs `needs_enrich`. Under 1,000: the TAM for this campaign is exhausted. |
 | `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). The suppress CTE types `$1::text` so the first slot is not unused (D70). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
@@ -371,11 +384,13 @@ formats, or sampling caps (D95).
    Cross-check AI Ark and Prospeo on a matched basis; within 10% the TAM
    is right; more than 10% apart means switch source (D78). Take about
    50 people from the second source against GetLeads / held (D79).
-3. `held` subtracts what this client already holds as an **exact
-   full-list join**, never a sample and never a lane total (D80, D95,
-   D97). It returns a `held_id` at once; poll `held(held_id)`. Under
-   1,000 net new: *the TAM for this campaign is exhausted*. Do not
-   widen.
+3. `held` subtracts **every lead this client already has** as an
+   **exact full-list join**, never a sample and never a lane total
+   (D80, D95, D97, D98). Match by email, else LinkedIn URL or
+   normalized name+company. It returns a `held_id` at once; poll
+   `held(held_id)`. Net new splits `has_email` vs `needs_enrich`.
+   Under 1,000 net new: *the TAM for this campaign is exhausted*. Do
+   not widen.
 4. Show net new and the full cost. The approver cuts by cost (D76).
 5. On a named approval: `pull` (1 to 2,000) → `suppress` → `icp` →
    `enrich` → `verify` → `normalize` → `qa` → `stage`. `import` only when
@@ -469,6 +484,10 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh or Cayden
   Never wait on a synchronous held export. Never poll only the first
   export_id of a split. Never use a paid GetLeads export or
   `search_contacts` for held. Never hide the export error class (D97).
+  Never treat held as suppressions only. Never skip the lead store,
+  Smartlead mirror, sends or provenance. Never match only by email
+  when a row has no address — use LinkedIn URL or normalized
+  name+company. Never hardcode a per-client held table (D98).
   Never hide a filter that actually ran from `filters_applied` (D95).
   Never put a client fact, a per-client constant or a per-client canon
   step on this page (D95). Never leave a backfilled receipt in place

@@ -8,27 +8,40 @@ import {
   heldRead,
   type HeldExportClass,
 } from "./held.js";
+import { HELD_EXPORT_COLUMNS, emptyHeldKeys, type HeldKeys } from "./heldKeys.js";
 import type { GetleadsFilters } from "../clients/getleads.js";
 
-/** D80 / D95 / D97 — held is an exact full-list join. Never a sample or a lane total. Ask Josh. */
+/** D80 / D95 / D97 / D98 — held is an exact full-list join to every client lead. Ask Josh. */
 
-const POOL_CSV = "email\na@example.com\nb@example.com\nc@example.com\n";
+const POOL_CSV =
+  "work_email,linkedin_url,first_name,last_name,company_name\n" +
+  "a@example.com,https://www.linkedin.com/in/ann,Ann,A,Acme\n" +
+  "b@example.com,https://linkedin.com/in/bob,Bob,B,Beta\n" +
+  "c@example.com,https://linkedin.com/in/cara,Cara,C,Co\n";
+
+function heldSet(over: Partial<HeldKeys> = {}): HeldKeys {
+  const keys = emptyHeldKeys();
+  keys.emails.add("a@example.com");
+  keys.emails.add("z@example.com");
+  return { ...keys, ...over };
+}
 
 function deps(over: Record<string, unknown> = {}) {
   return {
     db: {
       query: async (sql: string) => {
-        if (sql.includes("from public.campaigns")) return { rows: [{ name: "North Alpha IT" }] };
-        if (sql.includes("to_regclass")) return { rows: [{ leads: true, sends: true, suppression: true }] };
-        if (sql.includes("information_schema.columns")) return { rows: [{ n: "1" }] };
-        if (sql.includes("select distinct e")) return { rows: [{ e: "a@example.com" }, { e: "z@example.com" }] };
+        if (sql.includes("from public.campaigns") && sql.includes("name")) return { rows: [{ name: "North Alpha IT" }] };
         return { rows: [] };
       },
     },
     getleads: {
       startExport: async (_filters: unknown, opts?: { columns?: string[] }) => {
         if (opts?.columns) {
-          assert.deepEqual(opts.columns, ["work_email"], "D97: GetLeads catalog is work_email, not email. Ask Josh or Cayden.");
+          assert.deepEqual(
+            opts.columns,
+            [...HELD_EXPORT_COLUMNS],
+            "D98: export identifier columns (work_email, linkedin_url, name, company). Ask Josh or Cayden.",
+          );
         }
         return { export_id: "x" };
       },
@@ -45,12 +58,13 @@ function deps(over: Record<string, unknown> = {}) {
     fetchText: async () => POOL_CSV,
     sleep: async () => undefined,
     now: () => 1,
+    loadHeld: async () => heldSet(),
     ...over,
   } as never;
 }
 
-describe("D95 / D97 — held exact full-list join", () => {
-  it("joins the exported pool to the full held set and never scales", async () => {
+describe("D95 / D97 / D98 — held exact full-list join", () => {
+  it("joins the exported pool to every client lead and never scales", async () => {
     const r = await heldRead(deps(), {
       client_tag: "acme",
       smartlead_client_id: 1,
@@ -61,11 +75,69 @@ describe("D95 / D97 — held exact full-list join", () => {
     assert.equal(r.status, "done", r.last_error ?? r.note);
     assert.equal(r.held, 1);
     assert.equal(r.net_new, 2);
+    assert.equal(r.has_email, 2);
+    assert.equal(r.needs_enrich, 0);
+    assert.equal(r.exported, 3);
     assert.equal(r.filters_applied.company_description, "private equity");
     assert.deepEqual(r.filters_applied.job_titles, ["Partner"]);
     assert.match(r.note, /exact full-list join/);
+    assert.match(r.note, /every lead this client already has/);
     assert.doesNotMatch(r.note, /sampled|lane total|scaled/);
     assert.ok(!("sampled" in r) && !("method" in r));
+  });
+
+  it("matches a no-email row by LinkedIn or name+company and splits needs-enrich", async () => {
+    const csv =
+      "work_email,linkedin_url,first_name,last_name,company_name\n" +
+      "fresh@example.com,https://linkedin.com/in/fresh,Fresh,Person,NewCo\n" +
+      ",https://www.linkedin.com/in/AlreadyHeld,Pat,Held,OldCo\n" +
+      ",,Sam,Smith,Acme Inc\n";
+    const keys = emptyHeldKeys();
+    keys.linkedins.add("linkedin.com/in/alreadyheld");
+    keys.nameCompanies.add("sam|smith|acme inc");
+    const r = await heldRead(
+      deps({
+        fetchText: async () => csv,
+        loadHeld: async () => keys,
+      }),
+      {
+        client_tag: "acme",
+        smartlead_client_id: 1,
+        campaign_ids: [7],
+        filters: { job_titles: ["Partner"] },
+        tam: 3,
+      },
+    );
+    assert.equal(r.status, "done", r.last_error ?? r.note);
+    assert.equal(r.held, 2);
+    assert.equal(r.net_new, 1);
+    assert.equal(r.has_email, 1);
+    assert.equal(r.needs_enrich, 0);
+  });
+
+  it("counts a net-new row with no work_email as needs-enrich", async () => {
+    const csv =
+      "work_email,linkedin_url,first_name,last_name,company_name\n" +
+      "keep@example.com,https://linkedin.com/in/keep,Keep,Me,KeepCo\n" +
+      ",https://linkedin.com/in/need,Need,Mail,NeedCo\n";
+    const r = await heldRead(
+      deps({
+        fetchText: async () => csv,
+        loadHeld: async () => emptyHeldKeys(),
+      }),
+      {
+        client_tag: "acme",
+        smartlead_client_id: 1,
+        campaign_ids: [7],
+        filters: { job_titles: ["Partner"] },
+        tam: 2,
+      },
+    );
+    assert.equal(r.status, "done", r.last_error ?? r.note);
+    assert.equal(r.held, 0);
+    assert.equal(r.has_email, 1);
+    assert.equal(r.needs_enrich, 1);
+    assert.equal(r.net_new, 2);
   });
 
   it("refuses a sample or lane-total fallback when the pool cannot be exported", async () => {
@@ -117,7 +189,9 @@ describe("D95 / D97 — held exact full-list join", () => {
           },
         },
         fetchText: async (url: string) =>
-          url.includes("/a.") ? "email\na@example.com\nb@example.com\n" : "email\nc@example.com\nd@example.com\n",
+          url.includes("/a.")
+            ? "work_email,linkedin_url,first_name,last_name,company_name\na@example.com,,,A,A\nb@example.com,,,B,B\n"
+            : "work_email,linkedin_url,first_name,last_name,company_name\nc@example.com,,,C,C\nd@example.com,,,D,D\n",
       }),
       {
         client_tag: "acme",
@@ -217,30 +291,17 @@ describe("D95 / D97 — held exact full-list join", () => {
   });
 
   it("D92 — receipt meta parses; a bucket key without a name fails with the stored keys", async () => {
-    const pe = await heldRead(
-      deps({
-        db: {
-          query: async (sql: string) => {
-            if (sql.includes("from public.campaigns")) return { rows: [{ name: "PE Firms (With Team)" }] };
-            if (sql.includes("to_regclass")) return { rows: [{ leads: true, sends: false, suppression: false }] };
-            if (sql.includes("information_schema.columns")) return { rows: [{ n: "0" }] };
-            if (sql.includes("select distinct e")) return { rows: [] };
-            return { rows: [] };
-          },
-        },
-      }),
-      {
-        client_tag: "acme",
-        smartlead_client_id: 1,
-        campaign_ids: [3763808],
-        filters: {
-          job_titles: ["Partner"],
-          company_description: "private equity",
-          icp_gate: { required: true, cut_labels: ["venture_capital_firm"] },
-        },
-        tam: 3,
+    const pe = await heldRead(deps(), {
+      client_tag: "acme",
+      smartlead_client_id: 1,
+      campaign_ids: [3763808],
+      filters: {
+        job_titles: ["Partner"],
+        company_description: "private equity",
+        icp_gate: { required: true, cut_labels: ["venture_capital_firm"] },
       },
-    );
+      tam: 3,
+    });
     assert.equal(pe.status, "done", pe.last_error ?? pe.note);
 
     const it = await heldRead(

@@ -38,9 +38,10 @@ describe("D74 — getleads count maps; stamps are this campaign", () => {
     const tags = await readFile(new URL("src/builds/tags.ts", root), "utf8");
     assert.match(tags, /campaignId/, "D74: provenanceCounts takes the campaign");
     const held = await readFile(new URL("src/canon/held.ts", root), "utf8");
+    const heldKeys = await readFile(new URL("src/canon/heldKeys.ts", root), "utf8");
     assert.match(held, /net_new is the pool minus/, "D74: the note names the subtraction");
     assert.doesNotMatch(held, /was not subtracted/, "D74: the old client-total line is gone");
-    assert.match(held, /public\.suppression/, "D74: held includes suppression on the sample");
+    assert.match(heldKeys, /public\.suppression/, "D74: held includes suppression on the sample");
     const count = await readFile(new URL("src/canon/count.ts", root), "utf8");
     assert.match(count, /outboundFilters/, "D74: filters_used is what count_contacts received");
     const canon = await readFile(new URL("CANON.md", root), "utf8");

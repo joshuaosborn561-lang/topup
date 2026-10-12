@@ -16,15 +16,25 @@ import { MIN_NET_NEW } from "../policy/rules.js";
 import { countSlices, loadGeoFenceCities, type GeoCity, type GeoFenceRef } from "../recipes/geoFence.js";
 import type { SpendRails } from "../spend/rails.js";
 import { filtersApplied, getleadsParamsFromFilters, honorReceiptCountKeys } from "../jobs/filters.js";
+import {
+  HELD_EXPORT_COLUMNS,
+  loadHeldKeys,
+  poolRowsFromCsv,
+  rowHasEmail,
+  rowIsHeld,
+  type HeldKeys,
+} from "./heldKeys.js";
 
 const log = logger("held");
 
 /**
- * How much of a getleads pool the client already holds (D80, D95, D97): the
- * full held set (unsubscribes, hard bounces, DNC) joined to the exported
- * pool. The export is free, chunked, and polled in the background. Never a
- * sample, never a lane total, never a paid export. Addresses stay in memory
- * and are never logged.
+ * How much of a getleads pool the client already holds (D80, D95, D97, D98):
+ * every lead this client already has (lead store, Smartlead history and
+ * mirror, sends, provenance, suppressions) joined to the exported pool by
+ * email, else LinkedIn URL, else normalized name+company. The export is
+ * free, chunked, and polled in the background. Never a sample, never a
+ * lane total, never a paid export. Addresses stay in memory and are never
+ * logged.
  */
 export interface HeldDeps {
   db: Queryable;
@@ -34,6 +44,7 @@ export interface HeldDeps {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   loadGeo?: (ref: GeoFenceRef) => Promise<GeoCity[]>;
+  loadHeld?: (db: Queryable, clientId: number, clientTag: string) => Promise<HeldKeys>;
 }
 
 export type HeldStatus = "started" | "done" | "failed";
@@ -47,6 +58,9 @@ export interface HeldRead {
   tam: number;
   held: number | null;
   net_new: number | null;
+  has_email: number | null;
+  needs_enrich: number | null;
+  exported: number | null;
   note: string;
   rule: string;
   held_id: string | null;
@@ -113,6 +127,9 @@ function emptyHeld(over: Partial<HeldRead>): HeldRead {
     tam: 0,
     held: null,
     net_new: null,
+    has_email: null,
+    needs_enrich: null,
+    exported: null,
     note: "",
     rule: HELD_RULE,
     held_id: null,
@@ -154,11 +171,14 @@ export async function heldRead(d: HeldDeps, input: HeldInput, held_id: string | 
       tam: 0,
       held: 0,
       net_new: 0,
+      has_email: 0,
+      needs_enrich: 0,
+      exported: 0,
       note: "Pool is 0. net_new is the pool minus held.",
     });
   }
-  const heldSet = await loadHeldEmails(d.db, input.smartlead_client_id);
-  const pool = await exportPoolEmails(d, input.client_tag, filters as GetleadsFilters, tam);
+  const heldKeys = await (d.loadHeld ?? loadHeldKeys)(d.db, input.smartlead_client_id, input.client_tag);
+  const pool = await exportPoolRows(d, input.client_tag, filters as GetleadsFilters, tam);
   if ("error" in pool) {
     return emptyHeld({
       held_id,
@@ -171,9 +191,19 @@ export async function heldRead(d: HeldDeps, input: HeldInput, held_id: string | 
       note: pool.error,
     });
   }
-  let matched = 0;
-  for (const email of pool.emails) if (heldSet.has(email)) matched += 1;
-  const held = matched;
+  let held = 0;
+  let has_email = 0;
+  let needs_enrich = 0;
+  for (const row of pool.rows) {
+    if (rowIsHeld(row, heldKeys)) {
+      held += 1;
+      continue;
+    }
+    if (rowHasEmail(row)) has_email += 1;
+    else needs_enrich += 1;
+  }
+  const net_new = has_email + needs_enrich;
+  const exported = pool.rows.length;
   return emptyHeld({
     held_id,
     status: "done",
@@ -181,51 +211,18 @@ export async function heldRead(d: HeldDeps, input: HeldInput, held_id: string | 
     filters_applied: applied,
     tam,
     held,
-    net_new: Math.max(0, tam - held),
-    note: `${held} of this pool are already held (exact full-list join of the exported pool to this client's unsubscribes, hard bounces, and the DNC list). net_new is the pool minus that held count.`,
+    net_new,
+    has_email,
+    needs_enrich,
+    exported,
+    note: `${held} of ${exported} exported pool rows are already held (exact full-list join to every lead this client already has: lead store, Smartlead history and mirror, sends, provenance, and suppressions; match by email, else LinkedIn URL, else normalized name+company). net_new is the pool minus that held count, split as ${has_email} has-email and ${needs_enrich} needs-enrich.`,
   });
 }
 
-/** Distinct addresses this client holds under D81. Never logged. */
-export async function loadHeldEmails(db: Queryable, clientId: number): Promise<Set<string>> {
-  const { rows: has } = await db.query<{ leads: boolean; sends: boolean; suppression: boolean }>(
-    `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends,
-            to_regclass('public.suppression') is not null as suppression`,
-  );
-  if (!has[0]?.leads) return new Set();
-  const { rows: col } = await db.query<{ n: string }>(
-    `select count(*)::text as n from information_schema.columns
-      where table_schema = 'public' and table_name = 'leads' and column_name = 'negative_class'`,
-  );
-  const hasClass = Number(col[0]?.n ?? 0) > 0;
-  const unsub = hasClass
-    ? `select lower(l.email) as e from public.leads l
-        where l.smartlead_client_id = $1 and l.email is not null
-          and (l.negative_class = 'unsubscribe' or lower(coalesce(l.status, '')) = 'unsubscribed')`
-    : `select lower(l.email) as e from public.leads l
-        where l.smartlead_client_id = $1 and l.email is not null
-          and lower(coalesce(l.status, '')) = 'unsubscribed'`;
-  const bounce = has[0].sends
-    ? `union
-       select lower(l.email) as e from public.leads l where l.email is not null and l.category_id = 9
-       union
-       select lower(l.email) as e from public.leads l join public.sends s on s.lead_id = l.id
-        where l.email is not null and s.bounced`
-    : `union
-       select lower(l.email) as e from public.leads l where l.email is not null and l.category_id = 9`;
-  const dnc = has[0].suppression
-    ? `union
-       select lower(s.email) as e from public.suppression s where s.email is not null`
-    : "";
-  const { rows } = await db.query<{ e: string }>(
-    `select distinct e from (
-       ${unsub}
-       ${bounce}
-       ${dnc}
-     ) x`,
-    [clientId],
-  );
-  return new Set(rows.map((r) => r.e).filter((e) => e.includes("@")));
+/** Distinct addresses this client holds (D98). Never logged. */
+export async function loadHeldEmails(db: Queryable, clientId: number, clientTag?: string | null): Promise<Set<string>> {
+  const keys = await loadHeldKeys(db, clientId, clientTag);
+  return keys.emails;
 }
 
 /** Count of held emails, optionally limited to a list. Used by maps/size. */
@@ -248,12 +245,12 @@ export async function countHeldEmails(
   return all.size;
 }
 
-async function exportPoolEmails(
+async function exportPoolRows(
   d: HeldDeps,
   clientTag: string,
   filters: GetleadsFilters,
   tam: number,
-): Promise<{ emails: string[] } | { error: string; error_class: HeldExportClass }> {
+): Promise<{ rows: ReturnType<typeof poolRowsFromCsv> } | { error: string; error_class: HeldExportClass }> {
   try {
     let slice: GetleadsFilters = filters;
     if (filters.geo_fence) {
@@ -263,23 +260,18 @@ async function exportPoolEmails(
       slice = { ...filters, cities: filters.cities!.slice(0, 45) };
     }
     const parts = heldExportSlices(slice);
-    const seen = new Set<string>();
-    const emails: string[] = [];
+    const rows: ReturnType<typeof poolRowsFromCsv> = [];
     const maxRows = Math.min(Math.max(tam, 1), EXPORT_PAGE);
     for (const part of parts) {
-      const started = await d.getleads.startExport(part, { max_rows: maxRows, columns: ["work_email"] });
+      const started = await d.getleads.startExport(part, { max_rows: maxRows, columns: [...HELD_EXPORT_COLUMNS] });
       const ids = started.export_ids?.length ? started.export_ids : [started.export_id];
       for (const id of ids) {
         const got = await pollExport(d, clientTag, id);
         if ("error" in got) return got;
-        for (const email of emailsFromCsv(got.text)) {
-          if (seen.has(email)) continue;
-          seen.add(email);
-          emails.push(email);
-        }
+        rows.push(...poolRowsFromCsv(got.text));
       }
     }
-    return { emails };
+    return { rows };
   } catch (err) {
     const message = (err as Error).message ?? String(err);
     const error_class = classifyHeldExportError(message);
@@ -341,42 +333,14 @@ async function pollExport(
 
 /** Emails from an export page. The header must name an email column. */
 export function emailsFromCsv(text: string): string[] {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (lines.length < 2) return [];
-  const header = splitCsvLine(lines[0]!).map((cell) => cell.trim().toLowerCase());
-  const idx = header.findIndex((cell) => cell === "email" || cell === "work_email" || cell === "person_email");
-  if (idx < 0) return [];
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const line of lines.slice(1)) {
-    const email = (splitCsvLine(line)[idx] ?? "").trim().toLowerCase();
+  for (const row of poolRowsFromCsv(text)) {
+    const email = row.email?.trim().toLowerCase() ?? "";
     if (!email.includes("@") || seen.has(email)) continue;
     seen.add(email);
     out.push(email);
   }
-  return out;
-}
-
-function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
-    if (quoted) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') {
-          cur += '"';
-          i += 1;
-        } else quoted = false;
-      } else cur += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ",") {
-      out.push(cur);
-      cur = "";
-    } else cur += ch;
-  }
-  out.push(cur);
   return out;
 }
 

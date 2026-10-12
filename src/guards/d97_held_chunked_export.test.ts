@@ -9,7 +9,7 @@ const root = new URL("../../", import.meta.url);
 describe("D97 — held chunked free export", () => {
   it("CANON and the ledger name the async held join", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D97\*\*/, "D97: fold into CANON. Ask Josh or Cayden.");
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/, "D97: fold into CANON. Ask Josh or Cayden.");
     assert.match(canon, /held_id/, "D97: held returns a held_id. Ask Josh or Cayden.");
     assert.match(canon, /chunked|every export_id|every split/, "D97: the pool export is chunked. Ask Josh or Cayden.");
     assert.match(canon, /never a paid export|Never a paid export|never.*paid GetLeads export/i, "D97: paid export is refused. Ask Josh or Cayden.");
@@ -26,7 +26,7 @@ describe("D97 — held chunked free export", () => {
     assert.match(held, /classifyHeldExportError/, "D97: a failed export names its class. Ask Josh or Cayden.");
     assert.match(held, /paid_export/, "D97: a paid path is refused. Ask Josh or Cayden.");
     assert.doesNotMatch(held, /search_contacts/, "D97: held never pages the paid search. Ask Josh or Cayden.");
-    assert.match(held, /columns: \["work_email"\]/, "D97: export the work_email column. Ask Josh or Cayden.");
+    assert.match(held, /HELD_EXPORT_COLUMNS|work_email/, "D97: export the work_email column. Ask Josh or Cayden.");
     assert.doesNotMatch(held, /columns: \["email"\]/, "D97: email is gone from the GetLeads catalog. Ask Josh or Cayden.");
     assert.doesNotMatch(held, /EXPORT_DEADLINE_MS = 60_000/, "D97: the 60s single-id wait is gone. Ask Josh or Cayden.");
     const grok = await readFile(new URL("src/mcp/grok.ts", root), "utf8");

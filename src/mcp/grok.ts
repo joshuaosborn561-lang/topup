@@ -120,7 +120,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "held",
     {
       description:
-        "How much of a getleads pool the client already holds: per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list, as an exact full-list join (D80, D81, D95, D97). Never a sample and never a lane-total fallback. Returns a held_id at once (status started); poll held(held_id). The pool is a free chunked GetLeads export; every split id is polled. A failed export names its class (timeout, export_failed, fair_use, count_timeout, paid_export). Never a paid export. filters_applied lists every filter that ran. net_new is the pool minus that held count. Under 1,000 net new, the TAM for this campaign is exhausted.",
+        "How much of a getleads pool the client already holds: every lead this client already has (lead store, Smartlead history and mirror, sends, provenance, plus suppressions), as an exact full-list join (D80, D81, D95, D97, D98). Match by email, else LinkedIn URL or normalized name+company. Never a sample and never a lane-total fallback. Returns a held_id at once (status started); poll held(held_id). The pool is a free chunked GetLeads export of identifier columns; every split id is polled. A failed export names its class (timeout, export_failed, fair_use, count_timeout, paid_export). Never a paid export. filters_applied lists every filter that ran. net_new is the pool minus that held count, split as has_email vs needs_enrich. Under 1,000 net new, the TAM for this campaign is exhausted.",
       inputSchema: {
         client_tag: snake.optional(),
         campaign_id: z.number().int().optional(),
