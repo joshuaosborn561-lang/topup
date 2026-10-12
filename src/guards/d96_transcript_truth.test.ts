@@ -11,7 +11,7 @@ const root = new URL("../../", import.meta.url);
 describe("D96 — transcript truth and unassigned skip", () => {
   it("CANON names the backfill fix and the parking-lot lane", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D96\*\*/, "D96: fold into CANON. Ask Josh or Cayden.");
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/, "D96: CANON still has a header. Ask Josh or Cayden.");
     assert.match(canon, /The build transcript is the source of truth/, "D96. Ask Josh or Cayden.");
     assert.match(canon, /backfill fix, not widening/, "D96. Ask Josh or Cayden.");
     assert.match(canon, /Skip registry lane `unassigned`/, "D96. Ask Josh or Cayden.");

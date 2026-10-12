@@ -116,6 +116,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D94 | Live; site_owners scopes by the job's place_id or normalized domain, not the site_people_text batch; cached owners on this job's businesses belong to the job |
 | D95 | Live; replay the hand search (read record → same search → exact held join → net new + cost → pull/verify/stage on approval); hide stamps / lane meta / key formats / sampling from callers; filters_applied lists every filter that ran; held never samples or falls back to a lane total; no per-client constants or canon steps |
 | D96 | Live; build transcript / narrative is the source of truth for how a list was built; a backfilled receipt that disagrees or is thinner is corrected to match (a backfill fix, not widening); generic diff then --apply; skip registry lane unassigned and never retag onto or off it |
+| D97 | Live; held returns a held_id and runs the free GetLeads pool export in the background; every split export_id is polled; a miss names its class (timeout / export_failed / fair_use / count_timeout / paid_export); never a paid export |
 
 ---
 
@@ -3147,3 +3148,29 @@ asks). It does not retag or pull `unassigned`. It does not write
 still flips ACTIVE by hand (D5, D14).
 
 **Guard.** `src/guards/d96_transcript_truth.test.ts`. Ask Josh or Cayden.
+
+## D97 — held is an async chunked free export
+
+**Decision.** `held` returns a `held_id` at once (`status` started) and
+is polled with `held(held_id)`, the same pattern as `size`. The GetLeads
+pool export is free (unlimited-plan credits, fair-use). The widest
+OR-list is halved into slices; every `export_id` from `exportOrSplit`
+is polled on its own deadline. A miss names its class: `timeout`,
+`export_failed`, `fair_use`, `count_timeout`, or `paid_export`. There
+is no sample and no lane-total fallback. `search_contacts` is 1
+credit/row and is never the held path. If the only remaining path is
+paid, refuse and quote the exact cost. Addresses stay in memory and
+never return.
+
+**Why.** Josh / Cayden / Topup, 12 Oct 2026, after #65. `held` waited
+synchronously for 60s, polled only the first split id, and swallowed
+the error as a generic "could not export". That is a timeout, not a
+50k row cap and not a paid-export gate. The MCP call died before the
+exact full-list join could finish, so net new could not be computed.
+
+**What it does not do.** It does not page `search_contacts`. It does
+not spend. It does not sample. It does not fall back to a lane total.
+It does not write `dl_status`, `sg_exclude`, or `skip_*`. It does not
+unsuppress. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d97_held_chunked_export.test.ts`. Ask Josh or Cayden.
