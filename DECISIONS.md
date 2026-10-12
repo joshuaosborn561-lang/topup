@@ -100,7 +100,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D78 | Live; TAM cross-check GetLeads then AI Ark and Prospeo on a matched basis; within 10% TAM is right; more than 10% apart means switch source (not widening). Prospeo count is live (D83). AI Ark exact-title mode is live (D82) |
 | D79 | Live; take a ~50-person overlap sample of the second source against GetLeads / held |
 | D80 | Live; held / contacted / suppressed subtraction is an exact full-list join, never a sampled page (qualifies D74) |
-| D81 | Live; suppression is real unsubscribes only, permanently, per client; 6-month expiry is out (supersedes D63); not-interested is not suppressed; classify Smartlead negatives (text/category first, AI leftover dry-run); views use unsubscribe class only; suppress/count/size/held = per-client unsubs + hard bounces (pending Josh) + DNC list; sender column kept (0024 unapplied); never unsuppress in Smartlead |
+| D81 | Live; leftover AI runner is D90; suppression is real unsubscribes only, permanently, per client; 6-month expiry is out (supersedes D63); not-interested is not suppressed; classify Smartlead negatives (text/category first); views use unsubscribe class only; suppress/count/size/held = per-client unsubs + hard bounces (pending Josh) + DNC list; sender column kept; never unsuppress in Smartlead |
 | D82 | Live; GetLeads titles exact-match by default (`lower(current_title) IN`); substring only when the receipt says so; AI Ark counts use STRICT exact-title mode |
 | D83 | Live; count(source=prospeo) is page 1 of search-person (1 credit, pagination.total_count); no-result and 30-day repeats free; ~1.5¢/credit; needs approved_by; industries mapped to official names with inexact flags; honors D84 receipt keys |
 | D84 | Live; count honors max_per_company, industries_by_campaign, over_1k_campaign on every source including prospeo (qualifies D43 / D74) |
@@ -109,6 +109,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D87 | Live; a method Josh settles in chat is written into CANON.md and DECISIONS.md so every operator's bot follows it |
 | D88 | Live; no self-initiated runs on weekends or 8pm–6am CT unless Josh or Cayden asks live |
 | D89 | Live; Cayden has full authority over the top-up service and the canon |
+| D90 | Live; leftover-negative AI is classify_leftover: Jev on the existing OpenRouter path (vault openrouter_api_key / ICP_JEV_MODEL, same as icp-llm); fixed prompt (stop/remove = unsubscribe, anything else = not_interested, no body stays unclassified); approved_by; estimate first; $0.05 hard cap; source=ai; idempotent |
 
 ---
 
@@ -2932,3 +2933,30 @@ the canon: he can change, use or direct it however he wants.
 **Why.** Josh, 12 Oct 2026, live.
 
 **Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D90 — Leftover-negative AI runner
+
+**Decision.** The leftover Smartlead negatives that text and category
+could not class are classified by Jev on OpenRouter Decisions — the
+same provider and vault secret (`openrouter_api_key`) that `icp-llm`
+and `site_check` already use, model `ICP_JEV_MODEL`. No new vendor
+and no new Railway key. The verb is `classify_leftover(approved_by?)`.
+The prompt is fixed: an explicit request to stop or remove is
+`unsubscribe`; anything else is `not_interested`; no inbound body
+stays unclassified and is not sent. The first call is the estimate
+(Jev grade unit price). `approved_by` runs it through
+`SpendRails.gate`. Hard cap $0.05; over that is refused. Writes
+`negative_class` and `negative_class_source='ai'` only where the
+class is still null (idempotent). Counts only; bodies never return.
+Nothing is unsuppressed in Smartlead. Nothing writes `dl_status`,
+`sg_exclude`, or `skip_*`.
+
+**Why.** Josh, 12 Oct 2026: approved the ~1¢ leftover AI sort after
+D81 text/category backfill left 55 unclassified. The dry-run audit
+does not run AI; this verb does.
+
+**What it does not do.** It does not add OpenRouter or Jev as a new
+vendor. It does not change icp-llm. It does not classify an empty
+body. It does not overwrite a class. It does not run without a name.
+
+**Guard.** `src/guards/d90_leftover_ai.test.ts`. Ask Josh.

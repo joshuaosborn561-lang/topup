@@ -140,7 +140,7 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
 `campaign_record`, `build_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
-`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `site_check`, `suppress`, `enrich`, `verify`,
+`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `site_check`, `classify_leftover`, `suppress`, `enrich`, `verify`,
 `normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
 `resolve`, `note`.
 

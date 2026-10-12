@@ -8,6 +8,7 @@ import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
 import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
 import { GetleadsClient } from "./clients/getleads.js";
 import { IcpGateClient } from "./clients/icpGate.js";
+import { JevClassifyClient, loadOpenRouterKey } from "./clients/jevClassify.js";
 import { SitePeopleClient } from "./clients/sitePeople.js";
 import { peopleLoopConfig } from "./stages/icp/loops.js";
 import { LeadPipeClient } from "./clients/leadpipe.js";
@@ -126,6 +127,7 @@ async function main(): Promise<void> {
   const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
   const jobs = { pollMs: cfg.JOB_POLL_SECONDS * 1000, deadMs: cfg.JOB_DEAD_MINUTES * 60_000 };
   const icpGate = cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY ? new IcpGateClient(cfg.SUPABASE_FUNCTIONS_URL, { fetch: cfg.ICP_SITE_FETCH_KEY, llm: cfg.ICP_LLM_KEY, disco: cfg.ICP_DISCO_KEY }) : null;
+  const leftoverJev = new JevClassifyClient({ loadKey: () => loadOpenRouterKey(db), model: cfg.ICP_JEV_MODEL });
   const sitePeople = cfg.SITE_PEOPLE_KEY ? new SitePeopleClient(cfg.SUPABASE_FUNCTIONS_URL, cfg.SITE_PEOPLE_KEY, fetch, 130_000, cfg.SITE_PEOPLE_FETCH_PER_HOST) : null;
   const peopleLoops = peopleLoopConfig({
     SITE_PEOPLE_FETCH_PARALLEL: String(cfg.SITE_PEOPLE_FETCH_PARALLEL),
@@ -221,6 +223,7 @@ async function main(): Promise<void> {
         },
         size: new SizeRunner(db),
         siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, people: sitePeople, jevModel: cfg.ICP_JEV_MODEL, geminiModel: cfg.SITE_PEOPLE_GEMINI_MODEL, peopleLoops, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
+        leftoverAi: { db, rails, jev: leftoverJev },
         readTranscript:
           cfg.SUPABASE_URL && cfg.SUPABASE_SERVICE_ROLE_KEY
             ? (path) => downloadListBuildTranscript({ supabaseUrl: cfg.SUPABASE_URL, serviceRoleKey: cfg.SUPABASE_SERVICE_ROLE_KEY, path })

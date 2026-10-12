@@ -44,6 +44,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   suppress: "operator",
   icp: "operator",
   site_check: "operator",
+  classify_leftover: "operator",
   enrich: "operator",
   verify: "operator",
   normalize: "operator",

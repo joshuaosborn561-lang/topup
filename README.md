@@ -68,6 +68,7 @@ Verbs (one stage each, counts back):
 | `suppress` | Per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list (D81). Returns raw, dropped by reason, net new. |
 | `icp` | The ICP website gate (our own site fetch, Jev picks a category, DiscoLike on unreadable sites). Flagged rows are suppressed with a reason. Paid; estimate first. |
 | `site_check` | The website checker on a job or a store `leftovers` named: our own site fetch, then a question over what the site says. `icp` grades each company with the client's label set; `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (the owner by default). The people found are rows of `topup.site_people_found`. Paid; estimate first. Nothing on the rows changes. |
+| `classify_leftover` | Leftover Smartlead negatives that text/category could not class. Jev (same OpenRouter path as icp-llm) reads each inbound body. Explicit stop/remove = unsubscribe; anything else = not_interested; no body stays unclassified. Estimate first; `approved_by` runs it. Hard cap $0.05. Idempotent. |
 | `enrich` | Domains, people, emails through the waterfalls. Paid tiers estimate first. |
 | `verify` | MillionVerifier then No2Bounce. Paid; estimate first. |
 | `normalize` | Names, companies, locations, sports team. |
