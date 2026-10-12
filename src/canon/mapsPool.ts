@@ -39,7 +39,7 @@ export interface MapsPoolCount {
   relation: string;
 }
 
-/** Recycle window for maps used/contacted, matching suppress on main (D35). Ask Josh if D63's 6 months should replace this. */
+/** Unused after D81 (held/contacted is unsubs + hard bounces + DNC list, not a 90-day window). Kept so existing imports compile. */
 export const MAPS_USED_CONTACT_DAYS = 90;
 
 export function strings(v: unknown): string[] {
@@ -297,7 +297,8 @@ export interface MapsUsedParts {
 /**
  * Used components for a maps pool (D64). Counts only. Union of pool emails
  * already live on the receipt's campaigns, already in the ingest table, or
- * already contacted / on public.suppression for this client (90 days).
+ * already contacted under D81 (this client's unsubscribes, hard bounces,
+ * existing DNC list).
  */
 export async function countMapsUsedParts(
   db: Queryable,
@@ -313,6 +314,10 @@ export async function countMapsUsedParts(
   try {
     const rawCols = await columnsOf(db, resolved.schema, "maps_raw");
     if (!rawCols.has("email") || !rawCols.has("place_id")) return fallback;
+    const leadCols = await columnsOf(db, "public", "leads").catch(() => new Set<string>());
+    const unsubPred = leadCols.has("negative_class")
+      ? "(l.negative_class = 'unsubscribe' or lower(coalesce(l.status, '')) = 'unsubscribed')"
+      : "lower(coalesce(l.status, '')) = 'unsubscribed'";
     const emailExpr = "nullif(btrim(m.email), '')";
     const joinRaw = `left join ${q(resolved.schema)}.${q("maps_raw")} m on m.place_id = pool.place_id`;
     const tagParam = `$${resolved.params.length + 1}`;
@@ -342,11 +347,16 @@ export async function countMapsUsedParts(
          )) as already_ingested,
          (select count(*)::text from emails e where exists (
             select 1 from public.leads l
-            join public.sends s on s.lead_id = l.id
             join topup.client_map cm on cm.smartlead_client_id = l.smartlead_client_id
             where lower(l.email) = e.e and cm.client_tag = ${tagParam}
-              and s.sent and s.sent_at is not null
-              and s.sent_at >= now() - interval '${MAPS_USED_CONTACT_DAYS} days'
+              and (
+                (${unsubPred} or l.category_id = 9)
+              )
+         ) or exists (
+            select 1 from public.leads l
+            join public.sends s on s.lead_id = l.id
+            join topup.client_map cm on cm.smartlead_client_id = l.smartlead_client_id
+            where lower(l.email) = e.e and cm.client_tag = ${tagParam} and s.bounced
          ) or exists (
             select 1 from public.suppression s where lower(s.email) = e.e
          )) as already_contacted,
@@ -365,11 +375,16 @@ export async function countMapsUsedParts(
             select 1 from ${q("lp")}.${q(destTable)} h where lower(h.email) = e.e
          ) or exists (
             select 1 from public.leads l
-            join public.sends s on s.lead_id = l.id
             join topup.client_map cm on cm.smartlead_client_id = l.smartlead_client_id
             where lower(l.email) = e.e and cm.client_tag = ${tagParam}
-              and s.sent and s.sent_at is not null
-              and s.sent_at >= now() - interval '${MAPS_USED_CONTACT_DAYS} days'
+              and (
+                (${unsubPred} or l.category_id = 9)
+              )
+         ) or exists (
+            select 1 from public.leads l
+            join public.sends s on s.lead_id = l.id
+            join topup.client_map cm on cm.smartlead_client_id = l.smartlead_client_id
+            where lower(l.email) = e.e and cm.client_tag = ${tagParam} and s.bounced
          ) or exists (
             select 1 from public.suppression s where lower(s.email) = e.e
          )) as already_used`,

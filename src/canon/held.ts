@@ -67,13 +67,13 @@ export async function heldRead(
     method = scaled.method;
     note =
       method === "overlap"
-        ? `${held} of this pool are already held (export page matched this client's 90-day sends, live campaigns, or suppression). net_new is the pool minus that held count.`
-        : `${matched} of ${sample.length} sampled rows are already held (sends, live, or suppressed), scaled to ${held} of ${tam}. net_new is the pool minus that held estimate.`;
+        ? `${held} of this pool are already held (export page matched this client's unsubscribes, hard bounces, or the DNC list). net_new is the pool minus that held count.`
+        : `${matched} of ${sample.length} sampled rows are already held (unsubscribes, hard bounces, or the DNC list), scaled to ${held} of ${tam}. net_new is the pool minus that held estimate.`;
   } else {
     matched = await countHeldEmails(d.db, input.smartlead_client_id, input.campaign_ids, days, true, null);
     held = Math.min(tam, matched);
     method = "lane";
-    note = `${held} addresses already held on this lane's campaigns (capped at the pool). The pool could not be sampled, so this is the lane total, not a pool-overlap. net_new is the pool minus that count.`;
+    note = `${held} addresses already held on this lane (unsubscribes, hard bounces, DNC list; capped at the pool). The pool could not be sampled, so this is the lane total, not a pool-overlap. net_new is the pool minus that count.`;
   }
   return {
     source: "getleads",
@@ -143,50 +143,47 @@ async function exportPage(d: HeldDeps, clientTag: string, filters: GetleadsFilte
   return { text: await d.fetchText(url), rows };
 }
 
-/** Distinct addresses this client sent in the window, plus live-campaign holds. A sample limits it to those emails; lane mode limits it to these campaigns. */
-export async function countHeldEmails(db: Queryable, clientId: number, campaignIds: readonly number[], days: number, excludeLive: boolean, emails: string[] | null): Promise<number> {
+/** Distinct addresses this client holds under D81: unsubscribes, hard bounces, DNC list. A sample limits it to those emails. */
+export async function countHeldEmails(db: Queryable, clientId: number, campaignIds: readonly number[], _days: number, _excludeLive: boolean, emails: string[] | null): Promise<number> {
   if (campaignIds.length === 0) return 0;
-  const { rows: has } = await db.query<{ leads: boolean; sends: boolean; staging: boolean; campaigns: boolean; suppression: boolean }>(
+  const { rows: has } = await db.query<{ leads: boolean; sends: boolean; suppression: boolean }>(
     `select to_regclass('public.leads') is not null as leads, to_regclass('public.sends') is not null as sends,
-            to_regclass('public.leads_staging') is not null as staging, to_regclass('public.campaigns') is not null as campaigns,
             to_regclass('public.suppression') is not null as suppression`,
   );
-  if (!has[0]?.leads || !has[0].sends) return 0;
+  if (!has[0]?.leads) return 0;
+  const { rows: col } = await db.query<{ n: string }>(
+    `select count(*)::text as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'leads' and column_name = 'negative_class'`,
+  );
+  const hasClass = Number(col[0]?.n ?? 0) > 0;
   const sample = emails !== null && emails.length > 0;
-  if (!sample && !has[0].campaigns) return 0;
-  const live = excludeLive && has[0].campaigns;
-  const laneSend = sample ? "" : `and l.campaign_id in (select id from public.campaigns where smartlead_campaign_id = any($3::bigint[]))`;
-  const laneLive = sample ? "" : `and c.smartlead_campaign_id = any($3::bigint[])`;
+  const unsub = hasClass
+    ? `select lower(l.email) as e from public.leads l
+        where l.smartlead_client_id = $1 and l.email is not null
+          and (l.negative_class = 'unsubscribe' or lower(coalesce(l.status, '')) = 'unsubscribed')`
+    : `select lower(l.email) as e from public.leads l
+        where l.smartlead_client_id = $1 and l.email is not null
+          and lower(coalesce(l.status, '')) = 'unsubscribed'`;
+  const bounce = has[0].sends
+    ? `union
+       select lower(l.email) as e from public.leads l where l.email is not null and l.category_id = 9
+       union
+       select lower(l.email) as e from public.leads l join public.sends s on s.lead_id = l.id
+        where l.email is not null and s.bounced`
+    : `union
+       select lower(l.email) as e from public.leads l where l.email is not null and l.category_id = 9`;
+  const dnc = has[0].suppression
+    ? `union
+       select lower(s.email) as e from public.suppression s where s.email is not null`
+    : "";
   const { rows } = await db.query<{ n: string }>(
     `select count(distinct e)::text as n from (
-       select lower(l.email) as e
-       from public.leads l
-       join public.sends s on s.lead_id = l.id
-       where l.smartlead_client_id = $1 and l.email is not null
-         and s.sent and s.sent_at is not null
-         and s.sent_at >= now() - ($2::int * interval '1 day')
-         ${laneSend}
-       ${live ? `union
-       select lower(l.email) as e
-       from public.leads l
-       join public.campaigns c on c.id = l.campaign_id
-       where l.smartlead_client_id = $1 and l.email is not null
-         and upper(coalesce(c.status, '')) not in ('STOPPED', 'COMPLETED')
-         ${laneLive}` : ""}
-       ${live && has[0].staging ? `union
-       select lower(st.email) as e
-       from public.leads_staging st
-       join public.campaigns c on c.smartlead_campaign_id = st.campaign_id
-       where c.smartlead_client_id = $1 and st.email is not null
-         and upper(coalesce(c.status, '')) not in ('STOPPED', 'COMPLETED')
-         ${laneLive}` : ""}
-       ${sample && has[0].suppression ? `union
-       select lower(s.email) as e
-       from public.suppression s
-       where s.email is not null` : ""}
+       ${unsub}
+       ${bounce}
+       ${dnc}
      ) x
-     ${sample ? "where e = any($3::text[])" : ""}`,
-    sample ? [clientId, days, emails] : [clientId, days, campaignIds],
+     ${sample ? "where e = any($2::text[])" : ""}`,
+    sample ? [clientId, emails] : [clientId],
   );
   return Number(rows[0]?.n ?? 0);
 }

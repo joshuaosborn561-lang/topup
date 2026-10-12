@@ -43,8 +43,8 @@ describe("D64 — size dry-run", () => {
 
   it("returns a size_id at once and the suppress SQL is an aggregate join (D65)", async () => {
     const sql = sizeSuppressJoinSql({ schema: "client_emcor", fromSql: "client_emcor.maps_raw pool", params: [], cats: [], companion: false }, '"lp"."emcor_ingested_leads"', []);
-    assert.match(sql, /left join pos/, "D65: suppress is a join, not a per-email exists. Ask Josh.");
-    assert.match(sql, /left join dnc/);
+    assert.match(sql, /left join unsub/, "D81: suppress joins unsubscribe class, not Smartlead DNC. Ask Josh.");
+    assert.match(sql, /left join supp/);
     assert.match(sql, /count\(\*\)::text as n from classified/);
     assert.doesNotMatch(sql, /when exists \(select 1 from public\.leads l where lower\(l\.email\) = r\.e/, "D65: no correlated exists per email. Ask Josh.");
     assert.equal(shiftSqlParams("$1::text $2::text[]", SIZE_SUPPRESS_BIND_OFFSET), "$11::text $12::text[]");

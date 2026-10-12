@@ -100,7 +100,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D78 | Live; TAM cross-check GetLeads then AI Ark and Prospeo on a matched basis; within 10% TAM is right; more than 10% apart means switch source (not widening). Prospeo count is live (D83). AI Ark exact-title mode is live (D82) |
 | D79 | Live; take a ~50-person overlap sample of the second source against GetLeads / held |
 | D80 | Live; held / contacted / suppressed subtraction is an exact full-list join, never a sampled page (qualifies D74) |
-| D81 | Live; suppression is real unsubscribes only, permanently, per client; 6-month expiry is out (supersedes D63); not-interested is not suppressed; classify Smartlead negatives (code pending); hard bounces stay blocked pending Josh; never unsuppress in Smartlead |
+| D81 | Live; suppression is real unsubscribes only, permanently, per client; 6-month expiry is out (supersedes D63); not-interested is not suppressed; classify Smartlead negatives (text/category first, AI leftover dry-run); views use unsubscribe class only; suppress/count/size/held = per-client unsubs + hard bounces (pending Josh) + DNC list; sender column kept (0024 unapplied); never unsuppress in Smartlead |
 | D82 | Live; GetLeads titles exact-match by default (`lower(current_title) IN`); substring only when the receipt says so; AI Ark counts use STRICT exact-title mode |
 | D83 | Live; count(source=prospeo) is page 1 of search-person (1 credit, pagination.total_count); no-result and 30-day repeats free; ~1.5¢/credit; needs approved_by; industries mapped to official names with inexact flags; honors D84 receipt keys |
 | D84 | Live; count honors max_per_company, industries_by_campaign, over_1k_campaign on every source including prospeo (qualifies D43 / D74) |
