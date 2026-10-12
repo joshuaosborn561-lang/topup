@@ -48,4 +48,13 @@ describe("D98 — held identifier keys", () => {
     assert.equal(rowHasEmail(rows[1]!), false);
     assert.equal(rows[1]!.linkedin, "https://linkedin.com/in/b");
   });
+
+  it("keeps a quoted newline inside a company field as one row", () => {
+    const rows = poolRowsFromCsv(
+      'work_email,linkedin_url,first_name,last_name,company_name\n' +
+        'a@example.com,https://linkedin.com/in/a,Ann,A,"Acme\nInc"\n',
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.company, "Acme\nInc");
+  });
 });

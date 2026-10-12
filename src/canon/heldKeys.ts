@@ -109,11 +109,11 @@ export function rowHasEmail(row: PoolRow): boolean {
   return normalizeEmail(row.email) != null;
 }
 
-/** Parse an identifier CSV. Addresses stay in memory. */
+/** Parse an identifier CSV. Addresses stay in memory. Quoted newlines stay in-field. */
 export function poolRowsFromCsv(text: string): PoolRow[] {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (lines.length < 2) return [];
-  const header = splitCsvLine(lines[0]!).map((cell) => cell.trim().toLowerCase());
+  const table = parseCsv(text);
+  if (table.length < 2) return [];
+  const header = table[0]!.map((cell) => cell.trim().toLowerCase());
   const emailIdx = header.findIndex((cell) => cell === "email" || cell === "work_email" || cell === "person_email");
   const liIdx = header.findIndex((cell) => cell === "linkedin_url" || cell === "linkedin_profile" || cell === "linkedin");
   const firstIdx = header.findIndex((cell) => cell === "first_name");
@@ -123,8 +123,7 @@ export function poolRowsFromCsv(text: string): PoolRow[] {
   );
   if (emailIdx < 0 && liIdx < 0 && (firstIdx < 0 || lastIdx < 0 || companyIdx < 0)) return [];
   const out: PoolRow[] = [];
-  for (const line of lines.slice(1)) {
-    const cells = splitCsvLine(line);
+  for (const cells of table.slice(1)) {
     out.push({
       email: cellAt(cells, emailIdx),
       linkedin: cellAt(cells, liIdx),
@@ -142,27 +141,36 @@ function cellAt(cells: string[], idx: number): string | null {
   return v.length ? v : null;
 }
 
-function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
   let cur = "";
   let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
     if (quoted) {
       if (ch === '"') {
-        if (line[i + 1] === '"') {
+        if (text[i + 1] === '"') {
           cur += '"';
           i += 1;
         } else quoted = false;
       } else cur += ch;
     } else if (ch === '"') quoted = true;
     else if (ch === ",") {
-      out.push(cur);
+      row.push(cur);
       cur = "";
-    } else cur += ch;
+    } else if (ch === "\n") {
+      row.push(cur);
+      if (row.some((c) => c.trim().length > 0)) rows.push(row);
+      row = [];
+      cur = "";
+    } else if (ch !== "\r") cur += ch;
   }
-  out.push(cur);
-  return out;
+  if (cur.length || row.length) {
+    row.push(cur);
+    if (row.some((c) => c.trim().length > 0)) rows.push(row);
+  }
+  return rows;
 }
 
 async function clientTagFor(db: Queryable, clientId: number): Promise<string | null> {
