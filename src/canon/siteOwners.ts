@@ -26,7 +26,7 @@ export const SITE_OWNERS_SOURCE = "site_owners" as const;
 export const SITE_OWNERS_RULE =
   "Job-scoped owner count and pull (D93): count(source=\"site_owners\", job_id) is the dry-run; " +
   "pull(job_id, source=\"site_owners\") attaches. Scope is this job's ingest rows and this job's " +
-  "site_check batch, keyed by job_id, batch and place_id. It never reads topup.site_people_found " +
+  "site_check batch on topup.site_people_text, keyed by job_id, batch and place_id. It never reads topup.site_people_found " +
   "or a client owner table. Free. Pass job_id; it never opens a new job. Ask Josh or Cayden.";
 
 const IDENT = /^[a-z][a-z0-9_]*$/;
