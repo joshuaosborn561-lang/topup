@@ -37,7 +37,7 @@ describe("D75 — build_record is read-only", () => {
 
   it("CANON and the babysitter tell Grok to read the narrative first", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D75\*\*/, "D75: fold into CANON. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D(75|[8-9][0-9]|[0-9]{3,})\*\*/, "D75: fold into CANON. Ask Josh.");
     assert.match(canon, /`build_record\(client_tag, campaign_id\)`/, "D75: CANON names the read");
     assert.match(canon, /narrative first/, "D75: narrative first");
     assert.match(canon, /transcript only for an edge case/, "D75: transcript is the edge case");

@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D75** (2026-10-11). One page. `DECISIONS.md` is the append-only
+Canon as of **D89** (2026-10-12). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -165,18 +165,65 @@ D48).
    getleads names (LinkedIn commas map to semicolons). `company_description`
    and `purged_titles` (`exclude_job_titles`) are sent. An unmapped or
    unknown key fails; `filters_used` is exactly what was applied.
-   `max_per_company` is an export cap, not a count filter (D43, D74).
-   `campaign_record` stamp counts are this campaign, not a shared build.
-   `held` `net_new` is the pool minus held (this client's 90-day sends,
-   live campaigns, and suppression on the sampled page) (D74).
+   `max_per_company` is an export cap, not a count filter (D43, D74)
+   until D84 lands in code. `campaign_record` stamp counts are this
+   campaign, not a shared build. `held` `net_new` is the pool minus
+   held (this client's 90-day sends, live campaigns, and suppression)
+   as an exact full-list join, never a sampled page (D74, D80).
 24. **Operators read the build record before sizing or pulling a top-up.**
    `build_record(client_tag, campaign_id)` returns the matching
    `topup.list_build_records` rows (narrative, receipt_ids, campaign ids,
    transcript path). Read the narrative first. Fetch the transcript only
    for an edge case (`fetch_transcript` or `offset`/`limit`; the file can
    be large). Receipts stay the at-a-glance source of record. Read-only:
-   no DDL, no write, no spend (D75).
-25. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+   no DDL, no write, no spend (D75, D86).
+25. **Size the whole usable pool first.** Present every usable lead and
+   the full cost. Do not stop at one 2,000-row batch. A job still pulls
+   1 to 2,000 (D52); the approver cuts the pool by cost (D76).
+26. **VALID email is a quality filter, not a TAM cap.** Count every
+   email status. TAM = the receipt filters with `email_status` removed.
+   Verify after the pull with MillionVerifier, then No2Bounce (D77).
+27. **TAM cross-check.** Count GetLeads first, then AI Ark and Prospeo
+   on a matched basis: exact titles, ICP industries mapped to each
+   vendor's official names, same headcount bands, all email statuses,
+   same max-per-company cap, same post-pull gates. Within 10%: TAM is
+   right. More than 10% apart: GetLeads is the wrong source — use the
+   one that fits. Dropping VALID or switching source is not widening
+   (D78). Prospeo count and AI Ark exact-title mode: *code pending,
+   follow-up PR*.
+28. **Overlap sample.** Take about 50 people from the second source and
+   join them against GetLeads / held (D79).
+29. **Held / contacted / suppressed is an exact full-list join.** Never
+   a sampled page (D80).
+30. **Suppression is real unsubscribes only**, permanently, per client.
+   The 6-month expiry is out (supersedes D63). Not-interested and other
+   negatives are not suppressed. Smartlead marks all negatives as
+   do-not-contact, so they must be classified (unsubscribe vs
+   `not_interested`) and backfilled — *code pending, follow-up PR*.
+   Hard bounces stay blocked pending Josh. Never unsuppress anything
+   in Smartlead itself (D81).
+31. **Title filters are exact match** on GetLeads by default (substring
+   only if the receipt says so). AI Ark counts use an exact-title
+   match mode. *Code pending, follow-up PR* (D82).
+32. **Prospeo is a count source.** Page 1 of search-person is 1 credit
+   and returns `pagination.total_count`. No-result and 30-day repeat
+   searches are free. About 1.5 cents per credit; needs `approved_by`.
+   Map industries to Prospeo's official names and flag inexact
+   mappings. *Code pending, follow-up PR* (D83).
+33. **Count honors** `max_per_company`, `industries_by_campaign` and
+   `over_1k_campaign` when the receipt carries them. *Code pending,
+   follow-up PR* (D84).
+34. **Local-business owner finder.** `site_check("people")` (owner by
+   default), then the email waterfall on the people found, then the
+   generic inbox fallback (`info@` / `office@`, not `support@` /
+   `payroll@`) (D85).
+35. **A method Josh settles in chat** is written into this page and
+   `DECISIONS.md` so every operator's bot follows it (D87).
+36. **No self-initiated runs** on weekends or from 8pm to 6am CT unless
+   Josh or Cayden asks live (D88).
+37. **Cayden has full authority** over this service and this page: he
+   can change, use or direct it however he wants (D89).
+38. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh (D-meta).
 
 ## The reads
@@ -191,8 +238,8 @@ bears on stated and no verdict (D52).
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg **for this campaign**, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. |
 | `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). Receipts stay the at-a-glance source of record. Read-only; no spend. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
-| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free; every stored key is mapped or the call fails; `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Returns the number, every call, the cost. |
-| `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (90-day sends, live campaigns, suppression on the sampled page), and `net_new` as the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
+| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free; every stored key is mapped or the call fails; `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Prospeo count is *code pending* (D83). Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
+| `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (90-day sends, live campaigns, suppression) as an **exact full-list join**, never a sampled page (D80), and `net_new` as the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
 | `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). The suppress CTE types `$1::text` so the first slot is not unused (D70). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
 | `job(job_id)` | One job: its steps with counts, the per-campaign report, vendor calls, the spend cards waiting for a name, the last events. |
@@ -248,23 +295,25 @@ call next.
    `site_check("people", client_tag, table, looking_for)` finds the
    person on each site (the owner by default, or whoever Josh names);
    each is an estimate until a person says yes.
-3. `count(client_tag, source, filters)` with the filters from that record.
-   getleads is free. BCP-style records keep industries per campaign under
-   `industries_by_campaign`; pass that campaign's list as `industries`.
-   Every other getleads key stays as stored and is mapped, or the count
-   fails (D74). `filters_used` is what was applied. Maps keeps `plan_id` and the categories
-   list; it never scopes by ZIP or `client_tag` alone (D57). Companion
-   views that omit `plan_id` join `maps_raw` so `$1::text` is used (D59).
-   Maps used/net-new includes already-ingested and this-client prior
-   contact/suppression (D64). `size` is the free dry-run of that pool; it
-   returns a `size_id` at once — poll `size(size_id)` (D65).
-4. `held(client_tag, campaign_id, filters, tam)` with that count. If
-   `net_new` is under 1,000, say *the TAM for this campaign is exhausted*
-   and stop. Do not widen. If Josh wants options, give counts for each.
-5. Tell Cayden or Josh what you will pull and what it will cost. When one
-   of them says yes, `pull(...)` with `max_rows` 1 to 2,000. It returns the
-   `job_id` at once; poll `job(job_id)` until pull is done or failed
-   (D61, D62). If it failed, read `last_error` and stop.
+3. Size the **whole usable pool** first (D76). `count` with the receipt
+   filters, every email status (VALID is not a TAM cap; TAM = those
+   filters minus `email_status`) (D77). Cross-check AI Ark and Prospeo
+   on a matched basis; within 10% the TAM is right, more than 10%
+   apart means switch source (not widening) (D78). Take a ~50-person
+   overlap sample of the second source against GetLeads / held (D79).
+   getleads is free. Honor `max_per_company`, `industries_by_campaign`
+   and `over_1k_campaign` when stored (D84; *code pending*). Maps keeps
+   `plan_id` and the categories list (D57). `size` is the free Maps
+   dry-run; poll `size(size_id)` (D65).
+4. `held(client_tag, campaign_id, filters, tam)` as an exact full-list
+   join, never a sampled page (D80). If `net_new` is under 1,000, say
+   *the TAM for this campaign is exhausted* and stop. Do not widen.
+5. Present **all usable leads and the full cost**. The approver cuts by
+   cost (D76). Do not stop at one 2,000 batch. When Josh or Cayden says
+   yes, `pull(...)` with `max_rows` 1 to 2,000. It returns the `job_id`
+   at once; poll `job(job_id)` (D61, D62). If it failed, read
+   `last_error` and stop. No self-initiated run on a weekend or 8pm–6am
+   CT unless one of them asked live (D88).
 6. `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage` in
    order. After `icp`, read the label counts in `job(job_id)`: if one
    label swallows a big share, the label set is wrong; say so and stop.
@@ -333,7 +382,13 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   (narrative first; transcript only for an edge case). Never CREATE /
   DROP / ALTER `list_build_records`, never write that table, never
   return a signed URL for a transcript, and never fetch a storage path
-  that is not on a matching row (D75).
+  that is not on a matching row (D75, D86). Never stop a size at one
+  2,000 batch (D76). Never treat VALID as a TAM cap (D77). Never call
+  dropping VALID or switching the matched source "widening" (D78).
+  Never subtract held from a sampled page (D80). Never suppress
+  not-interested. Never expire an unsubscribe at 6 months. Never
+  unsuppress in Smartlead (D81). Never start a run on a weekend or
+  8pm–6am CT unless Josh or Cayden asked live (D88).
 * Never widen a pool unasked. Never top up a campaign under the bar.
 * Never run a paid call without a name. Never import while loads are
   paused. Never call LeadMagic (D58).
