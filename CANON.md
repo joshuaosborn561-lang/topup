@@ -1,6 +1,6 @@
 # Canon — the rules Grok bot works by
 
-Canon as of **D95** (2026-10-12). One page. `DECISIONS.md` is the append-only
+Canon as of **D96** (2026-10-12). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -278,7 +278,15 @@ D48).
    `filters_applied` lists every filter that actually ran. `held` never
    samples and never falls back to a lane total. No per-client constants
    or canon steps (D95).
-42. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
+42. **The build transcript is the source of truth.** When a backfilled
+   receipt disagrees with its matching `list_build_records` narrative or
+   transcript, or is thinner than it, correct the receipt to match.
+   That is a backfill fix, not widening. Diff first; `--apply` writes
+   `company_filters` only. No per-client constants (D96).
+43. **Skip registry lane `unassigned`.** It is a parking lot, not a
+   top-up lane. Do not pull it. Do not retag stamps onto it or off it
+   (D96).
+44. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
    here, write a guard that names it. Ask Josh or Cayden (D-meta).
 
 ## The reads
@@ -289,9 +297,9 @@ bears on stated and no verdict (D52).
 | Read | What it answers |
 |---|---|
 | `canon` | This page. Also the MCP server's instructions. |
-| `campaigns(client_tag?, include_inactive?)` | Every ACTIVE email campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. Cold call campaigns are left off. |
+| `campaigns(client_tag?, include_inactive?)` | Every ACTIVE email campaign: lifetime sends, positives, rate per 2,000, leads left, lane, `passes_reply_bar`, `never_top_up`. Cold call campaigns are left off. Registry lane `unassigned` is `never_top_up` (D96). |
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg **for this campaign**, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. Receipts and builds whose lane does not match the campaign's registry lane are left off (D92). |
-| `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). Receipts stay the at-a-glance source of record. Read-only; no spend. |
+| `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). The transcript / narrative is the source of truth when a backfilled receipt disagrees or is thinner (D96). Receipts stay the at-a-glance source of record after that fix. Read-only; no spend. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
 | `count(client_tag, source, filters, approved_by?, campaign_id?, job_id?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; honors `max_per_company`, `industries_by_campaign` and `over_1k_campaign` (D84); `industries_by_campaign` keys may be campaign ids or any non-id token on the stored map, matched as a word in the campaign name (D92, D93); `icp_gate` is receipt meta and is stripped (D92); `filters_used` is what the vendor received; `filters_applied` lists every filter that actually ran, including rewritten keys (D95); VALID is omitted — it is not a TAM cap (D77)), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new), `prospeo` (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs `approved_by`; industries mapped to official names with inexact flags; honors the same D84 receipt keys; search-person does not apply `max_per_company`, so that count is uncapped), `permits` with the filters you pass, or `site_owners` (free; pass `job_id`; this job's ingest rows by place_id or normalized domain; cached owners on those businesses belong to the job; never the shared owner view) (D94). Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (per-client unsubscribes, hard bounces pending Josh, existing DNC list) as an **exact full-list join**, never a sampled page and never a lane-total fallback (D80, D81, D95). `net_new` is the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
@@ -341,7 +349,7 @@ formats, or sampling caps (D95).
    question, not a guess. Read the narrative first; fetch the transcript
    only for an edge case. Receipts stay the at-a-glance source of record
    (D75, D86). Keep campaigns that pass the reply bar; skip the rest in
-   one line. After `site_check("people", job_id)`,
+   one line, including any registry lane `unassigned` (D96). After `site_check("people", job_id)`,
    `count(source="site_owners", job_id)` then
    `pull(job_id, source="site_owners")` attaches the people found
    on this job's places (place_id or normalized domain) (D94).
@@ -447,7 +455,11 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh or Cayden
   Never sample held and never fall back to a lane total (D95).
   Never hide a filter that actually ran from `filters_applied` (D95).
   Never put a client fact, a per-client constant or a per-client canon
-  step on this page (D95). Never start a run on a weekend or
+  step on this page (D95). Never leave a backfilled receipt in place
+  when its matching transcript or narrative disagrees or is thinner
+  (D96). Never call that correction widening (D96). Never retag stamps
+  onto or off registry lane unassigned, and never pull a campaign on
+  that lane (D96). Never start a run on a weekend or
   8pm–6am CT unless Josh or Cayden asked live (D88). Never send
   GetLeads `job_titles` as a substring match unless the receipt asks
   for `title_match=substring` (D82). Never count AI Ark titles in

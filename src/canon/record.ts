@@ -1,6 +1,7 @@
 import { campaignPerformance, provenanceCounts, type ProvenanceCount } from "../builds/index.js";
 import type { Queryable } from "../db/pool.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
+import { isUnassignedLane } from "./lanes.js";
 import { isColdCall, isNeverTopUp, ratePer2000 } from "../policy/rules.js";
 import { registryRows, type RegistryCampaign } from "./registry.js";
 import { legacyReplayWarnings } from "../recipes/legacyLeadmagic.js";
@@ -135,7 +136,7 @@ export async function campaignRecord(db: Queryable, repo: RecordRepo, clientTag:
   return {
     client_tag: clientTag,
     campaign_id: campaignId,
-    never_top_up: isNeverTopUp(campaignId, name),
+    never_top_up: isNeverTopUp(campaignId, name) || isUnassignedLane(regRow?.lane),
     registry: regRow,
     performance: { sends: p.sends, positives: p.positives, rate_per_2000: rate, passes_reply_bar: p.positives >= 1 && rate >= 1 },
     receipts,

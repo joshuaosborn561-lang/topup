@@ -44,7 +44,8 @@ Replicate the hand search. Do not reason about stamps, lane meta, key
 formats, or sampling (D95).
 
 1. `campaigns(client_tag)`. Keep `passes_reply_bar: true` and
-   `never_top_up: false`. One line on the rest and why.
+   `never_top_up: false`. One line on the rest and why. Skip registry
+   lane `unassigned` — it is a parking lot, not a top-up lane (D96).
 2. `campaign_record(client_tag, campaign_id)`. Find the receipt or build
    that fed most of the leads (`rows_imported`, and `leads_by_leg`). Its
    four legs and its `company_filters` are the method. Read
@@ -53,7 +54,9 @@ formats, or sampling (D95).
    `build_record(client_tag, campaign_id)` is the operator write-up of
    that same list. Read the narrative first. Fetch the transcript only
    for an edge case (`fetch_transcript` or `offset`/`limit`; it can be
-   large). Receipts stay the at-a-glance source of record (D75).
+   large). The transcript / narrative is the source of truth when a
+   backfilled receipt disagrees or is thinner (D96). Receipts stay the
+   at-a-glance source of record after that fix (D75).
    `leftovers(client_tag)` shows rows earlier pulls left in the stores
    (lane table, client schema, waterfall tables) as counts, and for each
    store the obvious gap: `need_domain`, `need_person`, `need_email`,

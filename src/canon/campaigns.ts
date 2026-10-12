@@ -3,6 +3,7 @@ import type { Queryable } from "../db/pool.js";
 import { assessCampaign, campaignIdsForClient, campaignSnapshots } from "../ledger/health.js";
 import { loadClientMap } from "./clients.js";
 import { isColdCall, isNeverTopUp, ratePer2000, REPLY_BAR_PER_2000 } from "../policy/rules.js";
+import { isUnassignedLane } from "./lanes.js";
 import { registryRows } from "./registry.js";
 
 /**
@@ -68,13 +69,14 @@ export async function listCampaigns(
       const h = assessCampaign(snap);
       const p = perf.get(snap.smartlead_campaign_id) ?? { sends: 0, positives: 0 };
       const rate = Math.round(ratePer2000(p.sends, p.positives) * 100) / 100;
+      const lane = lanes.get(snap.smartlead_campaign_id) ?? null;
       out.push({
         client_tag: client.client_tag,
         smartlead_client_id: client.smartlead_client_id,
         campaign_id: snap.smartlead_campaign_id,
         name: snap.name,
         status: snap.status,
-        lane: lanes.get(snap.smartlead_campaign_id) ?? null,
+        lane,
         sends: p.sends,
         positives: p.positives,
         rate_per_2000: rate,
@@ -84,7 +86,7 @@ export async function listCampaigns(
         sends_last_14d: snap.sends_last_14d,
         runway_days: h.runway_days,
         last_send_at: snap.last_send_at,
-        never_top_up: isNeverTopUp(snap.smartlead_campaign_id, snap.name),
+        never_top_up: isNeverTopUp(snap.smartlead_campaign_id, snap.name) || isUnassignedLane(lane),
       });
     }
   }

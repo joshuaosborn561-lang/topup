@@ -115,6 +115,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D93 | Live; site_owners count and pull are job-scoped; never the shared owner view; batch-as-attach-key superseded by D94; industries_by_campaign buckets come from the stored map; lane-mismatch retag is generic |
 | D94 | Live; site_owners scopes by the job's place_id or normalized domain, not the site_people_text batch; cached owners on this job's businesses belong to the job |
 | D95 | Live; replay the hand search (read record → same search → exact held join → net new + cost → pull/verify/stage on approval); hide stamps / lane meta / key formats / sampling from callers; filters_applied lists every filter that ran; held never samples or falls back to a lane total; no per-client constants or canon steps |
+| D96 | Live; build transcript / narrative is the source of truth for how a list was built; a backfilled receipt that disagrees or is thinner is corrected to match (a backfill fix, not widening); generic diff then --apply; skip registry lane unassigned and never retag onto or off it |
 
 ---
 
@@ -3114,3 +3115,35 @@ not unsuppress, and it does not write `dl_status`, `sg_exclude`, or
 `skip_*`. Josh still flips ACTIVE by hand (D5, D14).
 
 **Guard.** `src/guards/d95_replay_hand_search.test.ts`. Ask Josh or Cayden.
+
+## D96 — Transcript is the source of truth; skip unassigned
+
+**Decision.** The matching `list_build_records` narrative or transcript
+is the source of truth for how a list was built. When a backfilled
+receipt disagrees with that source, or is thinner than it, correct
+the receipt's `company_filters` to match. That is a backfill fix, not
+widening. The corrector is generic: official getleads industries and
+size bands, explicit title lists, and title phrases the source names.
+Diff first. `--apply` writes `company_filters` (and a notes line)
+only.
+
+Registry lane `unassigned` is a parking lot, not a top-up lane. Skip
+it. The lane-mismatch script never retags stamps onto it or off it,
+and refuses `--from_lane` / `--to_lane=unassigned`. `pull` refuses a
+campaign registered on that lane. `campaigns` marks it `never_top_up`.
+
+**Why.** Josh, 12 Oct 2026, delegated to Cayden / Topup. A Sept backfill
+wrote thinner or different filters than the hand-search write-up.
+Replaying the receipt replayed the bad backfill. About 42k provenance
+stamps sit on a single campaign whose registry lane is `unassigned`;
+retagging them would write the parking lot onto the stamp.
+
+**What it does not do.** It does not invent a filter the source does
+not name. It does not insert a new receipt. It does not rewrite
+`how_i_did_it`. It does not place an industry on a bucket when no
+bucket key or campaign name sits next to it (that stays unplaced and
+asks). It does not retag or pull `unassigned`. It does not write
+`dl_status`, `sg_exclude`, or `skip_*`. It does not unsuppress. Josh
+still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d96_transcript_truth.test.ts`. Ask Josh or Cayden.
