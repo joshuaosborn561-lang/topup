@@ -22,6 +22,7 @@ import { assertSupabaseProject, loadConfig } from "./config.js";
 import { Console } from "./console/console.js";
 import { loadClientTags } from "./canon/clients.js";
 import { downloadListBuildTranscript } from "./canon/buildRecord.js";
+import { HeldRunner } from "./canon/held.js";
 import { SizeRunner } from "./canon/size.js";
 import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
@@ -209,7 +210,7 @@ async function main(): Promise<void> {
         orchestrator,
         jobs: new JobRunner({ repo, stages, console: console_, ledger }),
         count: { getleads, aiArk, prospeo, maps, permits: permitCounts, rails, db },
-        held: {
+        held: new HeldRunner({
           db,
           getleads,
           rails,
@@ -220,7 +221,7 @@ async function main(): Promise<void> {
           },
           sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
           now: () => Date.now(),
-        },
+        }),
         size: new SizeRunner(db),
         siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, people: sitePeople, jevModel: cfg.ICP_JEV_MODEL, geminiModel: cfg.SITE_PEOPLE_GEMINI_MODEL, peopleLoops, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
         leftoverAi: { db, rails, jev: leftoverJev },

@@ -106,9 +106,12 @@ formats, or sampling (D95).
    (D69). The suppress CTE types `$1::text` so `$1` is not unused
    (D70). A normalize reopen replaces step counts; do not trust a
    leftover `held_company_n` from a prior hash.
-4. `held(client_tag, campaign_id, filters, tam)`. If `net_new` < 1,000:
-   *the TAM for this campaign is exhausted.* Stop there. If Josh asks for
-   options, give each option with its count.
+4. `held(client_tag, campaign_id, filters, tam)`. It returns a
+   `held_id` at once (`status` started). Poll `held(held_id)` until
+   done or failed. A failed export names its class; do not invent a
+   sample or a lane total. If `net_new` < 1,000: *the TAM for this
+   campaign is exhausted.* Stop there. If Josh asks for options, give
+   each option with its count.
 5. Tell Cayden or Josh: campaign, source, filters, count, net new, rows
    you will pull, worst-case cost. Wait for the yes.
 6. `pull(client_tag, campaign_id, source, filters, max_rows)`. It returns

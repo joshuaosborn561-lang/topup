@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { buildRecord, campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps, type SizeRunner } from "../canon/index.js";
+import { buildRecord, campaignRecord, countSource, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldRunner, type SizeRunner } from "../canon/index.js";
 import type { Repo } from "../db/repo.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import type { Orchestrator } from "../orchestrator.js";
@@ -30,7 +30,7 @@ export interface GrokDeps {
   orchestrator: Pick<Orchestrator, "abortRun">;
   jobs: JobRunner;
   count: CountDeps;
-  held: HeldDeps | null;
+  held: HeldRunner | null;
   size: SizeRunner;
   siteCheck: SiteCheckDeps;
   leftoverAi: LeftoverAiDeps;
@@ -120,14 +120,25 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "held",
     {
       description:
-        "How much of a getleads pool the client already holds: per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list, as an exact full-list join (D80, D81, D95). Never a sample and never a lane-total fallback. filters_applied lists every filter that ran. net_new is the pool minus that held count. Under 1,000 net new, the TAM for this campaign is exhausted.",
-      inputSchema: { client_tag: snake, campaign_id: z.number().int(), filters, tam: z.number().int().min(0), days: z.number().int().min(1).max(365).optional() },
+        "How much of a getleads pool the client already holds: per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list, as an exact full-list join (D80, D81, D95, D97). Never a sample and never a lane-total fallback. Returns a held_id at once (status started); poll held(held_id). The pool is a free chunked GetLeads export; every split id is polled. A failed export names its class (timeout, export_failed, fair_use, count_timeout, paid_export). Never a paid export. filters_applied lists every filter that ran. net_new is the pool minus that held count. Under 1,000 net new, the TAM for this campaign is exhausted.",
+      inputSchema: {
+        client_tag: snake.optional(),
+        campaign_id: z.number().int().optional(),
+        filters: filters.optional(),
+        tam: z.number().int().min(0).optional(),
+        days: z.number().int().min(1).max(365).optional(),
+        held_id: z.string().uuid().optional().describe("Poll a held join that already started."),
+      },
     },
-    async ({ client_tag, campaign_id, filters: f, tam, days }) => {
+    async ({ client_tag, campaign_id, filters: f, tam, days, held_id }) => {
       if (!d.held) return text({ error: "held is not available: the service has no getleads client configured." });
+      if (held_id) return text(await d.held.get(held_id));
+      if (!client_tag || campaign_id == null || !f || tam == null) {
+        return text({ error: "held needs client_tag, campaign_id, filters and tam, or a held_id to poll." });
+      }
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
       if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
-      return text(await heldRead(d.held, { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
+      return text(await d.held.start({ client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
     },
   );
 
