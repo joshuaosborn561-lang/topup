@@ -112,7 +112,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D90 | Live; leftover-negative AI is classify_leftover: Jev on the existing OpenRouter path (vault openrouter_api_key / ICP_JEV_MODEL, same as icp-llm); key path is D91; fixed prompt (stop/remove = unsubscribe, anything else = not_interested, no body stays unclassified); approved_by; estimate first; $0.05 hard cap; source=ai; idempotent |
 | D91 | Live; leftover AI reads the existing OpenRouter secret via topup.jev_openrouter_key() (security definer); the service never SELECTs vault.decrypted_secrets; leadtopup_app is not granted on schema vault |
 | D92 | Live; Cayden is a full approver equal to Josh on paid steps and backfill-filter confirmation; awaiting_owner (awaiting_josh still works); industries_by_campaign bucket keys resolve from the campaign name; icp_gate is receipt meta; stamps stay on the registry lane |
-| D93 | Live; site_owners count and pull are job + batch + place_id; never the shared owner view; industries_by_campaign buckets come from the stored map; lane-mismatch retag is generic |
+| D93 | Live; site_owners count and pull are job-scoped; never the shared owner view; batch-as-attach-key superseded by D94; industries_by_campaign buckets come from the stored map; lane-mismatch retag is generic |
+| D94 | Live; site_owners scopes by the job's place_id or normalized domain, not the site_people_text batch; cached owners on this job's businesses belong to the job |
 
 ---
 
@@ -3053,3 +3054,27 @@ bucket list. It does not write `campaign_builds`. It does not
 unsuppress. Josh still flips ACTIVE by hand (D5, D14).
 
 **Guard.** `src/guards/d93_job_scoped_owners.test.ts`. Ask Josh or Cayden.
+
+## D94 — Owners attach by the job's places, not the text batch
+
+**Decision.** `count(source="site_owners", job_id)` and
+`pull(job_id, source="site_owners")` scope by this job's ingest rows:
+`place_id` or normalized domain. Owners cached by an earlier
+`site_check` on those same businesses belong to the job. An owner
+whose domain or place is not on this job does not attach. The
+`site_people_text` batch is not the attach key. It never reads
+`topup.site_people_found` or a client owner table, and never another
+job or client. It does not abort or rewind the job. This qualifies
+D93's batch-intersection.
+
+**Why.** Josh, 12 Oct 2026, after D93. Answers are cached per domain,
+so an earlier check on the same business can live under another
+batch. Those owners still belong to this job. The text batch is how
+`site_check` queued the crawl, not which businesses the job holds.
+
+**What it does not do.** It does not attach an owner whose domain or
+place is not on this job. It does not read the shared owner view. It
+does not open, abort or rewind a job. It does not invent a client
+recipe. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d94_job_place_owners.test.ts`. Ask Josh or Cayden.
