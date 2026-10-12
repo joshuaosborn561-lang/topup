@@ -350,8 +350,12 @@ export function placeIndustries(
     const hit =
       parentheticalBucket(sourceText, industry, keys, campaignNames) ??
       nearestBucket(sourceText, industry, keys, campaignNames);
-    const official = mapGetleadsIndustry(industry).ok ? mapGetleadsIndustry(industry).value : industry;
-    const normalize = (v: string) => (mapGetleadsIndustry(v).ok ? mapGetleadsIndustry(v).value : v);
+    const mapped = mapGetleadsIndustry(industry);
+    const official = mapped.ok ? mapped.value : industry;
+    const normalize = (v: string) => {
+      const m = mapGetleadsIndustry(v);
+      return m.ok ? m.value : v;
+    };
     if (hit) buckets[hit] = uniq([...buckets[hit]!.map(normalize), official]);
     else if (keys.length === 1) buckets[keys[0]!] = uniq([...buckets[keys[0]!]!.map(normalize), official]);
     else unplaced.push(industry);
@@ -431,7 +435,12 @@ export function diffReceiptFilters(
       next.company_size = ordered;
     }
   }
-  if (extracted.over_1k_campaign && currentSize.length && filters.over_1k_campaign !== true) {
+  // over_1k_campaign tells count to keep only 1001+ bands (D84). Do not
+  // set it when the receipt already stores (or we just wrote) under-1k
+  // sizes — the full company_size list is then the source of truth.
+  const nextSize = strings(next.company_size);
+  const hasUnder1k = nextSize.some((b) => !b.startsWith("1001") && b !== "10001+" && b !== "5001 to 10000");
+  if (extracted.over_1k_campaign && currentSize.length && filters.over_1k_campaign !== true && !hasUnder1k) {
     patches.push({ key: "over_1k_campaign", before: filters.over_1k_campaign ?? null, after: true, reason: "thinner" });
     next.over_1k_campaign = true;
   }

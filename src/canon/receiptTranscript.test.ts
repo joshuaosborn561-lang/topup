@@ -195,7 +195,8 @@ describe("D96 — plan a correction", () => {
     assert.ok(((industries?.after as Record<string, string[]>).omega ?? []).includes("Warehousing and Storage"));
     const size = planned.patches.find((p) => p.key === "company_size");
     assert.ok((size?.after as string[]).includes("1 to 10"));
-    assert.equal(planned.patches.find((p) => p.key === "over_1k_campaign")?.after, true);
+    assert.ok((size?.after as string[]).includes("1001 to 5000"));
+    assert.equal(planned.patches.find((p) => p.key === "over_1k_campaign"), undefined);
   });
 
   it("skips when there is no build and scans many receipts", () => {
