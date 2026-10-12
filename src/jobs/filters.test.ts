@@ -61,8 +61,8 @@ describe("D74 — getleads filter mapping", () => {
       {
         job_titles: ["CIO"],
         industries_by_campaign: {
-          logistics: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
-          healthcare: ["Hospitals and Health Care", "Medical Practices"],
+          alpha: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
+          omega: ["Hospitals and Health Care", "Medical Practices"],
         },
       },
       3921852,
@@ -70,36 +70,36 @@ describe("D74 — getleads filter mapping", () => {
     assert.equal(bucketMiss.ok, false);
     if (!bucketMiss.ok) {
       assert.match(bucketMiss.error, /no list for campaign 3921852/);
-      assert.match(bucketMiss.error, /Stored keys: logistics, healthcare/);
+      assert.match(bucketMiss.error, /Stored keys: alpha, omega/);
     }
-    const logistics = getleadsParamsFromFilters(
+    const alpha = getleadsParamsFromFilters(
       {
         job_titles: ["CIO"],
         industries_by_campaign: {
-          logistics: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
-          healthcare: ["Hospitals and Health Care", "Medical Practices"],
+          alpha: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
+          omega: ["Hospitals and Health Care", "Medical Practices"],
         },
       },
       3921852,
-      "BCP Logistics IT (AirPods)",
+      "North Alpha IT",
     );
-    assert.ok(logistics.ok, (logistics as { error?: string }).error);
-    if (logistics.ok) {
-      assert.deepEqual(logistics.params.industries, ["Transportation; Logistics; Supply Chain and Storage", "Truck Transportation"]);
+    assert.ok(alpha.ok, (alpha as { error?: string }).error);
+    if (alpha.ok) {
+      assert.deepEqual(alpha.params.industries, ["Transportation; Logistics; Supply Chain and Storage", "Truck Transportation"]);
     }
-    const healthcare = getleadsParamsFromFilters(
+    const omega = getleadsParamsFromFilters(
       {
         job_titles: ["CIO"],
         industries_by_campaign: {
-          logistics: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
-          healthcare: ["Hospitals and Health Care", "Medical Practices"],
+          alpha: ["Transportation, Logistics, Supply Chain and Storage", "Truck Transportation"],
+          omega: ["Hospitals and Health Care", "Medical Practices"],
         },
       },
       3921850,
-      "BCP Healthcare IT (AirPods)",
+      "North Omega IT",
     );
-    assert.ok(healthcare.ok);
-    if (healthcare.ok) assert.deepEqual(healthcare.params.industries, ["Hospitals and Health Care", "Medical Practices"]);
+    assert.ok(omega.ok);
+    if (omega.ok) assert.deepEqual(omega.params.industries, ["Hospitals and Health Care", "Medical Practices"]);
     const peMeta = getleadsParamsFromFilters(
       {
         job_titles: ["Partner"],

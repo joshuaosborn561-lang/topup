@@ -220,8 +220,9 @@ describe("D71 — site_check", () => {
     assert.equal(done.counts!.people_listed, 7);
     assert.deepEqual(done.by_title, { owner: 3, president: 1 });
     assert.deepEqual(done.samples, { flagged: [], passed: ["acme.test (Owner)"] });
+    assert.match(done.next!, /source="site_owners"/);
+    assert.match(done.next!, /place_id/);
     assert.match(done.next!, /topup\.site_people_found/);
-    assert.match(done.next!, new RegExp(`question_key = '${questionKey("the service manager")}'`));
     assert.ok(!Object.keys(done).some((k) => /name/.test(k)) && !JSON.stringify(done.counts).match(/name/) && !JSON.stringify(done.by_title).match(/name/), "D2: the answer carries no name field");
   });
 
@@ -231,7 +232,7 @@ describe("D71 — site_check", () => {
     assert.equal(r.status, "nothing");
     assert.equal(w.cards.length, 0);
     assert.equal(r.counts!.found, 6);
-    assert.match(r.next!, /pull\(client_tag, campaign_id, source="table"/);
+    assert.match(r.next!, /pull\(job_id, source="site_owners"/);
     const off = build({ icpRows: [], peopleRows: [], variant: null, run });
     off.deps.people = null;
     const no = await siteCheck(off.deps, { question: "people", job_id: run.run_id });

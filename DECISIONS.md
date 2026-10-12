@@ -112,6 +112,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D90 | Live; leftover-negative AI is classify_leftover: Jev on the existing OpenRouter path (vault openrouter_api_key / ICP_JEV_MODEL, same as icp-llm); key path is D91; fixed prompt (stop/remove = unsubscribe, anything else = not_interested, no body stays unclassified); approved_by; estimate first; $0.05 hard cap; source=ai; idempotent |
 | D91 | Live; leftover AI reads the existing OpenRouter secret via topup.jev_openrouter_key() (security definer); the service never SELECTs vault.decrypted_secrets; leadtopup_app is not granted on schema vault |
 | D92 | Live; Cayden is a full approver equal to Josh on paid steps and backfill-filter confirmation; awaiting_owner (awaiting_josh still works); industries_by_campaign bucket keys resolve from the campaign name; icp_gate is receipt meta; stamps stay on the registry lane |
+| D93 | Live; site_owners count and pull are job + batch + place_id; never the shared owner view; industries_by_campaign buckets come from the stored map; lane-mismatch retag is generic |
 
 ---
 
@@ -3018,3 +3019,37 @@ unsuppress, and it does not write `dl_status`, `sg_exclude`, or
 `skip_*`. Josh still flips ACTIVE by hand (D5, D14).
 
 **Guard.** `src/guards/d92_cayden_approver.test.ts`. Ask Josh or Cayden.
+
+## D93 — Job-scoped owner count and pull
+
+**Decision.** site_check people stay tied to the job that found them.
+`count(source="site_owners", job_id)` is the free dry-run;
+`pull(job_id, source="site_owners")` attaches first_name / last_name /
+title on that job's ingest rows. Scope is this job's ingest rows ∩
+this job's `site_people_text` batch, keyed by place_id. It never opens
+a job, never reads `topup.site_people_found` or a client owner table,
+and does not abort or rewind the job.
+
+`industries_by_campaign` keys are campaign ids or any non-id token on
+the stored map. Resolve by id first, then by a word-boundary match of
+a stored key against the campaign name. No bucket list is hardcoded.
+
+The lane-mismatch fixer is generic: any `client_tag`, dry-run first,
+`--apply` writes. A receipt drops `campaign_ids` whose registry lane
+differs from the receipt lane. A provenance row whose email appears
+on exactly one registry lane that differs from its stamp is retagged
+to that lane. `campaign_builds` is a view; the script never writes it.
+Never writes `dl_status`, `sg_exclude`, or `skip_*`.
+
+**Why.** Josh, 12 Oct 2026, live. site_check answers are cached per
+domain, so a later job can count owners that live in another job's
+batch. A table pull of the shared view crossed clients. The retag
+script was named for one client and one pair of lanes. Bucket-key
+comments used named industries instead of the stored map.
+
+**What it does not do.** It does not abort or rewind a live job. It
+does not attach owners from another batch. It does not invent a
+bucket list. It does not write `campaign_builds`. It does not
+unsuppress. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d93_job_scoped_owners.test.ts`. Ask Josh or Cayden.

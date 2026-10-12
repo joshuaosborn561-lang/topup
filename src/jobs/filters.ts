@@ -75,9 +75,10 @@ function escapeRe(s: string): string {
 }
 
 /**
- * D84 stored this as a map of campaign id → industries. The BCP IT lane
- * receipt stored bucket names (`healthcare`, `logistics`) instead of ids.
- * Resolve by id first, then by a bucket word in the campaign name.
+ * D84 stored this as a map of campaign id → industries. Non-numeric keys
+ * are buckets taken from the map itself. Resolve by id first, then by a
+ * word-boundary match of a stored key against the campaign name. No key
+ * list is hardcoded (D93).
  */
 function pickIndustriesByCampaign(
   byCampaign: unknown,
