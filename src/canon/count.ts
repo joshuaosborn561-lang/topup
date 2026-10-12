@@ -75,6 +75,11 @@ export async function countSource(
         const bits = [
           r.exportable_rows != null && r.exportable_rows !== r.total_matching ? `exportable_rows ${r.exportable_rows}` : null,
           exportCap != null ? `max_per_company ${exportCap} is an export cap; count_contacts does not apply it (D43).` : null,
+          parsed.params.title_match === "substring"
+            ? "title_match substring as the receipt asked (D82)."
+            : applied.where_sql
+              ? "titles exact via lower(current_title) IN (D82)."
+              : null,
         ].filter((s): s is string => Boolean(s));
         return { ...base, filters_used: applied, count: r.total_matching, cost_cents: 0, note: bits.length ? bits.join(" ") : null };
       } catch (err) {
@@ -97,7 +102,11 @@ export async function countSource(
         const r = await d.aiArk.count(params as GetleadsFilters);
         calls.push({ vendor: "aiark", action: "people_preview", ok: true, count: r.total_matching, message: null });
         await d.rails.record({ runId: null, clientTag: input.client_tag, step: "size", vendor: "aiark", action: "people_preview", rows: 0, credits: 1, worstCaseCents: decision.worstCaseCents, balanceBefore: null, balanceAfter: null, vendorJobId: null, approvedBy: input.approved_by ?? null }).catch(() => undefined);
-        return { ...base, filters_used: used, count: r.total_matching, cost_cents: decision.worstCaseCents, note: null };
+        const titleNote =
+          parsed.params.title_match === "substring"
+            ? "AI Ark title mode WORD (substring as the receipt asked; D82)."
+            : "AI Ark title mode STRICT (exact-title match; D82).";
+        return { ...base, filters_used: used, count: r.total_matching, cost_cents: decision.worstCaseCents, note: titleNote };
       } catch (err) {
         calls.push({ vendor: "aiark", action: "people_preview", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
         return { ...base, filters_used: used, count: null, cost_cents: 0, note: "AI Ark count failed; see calls" };

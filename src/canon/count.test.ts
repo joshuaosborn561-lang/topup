@@ -46,7 +46,18 @@ describe("D52 — count", () => {
     assert.equal(r.cost_cents, 0);
     assert.ok(!("max_per_company" in r.filters_used));
     assert.match(r.note ?? "", /export cap/);
+    assert.match(r.note ?? "", /lower\(current_title\) IN/);
+    assert.equal(r.filters_used.where_sql, "lower(current_title) IN ('cio')");
+    assert.ok(!("job_titles" in r.filters_used));
     assert.match(r.rule, /TAM for this campaign is exhausted/);
+    const sub = await countSource(d, {
+      client_tag: "bcp",
+      source: "getleads",
+      filters: { job_titles: ["CIO"], title_match: "substring" },
+    });
+    assert.deepEqual(sub.filters_used.job_titles, ["CIO"]);
+    assert.ok(!("where_sql" in sub.filters_used));
+    assert.match(sub.note ?? "", /substring as the receipt asked/);
   });
 
   it("D74 — maps stored getleads keys and fails on an unmapped key", async () => {
@@ -66,7 +77,8 @@ describe("D52 — count", () => {
     assert.equal(r.count, 816);
     assert.deepEqual(r.filters_used.industries, ["Truck Transportation", "Transportation; Logistics; Supply Chain and Storage"]);
     assert.equal(r.filters_used.company_description, "private equity");
-    assert.deepEqual(r.filters_used.exclude_job_titles, ["Analyst", "Associate"]);
+    assert.equal(r.filters_used.where_sql, "lower(current_title) IN ('partner') AND lower(current_title) NOT IN ('analyst', 'associate')");
+    assert.ok(!("exclude_job_titles" in r.filters_used));
     assert.ok(!("max_per_company" in r.filters_used));
     assert.ok(!("purged_titles" in r.filters_used));
     const sent = seen[0] as { industries: string[]; company_description: string; exclude_job_titles: string[] };
@@ -97,6 +109,9 @@ describe("D52 — count", () => {
     assert.equal(yes.count, 2231);
     assert.equal(yes.cost_cents, 5);
     assert.equal((recorded[0] as { approvedBy: string }).approvedBy, "Cayden");
+    assert.match(yes.note ?? "", /STRICT/);
+    const sub = await countSource(d, { client_tag: "bcp", source: "ai_ark", filters: { job_titles: ["CIO"], title_match: "substring" }, approved_by: "Cayden" });
+    assert.match(sub.note ?? "", /WORD/);
   });
 
   it("maps reads the stored pool by plan_id and is not zero when rows exist; permits still sum by type and state", async () => {

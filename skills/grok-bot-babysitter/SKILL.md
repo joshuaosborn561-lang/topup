@@ -77,7 +77,10 @@ The rules you apply:
    free; `ai_ark` needs `approved_by`. BCP records keep industries per
    campaign under `industries_by_campaign`; pass that campaign's list as
    `industries` — do not pass the parent object. Every other getleads key
-   stays as stored and is mapped, or count fails (D74). `filters_used` is
+   stays as stored and is mapped, or count fails (D74). Titles are exact
+   (`lower(current_title) IN`) unless the receipt says
+   `title_match=substring` (D82). AI Ark counts use STRICT unless that
+   same receipt key asks for substring. `filters_used` is
    what was applied. Maps keeps `plan_id`
    and the categories list (D57); it never scopes by ZIP or `client_tag`
    alone.    Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
