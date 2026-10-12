@@ -3162,11 +3162,14 @@ credit/row and is never the held path. If the only remaining path is
 paid, refuse and quote the exact cost. Addresses stay in memory and
 never return.
 
-**Why.** Josh / Cayden / Topup, 12 Oct 2026, after #65. `held` waited
+**Why.** Josh / Cayden / Topup, 12 Oct 2026, after #65. Two stacked
+misses: the GetLeads catalog dropped `email` (`work_email` is the
+column), so `export_contacts` refused the start; and `held` waited
 synchronously for 60s, polled only the first split id, and swallowed
-the error as a generic "could not export". That is a timeout, not a
-50k row cap and not a paid-export gate. The MCP call died before the
-exact full-list join could finish, so net new could not be computed.
+the error as a generic "could not export". That is a column miss plus
+a timeout, not a 50k row cap and not a paid-export gate. The MCP call
+died before the exact full-list join could finish, so net new could
+not be computed.
 
 **What it does not do.** It does not page `search_contacts`. It does
 not spend. It does not sample. It does not fall back to a lane total.

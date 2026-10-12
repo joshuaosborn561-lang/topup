@@ -200,7 +200,7 @@ D48).
 29. **Held / contacted / suppressed is an exact full-list join.** Never
     a sampled page (D80). `held` returns a `held_id` at once (`status`
     started); poll `held(held_id)`. The pool is a free chunked GetLeads
-    export (0 credits, fair-use). Every `export_id` from a split is
+    export (0 credits, fair-use, `work_email` column). Every `export_id` from a split is
     polled. A slice that outruns its deadline is `timeout`. A failed
     export names its class (`timeout`, `export_failed`, `fair_use`,
     `count_timeout`, `paid_export`). Never a paid export

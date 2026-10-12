@@ -26,6 +26,8 @@ describe("D97 — held chunked free export", () => {
     assert.match(held, /classifyHeldExportError/, "D97: a failed export names its class. Ask Josh or Cayden.");
     assert.match(held, /paid_export/, "D97: a paid path is refused. Ask Josh or Cayden.");
     assert.doesNotMatch(held, /search_contacts/, "D97: held never pages the paid search. Ask Josh or Cayden.");
+    assert.match(held, /columns: \["work_email"\]/, "D97: export the work_email column. Ask Josh or Cayden.");
+    assert.doesNotMatch(held, /columns: \["email"\]/, "D97: email is gone from the GetLeads catalog. Ask Josh or Cayden.");
     assert.doesNotMatch(held, /EXPORT_DEADLINE_MS = 60_000/, "D97: the 60s single-id wait is gone. Ask Josh or Cayden.");
     const grok = await readFile(new URL("src/mcp/grok.ts", root), "utf8");
     assert.match(grok, /held_id/, "D97: the held tool accepts a held_id poll. Ask Josh or Cayden.");

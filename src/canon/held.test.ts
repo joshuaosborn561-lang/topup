@@ -26,7 +26,12 @@ function deps(over: Record<string, unknown> = {}) {
       },
     },
     getleads: {
-      startExport: async () => ({ export_id: "x" }),
+      startExport: async (_filters: unknown, opts?: { columns?: string[] }) => {
+        if (opts?.columns) {
+          assert.deepEqual(opts.columns, ["work_email"], "D97: GetLeads catalog is work_email, not email. Ask Josh or Cayden.");
+        }
+        return { export_id: "x" };
+      },
       checkExport: async () => ({
         job_status: "completed",
         export_url: "https://example.test/pool.csv",

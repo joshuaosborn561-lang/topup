@@ -267,7 +267,7 @@ async function exportPoolEmails(
     const emails: string[] = [];
     const maxRows = Math.min(Math.max(tam, 1), EXPORT_PAGE);
     for (const part of parts) {
-      const started = await d.getleads.startExport(part, { max_rows: maxRows, columns: ["email"] });
+      const started = await d.getleads.startExport(part, { max_rows: maxRows, columns: ["work_email"] });
       const ids = started.export_ids?.length ? started.export_ids : [started.export_id];
       for (const id of ids) {
         const got = await pollExport(d, clientTag, id);
