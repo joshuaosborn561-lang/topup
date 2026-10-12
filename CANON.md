@@ -165,8 +165,8 @@ D48).
    getleads names (LinkedIn commas map to semicolons). `company_description`
    and `purged_titles` (`exclude_job_titles`) are sent. An unmapped or
    unknown key fails; `filters_used` is exactly what was applied.
-   `max_per_company` is an export cap, not a count filter (D43, D74)
-   until D84 lands in code. `campaign_record` stamp counts are this
+   `max_per_company`, `industries_by_campaign` and `over_1k_campaign`
+   are honored when stored (D84; qualifies D43 / D74). `campaign_record` stamp counts are this
    campaign, not a shared build. `held` `net_new` is the pool minus
    held (this client's 90-day sends, live campaigns, and suppression)
    as an exact full-list join, never a sampled page (D74, D80).
@@ -212,8 +212,10 @@ D48).
    Map industries to Prospeo's official names and flag inexact
    mappings. *Code pending, follow-up PR* (D83).
 33. **Count honors** `max_per_company`, `industries_by_campaign` and
-   `over_1k_campaign` when the receipt carries them. *Code pending,
-   follow-up PR* (D84).
+   `over_1k_campaign` when the receipt carries them, on every source
+   (D84). Pass `campaign_id` when the industries map names more than
+   one campaign. Getleads `count_contacts` still cannot take the cap
+   (the API rejects the key); it stays on `filters_used`.
 34. **Local-business owner finder.** `site_check("people")` (owner by
    default), then the email waterfall on the people found, then the
    generic inbox fallback (`info@` / `office@`, not `support@` /
@@ -239,7 +241,7 @@ bears on stated and no verdict (D52).
 | `campaign_record(client_tag, campaign_id)` | Every receipt (company, domain, person, email legs; `company_filters` as stored; build label; method note; yield; dates), the build rows, the stamped leads counted by label and by leg **for this campaign**, the registry row, lifetime numbers, the source vocabulary for the values seen, the notes. |
 | `build_record(client_tag, campaign_id)` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Optional paged transcript text from the private `list-build-transcripts` bucket (`fetch_transcript`, `offset`/`limit`). Receipts stay the at-a-glance source of record. Read-only; no spend. |
 | `sources` | The vocabulary: every value a receipt leg can carry, what it means, how to repeat it, what it costs. |
-| `count(client_tag, source, filters, approved_by?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Prospeo count is *code pending* (D83). Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
+| `count(client_tag, source, filters, approved_by?, campaign_id?)` | A count on `getleads` (free; exact titles by default via `lower(current_title) IN`, substring only when the receipt says `title_match=substring` (D82); every stored key is mapped or the call fails; honors `max_per_company`, `industries_by_campaign` and `over_1k_campaign` (D84); `filters_used` is what was applied), `ai_ark` (paid; needs `approved_by`; exact-title `STRICT` unless the receipt asks for substring), `maps` (the stored pool in `client_<tag>.maps_raw`, scoped by `plan_id` and categories; the named ICP view, or companion `v_*_companies` ∪ `v_*_needs_domain` joined to `maps_raw` for `plan_id` when those exist; on `v_lane_e_*` categories match `main_category` and schools are dropped; binds are typed; reports pool, already live, already ingested, already contacted, used as the union, and net new) or `permits` with the filters you pass. Prospeo count is *code pending* (D83). Returns the number, every call, and the cost. Count every email status; VALID is not a TAM cap (D77). |
 | `held(client_tag, campaign_id, filters, tam, days?)` | How much of a getleads pool the client already holds (90-day sends, live campaigns, suppression) as an **exact full-list join**, never a sampled page (D80), and `net_new` as the pool minus that held count. Under 1,000: the TAM for this campaign is exhausted. |
 | `size(client_tag, campaign_id, source, filters)` | Free dry-run of the stored Maps pool (plan_id + ICP view, same as `count`): already held, suppression drops by reason, net new. Pool binds are `$11` / `$12` so they do not collide with recycle `$2::int[]` (D69). The suppress CTE types `$1::text` so the first slot is not unused (D70). Returns a `size_id` at once (`status` started); poll `size(size_id)`. Opens no job, spends nothing, does not block the lane. Counts only. |
 | `jobs(client_tag?, limit?)` | Recent jobs and runs with status, step, who opened it, spend. |
@@ -303,7 +305,7 @@ call next.
    apart means switch source (not widening) (D78). Take a ~50-person
    overlap sample of the second source against GetLeads / held (D79).
    getleads is free. Honor `max_per_company`, `industries_by_campaign`
-   and `over_1k_campaign` when stored (D84; *code pending*). Maps keeps
+   and `over_1k_campaign` when stored (D84). Maps keeps
    `plan_id` and the categories list (D57). `size` is the free Maps
    dry-run; poll `size(size_id)` (D65).
 4. `held(client_tag, campaign_id, filters, tam)` as an exact full-list
@@ -379,6 +381,8 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh.
   (D70). Never drop a stored getleads filter (a comma industry,
   `company_description`, `purged_titles`) and never count
   `lead_provenance` across twin campaigns that share a build (D74).
+  Never drop `max_per_company`, `industries_by_campaign` or
+  `over_1k_campaign` from a count when the receipt carries them (D84).
   Never size or pull a top-up without reading the build record
   (narrative first; transcript only for an edge case). Never CREATE /
   DROP / ALTER `list_build_records`, never write that table, never

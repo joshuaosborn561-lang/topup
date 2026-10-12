@@ -49,7 +49,7 @@ export async function heldRead(
   d: HeldDeps,
   input: { client_tag: string; smartlead_client_id: number; campaign_ids: readonly number[]; filters: Record<string, unknown>; tam: number; days?: number },
 ): Promise<HeldRead | { error: string }> {
-  const parsed = getleadsParamsFromFilters(input.filters);
+  const parsed = getleadsParamsFromFilters(input.filters, input.campaign_ids[0] ?? null);
   if (!parsed.ok) return { error: parsed.error };
   if (!Number.isFinite(input.tam) || input.tam < 0) return { error: 'tam must be the count from count(source="getleads", ...).' };
   const { max_per_company: _cap, ...filters } = parsed.params;

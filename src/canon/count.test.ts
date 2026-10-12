@@ -39,13 +39,13 @@ function deps(over: Partial<Parameters<typeof countSource>[0]> = {}) {
 }
 
 describe("D52 — count", () => {
-  it("getleads counts for free with the record's filters and drops the export cap", async () => {
+  it("getleads counts for free with the record's filters and honors the receipt cap", async () => {
     const { d } = deps();
     const r = await countSource(d, { client_tag: "bcp", source: "getleads", filters: { job_titles: ["CIO"], industries: ["Hospitals"], max_per_company: 2 } });
     assert.equal(r.count, 816);
     assert.equal(r.cost_cents, 0);
-    assert.ok(!("max_per_company" in r.filters_used));
-    assert.match(r.note ?? "", /export cap/);
+    assert.equal(r.filters_used.max_per_company, 2);
+    assert.match(r.note ?? "", /max_per_company 2 honored \(D84\)/);
     assert.match(r.note ?? "", /lower\(current_title\) IN/);
     assert.equal(r.filters_used.where_sql, "lower(current_title) IN ('cio')");
     assert.ok(!("job_titles" in r.filters_used));
@@ -79,18 +79,20 @@ describe("D52 — count", () => {
     assert.equal(r.filters_used.company_description, "private equity");
     assert.equal(r.filters_used.where_sql, "lower(current_title) IN ('partner') AND lower(current_title) NOT IN ('analyst', 'associate')");
     assert.ok(!("exclude_job_titles" in r.filters_used));
-    assert.ok(!("max_per_company" in r.filters_used));
+    assert.equal(r.filters_used.max_per_company, 3);
     assert.ok(!("purged_titles" in r.filters_used));
-    const sent = seen[0] as { industries: string[]; company_description: string; exclude_job_titles: string[] };
+    const sent = seen[0] as { industries: string[]; company_description: string; exclude_job_titles: string[]; max_per_company?: number };
     assert.deepEqual(sent.industries, r.filters_used.industries);
     assert.equal(sent.company_description, "private equity");
-    const dropped = await countSource(d, {
+    assert.equal(sent.max_per_company, undefined, "D43/D84: count_contacts still cannot take the cap");
+    const byCampaign = await countSource(d, {
       client_tag: "bcp",
       source: "getleads",
       filters: { job_titles: ["Partner"], industries_by_campaign: { "3763801": ["Hospitals"] } },
     });
-    assert.equal(dropped.count, null);
-    assert.match(dropped.note ?? "", /unmapped getleads filter keys: industries_by_campaign/);
+    assert.equal(byCampaign.count, 816);
+    assert.deepEqual(byCampaign.filters_used.industries, ["Hospitals"]);
+    assert.deepEqual(byCampaign.filters_used.industries_by_campaign, { "3763801": ["Hospitals"] });
     const badIndustry = await countSource(d, {
       client_tag: "bcp",
       source: "getleads",
@@ -136,5 +138,53 @@ describe("D52 — count", () => {
     const bad = await countSource(d, { client_tag: "bcp", source: "getleads", filters: { industries: ["Hospitals"] } });
     assert.equal(bad.count, null);
     assert.match(bad.note ?? "", /job_titles/);
+  });
+
+  it("D84 — every source honors max_per_company, industries_by_campaign and over_1k_campaign", async () => {
+    const { d, seen } = deps();
+    const receipt = {
+      job_titles: ["Partner"],
+      industries_by_campaign: { "3763801": ["Hospitals"], "3763802": ["Truck Transportation"] },
+      max_per_company: 2,
+      over_1k_campaign: true,
+    };
+    const gl = await countSource(d, { client_tag: "bcp", source: "getleads", filters: receipt, campaign_id: 3763801 });
+    assert.equal(gl.count, 816);
+    assert.deepEqual(gl.filters_used.industries, ["Hospitals"]);
+    assert.equal(gl.filters_used.max_per_company, 2);
+    assert.equal(gl.filters_used.over_1k_campaign, true);
+    assert.deepEqual(gl.filters_used.company_size, ["1001 to 5000", "5001 to 10000", "10001+"]);
+    assert.ok(!("max_per_company" in (seen[0] as object)), "count_contacts does not receive the cap");
+    const ark = await countSource(d, {
+      client_tag: "bcp",
+      source: "ai_ark",
+      filters: receipt,
+      campaign_id: 3763801,
+      approved_by: "Cayden",
+    });
+    assert.equal(ark.count, 2231);
+    assert.equal(ark.filters_used.max_per_company, 2);
+    assert.deepEqual(ark.filters_used.industries, ["Hospitals"]);
+    assert.equal(ark.filters_used.over_1k_campaign, true);
+    const maps = await countSource(d, {
+      client_tag: "emcor",
+      source: "maps",
+      filters: { plan_id: "custom-1789679826", categories: ["church"], ...receipt },
+      campaign_id: 3763801,
+    });
+    assert.equal(maps.count, 18322);
+    assert.equal(maps.filters_used.max_per_company, 2);
+    assert.deepEqual(maps.filters_used.industries, ["Hospitals"]);
+    assert.equal(maps.filters_used.over_1k_campaign, true);
+    const permits = await countSource(d, {
+      client_tag: "peterson",
+      source: "permits",
+      filters: { permit_types: ["roof"], states: ["TX"], ...receipt },
+      campaign_id: 3763801,
+    });
+    assert.equal(permits.count, 50);
+    assert.equal(permits.filters_used.max_per_company, 2);
+    assert.deepEqual(permits.filters_used.industries, ["Hospitals"]);
+    assert.equal(permits.filters_used.over_1k_campaign, true);
   });
 });

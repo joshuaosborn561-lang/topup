@@ -4,9 +4,10 @@ import { GETLEADS_BANDS, GETLEADS_EMAIL_STATUSES } from "../recipes/schema.js";
 
 /**
  * getleads filters as a receipt stores them, read back into the vendor's
- * parameters (D74). Every stored key is mapped or the parse fails. BCP-style
- * receipts keep industries per campaign under industries_by_campaign; pass
- * that campaign's list as industries — do not hand the parent object through.
+ * parameters (D74, D84). Every stored key is mapped or the parse fails.
+ * `industries_by_campaign`, `max_per_company` and `over_1k_campaign` are
+ * honored when the receipt carries them (D84). Pass `campaign_id` when
+ * the industries map names more than one campaign.
  */
 const BANDS = new Set<string>(GETLEADS_BANDS);
 const EMAIL_STATUSES = new Set<string>(GETLEADS_EMAIL_STATUSES);
@@ -40,6 +41,113 @@ export const GETLEADS_STORED_KEYS = [
 ] as const;
 
 const KNOWN = new Set<string>(GETLEADS_STORED_KEYS);
+
+/** 1001+ LinkedIn bands. `over_1k_campaign` includes or drops these (D84). */
+export const OVER_1K_BANDS = ["1001 to 5000", "5001 to 10000", "10001+"] as const;
+
+/** Receipt meta count honors on every source (D84). Not sent to count_contacts. */
+export const RECEIPT_COUNT_KEYS = ["max_per_company", "industries_by_campaign", "over_1k_campaign"] as const;
+
+export type ReceiptCountHonor =
+  | { ok: true; filters: Record<string, unknown>; honored: Record<string, unknown> }
+  | { ok: false; error: string };
+
+function campaignIdKey(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return String(Math.floor(value));
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return null;
+}
+
+/** campaign_id from the count argument or the filters blob (D84). */
+export function campaignIdFrom(filters: Record<string, unknown>, campaignId?: number | string | null): string | null {
+  return campaignIdKey(campaignId) ?? campaignIdKey(filters.campaign_id);
+}
+
+function pickIndustriesByCampaign(
+  byCampaign: unknown,
+  campaignId: string | null,
+): { ok: true; campaign_id: string; values: unknown } | { ok: false; error: string } {
+  if (byCampaign == null) return { ok: false, error: "industries_by_campaign is missing. Ask Josh." };
+  if (typeof byCampaign !== "object" || Array.isArray(byCampaign)) {
+    return { ok: false, error: "industries_by_campaign must be a map of campaign id to industries. Ask Josh." };
+  }
+  const map = byCampaign as Record<string, unknown>;
+  const keys = Object.keys(map);
+  if (keys.length === 0) return { ok: false, error: "industries_by_campaign is empty. Ask Josh." };
+  let id = campaignId;
+  if (!id && keys.length === 1) id = keys[0]!;
+  if (!id) {
+    return { ok: false, error: "industries_by_campaign has more than one campaign; pass campaign_id. Ask Josh." };
+  }
+  const raw = map[id] ?? map[String(Number(id))];
+  if (raw === undefined) {
+    return { ok: false, error: `industries_by_campaign has no list for campaign ${id}. Ask Josh.` };
+  }
+  const values = asStringArray(raw);
+  if (values.length === 0) {
+    return { ok: false, error: `industries_by_campaign for campaign ${id} is empty. Ask Josh.` };
+  }
+  return { ok: true, campaign_id: id, values };
+}
+
+/**
+ * Honor the receipt keys D84 names, on every count source. Strips the meta
+ * keys (and campaign_id) so a later D74 parse does not fail them as unmapped.
+ * Does not invent a filter the receipt did not carry.
+ */
+export function honorReceiptCountKeys(
+  filters: Record<string, unknown>,
+  campaignId?: number | string | null,
+): ReceiptCountHonor {
+  const next: Record<string, unknown> = { ...filters };
+  const honored: Record<string, unknown> = {};
+  const id = campaignIdFrom(filters, campaignId);
+
+  if ("industries_by_campaign" in next) {
+    const picked = pickIndustriesByCampaign(next.industries_by_campaign, id);
+    if (!picked.ok) return picked;
+    const mapped = mapIndustries(picked.values);
+    if (!mapped.ok) return mapped;
+    next.industries = mapped.values;
+    honored.industries = mapped.values;
+    honored.industries_by_campaign = { [picked.campaign_id]: mapped.values };
+    delete next.industries_by_campaign;
+  }
+
+  if ("over_1k_campaign" in next) {
+    const flag = next.over_1k_campaign;
+    if (typeof flag !== "boolean") {
+      return { ok: false, error: "over_1k_campaign must be true or false. Ask Josh." };
+    }
+    const existing = asStringArray(next.company_size);
+    const over = new Set<string>(OVER_1K_BANDS);
+    if (flag) {
+      const kept = existing.filter((band) => over.has(band));
+      next.company_size = kept.length > 0 ? kept : [...OVER_1K_BANDS];
+    } else if (existing.length > 0) {
+      const under = existing.filter((band) => !over.has(band));
+      if (under.length === 0) {
+        return { ok: false, error: "over_1k_campaign is false and company_size has only 1001+ bands. Ask Josh." };
+      }
+      next.company_size = under;
+    }
+    honored.over_1k_campaign = flag;
+    if (Array.isArray(next.company_size)) honored.company_size = next.company_size;
+    delete next.over_1k_campaign;
+  }
+
+  const exportCaps = next.export_caps && typeof next.export_caps === "object" && !Array.isArray(next.export_caps)
+    ? (next.export_caps as Record<string, unknown>)
+    : {};
+  const maxPer = Number(next.max_per_company ?? exportCaps.max_per_company);
+  if (Number.isFinite(maxPer) && maxPer >= 1) {
+    honored.max_per_company = Math.floor(maxPer);
+    next.max_per_company = honored.max_per_company;
+  }
+
+  delete next.campaign_id;
+  return { ok: true, filters: next, honored };
+}
 
 export interface GetleadsCountParams {
   job_titles?: string[];
@@ -119,15 +227,18 @@ function mapIndustries(v: unknown): { ok: true; values: string[] } | { ok: false
   return { ok: true, values: out };
 }
 
-export function getleadsParamsFromFilters(filters: Record<string, unknown>): GetleadsFilterParse {
+export function getleadsParamsFromFilters(
+  filters: Record<string, unknown>,
+  campaignId?: number | string | null,
+): GetleadsFilterParse {
+  const honored = honorReceiptCountKeys(filters, campaignId);
+  if (!honored.ok) return honored;
+  filters = honored.filters;
   const extra = unknownKeys(filters);
   if (extra.length) {
-    const hint = extra.includes("industries_by_campaign")
-      ? " Pass that campaign's list as industries."
-      : "";
     return {
       ok: false,
-      error: `unmapped getleads filter keys: ${extra.join(", ")}. Every stored key must map to the getleads API (D74).${hint} Ask Josh.`,
+      error: `unmapped getleads filter keys: ${extra.join(", ")}. Every stored key must map to the getleads API (D74). Ask Josh.`,
     };
   }
   const titles = asStringArray(filters.job_titles ?? filters.titles);

@@ -40,7 +40,7 @@ function sourceFor(spec: JobSpec): Recipe["source"] {
   const f = spec.filters;
   switch (spec.source) {
     case "getleads": {
-      const parsed = getleadsParamsFromFilters(f);
+      const parsed = getleadsParamsFromFilters(f, spec.campaign_id);
       if (!parsed.ok) throw new Error(parsed.error);
       return { kind: "getleads", params: parsed.params, widening_candidates: [] } as Recipe["source"];
     }
