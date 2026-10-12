@@ -458,8 +458,8 @@ has the full lines. A value not in the vocabulary is unknown; ask Josh or Cayden
   the campaign's registry lane (D92). Never read the shared owner table
   (`topup.site_people_found` or a client owner table) across clients.
   Never attach site_check people without job_id and a place_id or
-  normalized domain on this job (D94). Never attach an owner whose
-  domain or place is not on this job. Never start a run on a weekend or
+  normalized domain on this job (D94). Never attach an owner whose domain or place is not on this job.
+  Never start a run on a weekend or
   8pm–6am CT unless Josh or Cayden asked live (D88). Never send
   GetLeads `job_titles` as a substring match unless the receipt asks
   for `title_match=substring` (D82). Never count AI Ark titles in
