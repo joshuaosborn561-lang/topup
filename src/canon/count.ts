@@ -3,7 +3,9 @@ import type { MapsStats } from "../clients/mapsStats.js";
 import type { PermitCounts } from "../clients/permits.js";
 import type { Queryable } from "../db/pool.js";
 import { getleadsParamsFromFilters, honorReceiptCountKeys } from "../jobs/filters.js";
+import type { ProspeoIndustryMapping } from "../jobs/prospeoIndustries.js";
 import { countMapsPool, MAPS_POOL_NOTE, mapsPoolFiltersUsed, mapsPoolFromFilters } from "./mapsPool.js";
+import { searchPersonBody, type ProspeoSearch } from "./prospeoSearch.js";
 import type { SpendRails } from "../spend/rails.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
 
@@ -13,11 +15,12 @@ import { MIN_NET_NEW } from "../policy/rules.js";
  * decide whether the number is enough; the rule is stated on the answer
  * and Grok applies it. An AI Ark count costs money and needs an approver.
  */
-export type CountSource = "getleads" | "ai_ark" | "maps" | "permits";
+export type CountSource = "getleads" | "ai_ark" | "prospeo" | "maps" | "permits";
 
 export interface CountDeps {
   getleads: Getleads;
   aiArk: { count(filters: GetleadsFilters): Promise<{ total_matching: number }> } | null;
+  prospeo: ProspeoSearch | null;
   maps: MapsStats | null;
   permits: PermitCounts | null;
   rails: SpendRails;
@@ -46,6 +49,10 @@ export interface CountRead {
   net_new?: number;
   calls: CountCall[];
   cost_cents: number;
+  /** Worst-case cents before a paid call. Set on the estimate when approved_by is missing. */
+  estimate_cents?: number;
+  /** D83: each ICP industry and how it mapped onto Prospeo's official list. */
+  industry_mappings?: ProspeoIndustryMapping[];
   rule: string;
   note: string | null;
 }
@@ -120,6 +127,94 @@ export async function countSource(
       } catch (err) {
         calls.push({ vendor: "aiark", action: "people_preview", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
         return { ...base, filters_used: used, count: null, cost_cents: 0, note: "AI Ark count failed; see calls" };
+      }
+    }
+    case "prospeo": {
+      const parsed = getleadsParamsFromFilters(filters, input.campaign_id);
+      if (!parsed.ok) return { ...base, filters_used: input.filters, count: null, cost_cents: 0, note: parsed.error };
+      const { max_per_company: cap, ...countFilters } = parsed.params;
+      const rawIndustries = strings(filters.industries ?? filters.companyIndustry);
+      const built = searchPersonBody(countFilters as GetleadsFilters, rawIndustries);
+      const mappings = built.industry_mappings;
+      const flagNote = mappings
+        .filter((m) => m.match !== "exact")
+        .map((m) => (m.match === "none" ? `${m.input} has no Prospeo match` : `${m.input} → ${m.prospeo}`))
+        .join("; ");
+      const capNote = cap != null ? `max_per_company ${cap} honored (D84); search-person does not apply it (count is uncapped).` : null;
+      if (!built.ok) {
+        return { ...base, filters_used: input.filters, count: null, cost_cents: 0, industry_mappings: mappings, note: built.reason };
+      }
+      const used = {
+        ...withHonored(built.filters_used),
+        ...(built.filters_used.industries ? { industries: built.filters_used.industries } : {}),
+      };
+      if (!d.prospeo) {
+        return { ...base, filters_used: used, count: null, cost_cents: 0, industry_mappings: mappings, note: "PROSPEO_API_KEY is not set on the service." };
+      }
+      const decision = await d.rails.gate({
+        runId: "canon",
+        clientTag: input.client_tag,
+        step: "size",
+        vendor: "prospeo_search",
+        action: "search_person",
+        rows: 1,
+        recipeAuthorised: true,
+        approvedCents: input.approved_by ? 100 : 0,
+      });
+      const estimateBits = [
+        "Page 1 of search-person is 1 credit (about 1.5 cents); no-result and 30-day repeats are free.",
+        flagNote ? `Inexact industry mappings: ${flagNote}.` : null,
+        capNote,
+      ].filter((s): s is string => Boolean(s));
+      if (decision.kind !== "proceed") {
+        calls.push({ vendor: "prospeo", action: "search_person", ok: false, count: null, message: decision.reason });
+        return {
+          ...base,
+          filters_used: used,
+          count: null,
+          cost_cents: 0,
+          estimate_cents: decision.worstCaseCents,
+          industry_mappings: mappings,
+          note: `Not sent: ${decision.reason}. ${estimateBits.join(" ")} Pass approved_by with the name of the person who said yes.`,
+        };
+      }
+      try {
+        const r = await d.prospeo.count(countFilters as GetleadsFilters, rawIndustries);
+        calls.push({ vendor: "prospeo", action: "search_person", ok: true, count: r.total_matching, message: r.free ? "free" : null });
+        const credits = r.free ? 0 : 1;
+        const cost = r.free ? 0 : decision.worstCaseCents;
+        await d.rails
+          .record({
+            runId: null,
+            clientTag: input.client_tag,
+            step: "size",
+            vendor: "prospeo_search",
+            action: "search_person",
+            rows: 0,
+            credits,
+            worstCaseCents: decision.worstCaseCents,
+            balanceBefore: null,
+            balanceAfter: null,
+            vendorJobId: null,
+            approvedBy: input.approved_by ?? null,
+          })
+          .catch(() => undefined);
+        const titleNote = parsed.params.title_match === "substring" ? "title match CONTAINS (substring as the receipt asked; D82)." : "title match EXACT (D82).";
+        const bits = [titleNote, r.free ? "This search was free (no result or a 30-day repeat)." : null, flagNote ? `Inexact industry mappings: ${flagNote}.` : null, capNote].filter(
+          (s): s is string => Boolean(s),
+        );
+        return {
+          ...base,
+          filters_used: used,
+          count: r.total_matching,
+          cost_cents: cost,
+          estimate_cents: decision.worstCaseCents,
+          industry_mappings: mappings,
+          note: bits.join(" "),
+        };
+      } catch (err) {
+        calls.push({ vendor: "prospeo", action: "search_person", ok: false, count: null, message: (err as Error).message.slice(0, 200) });
+        return { ...base, filters_used: used, count: null, cost_cents: 0, industry_mappings: mappings, note: "Prospeo count failed; see calls" };
       }
     }
     case "maps": {

@@ -23,6 +23,8 @@ describe("D84 — count honors stored receipt keys", () => {
     assert.match(count, /case "maps"/, "D84: maps is a count source");
     assert.match(count, /case "permits"/, "D84: permits is a count source");
     assert.match(count, /case "ai_ark"/, "D84: ai_ark is a count source");
+    assert.match(count, /case "prospeo"/, "D84: prospeo is a count source");
+    assert.match(count, /count is uncapped/, "D84: Prospeo flags max_per_company as uncapped like GetLeads");
     assert.doesNotMatch(count, /export cap; count_contacts does not apply it \(D43\)/, "D84 qualifies D43");
   });
 

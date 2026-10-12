@@ -74,7 +74,7 @@ The rules you apply:
    already-answered domains are skipped. Nothing on the rows changes;
    you read the counts and say what you would do (D71, D72, D73).
 3. `count(client_tag, source, filters)` with those filters. getleads is
-   free; `ai_ark` needs `approved_by`. Honor `max_per_company`,
+   free; `ai_ark` and `prospeo` need `approved_by`. Honor `max_per_company`,
    `industries_by_campaign` and `over_1k_campaign` when the receipt
    carries them (D84). Pass `campaign_id` when the industries map names
    more than one campaign. Every other getleads key
