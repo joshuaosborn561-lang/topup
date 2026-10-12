@@ -9,7 +9,7 @@ const root = new URL("../../", import.meta.url);
 describe("D95 — replay the hand search", () => {
   it("CANON names the five-step flow and hides internals", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D95\*\*/, "D95: fold into CANON. Ask Josh or Cayden.");
+    assert.match(canon, /Canon as of \*\*D\d+\*\*/, "D95: CANON still has a header. Ask Josh or Cayden.");
     assert.match(canon, /Replay the hand search/, "D95. Ask Josh or Cayden.");
     assert.match(canon, /filters_applied/, "D95: every applied filter is listed. Ask Josh or Cayden.");
     assert.match(canon, /never a lane-total fallback|never a lane total/, "D95: held has no lane fallback. Ask Josh or Cayden.");

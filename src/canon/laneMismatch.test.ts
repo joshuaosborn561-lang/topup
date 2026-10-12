@@ -24,6 +24,10 @@ describe("D93 — lane-mismatch retag is generic", () => {
     assert.equal(narrowed.to_lane, "lane_b");
     assert.equal(narrowed.build_label, "build_1");
     assert.throws(() => parseLaneMismatchArgs(["--client_tag=acme", "--from_lane=lane_a"]), /both --from_lane and --to_lane/);
+    assert.throws(
+      () => parseLaneMismatchArgs(["--client_tag=acme", "--from_lane=unassigned", "--to_lane=lane_b"]),
+      /parking lot/,
+    );
   });
 
   it("the script has no client, lane or build constants", async () => {
@@ -32,6 +36,7 @@ describe("D93 — lane-mismatch retag is generic", () => {
     assert.match(src, /if \(!args\.apply\) return/, "D93: dry-run first");
     assert.match(src, /ALLOWED_SUPABASE_PROJECT_REF/);
     assert.match(src, /campaign_builds is a view/);
+    assert.match(src, /UNASSIGNED_LANE|isUnassignedLane/, "D96: unassigned is never a retag target");
     assert.doesNotMatch(src, /const CLIENT_TAG|const PE_LANE|const IT_LANE|const IT_BUILD/);
     assert.doesNotMatch(src, /["']bcp["']|["']emcor["']|["']pe_firms["']|["']it_dm_airpods["']/);
     assert.doesNotMatch(src, /\b(set|update)\s+dl_status|\b(set|update)\s+sg_exclude|\bskip_[a-z0-9_]+\s*=/);

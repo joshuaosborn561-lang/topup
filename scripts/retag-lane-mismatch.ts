@@ -8,6 +8,8 @@
  * historical. campaign_builds is a view; this script never writes it.
  *
  * Optional --from_lane / --to_lane / --build_label narrow the scan.
+ * Registry lane `unassigned` is a parking lot (D96): this script never
+ * retags stamps onto it or off it, and refuses --from_lane/--to_lane=unassigned.
  * Never writes dl_status, sg_exclude, or skip_*. Does not lift a
  * suppression. Never prints an email, a name, or a phone.
  *
@@ -18,6 +20,7 @@
  */
 import pg from "pg";
 import { ALLOWED_SUPABASE_PROJECT_REF } from "../src/config.js";
+import { isUnassignedLane, UNASSIGNED_LANE, UNASSIGNED_SKIP_NOTE } from "../src/canon/lanes.js";
 
 export interface LaneMismatchArgs {
   client_tag: string;
@@ -46,6 +49,9 @@ export function parseLaneMismatchArgs(argv: string[]): LaneMismatchArgs {
   const build_label = flag("--build_label");
   if (from_lane && !IDENT.test(from_lane)) throw new Error("--from_lane must be snake_case");
   if (to_lane && !IDENT.test(to_lane)) throw new Error("--to_lane must be snake_case");
+  if (isUnassignedLane(from_lane) || isUnassignedLane(to_lane)) {
+    throw new Error(UNASSIGNED_SKIP_NOTE);
+  }
   if ((from_lane && !to_lane) || (!from_lane && to_lane)) {
     throw new Error("pass both --from_lane and --to_lane, or neither. Ask Josh or Cayden.");
   }
@@ -97,6 +103,7 @@ export async function loadLaneMismatchPlan(db: Db, args: Omit<LaneMismatchArgs, 
   for (const r of registry) {
     const id = Number(r.campaign_id);
     const lane = String(r.lane ?? "");
+    if (isUnassignedLane(lane)) continue;
     if (Number.isInteger(id) && id > 0 && IDENT.test(lane)) laneOf.set(id, lane);
   }
   const { rows: receipts } = await db.query(
@@ -109,6 +116,7 @@ export async function loadLaneMismatchPlan(db: Db, args: Omit<LaneMismatchArgs, 
   const receipt_trims: ReceiptTrim[] = [];
   for (const r of receipts) {
     const receipt_lane = String(r.lane ?? "");
+    if (isUnassignedLane(receipt_lane)) continue;
     const before = ((r.campaign_ids as Array<string | number> | null) ?? [])
       .map((n) => Number(n))
       .filter((n) => Number.isInteger(n) && n > 0);
@@ -140,6 +148,7 @@ export async function loadLaneMismatchPlan(db: Db, args: Omit<LaneMismatchArgs, 
          join public.campaigns c on c.id = l.campaign_id
          join reg r on r.campaign_id = c.smartlead_campaign_id
         where l.email is not null
+          and r.lane is distinct from '${UNASSIGNED_LANE}'
      ),
      only_lane as (
        select e, min(lane) as lane
@@ -154,6 +163,8 @@ export async function loadLaneMismatchPlan(db: Db, args: Omit<LaneMismatchArgs, 
        join live lv on lv.e = o.e and lv.lane = o.lane
       where p.client_tag = $1
         and p.lane is distinct from o.lane
+        and p.lane is distinct from '${UNASSIGNED_LANE}'
+        and o.lane is distinct from '${UNASSIGNED_LANE}'
         and ($2::text is null or p.lane = $2)
         and ($3::text is null or o.lane = $3)
         and ($4::text is null or p.build_label = $4)
@@ -177,7 +188,7 @@ export async function loadLaneMismatchPlan(db: Db, args: Omit<LaneMismatchArgs, 
     receipt_trims,
     stamp_groups: stamp_groups.slice(0, 10),
     stamp_total: stamp_groups.reduce((a, g) => a + g.n, 0),
-    note: "campaign_builds is a view; this script never writes it. build_label stays historical. Counts and ids only.",
+    note: `campaign_builds is a view; this script never writes it. build_label stays historical. ${UNASSIGNED_SKIP_NOTE} Counts and ids only.`,
   };
 }
 
@@ -210,6 +221,7 @@ export async function applyLaneMismatchPlan(
          join public.campaigns c on c.id = l.campaign_id
          join reg r on r.campaign_id = c.smartlead_campaign_id
         where l.email is not null
+          and r.lane is distinct from '${UNASSIGNED_LANE}'
      ),
      only_lane as (
        select e, min(lane) as lane
@@ -223,6 +235,8 @@ export async function applyLaneMismatchPlan(
       where p.client_tag = $1
         and lower(p.email) = o.e
         and p.lane is distinct from o.lane
+        and p.lane is distinct from '${UNASSIGNED_LANE}'
+        and o.lane is distinct from '${UNASSIGNED_LANE}'
         and ($2::text is null or p.lane = $2)
         and ($3::text is null or o.lane = $3)
         and ($4::text is null or p.build_label = $4)`,
