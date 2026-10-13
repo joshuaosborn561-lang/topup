@@ -8,15 +8,16 @@ import { parseApprovers, PHASE_STEPS, QUOTE_CARD, TopupRunner } from "./runner.j
  * tail only after Josh or Cayden says yes by name, then the load. Nothing
  * runs without a recorded build. Ask Josh or Cayden.
  */
-function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; needsVerify?: number } = {}) {
+function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedError?: boolean; needsVerify?: number } = {}) {
   const runs = new Map<string, RunRow>();
   const steps = new Map<string, { status: string; attempts: number; approved_cents: number; counts?: Record<string, unknown> }>();
   const cards: Array<{ card_id: string; run_id: string; kind: string; payload: Record<string, unknown>; status: string; audience: string }> = [];
   const recipes = new Map<string, unknown>();
   const events: string[] = [];
+  const sql: string[] = [];
   let n = 0;
   const repo = {
-    runs, steps, cards, recipes, events,
+    runs, steps, cards, recipes, events, sql,
     upsertRecipe: async (r: { recipe_id: string; body: unknown }) => { recipes.set(r.recipe_id, r.body); },
     getRecipe: async (id: string) => (recipes.has(id) ? { recipe_id: id, body: recipes.get(id), owner_approved_at: null } : null),
     openRun: async (input: { recipe_id: string; client_tag: string; lane: string; campaign_id: number | null; trigger: string; opened_by: string | null }) => {
@@ -44,10 +45,14 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; needsVerify
     resolveCard: async (card_id: string, by: string, resolution: string) => { const c = cards.find((x) => x.card_id === card_id)!; c.status = "resolved"; (c as Record<string, unknown>).resolved_by = by; (c as Record<string, unknown>).resolution = resolution; return c; },
     loadsPaused: async () => opts.loadsPaused ?? false,
     cancelRunningSteps: async () => 0,
-    withRun: async (_id: string, fn: (tx: { query: (sql: string, params?: unknown[]) => Promise<{ rowCount: number; rows: unknown[] }> }) => Promise<unknown>) => fn({ query: async () => ({ rowCount: 3, rows: [] }) }),
+    withRun: async (_id: string, fn: (tx: { query: (sql: string, params?: unknown[]) => Promise<{ rowCount: number; rows: unknown[] }> }) => Promise<unknown>) =>
+      fn({ query: async (q: string) => { sql.push(q); return { rowCount: 3, rows: [] }; } }),
     raw: () => ({
       query: async (sql: string) => {
-        if (sql.includes("list_build_records")) return { rows: [{ n: opts.recorded === false ? "0" : "1" }] };
+        if (sql.includes("list_build_records")) {
+          if (opts.recordedError) throw new Error("permission denied for table list_build_records");
+          return { rows: [{ n: opts.recorded === false ? "0" : "1" }] };
+        }
         if (sql.includes("icp_variants")) return { rows: [{ n: "1" }] };
         if (sql.includes("information_schema.columns")) return { rows: [{ column_name: "email" }, { column_name: "company_domain" }] };
         if (sql.includes("needs_verify")) return { rows: [{ n: String(opts.needsVerify ?? 1200), with_email: String(opts.needsVerify ?? 1200), domains: "300" }] };
@@ -280,6 +285,58 @@ describe("D99 — the top-up", () => {
     const out = await j.run(opened.job_id, "approve", { by: "boot", approved_by: r!.approved_by, resume: true });
     assert.equal(out.status, "done");
     assert.equal(out.approved_by, "Cayden");
+  });
+
+  it("a database error while reading the build record is reported as one, never as 'no recorded build' (D102)", async () => {
+    const r = await runner(fakeRepo({ recordedError: true })).open(spec, "mcp:operator", "Healthcare IT");
+    assert.ok(!r.ok);
+    assert.match(r.message, /database error, not a missing build/);
+    assert.doesNotMatch(r.message, /no recorded build/);
+  });
+
+  it("abort gives a table pool its label back so the same table and where find the rows again (D102)", async () => {
+    const repo = fakeRepo();
+    const j = runner(repo);
+    const tableSpec = { ...spec, source: { kind: "table" as const, table: "lp.bcp_ingested_leads", where: "source_label = 'grok_pool'" } };
+    const opened = await j.open(tableSpec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    repo.sql.length = 0;
+    const a = await j.abort(opened.job_id, "mcp:operator");
+    assert.ok(a.ok);
+    assert.equal(a.ok && a.released, 3, "a table pool's rows are released, not deleted");
+    const release = repo.sql.find((q) => /run_id = null/.test(q));
+    assert.ok(release, "abort releases the rows");
+    assert.match(release!, /source_label = coalesce\(qa_flags->>'pool_label', source_label\)/, "D102: the bot's label comes back");
+    assert.match(release!, /- 'pool_label'/);
+  });
+
+  it("a restart between the last free step and the quote card is picked up on boot: the card gets posted (D102)", async () => {
+    const repo = fakeRepo();
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    for (const step of ["ingest", "dedupe", "suppress"]) repo.steps.set(`${opened.job_id}/${step}`, { status: "done", attempts: 1, approved_cents: 0 });
+    repo.runs.get(opened.job_id)!.status = "suppressing";
+    assert.deepEqual(await j.resumable(opened.job_id), { phase: "quote", approved_by: null, interrupted: null });
+    const resumed = await j.resumeInterrupted("boot");
+    assert.deepEqual(resumed, [opened.job_id]);
+    await new Promise((res) => setTimeout(res, 20));
+    assert.ok(repo.cards.some((c) => c.kind === QUOTE_CARD && c.status === "open"), "the quote card is up");
+    assert.equal(await j.resumable(opened.job_id), null, "with the card up the job is standing, not interrupted");
+    assert.deepEqual(await j.resumeInterrupted("boot"), [], "a second boot leaves it alone");
+  });
+
+  it("the quote answer says loads are paused so the yes and the unpause are asked for together (D102)", async () => {
+    const repo = fakeRepo({ loadsPaused: true });
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    const quoted = await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    assert.equal(quoted.status, "quoted");
+    assert.match(quoted.next, /Loads are paused/);
+    const standing = await j.standing(opened.job_id, "mcp:operator");
+    assert.match((standing as { next: string }).next, /Loads are paused/);
   });
 
   it("a pool with nothing new closes the job instead of quoting zero", async () => {

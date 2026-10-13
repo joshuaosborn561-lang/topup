@@ -32,7 +32,14 @@ describe("D2 — lead rows never leave the database", () => {
     const server = await readFile(new URL("../mcp/server.js", import.meta.url).pathname.replace(/\.js$/, ".ts"), "utf8");
     assert.ok(!/registerTool\(\s*"sample_rows"/.test(server), "D2/D48: the row-returning tool is gone. Ask Josh.");
     assert.equal(MCP_TOOL_ROLE["sample_rows"], undefined, "D2/D48: sample_rows has no role; it is retired. Ask Josh.");
-    assert.ok(!/select[^`]*\b(email|first_name|last_name|linkedin_url|phone)\b[^`]*from lp\./i.test(server), "D2/D48: no MCP tool selects lead fields from a lane table. Ask Josh.");
+    const { readdir } = await import("node:fs/promises");
+    for (const dir of ["../mcp/", "../canon/"]) {
+      const base = new URL(dir, import.meta.url);
+      for (const f of (await readdir(base)).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"))) {
+        const src = await readFile(new URL(f, base), "utf8");
+        assert.ok(!/select[^`]*\b(email|first_name|last_name|linkedin_url|phone)\b[^`]*from lp\./i.test(src), `D2/D48: ${dir}${f} selects lead fields from a lane table; no MCP tool or canon read may. Ask Josh.`);
+      }
+    }
   });
 
   it("a QA hold card shows at most ten samples", () => {

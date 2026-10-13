@@ -33,6 +33,12 @@ async function main(): Promise<void> {
     const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
     for (const f of files) {
       const sql = await readFile(path.join(dir, f), "utf8");
+      // A file whose header says "unapplied" waits for Josh; it is never
+      // installed by a routine migrate run.
+      if (/unapplied/i.test(sql.split("\n").slice(0, 5).join("\n"))) {
+        console.log(JSON.stringify({ tag: "migrate", skipped: f, why: "header says unapplied until Josh says so" }));
+        continue;
+      }
       await client.query("begin");
       try {
         await client.query(sql);

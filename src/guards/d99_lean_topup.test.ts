@@ -49,4 +49,20 @@ describe("D99 — the lean top-up", () => {
     assert.match(canon, /No recorded build means wait/);
     assert.ok(canon.split("\n").length < 140, "D99: the canon is one page");
   });
+
+  it("the docs agree on who runs LeadPipe: Grokbot hands a pool over, the service runs it through LeadPipe, Smartlead's own server imports", async () => {
+    for (const rel of ["AGENTS.md", "README.md", "skills/grok-bot-babysitter/SKILL.md"]) {
+      const text = await readFile(new URL(rel, root), "utf8");
+      assert.doesNotMatch(text, /connectors through\s+LeadPipe/, `D99: ${rel} says Grokbot replays through LeadPipe; the service runs LeadPipe, the bot ends with a file URL or a table. Ask Josh.`);
+    }
+    const canon = await readFile(new URL("CANON.md", root), "utf8");
+    assert.doesNotMatch(canon, /then Smartlead\s+through LeadPipe/, "D99: rows reach Smartlead through the Smartlead server's start_lead_import, not LeadPipe");
+    assert.match(canon, /Smartlead server/);
+  });
+
+  it("an empty Railway variable for a connector address means the default address, not nothing", () => {
+    const cfg = loadConfig({ MAPS_MCP_URL: "", PERMITSTACK_MCP_URL: "" });
+    assert.match(cfg.MAPS_MCP_URL, /^https:\/\//, "D99: connectors must still name the Maps address");
+    assert.match(cfg.PERMITSTACK_MCP_URL, /^https:\/\//, "D99: connectors must still name the PermitStack address");
+  });
 });

@@ -678,15 +678,19 @@ export class VerifyStage {
   private async fillMissingMailClass(table: string, runId: string): Promise<void> {
     const db = this.d.repo.raw();
     const { rows: have } = await db.query<{ ok: boolean }>(`select to_regclass('topup.mx_class') is not null as ok`);
+    // Lane-table writes carry the run (topup.lead_write_lock refuses a
+    // write without app.run_id while this job is open).
     if (have[0]?.ok) {
-      await db.query(
-        `update ${table} t set mail_class = m.mail_class
-         from topup.mx_class m
-         where t.run_id = $1 and t.lead_status = 'verified'
-           and (t.mail_class is null or t.mail_class in ('', 'unknown'))
-           and m.domain = split_part(lower(t.email), '@', 2)
-           and m.mail_class is not null and m.mail_class not in ('', 'unknown')`,
-        [runId],
+      await this.d.repo.withRun(runId, (tx) =>
+        tx.query(
+          `update ${table} t set mail_class = m.mail_class
+           from topup.mx_class m
+           where t.run_id = $1 and t.lead_status = 'verified'
+             and (t.mail_class is null or t.mail_class in ('', 'unknown'))
+             and m.domain = split_part(lower(t.email), '@', 2)
+             and m.mail_class is not null and m.mail_class not in ('', 'unknown')`,
+          [runId],
+        ),
       );
     }
     const { rows } = await db.query<{ domain: string }>(
@@ -701,11 +705,13 @@ export class VerifyStage {
       const host = await resolveMxHost(r.domain, this.d.resolveMx);
       const mailClass = mailClassFromMxHost(host);
       if (mailClass === "unknown") continue;
-      await db.query(
-        `update ${table} set mail_class = $3
-         where run_id = $1 and lead_status = 'verified' and split_part(lower(email), '@', 2) = $2
-           and (mail_class is null or mail_class in ('', 'unknown'))`,
-        [runId, r.domain, mailClass],
+      await this.d.repo.withRun(runId, (tx) =>
+        tx.query(
+          `update ${table} set mail_class = $3
+           where run_id = $1 and lead_status = 'verified' and split_part(lower(email), '@', 2) = $2
+             and (mail_class is null or mail_class in ('', 'unknown'))`,
+          [runId, r.domain, mailClass],
+        ),
       );
       if (have[0]?.ok) {
         await db.query(
