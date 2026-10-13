@@ -79,10 +79,11 @@ function paidStage(repo: ReturnType<typeof fakeRepo>, step: string, cents: numbe
   };
 }
 function freeStage(repo: ReturnType<typeof fakeRepo>, step: string, counts: Record<string, number>) {
-  return { run: async (run: RunRow) => { await repo.finishStep(run.run_id, step); return { kind: "done", counts }; } };
+  return { run: async (run: RunRow) => { await repo.finishStep(run.run_id, step); await repo.mergeRunCounts(run.run_id, counts); return { kind: "done", counts }; } };
 }
 
-function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: number } = { icp: 50, verify: 900 }, approvers?: string[]) {
+// The fake paid stages price themselves under what the quote approves (icp from 300 domains, verify from the fake row count).
+function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: number } = { icp: 1, verify: 1 }, approvers?: string[]) {
   const stages = {
     ingest: freeStage(repo, "ingest", { rows_claimed: 1500 }),
     dedupe: freeStage(repo, "dedupe", { held: 200 }),
@@ -169,16 +170,23 @@ describe("D99 — the top-up", () => {
     assert.ok(repo.events.some((l) => /Josh flips ACTIVE/.test(l)));
   });
 
-  it("a step priced above the quote is approved by the same name once, so the pool moving under the quote does not stall the job", async () => {
+  it("a step priced well above the quote waits for a fresh yes to the new number; a second named call then runs it", async () => {
     const repo = fakeRepo();
-    // The quote prices icp from the fake counts; the stage asks for more than that.
+    // The quote prices icp from the fake counts; the stage asks for far more.
     const j = runner(repo, { icp: 50_000, verify: 10 });
     const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
     if (!opened.ok) assert.fail(opened.message);
     await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    const held = await j.run(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Josh" });
+    assert.equal(held.status, "waiting_approval");
+    assert.equal(held.worst_case_cents, 50_000);
+    assert.ok(repo.events.some((l) => /above the .* said yes to/.test(l)));
+    // Josh sees $500 and says yes again: the open spend card lets the named call through.
+    const again = await j.begin(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Josh" });
+    assert.equal(again.status, "started");
+    await new Promise((res) => setTimeout(res, 30));
     const done = await j.run(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Josh" });
-    assert.equal(done.status, "done");
-    assert.ok(repo.events.some((l) => /above the quote/.test(l)));
+    assert.equal(done.status, "done", JSON.stringify({ why: done.why, step: done.step, cards: repo.cards.map((c) => [c.kind, c.status, c.payload.step]), icp: repo.steps.get(`${opened.job_id}/icp`) }));
   });
 
   it("loads paused: the approved job stops at staged and load refuses; load runs once loads resume", async () => {

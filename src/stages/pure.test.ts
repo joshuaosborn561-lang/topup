@@ -22,6 +22,11 @@ describe("D99 — the referee's pure halves", () => {
     assert.equal(safeWhere(""), "true");
     assert.throws(() => safeWhere("true; drop table x"));
     assert.throws(() => safeWhere("true -- x"));
+    assert.equal(safeWhere("source_label = 'topup_replay_3897344' and (state in ('CO','TX') or city ilike '%denver%') and email is not null"), "source_label = 'topup_replay_3897344' and (state in ('CO','TX') or city ilike '%denver%') and email is not null");
+    assert.throws(() => safeWhere("pg_sleep(10) = 1"), /does not run/);
+    assert.throws(() => safeWhere("id in (select id from public.leads)"), /does not run/);
+    assert.throws(() => safeWhere("email = $1"), /parameters/);
+    assert.throws(() => safeWhere("(state = 'CO'"), /parentheses/);
   });
 
   it("the pool may be the lane table itself, and LeadPipe gets no column_map", async () => {

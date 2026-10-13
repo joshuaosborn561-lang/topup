@@ -98,6 +98,12 @@ export async function attempt(d: StageDeps, run: RunRow, stage: Step, status: Ru
       await d.repo.setStepWaiting(run.run_id, stage, out.worstCaseCents ?? 0);
       await d.repo.setRunStatus(run.run_id, out.on === "owner" ? "awaiting_owner" : "awaiting_operator", stage);
     }
+    // A step row left at 'running' reads as "a restart cut this off" to the resume logic. Close it as what it is.
+    const row = await d.repo.getStep(run.run_id, stage);
+    if (row?.status === "running") {
+      if (out.kind === "nothing") await d.repo.finishStep(run.run_id, stage, { useful_output: 0, counts: {} });
+      else if (out.kind === "gate") await d.repo.failStep(run.run_id, stage, `gate unmet: ${out.why}`.slice(0, 500), false);
+    }
     return out;
   } catch (err) {
     const afterErr = await haltIfStopped(d.repo, run.run_id);

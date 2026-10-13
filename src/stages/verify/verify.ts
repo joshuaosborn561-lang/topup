@@ -117,6 +117,7 @@ export class VerifyStage {
       }
 
       for (;;) {
+        if ((await repo.getRun(run.run_id))?.status === "aborted") return { kind: "stopped" } as unknown as VerifyOutcome;
         batches = await this.loadBatches(run.run_id);
         const active = batches.filter((b) => ACTIVE.includes(b.status));
         if (active.length === 0) break;
@@ -144,8 +145,8 @@ export class VerifyStage {
     const marker = batchMarker(run.run_id, "A0");
     return this.d.repo.withRun(run.run_id, async (tx) => {
       const { rowCount } = await tx.query(
-        `update ${table} set lead_status = 'verifying', run_id = $1, verify_batch = $2, status_changed_at = now()
-         where lead_status = 'needs_verify' and (run_id is null or run_id = $1)`,
+        `update ${table} set lead_status = 'verifying', verify_batch = $2, status_changed_at = now()
+         where lead_status = 'needs_verify' and run_id = $1`,
         [run.run_id, marker],
       );
       return rowCount ?? 0;
@@ -179,6 +180,7 @@ export class VerifyStage {
     // was never submitted has none of its own yet.
     const stepRow = await repo.getStep(run.run_id, "verify");
     const priorApproval = b.approved_cents ?? stepRow?.approved_cents ?? 0;
+    const approvedBy = typeof stepRow?.counts?.approved_by === "string" ? String(stepRow.counts.approved_by) : null;
     const decision = await rails.gate({
       runId: run.run_id,
       clientTag: run.client_tag,
@@ -222,7 +224,7 @@ export class VerifyStage {
       balanceBefore,
       balanceAfter: null,
       vendorJobId: started.run_id,
-      approvedBy: null,
+      approvedBy: approvedBy,
     });
     const nowIso = new Date(this.now()).toISOString();
     await this.patchBatch(run.run_id, b.batch, {
@@ -566,9 +568,10 @@ export class VerifyStage {
 
     // Spend: what the vendors say they used, priced by our table; rail 4 drift check.
     const approved = b.approved_cents ?? b.worst_case_cents ?? 0;
+    const approvedBy = typeof (await repo.getStep(run.run_id, "verify"))?.counts?.approved_by === "string" ? String((await repo.getStep(run.run_id, "verify"))?.counts?.approved_by) : null;
     const balanceAfter = await rails.readBalance("millionverifier");
-    const mvCents = await rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "verify", vendor: "millionverifier", action: "credits_used", rows: b.rows, credits: obs.mv_credits_used, worstCaseCents: b.worst_case_cents, balanceBefore: null, balanceAfter, vendorJobId: b.vendor_run_id, approvedBy: null });
-    const n2bCents = await rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "verify", vendor: "no2bounce", action: "credits_used", rows: b.rows, credits: obs.n2b_credits_used, worstCaseCents: null, balanceBefore: null, balanceAfter: null, vendorJobId: b.vendor_run_id, approvedBy: null });
+    const mvCents = await rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "verify", vendor: "millionverifier", action: "credits_used", rows: b.rows, credits: obs.mv_credits_used, worstCaseCents: b.worst_case_cents, balanceBefore: null, balanceAfter, vendorJobId: b.vendor_run_id, approvedBy });
+    const n2bCents = await rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "verify", vendor: "no2bounce", action: "credits_used", rows: b.rows, credits: obs.n2b_credits_used, worstCaseCents: null, balanceBefore: null, balanceAfter: null, vendorJobId: b.vendor_run_id, approvedBy });
     if (mvCents + n2bCents > rails.allowanceCents(approved)) {
       log.error("verify billed over its approval", { run_id: run.run_id, batch: b.batch, billed_cents: mvCents + n2bCents, approved_cents: approved });
       await slack.postInThread(run, `Verify batch ${b.batch} billed ${usd(mvCents + n2bCents)} against an approval of ${usd(approved)}. Nothing else submits on this run until Josh looks.`);

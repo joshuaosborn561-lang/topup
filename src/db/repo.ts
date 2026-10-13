@@ -323,12 +323,14 @@ export class Repo {
    * second tap of the same cents does not add. The larger of the stored
    * amount and this one wins. Approver is the named person on the verb.
    */
+  /** Record a named approval on a step. The quote approves icp and verify before either has begun, so the row is created pending when missing. */
   async approveStep(runId: string, step: Step, approvedCents: number, approvedBy?: string | null): Promise<void> {
     await this.db.query(
-      `update topup.run_steps
-          set approved_cents = greatest(coalesce(approved_cents, 0), $3),
-              counts = counts || jsonb_build_object('approved_by', coalesce($4::text, counts->>'approved_by'))
-        where run_id = $1 and step = $2`,
+      `insert into topup.run_steps (run_id, step, status, attempts, approved_cents, counts)
+       values ($1, $2, 'pending', 0, $3, jsonb_build_object('approved_by', $4::text))
+       on conflict (run_id, step) do update set
+         approved_cents = greatest(coalesce(topup.run_steps.approved_cents, 0), excluded.approved_cents),
+         counts = coalesce(topup.run_steps.counts, '{}'::jsonb) || jsonb_build_object('approved_by', coalesce($4::text, topup.run_steps.counts->>'approved_by'))`,
       [runId, step, approvedCents, approvedBy ?? null],
     );
   }

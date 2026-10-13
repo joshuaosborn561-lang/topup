@@ -3,7 +3,7 @@ import type { Repo } from "../db/repo.js";
 import { presentRun, runIsOpen, type RunRow, type Step } from "../domain/runs.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
-import { isColdCall, isNeverTopUp, OWNER_APPROVER_NAMES } from "../policy/rules.js";
+import { isColdCall, isNeverTopUp, MIN_NET_NEW, OWNER_APPROVER_NAMES } from "../policy/rules.js";
 import { topupQuoteCard } from "../console/cards.js";
 import { usd } from "../spend/prices.js";
 import { domainSql, icpWorstCaseCents } from "../stages/icp/index.js";
@@ -233,7 +233,8 @@ export class TopupRunner {
       const who = opts.approved_by?.trim() ?? "";
       if (!this.isApprover(who)) return this.result(jobId, phase, first, "refused", {}, null, null, null, `approved_by "${who || "(empty)"}" is not an approver. ${this.rule}`, `show the quote to ${this.approvers.map(cap).join(" or ")}; then topup(job_id, approved_by=their name)`);
       const quote = await this.openQuote(jobId);
-      if (!quote) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no open quote on this job", "job(job_id); when the quote step is done the card is there, else the quote is still running");
+      const spendCard = (await this.d.repo.openCardsForRun(jobId)).some((c) => c.kind === "spend_approval");
+      if (!quote && !spendCard) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no open quote or spend card on this job", "job(job_id); when the quote step is done the card is there, else the quote is still running");
     }
     if ((phase === "load" || phase === "approve") && (await this.d.repo.loadsPaused())) {
       if (phase === "load") return this.result(jobId, phase, first, "refused", {}, null, null, null, "loads are paused; nothing reaches Smartlead until loads_paused is off", "loads_paused(paused=false, by=Josh) when Josh says so, then load(job_id)");
@@ -293,7 +294,9 @@ export class TopupRunner {
     if (!rec) return this.result(jobId, phase, first, "refused", {}, null, null, null, `job settings ${run.recipe_id} are missing`, "open a new job");
     const settings = parseJobSettings(rec.body);
     let approver: string | null = null;
-    if (phase === "approve" && opts.approved_by) approver = (await this.approveQuote(run, opts.approved_by, opts.by)) ?? (opts.resume ? opts.approved_by : null);
+    // First yes: the quote card is open and its figures are the ceiling. A later named call (the person saw a higher number) or a resume carries no ceiling.
+    const quoteWasOpen = phase === "approve" && !!(await this.openQuote(jobId));
+    if (phase === "approve" && opts.approved_by) approver = (await this.approveQuote(run, opts.approved_by, opts.by)) ?? (opts.resume || this.isApprover(opts.approved_by) ? opts.approved_by : null);
 
     for (const step of steps) {
       const already = await this.d.repo.getStep(jobId, step);
@@ -305,8 +308,9 @@ export class TopupRunner {
       }
       let outcome = await this.runStage(step, run, settings);
       if (String(outcome.kind) === "waiting" && approver) {
-        // A paid step priced itself above what the quote approved (the pool changed under it). Approve by the same name and run once more.
-        const named = await this.approveStepCards(run, step, approver, opts.by);
+        // A paid step priced itself above what the quote approved (the pool moved under it). Within a tenth of the quoted figure the
+        // same name covers it; above that the person sees the new number first (a named yes is to an amount, D51).
+        const named = await this.approveStepCards(run, step, approver, opts.by, quoteWasOpen ? await this.quotedFor(run.run_id, step) : null);
         if (named) outcome = await this.runStage(step, run, settings);
       }
       const o = outcome as unknown as Record<string, unknown>;
@@ -340,6 +344,12 @@ export class TopupRunner {
 
     if (phase === "quote") return this.postQuote(run, settings, opts.by);
     const counts = await this.funnel(run);
+    if (!(counts.imported > 0)) {
+      const why = `nothing was imported (staged ${counts.staged ?? 0}, imported ${counts.imported ?? 0}). Read job(job_id): the stage or import step says why.`;
+      await this.d.repo.setRunStatus(jobId, "failed", "import", why);
+      await this.event(run, "receipt", `Closed without a load: ${why}`, opts.by, "Nothing. Fix the cause and open a new job.");
+      return this.result(jobId, phase, "import", "nothing", counts, null, null, approver, why, "nothing loaded; the job closed. Read its steps.");
+    }
     const closed = await this.d.repo.getRun(jobId);
     if (closed && runIsOpen(closed.status)) await this.d.repo.setRunStatus(jobId, "done", "post_import");
     await this.event(run, "receipt", `Top-up done: ${counts.imported ?? 0} loaded into #${settings.campaign_id}. Josh flips ACTIVE by hand (D5).`, opts.by, "Nothing. Josh flips ACTIVE.");
@@ -357,7 +367,8 @@ export class TopupRunner {
       return this.result(run.run_id, "quote", "suppress", "nothing", counts, 0, null, null, why, "nothing to approve; the job closed. Say the TAM for this campaign is exhausted unless the record shows a source you did not replay.");
     }
     const existing = await this.openQuote(run.run_id);
-    const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id };
+    const belowFloor = quote.net_new < MIN_NET_NEW;
+    const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id, below_floor: belowFloor, floor: MIN_NET_NEW };
     let cardId = existing?.card_id ?? null;
     if (existing) {
       await this.d.repo.updateCardPayload(existing.card_id, payload);
@@ -374,8 +385,9 @@ export class TopupRunner {
     }
     await this.d.repo.setRunStatus(run.run_id, "awaiting_owner", "suppress");
     await this.event(run, "card_opened", `Quote for #${settings.campaign_id}: ${quote.net_new} net new (${quote.with_email} with an address, ${quote.domains} domains), worst case ${usd(quote.worst_case_cents)}. Waiting for Josh or Cayden.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
-    const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents };
-    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}. When they say yes: topup(job_id, approved_by="their name").`);
+    const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents, below_floor: belowFloor ? 1 : 0 };
+    const floorNote = belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this campaign looks exhausted unless the record shows a source not replayed; they decide.` : "";
+    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}.${floorNote} When they say yes: topup(job_id, approved_by="their name").`);
   }
 
   /** Net new after held and unsubscribes, and the worst case of everything paid that follows (ICP check + verification). */
@@ -432,9 +444,27 @@ export class TopupRunner {
     return approvedBy;
   }
 
-  /** A step's own spend card, approved by the same name (the pool moved under the quote). */
-  private async approveStepCards(run: RunRow, step: Step, approvedBy: string, by: string): Promise<string | null> {
+  /** What the quote said this step would cost, from the quote card that was resolved (null when unknown). */
+  private async quotedFor(jobId: string, step: Step): Promise<number | null> {
+    const row = await this.d.repo.getStep(jobId, step);
+    const c = row?.approved_cents;
+    return c == null ? null : Number(c);
+  }
+
+  /**
+   * A step's own spend card, approved by the same name. `quoted` is the
+   * ceiling the person already said yes to; a card more than a tenth above it
+   * is left open for a fresh yes to the new number.
+   */
+  private async approveStepCards(run: RunRow, step: Step, approvedBy: string, by: string, quoted: number | null = null): Promise<string | null> {
     const cards = (await this.d.repo.openCardsForRun(run.run_id)).filter((c) => c.kind === "spend_approval" && c.payload?.step === step);
+    if (quoted != null) {
+      const asked = cards.reduce((a, c) => a + Number(c.payload?.worst_case_cents ?? 0), 0);
+      if (asked > Math.ceil(quoted * 1.1)) {
+        await this.event(run, "card_opened", `${step}: priced at ${usd(asked)}, above the ${usd(quoted)} ${approvedBy} said yes to. Waiting for a yes to the new number.`, by, `topup(job_id, approved_by=name) after they see ${usd(asked)}.`);
+        return null;
+      }
+    }
     let cents = 0;
     for (const card of cards) {
       const tapped = await this.d.console.resolveAs(`${approvedBy} via ${by}`, "owner", card.card_id, "approve_spend");

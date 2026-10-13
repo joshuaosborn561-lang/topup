@@ -46,7 +46,7 @@ export async function preflightPool(
       const header = csvHeader(head);
       const usable = headerUsable(header);
       if (!usable.email && !usable.first) {
-        return { ok: false, message: `the file's header has no email or first_name column the service recognises (${TABLE_COLUMN_SYNONYMS.email.join(", ")} / ${TABLE_COLUMN_SYNONYMS.first_name.join(", ")}). Its columns: ${header.slice(0, 20).join(", ")}.` };
+        return { ok: false, message: `the file's first line has no email or first_name column the service recognises (${TABLE_COLUMN_SYNONYMS.email.join(", ")} / ${TABLE_COLUMN_SYNONYMS.first_name.join(", ")}). It has ${header.length} columns. Export with a header row.` };
       }
       notes.push(`${header.length} columns${usable.email ? `, email as ${usable.email}` : ", no email column"}`);
     }
@@ -62,11 +62,13 @@ export async function preflightPool(
   }
   const lane = isLaneTable(source.table, clientTag);
   if (lane && where === "true") return { ok: false, message: `${source.table} is the client's own lane table. Pass a where that picks the rows you ingested (for example source_label = 'your label'), not the whole table.` };
+  const other = /^lp\.([a-z0-9_]+)_ingested_leads$/.exec(source.table)?.[1] ?? /^client_([a-z0-9_]+)\./.exec(source.table)?.[1] ?? null;
+  if (other && other !== clientTag) return { ok: false, message: `${source.table} belongs to client ${other}, not ${clientTag}. A client's leads never move into another client's lane.` };
   const { rows: cols } = await db.query<{ column_name: string }>(`select column_name from information_schema.columns where table_schema = $1 and table_name = $2`, [schema, name]);
   if (cols.length === 0) return { ok: false, message: `${source.table} does not exist on campaignintelligence, or the service cannot read it. Build it in a schema the service can read, or ask Josh to grant select.` };
   const have = new Set(cols.map((c) => c.column_name));
   const usable = { email: TABLE_COLUMN_SYNONYMS.email.find((n) => have.has(n)) ?? null, first: TABLE_COLUMN_SYNONYMS.first_name.find((n) => have.has(n)) ?? null };
-  if (!usable.email && !usable.first) return { ok: false, message: `${source.table} has no email or first_name column the service recognises. Its columns: ${[...have].slice(0, 20).join(", ")}.` };
+  if (!usable.email && !usable.first) return { ok: false, message: `${source.table} has no email or first_name column the service recognises (${TABLE_COLUMN_SYNONYMS.email.join(", ")} / ${TABLE_COLUMN_SYNONYMS.first_name.join(", ")}). It has ${have.size} columns.` };
   let n = 0;
   try {
     const laneTable = ingestedTable(clientTag);
