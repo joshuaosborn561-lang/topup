@@ -447,21 +447,45 @@ export class TopupRunner {
   }
 
   /** Abort any open job: running steps stop, claimed rows go back, open cards close. Nothing is loaded by an aborted job. */
-  async abort(jobId: string, by: string): Promise<{ ok: true; released: number } | { ok: false; message: string }> {
+  /**
+   * Abort an open job. Running steps stop and open cards close. The rows the
+   * job brought in and never loaded are taken back out of the lane table
+   * (a file pool: deleted, so the next pull of the same people is not
+   * counted as "already in the lane"; a table pool: released to run_id null
+   * under the job's label). Rows that reached staging or Smartlead stay.
+   * Nothing is sent by an aborted job.
+   */
+  async abort(jobId: string, by: string): Promise<{ ok: true; released: number; removed: number } | { ok: false; message: string }> {
     const run = await this.d.repo.getRun(jobId);
     if (!run) return { ok: false, message: "no such job" };
     if (!runIsOpen(presentRun(run).status)) return { ok: false, message: `job ${jobId.slice(0, 8)} is already ${presentRun(run).status}` };
     await this.d.repo.cancelRunningSteps(jobId, `aborted by ${by}`);
-    let released = 0;
+    const rec = await this.d.repo.getRecipe(run.recipe_id).catch(() => null);
+    let fromFile = false;
     try {
-      released = await this.d.repo.withRun(jobId, async (tx) => {
-        const { rowCount } = await tx.query(
-          `update ${ingestedTable(run.client_tag)} set lead_status = 'needs_verify', run_id = null, verify_batch = null, status_changed_at = now()
-           where run_id = $1 and lead_status in ('verifying', 'claimed', 'reserved', 'pulling')`,
+      fromFile = rec ? parseJobSettings(rec.body).source.kind === "file_url" : false;
+    } catch {
+      fromFile = false;
+    }
+    let released = 0;
+    let removed = 0;
+    try {
+      const out = await this.d.repo.withRun(jobId, async (tx) => {
+        const table = ingestedTable(run.client_tag);
+        const keep = `('staged', 'imported', 'import_mismatch')`;
+        if (fromFile) {
+          const del = await tx.query(`delete from ${table} where run_id = $1 and lead_status not in ${keep}`, [jobId]);
+          return { released: 0, removed: del.rowCount ?? 0 };
+        }
+        const rel = await tx.query(
+          `update ${table} set lead_status = 'ingested', run_id = null, verify_batch = null, status_changed_at = now()
+           where run_id = $1 and lead_status not in ${keep}`,
           [jobId],
         );
-        return rowCount ?? 0;
+        return { released: rel.rowCount ?? 0, removed: 0 };
       });
+      released = out.released;
+      removed = out.removed;
     } catch (err) {
       const e = err as { code?: string; message?: string };
       if (!(e.code === "42P01" || /does not exist/i.test(e.message ?? ""))) throw err;
@@ -471,8 +495,8 @@ export class TopupRunner {
       await this.d.console.resolveAs(by, "operator", card.card_id, "abort").catch(() => undefined);
     }
     await this.d.repo.setRunStatus(jobId, "aborted", undefined, `aborted by ${by}`);
-    await this.event(run, "receipt", `Aborted by ${by}. ${released} rows released. Nothing was sent.`, by, "Nothing queued.");
-    return { ok: true, released };
+    await this.event(run, "receipt", `Aborted by ${by}. ${removed} rows the job brought in were taken back out of the lane table; ${released} released. Nothing was sent.`, by, "Nothing queued.");
+    return { ok: true, released, removed };
   }
 
   private async funnel(run: RunRow): Promise<Record<string, number>> {
