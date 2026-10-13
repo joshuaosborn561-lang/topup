@@ -249,7 +249,16 @@ export class TopupRunner {
       }
       if (kind === "parked") return this.result(jobId, phase, step, "parked", {}, null, null, approver, str("reason"), "read job(job_id); fix the cause or abort(job_id)");
       if (kind === "retry") return this.result(jobId, phase, step, "retry", {}, null, null, approver, str("error"), `call the same phase again; the third failure parks`);
-      if (kind === "gate") return this.result(jobId, phase, step, "gate", {}, null, null, approver, str("why") ?? str("reason") ?? "the step's gate did not pass", "read job(job_id)");
+      if (kind === "gate") {
+        const why = str("why") ?? str("reason") ?? "the step's gate did not pass";
+        if (phase === "quote" && step === "ingest") {
+          // Nothing landed: the job is over. Close it so no abort is needed and the campaign is free for the next try.
+          await this.d.repo.setRunStatus(jobId, "failed", step, why);
+          await this.event(run, "receipt", `Closed: ${why.slice(0, 300)}`, opts.by, "Fix the pool and call topup again.");
+          return this.result(jobId, phase, step, "gate", {}, null, null, approver, why, "the job closed itself; fix the pool and call topup again");
+        }
+        return this.result(jobId, phase, step, "gate", {}, null, null, approver, why, "read job(job_id)");
+      }
       if (kind === "declined") return this.result(jobId, phase, step, "declined", {}, null, null, approver, "the spend was declined", "open a new job if the decision changes");
       if (kind === "stopped") return this.result(jobId, phase, step, "stopped", {}, null, null, approver, "the job was aborted", "jobs()");
       return this.result(jobId, phase, step, "refused", {}, null, null, approver, `unexpected outcome ${kind}`, "read job(job_id)");
