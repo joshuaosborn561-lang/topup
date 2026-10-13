@@ -39,6 +39,7 @@ export const LEAD_FIELD_KEYS = new Set([
   "samples",
   "records",
   "items",
+  "body",
 ]);
 
 export function redact(value: unknown, depth = 0): unknown {

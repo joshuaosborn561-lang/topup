@@ -815,7 +815,7 @@ Those `leadtopup` calls; everything else on the server is out of scope.
 
 | Tool | Arguments (required in bold) | Sync / job | Returns |
 |---|---|---|---|
-| `count_contacts` | the contact filters: `job_titles[]`, `company_size[]` (**band labels** — `"11 to 50"`, `"51 to 200"`, …), `countries[]`, `states[]`, `cities[]`, `industries[]` (no commas — they shred silently), `email_status[]` (omit to pull every status; D35 item 15). **Never** `max_per_company` (export cap only; D43) and never numeric `employees_min` / `company_size_min`. | sync, **free, always** | `{total_matching, exportable_rows}` |
+| `count_contacts` | the contact filters: exact titles via `where_sql` `lower(current_title) IN (...)` by default (D82); `job_titles[]` only when the receipt says `title_match=substring`; `company_size[]` (**band labels** — `"11 to 50"`, `"51 to 200"`, …), `countries[]`, `states[]`, `cities[]`, `industries[]` (official getleads names; LinkedIn commas map to semicolons — D74), `company_description`, `exclude_job_titles` (stored as `purged_titles`; exact `NOT IN` unless substring), `email_status[]` (omit to pull every status; D35 item 15). **Never** `max_per_company` (export cap only; D43) and never numeric `employees_min` / `company_size_min`. An unmapped stored key fails. | sync, **free, always** | `{total_matching, exportable_rows}` |
 | `export_contacts` | same filters + `columns[]`, `max_per_company` (1–50), `max_rows` (1–50 000), **`confirmed: true`** (refused without it) | **export id** | `{export_id}`; later `cap_reason ∈ per_company \| max_rows \| hard_ceiling \| fair_use \| credits \| filtered` says why fewer rows than asked |
 | `check_contact_export` | **export_id** | sync poll | `{job_status, export_url, rows_exported, rows_available, cap_reason, cap_message}` |
 | `get_fair_use` | — | sync, free | remaining daily/monthly budget, `resets_at` |
@@ -889,7 +889,7 @@ unfiltered count when a key is one it does not know.
 The body uses the documented People Search fields only: `account.employeeSize`
 RANGE for getleads band labels, `account.location`, `account.industries`
 mode WORD, `account.keyword` source DESCRIPTION mode WORD, `contact.experience.latest.title`
-mode STRICT, `contact.seniority`, and `contact.departmentAndFunction` only
+mode STRICT (exact-title; WORD only when the receipt says `title_match=substring`, D82), `contact.seniority`, and `contact.departmentAndFunction` only
 for `operations` and `information_technology` (departments-and-functions.csv).
 A filter that cannot be mapped is not sent. `email_status` is not a preview
 field, so it is not sent. The open band `10001+` is not sent.
@@ -984,6 +984,16 @@ hooks; the service never runs more than three fetch calls or one Jev
 call at once. No cancel on any of the three; a batch that is abandoned
 simply stops being polled.
 
+Leftover-negative AI (`classify_leftover`, D90 / D91) uses the same Jev
+OpenRouter Decisions path (`https://openrouter.ai/api/alpha/decisions`)
+and the same vault secret (`openrouter_api_key`) that `icp-llm` already
+reads. The service calls `topup.jev_openrouter_key()` (security definer);
+it never SELECTs `vault.decrypted_secrets` and leadtopup_app is not
+granted on schema vault. Model is `ICP_JEV_MODEL` (`typesafe/jev-1.13`).
+The call lives in this service (`src/clients/jevClassify.ts`) so reply
+bodies never enter Grok context and never write `icp_llm_results`. No
+new vendor and no new Railway key.
+
 ## Site people (site-people)
 
 One edge function on campaignintelligence, written for `site_check`'s
@@ -997,27 +1007,30 @@ One edge function on campaignintelligence, written for `site_check`'s
   of every domain in the batch with no `http_status`, 5,000 characters
   a page and 36,000 a site, and appends the schema.org people on those
   pages as `STRUCTURED` lines. Rows are claimed `FOR UPDATE SKIP
-  LOCKED`, so up to three calls may run side by side. Free. Returns
-  `{processed, ok, released, remaining}`.
+  LOCKED`. Free. `host=` caps in-flight fetches per hostname (default 2).
+  Returns `{processed, ok, released, remaining}`.
 * `site-people?k=&mode=extract&batch=&n=&w=&model=gemini:<name>` has
   Gemini (Josh's key, `gemini_api_key` in the vault) list every person
   the site presents, with title, a short quote and the page, up to
   twelve, into `topup.site_people` keyed `(domain, md5(lower(name)))`,
-  and one row per domain in `topup.site_extractions`. Does not claim
-  rows: one call at a time per batch. About $1 per 1,000 sites at
-  36,000 characters. Returns `{processed, errors, last_error, people,
-  remaining}`.
+  and one row per domain in `topup.site_extractions`. Claims rows
+  (`in_progress`, SKIP LOCKED) so several extract calls may run side by
+  side without double-pay. 429 / 5xx retry with jitter. About $1 per
+  1,000 sites at 36,000 characters. Returns `{processed, errors,
+  last_error, people, remaining}`.
 * `site-people?k=&mode=ask&batch=&looking_for=&n=&w=&model=jev:<id>`
   has Jev pick, as one `choice` over the people listed plus
   `nobody_listed`, which of them is `looking_for`, with the site text as
   state, into `topup.site_answers` keyed `(domain,
   md5(lower(looking_for)))`. A site with nobody listed is answered
-  without a model call. One call at a time per batch. About $0.11 per
+  without a model call. Claims the same way as extract. About $0.11 per
   1,000. Returns `{processed, errors, last_error, found, nobody_listed,
   remaining}`.
 
 The people found are the view `topup.site_people_found` (`first_name`,
 `last_name`, `title`, `domain`, `company_domain`, `source_url`,
 `question_key`, `looking_for`). The service inserts domains and reads
-counts; a name never returns to it. Same connection cap as the ICP gate:
-one connection per call, never more than three fetch calls side by side.
+counts; a name never returns to it. One database connection per
+invocation; the service fans out (~50 fetch workers, ~28 Gemini, ~28
+Jev) and stays under the project's 60-connection cap. A deploy does not
+resume the loop — call `site_check` again.

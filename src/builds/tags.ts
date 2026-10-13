@@ -106,18 +106,43 @@ async function readBuildLegs(db: Queryable, campaignIds: readonly number[], out:
   }
 }
 
-/** Leads stamped per build label and confidence. A count, never a row. */
-export async function provenanceCounts(db: Queryable, clientTag: string, buildLabels: readonly string[]): Promise<ProvenanceCount[]> {
+/** Leads stamped per build label and confidence, for this campaign (D74). A count, never a row. */
+export async function provenanceCounts(
+  db: Queryable,
+  clientTag: string,
+  buildLabels: readonly string[],
+  campaignId?: number,
+): Promise<ProvenanceCount[]> {
   const labels = [...new Set(buildLabels.filter((l) => l.length > 0))];
   if (labels.length === 0) return [];
   try {
+    const scoped = Number.isInteger(campaignId);
+    if (scoped) {
+      const { rows: has } = await db.query<{ leads: boolean; campaigns: boolean }>(
+        `select to_regclass('public.leads') is not null as leads, to_regclass('public.campaigns') is not null as campaigns`,
+      );
+      if (!has[0]?.leads || !has[0].campaigns) return [];
+    }
     const { rows } = await db.query<{ build_label: string | null; confidence: string | null; leads: string }>(
-      `select build_label, confidence, count(*)::text as leads
-         from topup.lead_provenance
-        where client_tag = $1 and build_label = any($2::text[])
-        group by 1, 2
-        order by 1, 2`,
-      [clientTag, labels],
+      scoped
+        ? `select p.build_label, p.confidence, count(*)::text as leads
+             from topup.lead_provenance p
+            where p.client_tag = $1 and p.build_label = any($2::text[])
+              and exists (
+                select 1
+                  from public.leads l
+                  join public.campaigns c on c.id = l.campaign_id
+                 where lower(l.email) = lower(p.email)
+                   and c.smartlead_campaign_id = $3::bigint
+              )
+            group by 1, 2
+            order by 1, 2`
+        : `select build_label, confidence, count(*)::text as leads
+             from topup.lead_provenance
+            where client_tag = $1 and build_label = any($2::text[])
+            group by 1, 2
+            order by 1, 2`,
+      scoped ? [clientTag, labels, campaignId] : [clientTag, labels],
     );
     return rows.map((r) => ({ build_label: r.build_label, confidence: r.confidence, leads: Number(r.leads) }));
   } catch {

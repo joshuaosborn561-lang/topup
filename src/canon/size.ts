@@ -4,7 +4,8 @@ import { INTERESTED_CATEGORY_IDS } from "../domain/working.js";
 import { logger } from "../lib/log.js";
 import { MIN_NET_NEW } from "../policy/rules.js";
 import { BOUNCE_CATEGORY_ID, DNC_CATEGORY_ID, SUPPRESS_REASONS, WRONG_PERSON_CATEGORY_ID } from "../stages/suppress/index.js";
-import { clientPriorContactSql, DEFAULT_RECYCLE_DAYS, positiveReplySql } from "../stages/suppress/recycle.js";
+import { DEFAULT_RECYCLE_DAYS } from "../stages/suppress/recycle.js";
+import { hasNegativeClassColumn } from "../replies/store.js";
 import { loadClientMap } from "./clients.js";
 import { countMapsPool, mapsPoolFromFilters, mapsPoolWhere, resolveMapsPool, type MapsPoolResolved } from "./mapsPool.js";
 
@@ -49,7 +50,8 @@ export const SIZE_STATEMENT_TIMEOUT_MS = 45_000;
 /**
  * Recycle SQL hardcodes $2 (interested ids) through $10 (days). The pool
  * FROM after D68 also binds $1 / $2 (plan_id, categories). Shift those
- * pool binds past the suppress slots (D69).
+ * pool binds past the suppress slots (D69). The CTE still names $1::text
+ * so Postgres can type the first slot after the shift (D70).
  */
 export const SIZE_SUPPRESS_BIND_OFFSET = 10;
 
@@ -132,11 +134,11 @@ export async function sizeRead(db: Queryable, input: SizeInput, size_id: string 
  * sets (D65). Correlated EXISTS per email is what timed out at the MCP
  * 60s limit on EMCOR Lane E.
  */
-export function sizeSuppressJoinSql(resolved: MapsPoolResolved, destRef: string | null, whens: string[], where = ""): string {
+export function sizeSuppressJoinSql(resolved: MapsPoolResolved, destRef: string | null, whens: string[], where = "", hasClass = true): string {
   const fromSql = shiftSqlParams(resolved.fromSql, SIZE_SUPPRESS_BIND_OFFSET);
   const whereSql = shiftSqlParams(where, SIZE_SUPPRESS_BIND_OFFSET);
   return `with p as (
-         select $2::int[] as positive, $3::int as dnc, $4::int as wrong_person, $5::int as bounce,
+         select $1::text as plan_id, $2::int[] as positive, $3::int as dnc, $4::int as wrong_person, $5::int as bounce,
                 $6::bigint as smartlead_client_id, $7::bigint[] as client_campaigns, $8::text[] as offer_keys, $9::text as client_tag,
                 $10::int as recycle_after_days
        ),
@@ -151,14 +153,13 @@ export function sizeSuppressJoinSql(resolved: MapsPoolResolved, destRef: string 
           where e is not null and position('@' in e) > 0
             ${destRef ? `and not exists (select 1 from ${destRef} h where lower(h.email) = e)` : ""}
        ),
-       pos as (
-         select distinct r.e from r, p where ${positiveReplySql("$10")}
-       ),
-       dnc as (
-         select distinct lower(l.email) as e from public.leads l where l.category_id = $3
-       ),
-       wrong as (
-         select distinct lower(l.email) as e from public.leads l where l.category_id = $4
+       unsub as (
+         select distinct lower(l.email) as e from public.leads l
+          where l.smartlead_client_id = $6
+            and (
+              ${hasClass ? "l.negative_class = 'unsubscribe' or " : ""}
+              lower(coalesce(l.status, '')) = 'unsubscribed'
+            )
        ),
        supp as (
          select distinct lower(s.email) as e from public.suppression s
@@ -168,36 +169,18 @@ export function sizeSuppressJoinSql(resolved: MapsPoolResolved, destRef: string 
          union
          select distinct lower(l.email) from public.leads l join public.sends s on s.lead_id = l.id where s.bounced
        ),
-       prior as (
-         select distinct r.e from r, p where ${clientPriorContactSql("$10", true)}
-       ),
-       offer as (
-         select distinct lower(l.email) as e
-           from public.leads l
-           join public.campaigns c on c.id = l.campaign_id
-           join topup.campaign_registry cr on cr.campaign_id = c.smartlead_campaign_id
-          where cr.offer_key = any($8::text[]) and cr.client_tag <> $9
-       ),
        classified as (
          select r.e,
                 case
-                  when pos.e is not null then 'positive_reply'
-                  when dnc.e is not null then 'do_not_contact'
-                  when wrong.e is not null then 'wrong_person'
+                  when unsub.e is not null then 'unsubscribed'
                   when supp.e is not null then 'suppression_list'
                   when bounce.e is not null then 'bounced'
-                  when prior.e is not null then 'client_prior_contact'
-                  when offer.e is not null then 'same_offer_other_client'
                   ${whens.length ? whens.map((w) => `when ${w}`).join("\n                  ") : ""}
                 end as reason
            from r
-           left join pos on pos.e = r.e
-           left join dnc on dnc.e = r.e
-           left join wrong on wrong.e = r.e
+           left join unsub on unsub.e = r.e
            left join supp on supp.e = r.e
            left join bounce on bounce.e = r.e
-           left join prior on prior.e = r.e
-           left join offer on offer.e = r.e
        )
        select coalesce(reason, 'none') as reason, count(*)::text as n from classified group by 1`;
 }
@@ -234,7 +217,8 @@ async function suppressByReason(
     const extra: string[] = [];
     if (!t.suppression) extra.push("false then 'suppression_list'");
     const destRef = IDENT.test(destTable) ? `"lp"."${destTable}"` : null;
-    const sql = sizeSuppressJoinSql(resolved, destRef, extra, where);
+    const hasClass = await hasNegativeClassColumn(db);
+    const sql = sizeSuppressJoinSql(resolved, destRef, extra, where, hasClass);
     const params = [
       planId,
       [...INTERESTED_CATEGORY_IDS],

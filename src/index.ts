@@ -3,11 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { AiArkPreviewClient } from "./clients/aiArkPreview.js";
+import { ProspeoSearchClient } from "./canon/prospeoSearch.js";
 import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
 import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
 import { GetleadsClient } from "./clients/getleads.js";
 import { IcpGateClient } from "./clients/icpGate.js";
+import { JevClassifyClient, loadOpenRouterKey } from "./clients/jevClassify.js";
 import { SitePeopleClient } from "./clients/sitePeople.js";
+import { peopleLoopConfig } from "./stages/icp/loops.js";
 import { LeadPipeClient } from "./clients/leadpipe.js";
 import { MapsStatsClient } from "./clients/mapsStats.js";
 import { NameToEmailClient } from "./clients/nameToEmail.js";
@@ -18,6 +21,8 @@ import { VerifierClient } from "./clients/verifier.js";
 import { assertSupabaseProject, loadConfig } from "./config.js";
 import { Console } from "./console/console.js";
 import { loadClientTags } from "./canon/clients.js";
+import { downloadListBuildTranscript } from "./canon/buildRecord.js";
+import { HeldRunner } from "./canon/held.js";
 import { SizeRunner } from "./canon/size.js";
 import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
@@ -113,6 +118,7 @@ async function main(): Promise<void> {
   const leadpipe = new LeadPipeClient(cfg.LEADPIPE_MCP_URL, cfg.LEADPIPE_TOKEN);
   const getleads = new GetleadsClient(cfg.GETLEADS_MCP_URL, cfg.GETLEADS_TOKEN);
   const aiArk = cfg.AI_ARK_TOKEN ? new AiArkPreviewClient(cfg.AI_ARK_TOKEN, cfg.AI_ARK_PREVIEW_URL) : null;
+  const prospeo = cfg.PROSPEO_API_KEY ? new ProspeoSearchClient(cfg.PROSPEO_API_KEY, cfg.PROSPEO_SEARCH_URL) : null;
   const maps = cfg.MAPS_MCP_URL ? new MapsStatsClient(cfg.MAPS_MCP_URL) : null;
   const permitCounts = cfg.PERMITSTACK_MCP_URL ? new PermitCountsClient(cfg.PERMITSTACK_MCP_URL) : null;
   const smartlead = new SmartleadClient(cfg.SMARTLEAD_MCP_URL, cfg.SMARTLEAD_TOKEN);
@@ -122,7 +128,21 @@ async function main(): Promise<void> {
   const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
   const jobs = { pollMs: cfg.JOB_POLL_SECONDS * 1000, deadMs: cfg.JOB_DEAD_MINUTES * 60_000 };
   const icpGate = cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY ? new IcpGateClient(cfg.SUPABASE_FUNCTIONS_URL, { fetch: cfg.ICP_SITE_FETCH_KEY, llm: cfg.ICP_LLM_KEY, disco: cfg.ICP_DISCO_KEY }) : null;
-  const sitePeople = cfg.SITE_PEOPLE_KEY ? new SitePeopleClient(cfg.SUPABASE_FUNCTIONS_URL, cfg.SITE_PEOPLE_KEY) : null;
+  const leftoverJev = new JevClassifyClient({ loadKey: () => loadOpenRouterKey(db), model: cfg.ICP_JEV_MODEL });
+  const sitePeople = cfg.SITE_PEOPLE_KEY ? new SitePeopleClient(cfg.SUPABASE_FUNCTIONS_URL, cfg.SITE_PEOPLE_KEY, fetch, 130_000, cfg.SITE_PEOPLE_FETCH_PER_HOST) : null;
+  const peopleLoops = peopleLoopConfig({
+    SITE_PEOPLE_FETCH_PARALLEL: String(cfg.SITE_PEOPLE_FETCH_PARALLEL),
+    SITE_PEOPLE_FETCH_WORKERS: String(cfg.SITE_PEOPLE_FETCH_WORKERS),
+    SITE_PEOPLE_FETCH_PER_CALL: String(cfg.SITE_PEOPLE_FETCH_PER_CALL),
+    SITE_PEOPLE_FETCH_PER_HOST: String(cfg.SITE_PEOPLE_FETCH_PER_HOST),
+    SITE_PEOPLE_EXTRACT_PARALLEL: String(cfg.SITE_PEOPLE_EXTRACT_PARALLEL),
+    SITE_PEOPLE_EXTRACT_WORKERS: String(cfg.SITE_PEOPLE_EXTRACT_WORKERS),
+    SITE_PEOPLE_EXTRACT_PER_CALL: String(cfg.SITE_PEOPLE_EXTRACT_PER_CALL),
+    SITE_PEOPLE_ASK_PARALLEL: String(cfg.SITE_PEOPLE_ASK_PARALLEL),
+    SITE_PEOPLE_ASK_WORKERS: String(cfg.SITE_PEOPLE_ASK_WORKERS),
+    SITE_PEOPLE_ASK_PER_CALL: String(cfg.SITE_PEOPLE_ASK_PER_CALL),
+    SITE_PEOPLE_GEMINI_RPM: String(cfg.SITE_PEOPLE_GEMINI_RPM),
+  });
   const base = { repo, console: console_ };
 
   const pull = new PullStage({
@@ -189,8 +209,8 @@ async function main(): Promise<void> {
         ledger,
         orchestrator,
         jobs: new JobRunner({ repo, stages, console: console_, ledger }),
-        count: { getleads, aiArk, maps, permits: permitCounts, rails, db },
-        held: {
+        count: { getleads, aiArk, prospeo, maps, permits: permitCounts, rails, db },
+        held: new HeldRunner({
           db,
           getleads,
           rails,
@@ -201,9 +221,14 @@ async function main(): Promise<void> {
           },
           sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
           now: () => Date.now(),
-        },
+        }),
         size: new SizeRunner(db),
-        siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, people: sitePeople, jevModel: cfg.ICP_JEV_MODEL, geminiModel: cfg.SITE_PEOPLE_GEMINI_MODEL, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
+        siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, people: sitePeople, jevModel: cfg.ICP_JEV_MODEL, geminiModel: cfg.SITE_PEOPLE_GEMINI_MODEL, peopleLoops, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
+        leftoverAi: { db, rails, jev: leftoverJev },
+        readTranscript:
+          cfg.SUPABASE_URL && cfg.SUPABASE_SERVICE_ROLE_KEY
+            ? (path) => downloadListBuildTranscript({ supabaseUrl: cfg.SUPABASE_URL, serviceRoleKey: cfg.SUPABASE_SERVICE_ROLE_KEY, path })
+            : undefined,
       },
     }),
   );

@@ -17,11 +17,11 @@ Thirteen steps plus the receipt at 11.5. Steps 3 through 12 are mechanical and b
 
 Rules that apply to every step: no lead rows in chat beyond ten sample rows; data moves server to server; estimate and get approval before any paid call; pass `client_tag` on every job; confirm the Supabase project before writing (`azpapwtnrbzywlnxxecz` campaign and lead data, `kemvxzhcxvynmoutwdrh` parcels, `klomihumrgwoixbzxypr` CRM); one session at a time on a client's tables.
 
-## Step 1. Nail the ICP for the lane (Josh)
+## Step 1. Nail the ICP for the lane (Josh or Cayden)
 
 What: titles, headcount bands, geography, industries, offer family, gift tier. Decide the cells up front: band × gateway (SEG or OTHER) × gift (team or AirPods) × offer.
 Source: the client's lead pull skill (`parlay-lead-pulls`, `culture-fits-lead-pulls`, `techevo-lead-pulls`, `goliath-lead-pulls`, `salesglider-lead-pulls`) plus the latest client call in Fireflies. ICP drift is common; the call wins over the skill and the skill gets updated.
-Gate: every cell has a campaign or Josh knows one must be built. Josh signs off on the segment before anything is pulled.
+Gate: every cell has a campaign or Josh or Cayden knows one must be built. Josh or Cayden signs off on the segment before anything is pulled.
 
 ## Step 2. Size it (code)
 

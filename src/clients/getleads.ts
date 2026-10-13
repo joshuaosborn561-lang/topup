@@ -10,12 +10,33 @@ import { McpHttpClient } from "./mcpHttp.js";
  * Grok bot must not call these (D39) — the Railway service does, server-side.
  *
  * The brief's getleads rules are enforced by the recipe schema before a
- * filter reaches this file: headcount is band labels, industries carry no
- * commas, `email_status` omitted pulls every status (D35 item 15).
+ * filter reaches this file: headcount is band labels, industries are
+ * official getleads names (LinkedIn commas map to semicolons; D74),
+ * `email_status` omitted pulls every status (D35 item 15).
  * `assertGetleadsFilters` also refuses band labels plus a numeric
  * employee bound (D34). `outboundFilters` sends count keys only:
- * exact band labels, never `max_per_company` (D43).
+ * exact band labels, never `max_per_company` (D43). Titles default
+ * to exact `lower(current_title) IN (...)` (D82); substring
+ * `job_titles` only when the receipt says `title_match=substring`.
  */
+
+export type TitleMatch = "exact" | "substring";
+
+/** Receipt `title_match` / `title_match_mode`. Missing means exact (D82). */
+export function titleMatchMode(filters: { title_match?: string } | Record<string, unknown>): TitleMatch {
+  const raw = (filters as { title_match?: unknown }).title_match;
+  return raw === "substring" ? "substring" : "exact";
+}
+
+/** Exact-title predicate for getleads `where_sql` (D82). Quotes are escaped. */
+export function exactTitleWhereSql(include: readonly string[], exclude: readonly string[] = []): string {
+  const lit = (s: string) => `'${s.toLowerCase().replace(/'/g, "''")}'`;
+  const parts: string[] = [];
+  if (include.length) parts.push(`lower(current_title) IN (${include.map(lit).join(", ")})`);
+  if (exclude.length) parts.push(`lower(current_title) NOT IN (${exclude.map(lit).join(", ")})`);
+  return parts.join(" AND ");
+}
+
 export type GetleadsFilters = Recipe["source"] extends infer S ? (S extends { kind: "getleads"; params: infer P } ? P : never) : never;
 
 export interface CountResult {
@@ -232,6 +253,7 @@ export const GETLEADS_COUNT_KEYS = [
   "cities",
   "industries",
   "company_description",
+  "exclude_job_titles",
   "email_status",
   "employee_profiles_on_linkedin_min",
   "employee_profiles_on_linkedin_max",
@@ -274,6 +296,19 @@ export function outboundFilters(filters: GetleadsFilters): Record<string, unknow
     out.job_functions = [...new Set([job.trim(), ...already])];
   }
   delete out.job_function;
+  if (titleMatchMode(src) === "exact") {
+    const titles = Array.isArray(out.job_titles)
+      ? (out.job_titles as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim())
+      : [];
+    const purged = Array.isArray(out.exclude_job_titles)
+      ? (out.exclude_job_titles as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim())
+      : [];
+    if (titles.length || purged.length) {
+      out.where_sql = exactTitleWhereSql(titles, purged);
+      delete out.job_titles;
+      delete out.exclude_job_titles;
+    }
+  }
   return out;
 }
 

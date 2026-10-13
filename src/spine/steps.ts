@@ -36,8 +36,8 @@ export const SPINE: readonly SpineStep[] = [
     n: 1,
     title: "Nail the ICP for the lane",
     owner: "josh",
-    also: null,
-    gate: "every cell has a campaign or Josh knows one must be built. Josh signs off on the segment before anything is pulled.",
+    also: { who: "cayden", when: "full approver, equal to Josh (D92)" },
+    gate: "every cell has a campaign or Josh or Cayden knows one must be built. Josh or Cayden signs off on the segment before anything is pulled.",
     skill: "the client's lead pull skill (parlay-lead-pulls, culture-fits-lead-pulls, techevo-lead-pulls, goliath-lead-pulls, salesglider-lead-pulls) plus the latest client call in Fireflies",
     // The recipe is the signed-off segment; `trigger` checks a recipe exists for the lane before a run opens.
     pipeline: ["trigger"],

@@ -51,6 +51,18 @@ describe("getleads filters — D34", () => {
     assert.throws(() => assertGetleadsFilters(bands({ company_size_min: 11 })), /band overlap/);
   });
 
+  it("D82 — exact titles become lower(current_title) IN and drop job_titles", () => {
+    const out = outboundFilters(bands({ exclude_job_titles: ["Intern"] }));
+    assert.equal(out.where_sql, "lower(current_title) IN ('it director') AND lower(current_title) NOT IN ('intern')");
+    assert.equal("job_titles" in out, false);
+    assert.equal("exclude_job_titles" in out, false);
+    const quoted = outboundFilters({ job_titles: ["Head of People's Ops"] } as GetleadsFilters);
+    assert.equal(quoted.where_sql, "lower(current_title) IN ('head of people''s ops')");
+    const sub = outboundFilters(bands({ title_match: "substring" }));
+    assert.deepEqual(sub.job_titles, ["IT Director"]);
+    assert.equal("where_sql" in sub, false);
+  });
+
   it("maps job_function to job_functions for export and keeps seniority", () => {
     const filters = {
       job_function: "Operations",

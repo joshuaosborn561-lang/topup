@@ -40,6 +40,9 @@ const schema = z.object({
   /** AI Ark People Preview. Empty means count(source="ai_ark") says so instead of counting. */
   AI_ARK_TOKEN: z.string().default(""),
   AI_ARK_PREVIEW_URL: z.string().default("https://api.ai-ark.com/api/developer-portal/v1/people/preview"),
+  /** Prospeo search-person count (D83). Empty means count(source="prospeo") says so instead of counting. */
+  PROSPEO_API_KEY: z.string().default(""),
+  PROSPEO_SEARCH_URL: z.string().default("https://api.prospeo.io/search-person"),
   /** Smartlead server on Railway (import, post-import). It has no inbound auth today; the token slot is for when it does. */
   SMARTLEAD_MCP_URL: z.string().default(""),
   SMARTLEAD_TOKEN: z.string().default(""),
@@ -65,6 +68,17 @@ const schema = z.object({
   ICP_JEV_MODEL: z.string().default("typesafe/jev-1.13"),
   SITE_PEOPLE_KEY: z.string().default(""),
   SITE_PEOPLE_GEMINI_MODEL: z.string().default("gemini-3.1-flash-lite"),
+  SITE_PEOPLE_FETCH_PARALLEL: numberWithDefault(2),
+  SITE_PEOPLE_FETCH_WORKERS: numberWithDefault(25),
+  SITE_PEOPLE_FETCH_PER_CALL: numberWithDefault(50),
+  SITE_PEOPLE_FETCH_PER_HOST: numberWithDefault(2),
+  SITE_PEOPLE_EXTRACT_PARALLEL: numberWithDefault(4),
+  SITE_PEOPLE_EXTRACT_WORKERS: numberWithDefault(7),
+  SITE_PEOPLE_EXTRACT_PER_CALL: numberWithDefault(28),
+  SITE_PEOPLE_ASK_PARALLEL: numberWithDefault(4),
+  SITE_PEOPLE_ASK_WORKERS: numberWithDefault(7),
+  SITE_PEOPLE_ASK_PER_CALL: numberWithDefault(28),
+  SITE_PEOPLE_GEMINI_RPM: numberWithDefault(200),
 
   /** Poll cadence and patience for the vendor jobs. */
   JOB_POLL_SECONDS: numberWithDefault(30),
@@ -122,6 +136,7 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     wizard: Boolean(cfg.WIZARD_HEALTH_URL),
     getleads: Boolean(cfg.GETLEADS_MCP_URL),
     ai_ark: Boolean(cfg.AI_ARK_TOKEN),
+    prospeo: Boolean(cfg.PROSPEO_API_KEY),
     smartlead: Boolean(cfg.SMARTLEAD_MCP_URL),
     maps: Boolean(cfg.MAPS_MCP_URL),
     permits: Boolean(cfg.PERMITSTACK_MCP_URL),

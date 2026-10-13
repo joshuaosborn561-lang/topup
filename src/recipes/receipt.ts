@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ASK, isOwnerApprover } from "../policy/rules.js";
 
 /**
  * A pull receipt (D31–D33). Claude writes one after a first list; this
@@ -154,10 +155,13 @@ export function companyFiltersFromSource(source: {
   return {};
 }
 
-/** Backfill rows that say "Josh to confirm" are for proposals only. */
+/** Notes that mean a backfill filter set is still waiting on a named owner. */
+export const AWAITING_CONFIRM_NOTES = /(?:josh|cayden) to confirm/i;
+
+/** Backfill rows that say "Josh to confirm" or "Cayden to confirm" are for proposals only. Either may confirm (D92). */
 export function receiptConfirmed(r: Pick<PullReceipt, "owner_confirmed_at" | "notes">): boolean {
   if (r.owner_confirmed_at) return true;
-  return !/josh to confirm/i.test(r.notes ?? "");
+  return !AWAITING_CONFIRM_NOTES.test(r.notes ?? "");
 }
 
 /**
@@ -171,6 +175,13 @@ export function receiptNeedsRecount(r: Pick<PullReceipt, "written_by" | "tam_cou
 /** TAM to print on a proposal. Null means recount first; never use rows_found. */
 export function proposedTam(r: PullReceipt): number | null {
   return receiptNeedsRecount(r) ? null : r.tam_count;
+}
+
+/** Josh or Cayden may stamp owner_confirmed_at. Anyone else is refused (D92). Does not run the write. */
+export function confirmFiltersApprover(approvedBy: string | null | undefined): { ok: true; by: string } | { ok: false; error: string } {
+  const by = (approvedBy ?? "").trim();
+  if (!isOwnerApprover(by)) return { ok: false, error: `confirm_filters needs Josh or Cayden. ${ASK}` };
+  return { ok: true, by };
 }
 
 export type YieldPick = { receipt: PullReceipt; imported: number; found: number };

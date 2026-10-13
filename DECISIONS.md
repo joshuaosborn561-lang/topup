@@ -82,16 +82,42 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D60 | Live; the ICP website gate is a verb between suppress and enrich: our own site fetch, Jev picks a category, DiscoLike on unreadable sites; verdict written on the rows, flagged rows suppressed with a reason; label set per client in `topup.icp_variants`; keys in Railway |
 | D61 | Live; maps pull insert into `lp.<tag>_ingested_leads` is idempotent on email (`already_held`); `pull` returns the job id and runs in the background; nothing opens as the watch |
 | D62 | Live; a background maps pull always ends done or failed with `last_error`; the copy reads the named ICP view (not the companion join), times out, and dedupes with or without a unique email index |
-| D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). That PR writes the live D63 text. This stub keeps the ledger contiguous so D64 can ship off main |
+| D63 | Reserved for PR #40 (`cursor/suppress-client-inbox-a879`). Six-month expiry in that stub is superseded by D81 |
 | D64 | Live; job 46b1c941: enrich approval runs the paid people step; a step that did not run is not done; ICP labels are tokens; spend cards re-quote and record actuals; maps used/net-new includes ingested + contacted; lp_export reads the wrapped payload; verify retry uses the recorded approval and does not park; `size` is the free dry-run; maps pull skips held emails before max_rows |
 | D65 | Live; job 46b1c941 after #42: size is async + aggregate SQL; approval is idempotent per step/approver/amount; QA hold count is this job; a false done with queued rows is reopened; Lane E role-inbox company from Maps name; first_name_fallback defaults off |
 | D66 | Live; job 46b1c941 after #43: people/email waterfalls read an ingest `_ew` view that exposes `domain` from `company_domain`; a done step reopens when its `rules_hash` changed or `force=true`. Runtime CREATE VIEW in `lp` superseded by D67 |
 | D67 | Live; job 46b1c941 after #44: no runtime DDL — people/email waterfalls read `topup.<tag>_ingested_leads_ew` from one-time migration 0021; normalize fills company from `maps_raw.name` joined on email; ingest coalesces company/name/title |
 | D68 | Live; job 46b1c941 after #45: hold and fill share `company_n`; maps city is parsed from `City, ST`; lane E ICP re-applies `main_category` and drops preschool–high school (reverses D59's no-reapply) |
 | D69 | Live; job 46b1c941 after #46: a step reopen replaces counts (stale held_company_n / company.missing cannot survive); size pool binds start at $11 so categories do not collide with $2::int[] |
-| D70 | Reserved for PR #49 (`cursor/size-param-type-74ac`). That PR writes the live D70 text. This stub keeps the ledger contiguous so D71 can ship off main |
+| D70 | Live; size() after D69: the suppress CTE types `$1::text` so Postgres can type the first slot after the $11/$12 shift (size_id 33e8f595) |
 | D71 | Superseded by D72 for the people half: the `owners` question (Jev judging names a store already held) is gone; the `icp` question stands as written. `topup.site_check_people` was never written; dropping it is Josh's call |
 | D72 | Live; `site_check("people", …, looking_for?)` crawls each company's homepage and people pages, has Gemini (Josh's key) list every person the site presents, and asks Jev which of them is `looking_for` (default: the owner, or the person who runs the company); sites, people and answers are kept per domain (`topup.site_people_text`, `site_people`, `site_extractions`, `site_answers`); the people found are rows of the view `topup.site_people_found` a table pull reads; estimate first, a name runs it; nothing on the rows changes; a name never returns to the service |
+| D73 | Live; `site_check(people)` fetch / extract / ask fan out (~50 fetch workers, 2 per host; ~28 Gemini and ~28 Jev; backoff on 429/5xx; Gemini RPM limiter 200). Env and tool params override. A deploy does not resume the loop — Topup calls the same verb again; already-extracted and already-answered domains are skipped. Nothing starts on boot (D5). The Gemini ceiling is still unchecked × the table |
+| D74 | Live; getleads `count`/`held` map every stored key (official industry names, `company_description`, `purged_titles` → `exclude_job_titles`) and fail on an unmapped key; `filters_used` is what was applied; `campaign_record` stamp counts are this campaign; `held` `net_new` is the pool minus held (sends / live / suppressed) |
+| D75 | Live; `build_record` is a read-only read of `topup.list_build_records` (narrative, receipt_ids, campaign ids, transcript path) plus an optional paged transcript from private Storage `list-build-transcripts`; operators read the narrative first, transcript for edge cases; receipts stay the at-a-glance source of record; no DDL, no write, no spend |
+| D76 | Live; size the whole usable pool first and present all usable leads with full cost; the approver cuts by cost; a job still pulls 1 to 2,000 |
+| D77 | Live; VALID email is a quality filter, not a TAM cap; count all email statuses; TAM = receipt filters minus email_status; verify after with MillionVerifier then No2Bounce |
+| D78 | Live; TAM cross-check GetLeads then AI Ark and Prospeo on a matched basis; within 10% TAM is right; more than 10% apart means switch source (not widening). Prospeo count is live (D83). AI Ark exact-title mode is live (D82) |
+| D79 | Live; take a ~50-person overlap sample of the second source against GetLeads / held |
+| D80 | Live; held / contacted / suppressed subtraction is an exact full-list join, never a sampled page (qualifies D74) |
+| D81 | Live; leftover AI runner is D90; suppression is real unsubscribes only, permanently, per client; 6-month expiry is out (supersedes D63); not-interested is not suppressed; classify Smartlead negatives (text/category first); views use unsubscribe class only; suppress/count/size/held = per-client unsubs + hard bounces (pending Josh) + DNC list; sender column kept; never unsuppress in Smartlead |
+| D82 | Live; GetLeads titles exact-match by default (`lower(current_title) IN`); substring only when the receipt says so; AI Ark counts use STRICT exact-title mode |
+| D83 | Live; count(source=prospeo) is page 1 of search-person (1 credit, pagination.total_count); no-result and 30-day repeats free; ~1.5¢/credit; needs approved_by; industries mapped to official names with inexact flags; honors D84 receipt keys |
+| D84 | Live; count honors max_per_company, industries_by_campaign, over_1k_campaign on every source including prospeo (qualifies D43 / D74) |
+| D85 | Live; local-business owner finder: site_check people (owner by default), then email waterfall, then generic inbox fallback (info@ / office@, not support@ / payroll@) |
+| D86 | Live; read list_build_records (narrative first, transcript for edge cases) before sizing or rebuilding (same as D75) |
+| D87 | Live; a method Josh settles in chat is written into CANON.md and DECISIONS.md so every operator's bot follows it |
+| D88 | Live; no self-initiated runs on weekends or 8pm–6am CT unless Josh or Cayden asks live |
+| D89 | Live; Cayden has full authority over the top-up service and the canon |
+| D90 | Live; leftover-negative AI is classify_leftover: Jev on the existing OpenRouter path (vault openrouter_api_key / ICP_JEV_MODEL, same as icp-llm); key path is D91; fixed prompt (stop/remove = unsubscribe, anything else = not_interested, no body stays unclassified); approved_by; estimate first; $0.05 hard cap; source=ai; idempotent |
+| D91 | Live; leftover AI reads the existing OpenRouter secret via topup.jev_openrouter_key() (security definer); the service never SELECTs vault.decrypted_secrets; leadtopup_app is not granted on schema vault |
+| D92 | Live; Cayden is a full approver equal to Josh on paid steps and backfill-filter confirmation; awaiting_owner (awaiting_josh still works); industries_by_campaign bucket keys resolve from the campaign name; icp_gate is receipt meta; stamps stay on the registry lane |
+| D93 | Live; site_owners count and pull are job-scoped; never the shared owner view; batch-as-attach-key superseded by D94; industries_by_campaign buckets come from the stored map; lane-mismatch retag is generic |
+| D94 | Live; site_owners scopes by the job's place_id or normalized domain, not the site_people_text batch; cached owners on this job's businesses belong to the job |
+| D95 | Live; replay the hand search (read record → same search → exact held join → net new + cost → pull/verify/stage on approval); hide stamps / lane meta / key formats / sampling from callers; filters_applied lists every filter that ran; held never samples or falls back to a lane total; no per-client constants or canon steps |
+| D96 | Live; build transcript / narrative is the source of truth for how a list was built; a backfilled receipt that disagrees or is thinner is corrected to match (a backfill fix, not widening); generic diff then --apply; skip registry lane unassigned and never retag onto or off it |
+| D97 | Live; held returns a held_id and runs the free GetLeads pool export in the background; every split export_id is polled; a miss names its class (timeout / export_failed / fair_use / count_timeout / paid_export); never a paid export |
+| D98 | Live; held is every lead this client already has (lead store, Smartlead history and mirror, sends, provenance, plus suppressions); match by email, else LinkedIn URL, else normalized name+company; generic exact join (D80); net new splits has_email vs needs_enrich |
 
 ---
 
@@ -2471,14 +2497,27 @@ table should stay a soft zero.
 
 **Guard.** `src/guards/d69_hold_recompute_size.test.ts`. Ask Josh.
 
-## D70 — `size()` `$1` type after the `$11`/`$12` shift (reserved)
+## D70 — Size types `$1` after the `$11` shift
 
-**Decision.** Reserved for PR #49 (`cursor/size-param-type-74ac`). That
-PR owns D70 (typing `size()`'s `$1` after D69 moved the pool binds).
-This stub exists so D71 can land on a branch off main without a gap in
-the ledger. Do not implement D70 here.
+**Decision.** After D69 shipped (`7b6d2a7`), `size()` on the
+strict ICP path failed: `could not determine data type of
+parameter $1` (`size_id` `33e8f595`). Recycle SQL uses `$2`–
+`$10`. Pool `$1` / `$2` shift to `$11` / `$12`. `$1` then
+never appeared in the query. Postgres still requires a type
+for `$1` when `$2` is used (same class of failure as D59).
+The suppress CTE now selects `$1::text as plan_id`. The
+value is the same plan id already in params[0]. A PGlite
+test runs `size()` end to end on the companion ICP path.
 
-**Why.** #49 is open and unmerged. Meta requires contiguous numbers.
+**Why.** D69 fixed the `$2` collision and then left `$1`
+unused. Live size on lane E died in the suppress pass.
+
+**Tradeoff.** `plan_id` is bound twice (`$1` and `$11`).
+That is cheaper than renumbering recycle SQL. Ask Josh
+before dropping the dummy `$1`.
+
+**Guard.** `src/guards/d70_size_typed_param.test.ts` and
+`src/canon/size.pg.test.ts`. Ask Josh.
 
 ## D71 — The website checker is a verb: `site_check`, two questions
 
@@ -2612,3 +2651,562 @@ a client should be small and checked against the real sites, as
 
 **Guard.** `src/guards/d72_site_people.test.ts` (replaces the D71
 guard); unit tests in `src/canon/siteCheck.test.ts`. Ask Josh.
+
+## D73 — `site_check(people)` fans out; a deploy resumes by the same verb
+
+**Decision.** The people loops were three fetch invocations and one
+extract / ask invocation at a time, about 260 extracts per 30 minutes.
+That cannot finish ~3,300 remaining EMCOR sites in 10–15 minutes. Fetch,
+extract and ask now take `parallel` × `workers` from Railway env (and
+optional tool params), defaults **2 × 25 fetch** (~50, **2 per host**),
+**4 × 7 Gemini** and **4 × 7 Jev** (~28 each), Gemini RPM limiter
+**200**. 429 / 5xx retry with exponential backoff and jitter. The
+`site-people` edge function claims extract and ask rows (`FOR UPDATE
+SKIP LOCKED` / an `in_progress` extraction), so fan-out cannot
+double-pay. ICP fetch stays three-wide; ICP grade stays one-wide (it
+still does not claim).
+
+A Railway deploy restarts the container and kills the in-flight HTTP
+call. **Nothing starts on boot** (D5). Topup resumes with the same
+verb, same scope, same `looking_for`, and `approved_by`:
+
+`site_check(question="people", client_tag="emcor", table="client_emcor.owner_netnew_20261010", approved_by="Josh")`
+
+The batch id is stable per scope. Stale `http_status = -1` claims
+older than two minutes, and stale `in_progress` extractions older than
+three, are released. Domains already in `site_extractions` (no error)
+or `site_answers` (this question, no error) are skipped and not paid
+again. The Gemini worst-case quote is still `unchecked ×` the price
+table (D51, D72). No parked job.
+
+**Why.** Josh, 10 Oct 2026, live: remaining ~3,300 sites in 10–15
+minutes (~4–5 / sec). Official Gemini 3.1 Flash-Lite RPM / TPM are not
+published (AI Studio only; a models/quota read would need the key).
+Community free-tier figures are 15 RPM / 250k TPM / 500 RPD — that
+cannot hit the target, so the limiter assumes a paid key. Paid
+Flash-Lite Tier 1 has historically been 4,000 RPM / 4M TPM; 200 RPM
+sits under that. 28 in-flight at 6–8 s/call is about 3.5–4.7 sites/sec
+on extract; ask is the same after. Sequential extract-then-ask on
+~2,500 remaining is about 12–16 minutes if Gemini stays that fast.
+Supabase edge: 150 s idle timeout, 400 s paid wall clock, 2 s CPU, no
+documented project-wide concurrency cap; one DB connection per
+invocation. Peak is four extract connections, well under the project's
+60.
+
+**What it does not do.** It does not auto-resume on boot. It does not
+change the ICP loops' defaults. It does not lower or raise the Gemini
+ceiling. It does not scrape reviews or call a paid vendor for the
+owner-name pilot.
+
+**Tradeoff.** Higher fan-out can 429; backoff handles that. Per-host
+2 is polite and costs little because each domain is its own host. A
+free-tier Gemini key cannot make the 10–15 minute bar — say so and
+stop.
+
+**Guard.** `src/guards/d73_site_people_concurrency.test.ts`; unit
+tests in `src/stages/icp/loops.test.ts`, `src/lib/backoff.test.ts`,
+`src/canon/siteCheck.test.ts`. Ask Josh.
+
+## D74 — getleads count maps every stored key; stamps are this campaign
+
+**Decision.** `count` and `held` were silently dropping stored getleads
+filters. `industryNames` threw away any value with a comma, so
+`Transportation, Logistics, Supply Chain and Storage` vanished while
+`Truck Transportation` stayed; sent alone the comma form is not a
+getleads industry and the vendor ignores it. `company_description` and
+`purged_titles` never left the receipt. A BCP PE count then looked like
+every US partner.
+
+Every stored key now maps or the parse fails. Official industry names
+come from `get_available_values` field=industries (2026-10-10, 0
+credits): getleads uses semicolons where LinkedIn stores commas.
+`purged_titles` is `exclude_job_titles`. `company_description` is sent.
+`max_per_company` stays an export cap (D43) and is not in
+`filters_used`. `filters_used` is exactly `outboundFilters` — what
+`count_contacts` received. `industries_by_campaign` and other receipt
+meta fail with the key named.
+
+`campaign_record` `leads_by_label` and `leads_by_leg` count
+`topup.lead_provenance` rows whose email is on this campaign
+(`public.leads` × `public.campaigns.smartlead_campaign_id`). A shared
+build label is not one number for every twin.
+
+`held` `net_new` is `max(0, tam - held)`. `held` is the share of this
+pool already on this client's 90-day sends, live campaigns, or
+`public.suppression` (sample scaled when the export page is shorter
+than the pool). The note says that. The old line "The client total was
+not subtracted" is gone — that total is not the held figure, and the
+pool overlap is subtracted.
+
+**Why.** Josh, 10 Oct 2026, BCP sizing test: three silent count bugs.
+Counts only.
+
+**What it does not do.** It does not send `max_per_company` to
+`count_contacts` (D43). It does not invent an industry. It does not
+SELECT a lead row.
+
+**Tradeoff.** A stale official-industry snapshot fails an industry
+getleads added after 2026-10-10 — say so and ask Josh, do not drop it.
+
+**Guard.** `src/guards/d74_count_filters.test.ts`; unit tests in
+`src/jobs/filters.test.ts`, `src/canon/count.test.ts`,
+`src/canon/held.test.ts`, `src/canon/record.test.ts`,
+`src/builds/tags.test.ts`. Ask Josh.
+
+## D75 — operators read the build record before sizing or pulling
+
+**Decision.** `topup.list_build_records` and the private Storage bucket
+`list-build-transcripts` already exist on campaignintelligence
+(`azpapwtnrbzywlnxxecz`). The service exposes them as a read:
+`build_record(client_tag, campaign_id)`. It returns the matching rows
+(narrative, receipt_ids, campaign ids, transcript path) and, when asked,
+pages the transcript text (`fetch_transcript` or `offset`/`limit`;
+default 12,000 characters, max 24,000). Operators read the narrative
+first and fetch the transcript only for an edge case. Receipts
+(`campaign_record`) stay the at-a-glance source of record.
+
+The call is read-only. No DDL. No write. No spend. A missing table
+fails and asks Josh. A transcript path that is not on a matching row
+is refused. The path is a storage object name, never a signed URL.
+Cold-call campaigns are ignored (D54).
+
+**Why.** Josh, Saturday 10 Oct 2026, 6:06pm CT: the write-ups and
+transcripts are how a list was actually built; Grok was sizing from
+receipts alone.
+
+**What it does not do.** It does not CREATE / DROP / ALTER. It does
+not insert or update `list_build_records`. It does not upload to
+Storage. It does not open a job. It does not return a lead row.
+
+**Tradeoff.** A 2 MB transcript is paged, not dumped. The official
+industry / filter facts still live on the receipt.
+
+**Guard.** `src/guards/d75_build_record.test.ts`; unit tests in
+`src/canon/buildRecord.test.ts`. Ask Josh.
+
+## D76 — Size the whole usable pool; the approver cuts by cost
+
+**Decision.** Size the whole usable pool first and present every usable
+lead with the full cost. Do not stop at one 2,000-row batch. A job
+still pulls 1 to 2,000 (D52, D54). The approver cuts the pool by cost.
+
+**Why.** Josh, 12 Oct 2026, live: the 2,000 cap is a pull size, not a
+size ceiling.
+
+**What it does not do.** It does not raise `max_rows` past 2,000.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D77 — VALID is a quality filter, not a TAM cap
+
+**Decision.** Count every email status. TAM = the receipt filters with
+`email_status` removed. After the pull, verify with MillionVerifier
+then No2Bounce. VALID is a quality filter, not a cap on the TAM.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D78 — TAM cross-check: GetLeads, then AI Ark and Prospeo
+
+**Decision.** Count GetLeads first, then AI Ark and Prospeo on a
+matched basis: exact titles, ICP industries mapped to each vendor's
+official names, same headcount bands, all email statuses, same
+max-per-company cap, same post-pull gates. Within 10%: the TAM is
+right. More than 10% apart: GetLeads is the wrong source — source
+from the one that fits. Dropping VALID or switching source is not
+widening. Prospeo count and AI Ark exact-title mode: *code pending,
+follow-up PR*.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D79 — ~50-person overlap sample of the second source
+
+**Decision.** Take about 50 people from the second source and join
+them against GetLeads / held. Counts and ids only.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D80 — Held is an exact full-list join
+
+**Decision.** Held / contacted / suppressed subtraction is an exact
+full-list join. Never a sampled page. Qualifies D74's "sampled page"
+wording.
+
+**Why.** Josh, 12 Oct 2026, live. A page scaled to the pool was
+under-subtracting.
+
+**What it does not do.** The `held` verb's code is not rewritten in
+this PR (*docs only*; follow-up if the join is still a sample).
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D81 — Suppression is unsubscribes only, permanently, per client
+
+**Decision.** Suppression covers only real unsubscribes (explicit
+do-not-contact), permanently, per client. The 6-month expiry is out
+(supersedes D63). Not-interested and other negatives are not
+suppressed. Smartlead marks all negatives as do-not-contact, so they
+must be classified (unsubscribe vs `not_interested`) and backfilled —
+*code pending, follow-up PR*. Hard bounces stay blocked pending Josh
+(open question). Never unsuppress anything in Smartlead itself.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D82 — Title filters are exact match (code pending)
+
+**Decision.** GetLeads title filters use exact match by default
+(substring only if the receipt says so). AI Ark counts use an
+exact-title match mode. *Code pending, follow-up PR.*
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D83 — Prospeo count source (code pending)
+
+**Decision.** Prospeo count: page 1 of search-person = 1 credit and
+returns `pagination.total_count`. No-result and 30-day repeat
+searches are free. About 1.5 cents per credit; needs `approved_by`.
+Map industries to Prospeo's official names and flag inexact
+mappings. *Code pending, follow-up PR.*
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D84 — Count honors stored receipt keys (code pending)
+
+**Decision.** Count honors `max_per_company`, `industries_by_campaign`
+and `over_1k_campaign` when the receipt carries them. Qualifies D43
+(export-only `max_per_company`) and D74 (fail-loud mapping). *Code
+pending, follow-up PR.*
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D85 — Local-business owner finder
+
+**Decision.** For a local-business / physical list: `site_check("people")`
+(owner by default), then the email waterfall on the people found,
+then the generic inbox fallback (`info@` / `office@`, not `support@`
+/ `payroll@`).
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D86 — Read the build record before sizing or rebuilding
+
+**Decision.** Operators read `list_build_records` (narrative first,
+transcript for edge cases) before sizing or rebuilding a list. Same
+read as D75; this entry restates it as a sizing gate.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D87 — Chat method decisions land in the canon
+
+**Decision.** A method Josh settles in chat is written into `CANON.md`
+and `DECISIONS.md` in the same PR so every operator's bot follows it.
+A new rule is still a new decision (D-meta).
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D88 — No self-initiated runs nights or weekends
+
+**Decision.** Nothing starts on its own on a weekend or from 8pm to
+6am CT unless Josh or Cayden asks live. Daytime still follows D51
+(nothing starts on its own; Grok calls the next verb).
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D89 — Cayden has full authority
+
+**Decision.** Cayden has full authority over the top-up service and
+the canon: he can change, use or direct it however he wants.
+
+**Why.** Josh, 12 Oct 2026, live.
+
+**Guard.** `src/guards/d76_ops_rules.test.ts`. Ask Josh.
+
+## D90 — Leftover-negative AI runner
+
+**Decision.** The leftover Smartlead negatives that text and category
+could not class are classified by Jev on OpenRouter Decisions — the
+same provider and vault secret (`openrouter_api_key`) that `icp-llm`
+and `site_check` already use, model `ICP_JEV_MODEL`. No new vendor
+and no new Railway key. The verb is `classify_leftover(approved_by?)`.
+The prompt is fixed: an explicit request to stop or remove is
+`unsubscribe`; anything else is `not_interested`; no inbound body
+stays unclassified and is not sent. The first call is the estimate
+(Jev grade unit price). `approved_by` runs it through
+`SpendRails.gate`. Hard cap $0.05; over that is refused. Writes
+`negative_class` and `negative_class_source='ai'` only where the
+class is still null (idempotent). Counts only; bodies never return.
+Nothing is unsuppressed in Smartlead. Nothing writes `dl_status`,
+`sg_exclude`, or `skip_*`.
+
+**Why.** Josh, 12 Oct 2026: approved the ~1¢ leftover AI sort after
+D81 text/category backfill left 55 unclassified. The dry-run audit
+does not run AI; this verb does.
+
+**What it does not do.** It does not add OpenRouter or Jev as a new
+vendor. It does not change icp-llm. It does not classify an empty
+body. It does not overwrite a class. It does not run without a name.
+
+**Guard.** `src/guards/d90_leftover_ai.test.ts`. Ask Josh.
+
+## D91 — Leftover AI key is the definer function
+
+**Decision.** `classify_leftover` reads the existing OpenRouter secret
+through `topup.jev_openrouter_key()` (security definer, execute granted
+to `leadtopup_app`). The service never SELECTs `vault.decrypted_secrets`.
+`leadtopup_app` is not granted USAGE on schema vault and is not granted
+SELECT on `vault.decrypted_secrets`. A direct vault SELECT from the
+Railway role fails (`permission denied for schema vault`, then
+`permission denied for function _crypto_aead_det_decrypt`). The secret
+is still `openrouter_api_key`, the same one icp-llm uses. No new vendor
+and no new Railway key. The key is cached for the process. The verb
+returns `last_error` (message only, never a body) when a leftover fails.
+
+**Why.** Josh, 12 Oct 2026: run the leftover AI on the 55 after #59
+deployed. Production `6c56390` classified 0 of 52: the app role cannot
+decrypt vault. The definer function returns a key (`key_ok`).
+
+**What it does not do.** It does not grant vault to the app. It does
+not put the key in Railway. It does not change icp-llm. It does not
+log the key or a body.
+
+**Guard.** `src/guards/d91_leftover_ai_key.test.ts`. Ask Josh.
+
+## D92 — Cayden is a full approver equal to Josh
+
+**Decision.** Cayden approves paid steps and confirms backfilled
+filters the same as Josh. `ASK` is "Ask Josh or Cayden." Owner cards
+wait on "Josh or Cayden". Run status `awaiting_owner` is the write;
+`awaiting_josh` still counts as waiting on an owner. Step 1 of the
+spine names both. `confirm_filters(receipt_id, approved_by)` stamps
+`owner_confirmed_at` when the name is Josh or Cayden; it does not
+rewrite filters and this PR does not stamp any receipt.
+
+Stored `industries_by_campaign` may use campaign ids or bucket names
+(`healthcare`, `logistics`). Count and held resolve a bucket from the
+campaign name. Receipt-only keys such as `icp_gate` are stripped so
+held/count do not fail them as unmapped. A receipt or
+`campaign_builds` row whose lane does not match the campaign's
+registry lane is not attached to that campaign.
+
+**Why.** Josh, 12 Oct 2026, live. D89 already gave Cayden authority;
+the service still asked only Josh, keyed BCP IT industries as
+`healthcare`/`logistics` instead of campaign ids, and `held()` failed
+on those keys and on PE `icp_gate`. The BCP PE SEG campaign (3897344)
+showed 576 leads stamped `getleads_bcp_u50_expansion_20260903` /
+`it_dm_airpods` because `stamp_provenance` and `campaign_ids = any()`
+attached an IT build to PE campaigns.
+
+**What it does not do.** It does not confirm any backfill row. It does
+not run the PE/IT retag script until merge (`--apply`).
+`campaign_builds` is a view; the script never writes it. It does not
+unsuppress, and it does not write `dl_status`, `sg_exclude`, or
+`skip_*`. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d92_cayden_approver.test.ts`. Ask Josh or Cayden.
+
+## D93 — Job-scoped owner count and pull
+
+**Decision.** site_check people stay tied to the job that found them.
+`count(source="site_owners", job_id)` is the free dry-run;
+`pull(job_id, source="site_owners")` attaches first_name / last_name /
+title on that job's ingest rows. Scope is this job's ingest rows ∩
+this job's `site_people_text` batch, keyed by place_id. It never opens
+a job, never reads `topup.site_people_found` or a client owner table,
+and does not abort or rewind the job.
+
+`industries_by_campaign` keys are campaign ids or any non-id token on
+the stored map. Resolve by id first, then by a word-boundary match of
+a stored key against the campaign name. No bucket list is hardcoded.
+
+The lane-mismatch fixer is generic: any `client_tag`, dry-run first,
+`--apply` writes. A receipt drops `campaign_ids` whose registry lane
+differs from the receipt lane. A provenance row whose email appears
+on exactly one registry lane that differs from its stamp is retagged
+to that lane. `campaign_builds` is a view; the script never writes it.
+Never writes `dl_status`, `sg_exclude`, or `skip_*`.
+
+**Why.** Josh, 12 Oct 2026, live. site_check answers are cached per
+domain, so a later job can count owners that live in another job's
+batch. A table pull of the shared view crossed clients. The retag
+script was named for one client and one pair of lanes. Bucket-key
+comments used named industries instead of the stored map.
+
+**What it does not do.** It does not abort or rewind a live job. It
+does not attach owners from another batch. It does not invent a
+bucket list. It does not write `campaign_builds`. It does not
+unsuppress. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d93_job_scoped_owners.test.ts`. Ask Josh or Cayden.
+
+## D94 — Owners attach by the job's places, not the text batch
+
+**Decision.** `count(source="site_owners", job_id)` and
+`pull(job_id, source="site_owners")` scope by this job's ingest rows:
+`place_id` or normalized domain. Owners cached by an earlier
+`site_check` on those same businesses belong to the job. An owner
+whose domain or place is not on this job does not attach. The
+`site_people_text` batch is not the attach key. It never reads
+`topup.site_people_found` or a client owner table, and never another
+job or client. It does not abort or rewind the job. This qualifies
+D93's batch-intersection.
+
+**Why.** Josh, 12 Oct 2026, after D93. Answers are cached per domain,
+so an earlier check on the same business can live under another
+batch. Those owners still belong to this job. The text batch is how
+`site_check` queued the crawl, not which businesses the job holds.
+
+**What it does not do.** It does not attach an owner whose domain or
+place is not on this job. It does not read the shared owner view. It
+does not open, abort or rewind a job. It does not invent a client
+recipe. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d94_job_place_owners.test.ts`. Ask Josh or Cayden.
+
+## D95 — Replay the hand search; hide internals
+
+**Decision.** The service exists to replay what a person did by hand.
+The caller flow is five steps: read the campaign's build record or
+receipt (exact filters, titles, industries, headcount, source); rerun
+that same search; subtract everything already held for that client
+with an exact full-list join; show net new plus cost; pull, verify
+and stage on a named approval.
+
+Caller-facing answers hide stamps, lane meta, key formats and
+sampling caps. `count` returns `filters_applied` with every filter
+that actually ran, including keys rewritten for the vendor
+(`where_sql`, a resolved `industries_by_campaign` bucket, omitted
+`email_status`). `filters_used` stays what the vendor received.
+`held` always does the exact full-list join of the exported
+pool to this client's unsubscribes, hard bounces and DNC
+list. A failed export is an error. It never samples and never falls
+back to a lane total. No per-client constants, no per-client canon
+steps, no client facts on this page.
+
+**Why.** Josh, 12 Oct 2026, live. The service had grown caller-visible
+internals so operators had to reason about bookkeeping instead of
+replaying the search. A held sample that failed used a lane total
+and reported net new of zero. A count applied a rewritten filter
+without listing it.
+
+**What it does not do.** It does not invent filters. It does not
+confirm a backfilled title set. It does not retag or skip a registry
+lane. It does not rewrite receipts. It does not duplicate job-scoped
+owner count/pull (D93, D94) or the generic lane-mismatch fixer. It does
+not unsuppress, and it does not write `dl_status`, `sg_exclude`, or
+`skip_*`. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d95_replay_hand_search.test.ts`. Ask Josh or Cayden.
+
+## D96 — Transcript is the source of truth; skip unassigned
+
+**Decision.** The matching `list_build_records` narrative or transcript
+is the source of truth for how a list was built. When a backfilled
+receipt disagrees with that source, or is thinner than it, correct
+the receipt's `company_filters` to match. That is a backfill fix, not
+widening. The corrector is generic: official getleads industries and
+size bands, explicit title lists, and title phrases the source names.
+Diff first. `--apply` writes `company_filters` (and a notes line)
+only.
+
+Registry lane `unassigned` is a parking lot, not a top-up lane. Skip
+it. The lane-mismatch script never retags stamps onto it or off it,
+and refuses `--from_lane` / `--to_lane=unassigned`. `pull` refuses a
+campaign registered on that lane. `campaigns` marks it `never_top_up`.
+
+**Why.** Josh, 12 Oct 2026, delegated to Cayden / Topup. A Sept backfill
+wrote thinner or different filters than the hand-search write-up.
+Replaying the receipt replayed the bad backfill. About 42k provenance
+stamps sit on a single campaign whose registry lane is `unassigned`;
+retagging them would write the parking lot onto the stamp.
+
+**What it does not do.** It does not invent a filter the source does
+not name. It does not insert a new receipt. It does not rewrite
+`how_i_did_it`. It does not place an industry on a bucket when no
+bucket key or campaign name sits next to it (that stays unplaced and
+asks). It does not retag or pull `unassigned`. It does not write
+`dl_status`, `sg_exclude`, or `skip_*`. It does not unsuppress. Josh
+still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d96_transcript_truth.test.ts`. Ask Josh or Cayden.
+
+## D97 — held is an async chunked free export
+
+**Decision.** `held` returns a `held_id` at once (`status` started) and
+is polled with `held(held_id)`, the same pattern as `size`. The GetLeads
+pool export is free (unlimited-plan credits, fair-use). The widest
+OR-list is halved into slices; every `export_id` from `exportOrSplit`
+is polled on its own deadline. A miss names its class: `timeout`,
+`export_failed`, `fair_use`, `count_timeout`, or `paid_export`. There
+is no sample and no lane-total fallback. `search_contacts` is 1
+credit/row and is never the held path. If the only remaining path is
+paid, refuse and quote the exact cost. Addresses stay in memory and
+never return.
+
+**Why.** Josh / Cayden / Topup, 12 Oct 2026, after #65. Two stacked
+misses: the GetLeads catalog dropped `email` (`work_email` is the
+column), so `export_contacts` refused the start; and `held` waited
+synchronously for 60s, polled only the first split id, and swallowed
+the error as a generic "could not export". That is a column miss plus
+a timeout, not a 50k row cap and not a paid-export gate. The MCP call
+died before the exact full-list join could finish, so net new could
+not be computed.
+
+**What it does not do.** It does not page `search_contacts`. It does
+not spend. It does not sample. It does not fall back to a lane total.
+It does not write `dl_status`, `sg_exclude`, or `skip_*`. It does not
+unsuppress. Josh still flips ACTIVE by hand (D5, D14).
+
+**Guard.** `src/guards/d97_held_chunked_export.test.ts`. Ask Josh or Cayden.
+
+## D98 — held is every lead this client already has
+
+**Decision.** `held` subtracts every lead this client already has, not
+only unsubscribes, hard bounces and the DNC list. The set is the lead
+store (`lp.<tag>_ingested_leads`, `client_<tag>.leads` / `contacts`,
+waterfall contacts), the Smartlead history and mirror (`public.leads`
+for this `smartlead_client_id`), staging for this client's campaigns,
+sends (via the mirror), past receipts and provenance
+(`topup.lead_provenance` for this `client_tag`), plus suppressions.
+Match by email. For a row with no email, match by LinkedIn URL or
+normalized name+company. Generic for every client. Exact full-list
+join (D80). The pool export carries identifier columns
+(`work_email`, `linkedin_url`, `first_name`, `last_name`,
+`company_name`). The answer splits net new as `has_email` vs
+`needs_enrich`. `maps_raw` is the scrape pool, not a held store.
+Qualifies D81's held line.
+
+**Why.** Josh / Topup, 12 Oct 2026, after #66. Healthcare IT 3921850
+showed 76 held of 4,643 against suppressions only, after about 2,228
+had already matched the client's loaded leads. The suppression-only
+set under-subtracted people already in any of that client's
+campaigns.
+
+**What it does not do.** It does not sample. It does not fall back to
+a lane total. It does not spend. It does not page `search_contacts`.
+It does not write `dl_status`, `sg_exclude`, or `skip_*`. It does not
+unsuppress. It does not change the suppress verb (still unsubscribes
+only). It does not treat `maps_raw` as held. Josh still flips ACTIVE
+by hand (D5, D14). Pulls stay held until a person says yes.
+
+**Guard.** `src/guards/d98_held_all_client_leads.test.ts`. Ask Josh or Cayden.

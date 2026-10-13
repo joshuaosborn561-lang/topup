@@ -40,13 +40,23 @@ The rules you apply:
 
 ## The loop (one campaign at a time)
 
+Replicate the hand search. Do not reason about stamps, lane meta, key
+formats, or sampling (D95).
+
 1. `campaigns(client_tag)`. Keep `passes_reply_bar: true` and
-   `never_top_up: false`. One line on the rest and why.
+   `never_top_up: false`. One line on the rest and why. Skip registry
+   lane `unassigned` — it is a parking lot, not a top-up lane (D96).
 2. `campaign_record(client_tag, campaign_id)`. Find the receipt or build
    that fed most of the leads (`rows_imported`, and `leads_by_leg`). Its
    four legs and its `company_filters` are the method. Read
    `how_i_did_it` and `notes`. `sources` tells you what a leg value means
    and how to repeat it. A missing leg or empty filters: ask Josh.
+   `build_record(client_tag, campaign_id)` is the operator write-up of
+   that same list. Read the narrative first. Fetch the transcript only
+   for an edge case (`fetch_transcript` or `offset`/`limit`; it can be
+   large). The transcript / narrative is the source of truth when a
+   backfilled receipt disagrees or is thinner (D96). Receipts stay the
+   at-a-glance source of record after that fix (D75).
    `leftovers(client_tag)` shows rows earlier pulls left in the stores
    (lane table, client schema, waterfall tables) as counts, and for each
    store the obvious gap: `need_domain`, `need_person`, `need_email`,
@@ -60,16 +70,27 @@ The rules you apply:
    site's people pages, has Gemini list everyone the site presents and
    asks Jev who is `looking_for` (the owner by default; say who you want
    in plain words: "the service manager", "the person who buys IT"). The
-   people found are rows of `topup.site_people_found`; the answer tells
-   you the `pull(source="table", …)` call that brings them into a job.
+   people found stay in `topup.site_answers` / `site_people`; the answer
+   tells you `pull(job_id, source="site_owners")` attaches them to this
+   job's businesses only (place_id or normalized domain). Cached owners
+   on those businesses belong to the job. Never pull the shared
+   view `topup.site_people_found` or a client owner table (D94).
    The first call is the estimate (about $0.11 per 1,000 for icp, about
-   $1.11 per 1,000 sites for people); a name runs it. Nothing on the
-   rows changes; you read the counts and say what you would do (D71,
-   D72).
+   $1.11 per 1,000 sites for people); a name runs it. A deploy does
+   not resume a running `people` check — call the same verb again with
+   the same `client_tag` / `table` (or `job_id`), the same
+   `looking_for`, and `approved_by`. Already-extracted and
+   already-answered domains are skipped. Nothing on the rows changes;
+   you read the counts and say what you would do (D71, D72, D73).
 3. `count(client_tag, source, filters)` with those filters. getleads is
-   free; `ai_ark` needs `approved_by`. BCP records keep industries per
-   campaign under `industries_by_campaign`; pass that campaign's list as
-   `industries`. Every other key stays as stored. Maps keeps `plan_id`
+   free; `ai_ark` and `prospeo` need `approved_by`. Honor `max_per_company`,
+   `industries_by_campaign` and `over_1k_campaign` when the receipt
+   carries them (D84). Pass `campaign_id` when the industries map names
+   more than one campaign. Every other getleads key
+   stays as stored and is mapped, or count fails (D74). Titles are exact
+   (`lower(current_title) IN`) unless the receipt says
+   `title_match=substring` (D82). AI Ark counts use STRICT unless that
+   same receipt key asks for substring.    `filters_applied` lists every filter that actually ran. Maps keeps `plan_id`
    and the categories list (D57); it never scopes by ZIP or `client_tag`
    alone.    Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
    when those exist. Companions that omit `plan_id` join `maps_raw`
@@ -82,11 +103,19 @@ The rules you apply:
    is the free dry-run of that pool plus suppression by reason. It
    returns a `size_id` at once; poll `size(size_id)` (D65). Pool
    binds are `$11` / `$12` so they do not collide with recycle `$2`
-   (D69). A normalize reopen replaces step counts; do not trust a
+   (D69). The suppress CTE types `$1::text` so `$1` is not unused
+   (D70). A normalize reopen replaces step counts; do not trust a
    leftover `held_company_n` from a prior hash.
-4. `held(client_tag, campaign_id, filters, tam)`. If `net_new` < 1,000:
-   *the TAM for this campaign is exhausted.* Stop there. If Josh asks for
-   options, give each option with its count.
+4. `held(client_tag, campaign_id, filters, tam)`. It returns a
+   `held_id` at once (`status` started). Poll `held(held_id)` until
+   done or failed. Held is every lead this client already has (lead
+   store, Smartlead history and mirror, sends, provenance, plus
+   suppressions), matched by email, else LinkedIn URL or normalized
+   name+company (D98). A failed export names its class; do not invent a
+   sample or a lane total. Net new splits `has_email` vs
+   `needs_enrich`. If `net_new` < 1,000: *the TAM for this
+   campaign is exhausted.* Stop there. If Josh asks for options, give
+   each option with its count.
 5. Tell Cayden or Josh: campaign, source, filters, count, net new, rows
    you will pull, worst-case cost. Wait for the yes.
 6. `pull(client_tag, campaign_id, source, filters, max_rows)`. It returns
@@ -107,7 +136,10 @@ The rules you apply:
    first; the service never CREATE VIEW).
 7. `import(job_id)` only when `loads_paused` is off and a person said so.
 8. `write_receipt(job_id, …)` with the four legs, the filters you used and
-   one plain sentence. The next top-up reads it.
+   one plain sentence. The next top-up reads it. A backfill row that still
+   says "Josh to confirm" or "Cayden to confirm" is a proposal until
+   `confirm_filters(receipt_id, approved_by)` stamps it. Pass Josh or
+   Cayden. Do not confirm it yourself.
 9. Post counts and ids: campaign, pulled, net new after suppression,
    sendable, staged, imported, spend by vendor, job id. Josh flips ACTIVE.
 
@@ -125,9 +157,9 @@ Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
 ## Allow list (you may call these)
 
 On this service (`leadtopup`, no login): `canon`, `campaigns`,
-`campaign_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
-`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `site_check`, `suppress`, `enrich`, `verify`,
-`normalize`, `qa`, `stage`, `import`, `write_receipt`, `abort`,
+`campaign_record`, `build_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
+`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `site_check`, `classify_leftover`, `suppress`, `enrich`, `verify`,
+`normalize`, `qa`, `stage`, `import`, `write_receipt`, `confirm_filters`, `abort`,
 `resolve`, `note`.
 
 On LeadPipe (Context Saver), for a CSV Josh hands you: `lp_plan`,
@@ -137,8 +169,9 @@ On LeadPipe (Context Saver), for a CSV Josh hands you: `lp_plan`,
 
 On Supabase: `COUNT`, `GROUP BY` over `topup.pull_receipts`,
 `topup.campaign_builds`, `topup.campaign_registry`, `topup.lead_provenance`
-by `build_label` and the four legs. Never SELECT `email`, `first_name`,
-`last_name`, `phone`, `linkedin_url`.
+by `build_label` and the four legs. `build_record` reads
+`topup.list_build_records` (narrative, ids, path). Never SELECT `email`,
+`first_name`, `last_name`, `phone`, `linkedin_url`.
 
 ## Ban list (you must not call these)
 

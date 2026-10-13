@@ -111,8 +111,9 @@ export function peoplePreviewBody(filters: GetleadsFilters, page = 0, size = 1):
   }
 
   if (filters.job_titles?.length) {
+    const titleMode = filters.title_match === "substring" ? "WORD" : "STRICT";
     contact.experience = {
-      latest: { title: { any: { include: { mode: "STRICT", content: [...filters.job_titles] } } } },
+      latest: { title: { any: { include: { mode: titleMode, content: [...filters.job_titles] } } } },
     };
   }
 

@@ -18,7 +18,7 @@ Write only on Supabase project `azpapwtnrbzywlnxxecz` (campaignintelligence), ta
 
 The lane row is the filter book. The build rows are the yield. When proposing a top-up, pick the **build with the best measured imported count**, not the method on the lane row.
 
-Until Josh confirms a backfill row (`owner_confirmed_at` set, or the notes no longer say "Josh to confirm"), **propose it, do not scale**.
+Until Josh or Cayden confirms a backfill row (`owner_confirmed_at` set, or the notes no longer say "Josh to confirm" / "Cayden to confirm"), **propose it, do not scale**. `confirm_filters(receipt_id, approved_by)` accepts either name (D92).
 
 If the latest receipt on the lane is `claude_backfill` or `claude_backfill_build`, **recount** (`count_contacts` or the Maps/permit company count) before proposing. Those rows have `tam_count` null and `rows_found` equal to the original export, not the pool. A blank `tam_count` is not TAM.
 
@@ -50,7 +50,7 @@ If you only have the export size, put it in `rows_found` and leave `tam_count` n
 
 ## getleads and physical filters
 
-**getleads `company_filters`:** titles, exact band labels, countries, industries (no commas), every email status (omit `email_status`; D35 item 15), and `export_caps.max_per_company` if you capped the export. Do not put `max_per_company` in the count filters.
+**getleads `company_filters`:** titles, exact band labels, countries, industries (official getleads names; LinkedIn commas map), `company_description`, `purged_titles`, every email status (omit `email_status`; D35 item 15), and `export_caps.max_per_company` if you capped the export. Do not put `max_per_company` in the count filters.
 
 **physical `company_filters`:** store the scrape recipe and the ICP slice separately.
 

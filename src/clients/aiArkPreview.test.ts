@@ -43,6 +43,11 @@ describe("AI Ark People Preview", () => {
     const contact = built.body.contact as { experience: { latest: { title: { any: { include: { mode: string; content: string[] } } } } } };
     assert.equal(contact.experience.latest.title.any.include.mode, "STRICT");
     assert.deepEqual(contact.experience.latest.title.any.include.content, ["CIO", "Director of IT"]);
+    const sub = peoplePreviewBody({ ...titles, title_match: "substring" });
+    assert.equal(sub.ok, true);
+    if (!sub.ok) return;
+    const subContact = sub.body.contact as { experience: { latest: { title: { any: { include: { mode: string } } } } } };
+    assert.equal(subContact.experience.latest.title.any.include.mode, "WORD");
   });
 
   it("maps Operations and Information Technology, and refuses an unmapped function", () => {

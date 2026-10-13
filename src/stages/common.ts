@@ -96,7 +96,7 @@ export async function attempt(d: StageDeps, run: RunRow, stage: Step, status: Ru
     if (afterBody) return afterBody;
     if (out.kind === "waiting") {
       await d.repo.setStepWaiting(run.run_id, stage, out.worstCaseCents ?? 0);
-      await d.repo.setRunStatus(run.run_id, out.on === "owner" ? "awaiting_josh" : "awaiting_operator", stage);
+      await d.repo.setRunStatus(run.run_id, out.on === "owner" ? "awaiting_owner" : "awaiting_operator", stage);
     }
     return out;
   } catch (err) {

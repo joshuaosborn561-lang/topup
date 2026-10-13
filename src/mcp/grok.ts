@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { campaignRecord, countSource, heldRead, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldDeps, type SizeRunner } from "../canon/index.js";
+import { buildRecord, campaignRecord, countSource, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldRunner, type SizeRunner } from "../canon/index.js";
 import type { Repo } from "../db/repo.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import type { Orchestrator } from "../orchestrator.js";
@@ -11,8 +11,12 @@ import { registryRows } from "../canon/registry.js";
 import { LEGACY_EMAIL_MAX_TIER_ALIASES, mapEmailMaxTier, mapPersonSource } from "../recipes/legacyLeadmagic.js";
 import { EMAIL_TIERS } from "../recipes/schema.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
+import { isUnassignedLane, UNASSIGNED_SKIP_NOTE } from "../canon/lanes.js";
 import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
+import { confirmFiltersApprover } from "../recipes/receipt.js";
 import { siteCheck, SITE_CHECK_QUESTIONS, type SiteCheckDeps } from "../canon/siteCheck.js";
+import { attachSiteOwners, countSiteOwners, refuseSharedOwnerTable, SITE_OWNERS_SOURCE, siteOwnersNeedJobId } from "../canon/siteOwners.js";
+import { classifyLeftover, type LeftoverAiDeps } from "../replies/leftoverAi.js";
 
 /**
  * The reads and the verbs for Grok bot (D52). Reads return what Supabase
@@ -26,14 +30,17 @@ export interface GrokDeps {
   orchestrator: Pick<Orchestrator, "abortRun">;
   jobs: JobRunner;
   count: CountDeps;
-  held: HeldDeps | null;
+  held: HeldRunner | null;
   size: SizeRunner;
   siteCheck: SiteCheckDeps;
+  leftoverAi: LeftoverAiDeps;
+  /** D75: GET a list-build-transcripts object. Path must already be on a matching row. */
+  readTranscript?: (path: string) => Promise<string>;
   by: string;
 }
 
-export const GROK_READS = ["campaigns", "campaign_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
-export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "abort"] as const;
+export const GROK_READS = ["campaigns", "campaign_record", "build_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
+export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "classify_leftover", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "confirm_filters", "abort"] as const;
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
 const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
@@ -54,10 +61,28 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "campaign_record",
     {
       description:
-        "How this campaign was pulled, as Supabase holds it: every receipt (company, domain, person and email sources, company_filters as stored, build label, method note, yield by step, segment, dates), the build rows, the stamped leads counted by label and by source leg, the registry row, lifetime sends and positives, the source vocabulary for the values seen, and the written notes. Read it, see where most of the leads came from, repeat that. No verdict, never a lead row.",
+        "How this campaign was pulled, as Supabase holds it: every receipt (company, domain, person and email sources, company_filters as stored, build label, method note, yield by step, segment, dates), the build rows, the stamped leads counted by label and by source leg for this campaign only (not twins sharing a build), the registry row, lifetime sends and positives, the source vocabulary for the values seen, and the written notes. Read it, see where most of the leads came from, repeat that. No verdict, never a lead row.",
       inputSchema: { client_tag: snake, campaign_id: z.number().int() },
     },
     async ({ client_tag, campaign_id }) => text(await campaignRecord(d.repo.raw(), d.repo, client_tag, campaign_id)),
+  );
+
+  server.registerTool(
+    "build_record",
+    {
+      description:
+        "The operator write-up of how this list was built, from topup.list_build_records: narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Receipts (campaign_record) stay the at-a-glance source of record. Pass fetch_transcript=true (or offset/limit) to page the transcript text from the private list-build-transcripts bucket — transcripts can be large. The path is a storage object name, never a file URL. Read-only; no spend.",
+      inputSchema: {
+        client_tag: snake,
+        campaign_id: z.number().int(),
+        fetch_transcript: z.boolean().optional().describe("Page the transcript text. Default off; read the narrative first."),
+        transcript_path: z.string().optional().describe("Required when the matching rows name more than one path."),
+        offset: z.number().int().min(0).optional().describe("Character offset into the transcript."),
+        limit: z.number().int().min(1).max(24_000).optional().describe("Characters to return. Default 12,000; max 24,000."),
+      },
+    },
+    async ({ client_tag, campaign_id, fetch_transcript, transcript_path, offset, limit }) =>
+      text(await buildRecord({ db: d.repo.raw(), readTranscript: d.readTranscript }, { client_tag, campaign_id, fetch_transcript, transcript_path, offset, limit })),
   );
 
   server.registerTool(
@@ -70,24 +95,50 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "count",
     {
       description:
-        "A count on one source with the filters you supply, as the record stores them: getleads (free), ai_ark (about five cents; needs approved_by), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
-      inputSchema: { client_tag: snake, source: z.enum(["getleads", "ai_ark", "maps", "permits"]), filters, approved_by: z.string().optional().describe("Name of the person who approved the paid call.") },
+        "A count on one source with the filters you supply, as the record stores them: getleads (free; exact titles by default via lower(current_title) IN, substring only when the receipt says title_match=substring; every stored key is mapped or the call fails; honors max_per_company, industries_by_campaign and over_1k_campaign (D84); filters_used is what the vendor received; filters_applied lists every filter that actually ran, including rewritten keys), ai_ark (about five cents; needs approved_by; exact-title STRICT unless the receipt asks for substring), prospeo (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs approved_by; industries mapped to Prospeo's official names with inexact flags; honors the same D84 receipt keys; search-person does not apply max_per_company so that count is uncapped), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly), site_owners (free dry-run of this job's site_check people: this job's ingest rows by place_id or normalized domain; cached owners on those businesses belong to the job; pass job_id; never reads the shared owner view). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
+      inputSchema: {
+        client_tag: snake.optional(),
+        source: z.enum(["getleads", "ai_ark", "prospeo", "maps", "permits", "site_owners"]),
+        filters,
+        campaign_id: z.number().int().optional().describe("Needed when industries_by_campaign names more than one campaign (D84)."),
+        job_id: z.string().optional().describe("Required for source=site_owners: the job whose places (place_id or normalized domain) are counted (D94)."),
+        approved_by: z.string().optional().describe("Name of the person who approved the paid call."),
+      },
     },
-    async ({ client_tag, source, filters: f, approved_by }) => text(await countSource(d.count, { client_tag, source, filters: f, approved_by: approved_by ?? null })),
+    async ({ client_tag, source, filters: f, campaign_id, job_id, approved_by }) => {
+      if (source === SITE_OWNERS_SOURCE) {
+        if (!job_id) return text({ error: siteOwnersNeedJobId() });
+        const looking = typeof f.looking_for === "string" ? f.looking_for : null;
+        return text(await countSiteOwners({ db: d.repo.raw(), repo: d.repo }, { job_id, client_tag: client_tag ?? null, looking_for: looking }));
+      }
+      if (!client_tag) return text({ error: "count needs client_tag." });
+      return text(await countSource(d.count, { client_tag, source, filters: f, campaign_id: campaign_id ?? null, approved_by: approved_by ?? null }));
+    },
   );
 
   server.registerTool(
     "held",
     {
       description:
-        "How much of a getleads pool the client already holds: a page of the pool is matched against what the client sent and its live campaigns, scaled to the tam you pass from count. Returns held and net_new with the method. Under 1,000 net new, the TAM for this campaign is exhausted.",
-      inputSchema: { client_tag: snake, campaign_id: z.number().int(), filters, tam: z.number().int().min(0), days: z.number().int().min(1).max(365).optional() },
+        "How much of a getleads pool the client already holds: every lead this client already has (lead store, Smartlead history and mirror, sends, provenance, plus suppressions), as an exact full-list join (D80, D81, D95, D97, D98). Match by email, else LinkedIn URL or normalized name+company. Never a sample and never a lane-total fallback. Returns a held_id at once (status started); poll held(held_id). The pool is a free chunked GetLeads export of identifier columns; every split id is polled. A failed export names its class (timeout, export_failed, fair_use, count_timeout, paid_export). Never a paid export. filters_applied lists every filter that ran. net_new is the pool minus that held count, split as has_email vs needs_enrich. Under 1,000 net new, the TAM for this campaign is exhausted.",
+      inputSchema: {
+        client_tag: snake.optional(),
+        campaign_id: z.number().int().optional(),
+        filters: filters.optional(),
+        tam: z.number().int().min(0).optional(),
+        days: z.number().int().min(1).max(365).optional(),
+        held_id: z.string().uuid().optional().describe("Poll a held join that already started."),
+      },
     },
-    async ({ client_tag, campaign_id, filters: f, tam, days }) => {
+    async ({ client_tag, campaign_id, filters: f, tam, days, held_id }) => {
       if (!d.held) return text({ error: "held is not available: the service has no getleads client configured." });
+      if (held_id) return text(await d.held.get(held_id));
+      if (!client_tag || campaign_id == null || !f || tam == null) {
+        return text({ error: "held needs client_tag, campaign_id, filters and tam, or a held_id to poll." });
+      }
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
       if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
-      return text(await heldRead(d.held, { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
+      return text(await d.held.start({ client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
     },
   );
 
@@ -95,7 +146,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "size",
     {
       description:
-        "Free dry-run of the stored Maps pool: already held, suppression drops by reason, net new. ICP pool binds start at $11 so they do not collide with recycle $2. Returns a size_id at once (status started); poll size(size_id) until done. Opens no job, spends nothing, does not block the lane. Counts only.",
+        "Free dry-run of the stored Maps pool: already held, suppression drops by reason, net new. ICP pool binds start at $11 so they do not collide with recycle $2. The suppress CTE types $1 as text. Returns a size_id at once (status started); poll size(size_id) until done. Opens no job, spends nothing, does not block the lane. Counts only.",
       inputSchema: {
         client_tag: snake.optional(),
         campaign_id: z.number().int().optional(),
@@ -145,13 +196,13 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "pull",
     {
       description:
-        "Open a job for one campaign and start the pull in the background: the source and filters you read off campaign_record, up to max_rows. Returns the job_id at once (status started). Poll job(job_id) until pull/ingest finish. A spend estimate still waits for approved_by on a later pull(job_id). Then suppress, icp, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id.",
+        "Open a job for one campaign and start the pull in the background: the source and filters you read off campaign_record, up to max_rows. Returns the job_id at once (status started). Poll job(job_id) until pull/ingest finish. A spend estimate still waits for approved_by on a later pull(job_id). source=site_owners attaches site_check people to an existing job only (pass job_id; place_id or normalized domain of this job's ingest rows); cached owners on those businesses belong to the job; it never opens a job and never reads topup.site_people_found or a client owner table. Then suppress, icp, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id.",
       inputSchema: {
-        client_tag: snake,
-        campaign_id: z.number().int(),
+        client_tag: snake.optional(),
+        campaign_id: z.number().int().optional(),
         source: z.enum(JOB_SOURCES as unknown as [string, ...string[]]),
-        filters,
-        max_rows: z.number().int().min(1).max(MAX_ROWS_PER_JOB).describe(`1 to ${MAX_ROWS_PER_JOB} rows per job.`),
+        filters: filters.optional(),
+        max_rows: z.number().int().min(1).max(MAX_ROWS_PER_JOB).optional().describe(`1 to ${MAX_ROWS_PER_JOB} rows per job. Not used for source=site_owners.`),
         lane: snake.optional().describe("Defaults to the campaign's registry lane."),
         email_max_tier: z.enum([...EMAIL_TIERS, ...LEGACY_EMAIL_MAX_TIER_ALIASES]).optional().describe("Live ceiling, or a stored leadmagic / lm / lead_magic alias which maps to aiark (D58)."),
         name_to_email: z.boolean().optional(),
@@ -160,17 +211,35 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         job_id: z.string().optional(),
       },
     },
-    async ({ client_tag, campaign_id, source, filters: f, max_rows, lane, email_max_tier, name_to_email, icp_kind, approved_by, job_id }) => {
+    async ({ client_tag, campaign_id, source, filters: rawFilters, max_rows, lane, email_max_tier, name_to_email, icp_kind, approved_by, job_id }) => {
+      const f = rawFilters ?? {};
+      if (source === "table") {
+        const table = typeof f.table === "string" ? f.table : typeof f.schema === "string" && typeof f.name === "string" ? `${f.schema}.${f.name}` : null;
+        const shared = refuseSharedOwnerTable(table);
+        if (shared) return text({ error: shared });
+      }
+      if (source === SITE_OWNERS_SOURCE) {
+        if (!job_id) return text({ error: siteOwnersNeedJobId() });
+        const looking = typeof f.looking_for === "string" ? f.looking_for : null;
+        return text(await attachSiteOwners({ db: d.repo.raw(), repo: d.repo }, { job_id, looking_for: looking, apply: true }));
+      }
+      if (!client_tag || campaign_id == null || max_rows == null) {
+        return text({ error: "pull needs client_tag, campaign_id and max_rows, or job_id with source=site_owners." });
+      }
       let id = job_id ?? null;
       if (!id) {
         const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
         if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
         const registry = registryRows(await d.repo.campaignRegistry(client_tag).catch(() => []));
         const name = (await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null)) ?? registry.find((r) => r.campaign_id === campaign_id)?.campaign_name ?? null;
-        if (isColdCall(name)) return text({ error: `#${campaign_id} ${name} is marked as cold call; the service ignores it (D54). Ask Josh.` });
-        const laneName = lane ?? registry.find((r) => r.campaign_id === campaign_id)?.lane ?? "grok";
+        if (isColdCall(name)) return text({ error: `#${campaign_id} ${name} is marked as cold call; the service ignores it (D54). Ask Josh or Cayden.` });
+        const registryLane = registry.find((r) => r.campaign_id === campaign_id)?.lane ?? null;
+        if (isUnassignedLane(registryLane) || isUnassignedLane(lane)) {
+          return text({ error: `#${campaign_id} is registered lane unassigned. ${UNASSIGNED_SKIP_NOTE}` });
+        }
+        const laneName = lane ?? registryLane ?? "grok";
         const mappedTier = mapEmailMaxTier(email_max_tier);
-        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(mappedTier.tier ? { email_max_tier: mappedTier.tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
+        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(name ? { campaign_name: name } : {}), ...(mappedTier.tier ? { email_max_tier: mappedTier.tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
         const opened = await d.jobs.open(spec, d.by);
         if (!opened.ok) return text({ error: opened.message });
         id = opened.job_id;
@@ -203,7 +272,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "site_check",
     {
       description:
-        "The website checker (skill icp-website-gate): our own site fetch (free), then a question over what the site says. question=icp: is each company in the client's ICP (the client's label set, Jev's category pick, about $0.11 per 1,000; verdict per domain, which icp(job_id) then stamps on a job's rows for free). question=people: crawl each company's homepage and people pages (team, leadership, staff, about, contact), have Gemini list every person the site presents, then ask Jev which of them is looking_for (default: the owner, or the person who runs the company; or say who you want: 'the service manager', 'the person who buys IT'). About $1.11 per 1,000 sites worst case. The people found become rows of topup.site_people_found (first_name, last_name, title, domain, source_url) that pull(source=\"table\") can bring into a job. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. Nothing on the rows changes; sites, people and answers are kept per domain so a re-run never pays twice. Counts and labels only; never a name.",
+        "The website checker (skill icp-website-gate): our own site fetch (free), then a question over what the site says. question=icp: is each company in the client's ICP (the client's label set, Jev's category pick, about $0.11 per 1,000; verdict per domain, which icp(job_id) then stamps on a job's rows for free). question=people: crawl each company's homepage and people pages (team, leadership, staff, about, contact), have Gemini list every person the site presents, then ask Jev which of them is looking_for (default: the owner, or the person who runs the company; or say who you want: 'the service manager', 'the person who buys IT'). About $1.11 per 1,000 sites worst case. The people found stay in topup.site_answers / site_people; pull(job_id, source=\"site_owners\") attaches them to this job's businesses only (place_id or normalized domain). Never pull the shared view topup.site_people_found or a client owner table. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. A deploy does not resume the loop — call this verb again with the same scope and approved_by; already-extracted and already-answered domains are skipped and not paid again. Optional fetch_/extract_/ask_ parallel and workers override the Railway defaults (~50 fetch, ~28 Gemini, ~28 Jev). Nothing on the rows changes. Counts and labels only; never a name.",
       inputSchema: {
         question: z.enum(SITE_CHECK_QUESTIONS),
         client_tag: snake.optional(),
@@ -211,9 +280,28 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         table: z.string().optional().describe("schema.table as leftovers lists it (lp.<tag>_…, client_<tag>.…, public.<tag>…_wf_contacts). Needs client_tag."),
         looking_for: z.string().max(200).optional().describe("people only: who to find on the site, in plain words. Default: the owner, or the person who runs the company."),
         approved_by: z.string().optional().describe("Name of the person who approved the quoted worst case."),
+        fetch_parallel: z.number().int().min(1).max(32).optional().describe("How many site-people fetch invocations to run side by side. Default 2."),
+        fetch_workers: z.number().int().min(1).max(60).optional().describe("Workers inside each fetch invocation. Default 25 (2×25 ≈ 50, 2 per host)."),
+        extract_parallel: z.number().int().min(1).max(32).optional().describe("How many Gemini extract invocations to run side by side. Default 4."),
+        extract_workers: z.number().int().min(1).max(60).optional().describe("Gemini workers inside each extract invocation. Default 7 (4×7 = 28)."),
+        ask_parallel: z.number().int().min(1).max(32).optional().describe("How many Jev ask invocations to run side by side. Default 4."),
+        ask_workers: z.number().int().min(1).max(60).optional().describe("Jev workers inside each ask invocation. Default 7 (4×7 = 28)."),
       },
     },
-    async ({ question, client_tag, job_id, table, looking_for, approved_by }) => text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, looking_for: looking_for ?? null, approved_by: approved_by ?? null })),
+    async ({ question, client_tag, job_id, table, looking_for, approved_by, fetch_parallel, fetch_workers, extract_parallel, extract_workers, ask_parallel, ask_workers }) =>
+      text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, looking_for: looking_for ?? null, approved_by: approved_by ?? null, fetch_parallel, fetch_workers, extract_parallel, extract_workers, ask_parallel, ask_workers })),
+  );
+
+  server.registerTool(
+    "classify_leftover",
+    {
+      description:
+        "D90 leftover-negative AI: Jev (same OpenRouter path as icp-llm) classifies each unclassified Smartlead negative's inbound body as unsubscribe vs not_interested. Text and category already ran. No body stays unclassified. First call is the estimate; approved_by runs it. Hard cap $0.05. Writes negative_class_source=ai. Idempotent. Counts only; never a body or a name.",
+      inputSchema: {
+        approved_by: z.string().optional().describe("Name of the person who approved the quoted worst case."),
+      },
+    },
+    async ({ approved_by }) => text(await classifyLeftover(d.leftoverAi, { approved_by: approved_by ?? null })),
   );
 
   server.registerTool(
@@ -280,6 +368,35 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
   );
 
   server.registerTool(
+    "confirm_filters",
+    {
+      description:
+        "Stamp owner_confirmed_at on a backfilled pull receipt so the next top-up may scale it. Josh or Cayden only (D92). Pass approved_by with their name. Does not rewrite filters. Counts and ids only.",
+      inputSchema: {
+        receipt_id: z.string().uuid(),
+        approved_by: z.string().describe("Josh or Cayden."),
+      },
+    },
+    async ({ receipt_id, approved_by }) => {
+      const who = confirmFiltersApprover(approved_by);
+      if (!who.ok) return text({ error: who.error });
+      const stamped = await d.repo.confirmPullReceipt(receipt_id, who.by);
+      if (!stamped) return text({ error: "no such receipt" });
+      await d.ledger
+        .event({
+          client_tag: "canon",
+          lane: "confirm",
+          run_id: null,
+          event: "approved",
+          line: `Receipt ${receipt_id.slice(0, 8)} filters confirmed by ${who.by}${stamped.already ? " (already stamped)" : ""}.`,
+          actor: d.by,
+        })
+        .catch(() => undefined);
+      return text({ ok: true, receipt_id: stamped.receipt_id, confirmed_by: who.by, already: stamped.already });
+    },
+  );
+
+  server.registerTool(
     "abort",
     { description: "Abort any open job or run. Running steps stop, claimed rows go back, open cards close. Nothing is loaded by an aborted job.", inputSchema: { job_id: z.string() } },
     async ({ job_id }) => {
@@ -292,7 +409,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
 function verbDescription(verb: Exclude<Verb, "pull">): string {
   switch (verb) {
     case "suppress":
-      return "Run suppression on the job's rows: the response-based global list, the client's prior contacts, bounces, the public list and the client's own domain list. Returns raw, dropped by reason, net new.";
+      return "Run suppression on the job's rows (D81): this client's classified unsubscribes, hard bounces (pending Josh), and the existing DNC list. Not-interested is not suppressed. Smartlead Do Not Contact is not a class. Returns raw, dropped by reason, net new.";
     case "icp":
       return "The ICP website gate (skill icp-website-gate): fetch each distinct domain's site with our own edge function (free), let Jev pick a category (about $0.11 per 1,000 sites), ask DiscoLike about the sites we could not read (about $0.0038 each), and write the verdict onto the rows. Only icp_gate = yes moves on; flagged rows are suppressed with a reason and stay in the table. The first call returns the estimate; approved_by runs it. Rows with no domain are left: enrich(job_id) then icp(job_id) again. Needs a label set for the client in topup.icp_variants.";
     case "enrich":

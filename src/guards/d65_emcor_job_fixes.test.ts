@@ -18,7 +18,7 @@ describe("D65 — EMCOR job 46b1c941 follow-up", () => {
     const size = await readFile(new URL("src/canon/size.ts", root), "utf8");
     assert.match(size, /class SizeRunner/, "D65: size returns a size_id and runs in the background. Ask Josh.");
     assert.match(size, /size_id/, "D65: poll size(size_id). Ask Josh.");
-    assert.match(size, /left join pos/, "D65: suppress is a join. Ask Josh.");
+    assert.match(size, /left join unsub/, "D65: suppress is a join. Ask Josh.");
     assert.match(size, /SIZE_STATEMENT_TIMEOUT_MS/, "D65: the size query times out instead of hanging the MCP call. Ask Josh.");
     const grok = await readFile(new URL("src/mcp/grok.ts", root), "utf8");
     assert.match(grok, /size_id/, "D65: the size tool accepts size_id to poll. Ask Josh.");
