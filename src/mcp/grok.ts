@@ -9,6 +9,7 @@ import type { Repo } from "../db/repo.js";
 import { LEADPIPE_RULE } from "../grok/allowlist.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
 import type { LaneLedger } from "../ledger/lane.js";
+import { preflightPool } from "../jobs/preflight.js";
 import { poolSource, type JobSpec } from "../jobs/settings.js";
 import { APPROVER_RULE, type TopupRunner } from "../jobs/runner.js";
 
@@ -89,10 +90,12 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
       if (!client) return text({ error: `${client_tag} is not in topup.client_map. Adding a client is a row in that table. Ask Josh.` });
       const name = await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null);
+      const pool = await preflightPool(d.repo.raw(), client_tag, source);
+      if (!pool.ok) return text({ error: `The pool cannot land, so no job was opened: ${pool.message}` });
       const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_id, source };
       const opened = await d.jobs.open(spec, d.by, name);
       if (!opened.ok) return text({ error: opened.message });
-      return text(await d.jobs.begin(opened.job_id, "quote", { by: d.by }));
+      return text({ ...(await d.jobs.begin(opened.job_id, "quote", { by: d.by })), pool: pool.note });
     },
   );
 
