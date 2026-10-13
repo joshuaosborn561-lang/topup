@@ -79,7 +79,7 @@ export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: Sp
     replicas: 1,
     supabase_project: ALLOWED_SUPABASE_PROJECT_REF,
     readiness: configReadiness(d.cfg),
-    caps: { auto_spend_usd: d.cfg.AUTO_SPEND_CAP_USD, daily_vendor_usd: d.cfg.DAILY_VENDOR_CAP_USD },
+    caps: { auto_spend_usd: d.cfg.AUTO_SPEND_CAP_USD, daily_vendor_usd: null, note: "no daily cap (D104): the approved amount is the limit" },
   };
   if (!d.repo) return { ok: false, ...base, db: false, note: "DATABASE_URL not set; nothing else can be reported" };
 
@@ -108,7 +108,6 @@ export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: Sp
     leads_by_status: leads,
     spend: {
       today: usd(spendToday),
-      daily_cap: usd(d.rails?.cfg.dailyCapCents ?? Math.round(d.cfg.DAILY_VENDOR_CAP_USD * 100)),
       by_vendor_30d: Object.fromEntries(Object.entries(spend30).map(([v, c]) => [v, usd(c)])),
       month_to_date: mtd.map((r) => ({ client_tag: r.client_tag, vendor: r.vendor, usd: usd(r.cents) })),
       balance_readers: d.rails ? ["millionverifier", "no2bounce"].filter((v) => d.rails!.hasBalanceReader(v)) : [],

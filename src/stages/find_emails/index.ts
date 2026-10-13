@@ -1,6 +1,6 @@
 import type { EmailFinder, FinderJob } from "../../clients/emailFinder.js";
 import { ingestedTable } from "../../db/pool.js";
-import type { RunRow } from "../../domain/runs.js";
+import { runIsOpen, type RunRow } from "../../domain/runs.js";
 import { spendApprovalCard } from "../../console/cards.js";
 import type { JobSettings } from "../../jobs/settings.js";
 import { PRICES, usd, worstCaseCents } from "../../spend/prices.js";
@@ -106,7 +106,7 @@ export class FindEmailsStage {
           if (j.status === "done") return { state: "done", value: j };
           return { state: "running" };
         },
-        { pollMs: this.d.cfg.pollMs, deadMs: this.d.cfg.deadMs, clock: this.clock, what: `email finder ${jobId}`, stop: async () => (await this.d.repo.getRun(run.run_id))?.status === "aborted" },
+        { pollMs: this.d.cfg.pollMs, deadMs: this.d.cfg.deadMs, clock: this.clock, what: `email finder ${jobId}`, stop: async () => !runIsOpen((await this.d.repo.getRun(run.run_id))?.status ?? "aborted") },
       );
       if (job.outcome === "refused_over_ceiling") {
         await this.d.repo.setStepVendorJob(run.run_id, "find_emails", null);
@@ -214,7 +214,7 @@ export class FindEmailsStage {
     const existing = open.find((c) => c.kind === "spend_approval" && c.payload.step === "find_emails");
     const payload = { step: "find_emails", vendor: "email finder", action: FIND_ACTION, rows, worst_case_cents: worst };
     const blocks = (cardId: string) =>
-      spendApprovalCard({ cardId, runId: run.run_id, clientTag: run.client_tag, step: "find_emails", vendor: "email finder", action: FIND_ACTION, rows, worstCaseCents: worst, projectedUseful: null, spentTodayCents: spentToday, dailyCapCents: this.d.rails.cfg.dailyCapCents });
+      spendApprovalCard({ cardId, runId: run.run_id, clientTag: run.client_tag, step: "find_emails", vendor: "email finder", action: FIND_ACTION, rows, worstCaseCents: worst, projectedUseful: null, spentTodayCents: spentToday });
     if (existing) {
       await this.d.repo.updateCardPayload(existing.card_id, payload);
       await this.d.repo.setCardBlocks(existing.card_id, blocks(existing.card_id));

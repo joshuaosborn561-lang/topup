@@ -119,6 +119,9 @@ export async function attempt(d: StageDeps, run: RunRow, stage: Step, status: Ru
 
 /** Park the run at a stage with one card to Cayden. A parked run never retries on its own. */
 export async function park(d: StageDeps, run: RunRow, stage: Step, reason: string, attempts: number): Promise<StageOutcome> {
+  // Close the step as parked. A row left 'running' reads as "a restart cut this off" and boot would re-run it with nobody asking.
+  const row = await d.repo.getStep(run.run_id, stage);
+  if (!row || row.status === "running" || row.status === "pending") await d.repo.failStep(run.run_id, stage, reason, true);
   await d.repo.setRunStatus(run.run_id, "awaiting_operator", stage, reason);
   const [sizeStep, pullStep] = await Promise.all([d.repo.getStep(run.run_id, "ingest"), d.repo.getStep(run.run_id, "ingest")]);
   const report = formatCampaignReport(

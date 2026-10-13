@@ -123,6 +123,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D101 | Live; who approves is a Railway setting (`TOPUP_APPROVERS`, default Josh and Cayden per D92; Josh alone for the first EMCOR, BCP and Insight top-ups); a yes is to an amount: a paid step priced more than a tenth above the quote waits for a fresh named yes; a job a restart cut off resumes on boot; an aborted job's unloaded rows leave the lane table |
 | D102 | Live; under the 1,000 floor the quote still posts and the approver decides; loads start paused until an approver flips `loads_paused`; the ICP label set in `topup.icp_variants` is a precondition for a yes; audit fixes: a job cut off before its quote card is resumed on boot, lane-table writes carry the run, abort gives a table pool its label back, a database error is never reported as "no recorded build" |
 | D103 | Live; top-ups find emails: the service keeps the people an export names without an email (LeadPipe drops them), the quote counts and prices them, and after the named yes the Email Finder Waterfall looks them up between the ICP check and verification; found addresses pass the same held and unsubscribe checks; exports run without the VALID filter |
+| D104 | Live; no daily vendor cap: what the approver says yes to is the only spend limit; supersedes the $25 daily backstop of D9. With it, the last six audit findings: a parked step is closed as parked and only a named call retries it, every wait loop stops when its job closes, a resumed ingest waits for LeadPipe to finish, the ICP check never throws out a site it read but did not grade and never pays DiscoLike twice, SQL row literals are cut from build records |
 
 ---
 
@@ -3434,3 +3435,41 @@ Ark without Josh (D58). It does not load an address it did not verify. It
 does not send a row through chat. It does not change LeadPipe.
 
 **Guard.** `src/guards/d103_find_emails.test.ts`. Ask Josh.
+
+## D104 — No daily cap: what the approver says yes to is the limit
+
+**Decision.** The $25 daily vendor backstop (D9) is gone. A paid step runs
+when a named approver has said yes to its amount (D51, D101) and for no
+other reason; nothing else stops it on spend. The auto cap stays $0, the
+tenth-over rule stays, and the finder and the verifier are still told the
+approved amount as their ceiling. `DAILY_VENDOR_CAP_USD` is no longer read.
+Spend cards show what was spent today, not a cap.
+
+Six audit findings land with it (the last of the 13 Oct 2026 audit: 57
+candidates, 6 confirmed by two independent verifiers each):
+
+1. A step that parks is closed as `parked`. Before, the exhausted-attempts
+   path left it `running`, so a restart read it as cut off and ran it again
+   with nobody asking. Now boot skips a parked job, `topup(job_id)` with no
+   name reports it, and only `topup(job_id, approved_by=name)` tries it
+   once more.
+2. Every wait loop (ingest, ICP, the finder, verification) stops when its
+   job closes for any reason, not only on an abort.
+3. A resumed ingest waits for LeadPipe's job to finish before counting, so
+   it never quotes a half-written pool.
+4. The ICP check marks a site unknown only when the fetch came back
+   unreadable and DiscoLike gave no verdict. A site that was read but not
+   graded goes on ungraded; a grading run that stopped early is retried.
+5. A retried ICP check collects the DiscoLike task it already paid for
+   instead of submitting the same domains again.
+6. Literal rows in SQL inside a build record (`insert … values (…)`) are
+   counted, never shown.
+
+**Why.** Josh, 13 Oct 2026: "there should be no cap just whatever I
+approve." The cap would have stopped the BCP email look-up he means to
+approve.
+
+**What it does not do.** It does not run anything unapproved. It does not
+raise the auto cap. It does not let a step spend past the amount approved.
+
+**Guard.** `src/guards/d104_no_daily_cap.test.ts`. Ask Josh.

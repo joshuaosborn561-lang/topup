@@ -58,4 +58,9 @@ describe("D99 — method off the transcript", () => {
     assert.equal(isoOrNull(null), null);
     assert.equal(isoOrNull("not a date"), null);
   });
+  it("literal rows in SQL are counted, never kept (audit, D2)", () => {
+    const out = redactArg("insert into public.x (first_name, last_name, company) values ('Ann', 'Lee', 'Acme'), ('Bob', 'Ray', 'Beta'), ('Cat', 'Kim', 'Gamma')");
+    assert.match(out, /values \(… 3 rows not shown\)/);
+    assert.doesNotMatch(out, /Ann|Acme|Bob|Beta/);
+  });
 });

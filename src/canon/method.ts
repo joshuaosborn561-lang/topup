@@ -81,6 +81,8 @@ export function redactArg(value: string): string {
       /* not JSON after all; the text rules below apply */
     }
   }
+  // Literal rows in SQL (insert … values (…), (…)) are counted, never kept.
+  v = v.replace(/\bvalues\s*\(([\s\S]*)$/i, (_m, rest: string) => `values (… ${1 + (rest.match(/\)\s*,\s*\(/g) ?? []).length} rows not shown)`);
   const lines = v.split("\n");
   // A pasted result set (many lines that all look like delimited data) is not an argument the bot needs.
   const delimited = lines.filter((l) => (l.match(/[,\t|]/g) ?? []).length >= 4).length;

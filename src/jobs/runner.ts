@@ -111,8 +111,6 @@ export interface TopupRunnerDeps {
   backgroundTimeoutMs?: number;
   /** Who may approve a top-up, by first name (TOPUP_APPROVERS in Railway). Default: Josh and Cayden (D92). */
   approvers?: readonly string[];
-  /** The daily vendor cap (DAILY_VENDOR_CAP_USD, in cents). A quote above it says so up front. */
-  dailyCapCents?: number;
 }
 
 const cap = (n: string) => n[0]!.toUpperCase() + n.slice(1);
@@ -151,14 +149,16 @@ export class TopupRunner {
    * A deploy kills background phases (13 Oct 2026); boot calls this for
    * every open job with a step left 'running' and picks each one back up.
    */
-  async resumable(jobId: string): Promise<{ phase: Phase; approved_by: string | null; interrupted: Step | null } | null> {
+  async resumable(jobId: string): Promise<{ phase: Phase; approved_by: string | null; interrupted: Step | null; parked?: Step | null } | null> {
     const run = await this.d.repo.getRun(jobId);
     if (!run || !runIsOpen(presentRun(run).status) || Number(run.counts_by_status?.grok_job) !== 1) return null;
     const stepRows = new Map<Step, Awaited<ReturnType<Repo["getStep"]>>>();
     for (const step of [...PHASE_STEPS.quote, ...PHASE_STEPS.approve]) stepRows.set(step, await this.d.repo.getStep(jobId, step));
     const interrupted = [...stepRows.entries()].find(([, r]) => r?.status === "running")?.[0] ?? null;
+    // A parked step failed three times or was refused; it waits for a person, never for a restart.
+    const parked = [...stepRows.entries()].find(([, r]) => r?.status === "parked")?.[0] ?? null;
     const done = (step: Step) => stepRows.get(step)?.status === "done";
-    if (!PHASE_STEPS.quote.every(done)) return { phase: "quote", approved_by: null, interrupted };
+    if (!PHASE_STEPS.quote.every(done)) return { phase: "quote", approved_by: null, interrupted, parked };
     const icp = stepRows.get("icp");
     const find = stepRows.get("find_emails");
     const verify = stepRows.get("verify");
@@ -168,11 +168,11 @@ export class TopupRunner {
       // The three free steps are done. With the quote card up the job is
       // standing, waiting for a name; without one the process died between
       // the last step and the card, and the quote phase re-runs to post it.
-      return (await this.openQuote(jobId)) ? null : { phase: "quote", approved_by: null, interrupted };
+      return (await this.openQuote(jobId)) ? null : { phase: "quote", approved_by: null, interrupted, parked };
     }
     if (!PHASE_STEPS.approve.every(done)) {
       const loadOnly = PHASE_STEPS.approve.filter((st) => st !== "import" && st !== "post_import").every(done);
-      return { phase: loadOnly ? "load" : "approve", approved_by: recorded, interrupted };
+      return { phase: loadOnly ? "load" : "approve", approved_by: recorded, interrupted, parked };
     }
     return null;
   }
@@ -181,6 +181,11 @@ export class TopupRunner {
   async resume(jobId: string, by: string): Promise<TopupResult | null> {
     const r = await this.resumable(jobId);
     if (!r) return null;
+    if (r.parked) {
+      // Parked waits for a person by name; a status check or a restart never re-runs it.
+      const step = await this.d.repo.getStep(jobId, r.parked);
+      return this.result(jobId, r.phase, r.parked, "parked", {}, null, null, null, String(step?.last_error ?? `${r.parked} is parked`), `tell ${this.approvers.map(cap).join(" or ")} why; topup(job_id, approved_by="their name") tries ${r.parked} once more, or abort(job_id)`);
+    }
     if (r.interrupted) await this.d.repo.resetStep(jobId, r.interrupted);
     const run = await this.d.repo.getRun(jobId);
     if (run) await this.event(run, "step", `${r.phase}: resumed by ${by}${r.interrupted ? ` at ${r.interrupted}` : ""}.`, by);
@@ -195,7 +200,7 @@ export class TopupRunner {
       const r = await this.resumable(run.run_id);
       // A step left running, or a free quote with no card yet: both are a
       // cut-off. An approved tail waiting on a card or on paused loads is not.
-      if (!r || !(r.interrupted || r.phase === "quote")) continue;
+      if (!r || r.parked || !(r.interrupted || r.phase === "quote")) continue;
       const out = await this.resume(run.run_id, by);
       if (out && out.status === "started") resumed.push(run.run_id);
     }
@@ -265,6 +270,12 @@ export class TopupRunner {
       if (!quote && !spendCard) {
         // A yes was already recorded and a step failed or was cut off: the same name picks the approved tail back up.
         const r = await this.resumable(jobId);
+        if (r?.parked) {
+          // A person, by name, asks for one more try of a parked step.
+          await this.d.repo.resetStep(jobId, r.parked);
+          await this.event(run, "step", `${r.phase}: ${r.parked} was parked; ${who} asked for one more try.`, opts.by);
+          return this.begin(jobId, r.phase, { by: opts.by, approved_by: who, resume: true });
+        }
         if (r && r.phase !== "quote") return this.begin(jobId, r.phase, { by: opts.by, approved_by: who, resume: true });
         return this.result(jobId, phase, first, "refused", {}, null, null, null, "no open quote or spend card on this job", "job(job_id); when the quote step is done the card is there, else the quote is still running");
       }
@@ -430,12 +441,7 @@ export class TopupRunner {
         ? ` Plus ${quote.to_find} more new people with no email that the email finder will look up after the yes (up to ${usd(quote.find_cents)} of the total; only the ones it finds are verified and loaded).`
         : ` ${quote.to_find} more new people have no email and the email finder is not connected on the service, so they are left out. Ask Josh.`
       : "";
-    const capCents = this.d.dailyCapCents;
-    const capNote =
-      capCents != null && quote.worst_case_cents > capCents
-        ? ` The worst case is above the ${usd(capCents)} daily vendor cap (DAILY_VENDOR_CAP_USD on Railway): a step that would pass it stops until the next day or until Josh raises the cap. Say so with the number.`
-        : "";
-    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads with an email for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)} in all (ICP check ${usd(quote.icp_cents)}, email finder ${usd(quote.find_cents)}, verification ${usd(quote.verify_cents)}).${findNote}${floorNote}${capNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
+    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads with an email for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)} in all (ICP check ${usd(quote.icp_cents)}, email finder ${usd(quote.find_cents)}, verification ${usd(quote.verify_cents)}).${findNote}${floorNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
   }
 
   /** Loads start paused (D102); the quote answer says so, so the yes and the unpause are asked for together. */

@@ -24,7 +24,7 @@ class FakeRepo {
   }
 }
 
-const cfg = { autoCapCents: 500, dailyCapCents: 2500, driftTolerance: 0.1 };
+const cfg = { autoCapCents: 500, driftTolerance: 0.1 };
 
 function rails(repo = new FakeRepo()) {
   return { repo, rails: new SpendRails(repo as unknown as Repo, cfg) };
@@ -79,10 +79,11 @@ describe("spend rails (D9)", () => {
     assert.equal(lower.worstCaseCents, 200);
   });
 
-  it("daily backstop — $25 across vendors parks everything, approval or not", () => {
-    const d = rails().rails.decide(req({ rows: 1000, approvedCents: 99_999 }), 2400);
-    assert.equal(d.kind, "blocked");
-    assert.match(d.reason, /daily vendor cap/);
+  it("D104 — no daily cap: whatever was spent today, an approved amount runs and an unapproved one asks", () => {
+    const ok = rails().rails.decide(req({ rows: 10_000, approvedCents: 99_999 }), 1_000_000);
+    assert.equal(ok.kind, "proceed");
+    const ask = rails().rails.decide(req({ rows: 10_000 }), 1_000_000);
+    assert.equal(ask.kind, "ask");
   });
 
   it("rail 5 — a resume is free and never gated; a split is priced like a submit", () => {

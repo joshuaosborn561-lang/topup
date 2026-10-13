@@ -96,7 +96,7 @@ function fakeFinder(pg: PGlite, found: Record<string, string>): EmailFinder & { 
 
 function stage(repo: ReturnType<typeof fakeRepo>, finder: EmailFinder, calls: string[]) {
   const console_ = { postInThread: async () => undefined, ask: async (i: { kind: string; payload: Record<string, unknown> }) => { const c = { card_id: `c${repo.cards.length + 1}`, kind: i.kind, payload: i.payload, status: "open" }; repo.cards.push(c); return c; } };
-  const rails = new SpendRails(repo as never, { autoCapCents: 0, dailyCapCents: 100_000, driftTolerance: 0.1 });
+  const rails = new SpendRails(repo as never, { autoCapCents: 0, driftTolerance: 0.1 });
   return new FindEmailsStage({
     repo: repo as never,
     console: console_ as never,

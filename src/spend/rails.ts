@@ -15,12 +15,11 @@ const log = logger("spend");
  * 5. Re-bills are asks — anything that may bill again is new spend under rule 2.
  *    Resume is free and never gated.
  *
- * Plus the daily backstop: DAILY_VENDOR_CAP_USD across all vendors parks everything.
+ * No daily cap (D104): what the approver said yes to is the only limit.
  */
 
 export interface RailsConfig {
   autoCapCents: number;
-  dailyCapCents: number;
   /** Fraction of approved spend the balance may drift past before the step is killed. */
   driftTolerance: number;
 }
@@ -71,7 +70,7 @@ export class SpendRails {
   }
 
   /** Pure decision, given today's spend. Exposed for tests. */
-  decide(req: SpendRequest, spentTodayCents: number): SpendDecision {
+  decide(req: SpendRequest, _spentTodayCents: number): SpendDecision {
     if (isBannedVendor(req.vendor)) {
       return { kind: "blocked", worstCaseCents: 0, reason: `${req.vendor} is banned from this stack` };
     }
@@ -89,15 +88,6 @@ export class SpendRails {
     const worst = req.worstCaseCents === undefined ? computed : Math.max(computed, Math.ceil(req.worstCaseCents));
     if (worst === 0) {
       return { kind: "proceed", worstCaseCents: 0, reason: isFreeAction(req.action) ? "free action" : "included plan" };
-    }
-    if (spentTodayCents + worst > this.cfg.dailyCapCents) {
-      return {
-        kind: "blocked",
-        worstCaseCents: worst,
-        reason:
-          `daily vendor cap: ${usd(spentTodayCents)} spent today + ${usd(worst)} worst case exceeds ` +
-          `${usd(this.cfg.dailyCapCents)}; everything parks until tomorrow or Josh raises the cap`,
-      };
     }
     const approved = req.approvedCents ?? 0;
     if (worst <= this.cfg.autoCapCents) {
@@ -202,10 +192,9 @@ export class SpendRails {
   }
 }
 
-export function railsConfigFrom(env: { AUTO_SPEND_CAP_USD: number; DAILY_VENDOR_CAP_USD: number }): RailsConfig {
+export function railsConfigFrom(env: { AUTO_SPEND_CAP_USD: number }): RailsConfig {
   return {
     autoCapCents: Math.round(env.AUTO_SPEND_CAP_USD * 100),
-    dailyCapCents: Math.round(env.DAILY_VENDOR_CAP_USD * 100),
     driftTolerance: 0.1,
   };
 }

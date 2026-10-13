@@ -2,7 +2,7 @@ import type { LeadPipe } from "../../clients/leadpipe.js";
 import type { Verifier, VerifierResults, VerifierStatus } from "../../clients/verifier.js";
 import type { Repo } from "../../db/repo.js";
 import { ingestedTable } from "../../db/pool.js";
-import { funnelCounts, MAX_STEP_ATTEMPTS, type Role, type RunRow } from "../../domain/runs.js";
+import { funnelCounts, MAX_STEP_ATTEMPTS, runIsOpen, type Role, type RunRow } from "../../domain/runs.js";
 import { parseCsv } from "../../lib/csv.js";
 import { logger } from "../../lib/log.js";
 import { type JobSettings } from "../../jobs/settings.js";
@@ -117,7 +117,8 @@ export class VerifyStage {
       }
 
       for (;;) {
-        if ((await repo.getRun(run.run_id))?.status === "aborted") return { kind: "stopped" } as unknown as VerifyOutcome;
+        // Stop when the job closed for any reason (aborted, timed out, failed), not only on an abort.
+        if (!runIsOpen((await repo.getRun(run.run_id))?.status ?? "aborted")) return { kind: "stopped" } as unknown as VerifyOutcome;
         batches = await this.loadBatches(run.run_id);
         const active = batches.filter((b) => ACTIVE.includes(b.status));
         if (active.length === 0) break;
@@ -271,7 +272,6 @@ export class VerifyStage {
               worstCaseCents: worst,
               projectedUseful: null,
               spentTodayCents: spentToday,
-              dailyCapCents: rails.cfg.dailyCapCents,
             }),
           expiresAt: new Date(this.now() + this.d.cfg.cardTimeoutMs),
         });

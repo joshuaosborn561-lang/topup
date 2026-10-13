@@ -91,7 +91,7 @@ function freeStage(repo: ReturnType<typeof fakeRepo>, step: string, counts: Reco
 }
 
 // The fake paid stages price themselves under what the quote approves (icp from 300 domains, verify from the fake row count).
-function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: number; find?: number; finder?: boolean; dailyCapCents?: number } = { icp: 1, verify: 1 }, approvers?: string[]) {
+function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: number; find?: number; finder?: boolean } = { icp: 1, verify: 1 }, approvers?: string[]) {
   const stages = {
     ingest: freeStage(repo, "ingest", { rows_claimed: 1500 }),
     dedupe: freeStage(repo, "dedupe", { held: 200 }),
@@ -122,7 +122,7 @@ function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: 
       return card;
     },
   };
-  return new TopupRunner({ repo: repo as never, stages: stages as never, console: console_ as never, ledger: ledger as never, now: () => 1700000000000, ...(approvers ? { approvers } : {}), ...(paid.dailyCapCents != null ? { dailyCapCents: paid.dailyCapCents } : {}) });
+  return new TopupRunner({ repo: repo as never, stages: stages as never, console: console_ as never, ledger: ledger as never, now: () => 1700000000000, ...(approvers ? { approvers } : {}) });
 }
 
 const spec = { client_tag: "bcp", smartlead_client_id: 542838, campaign_id: 3921850, source: { kind: "file_url" as const, urls: ["https://example.invalid/pool.csv"] } };
@@ -259,7 +259,7 @@ describe("D99 — the top-up", () => {
     repo.steps.set(`${opened.job_id}/ingest`, { status: "running", attempts: 1, approved_cents: 0 });
     repo.runs.get(opened.job_id)!.status = "ingesting";
     const r = await j.resumable(opened.job_id);
-    assert.deepEqual(r, { phase: "quote", approved_by: null, interrupted: "ingest" });
+    assert.deepEqual(r, { phase: "quote", approved_by: null, interrupted: "ingest", parked: null });
     const resumed = await j.resumeInterrupted("boot");
     assert.deepEqual(resumed, [opened.job_id]);
     await new Promise((res) => setTimeout(res, 20));
@@ -321,7 +321,7 @@ describe("D99 — the top-up", () => {
     if (!opened.ok) assert.fail(opened.message);
     for (const step of ["ingest", "dedupe", "suppress"]) repo.steps.set(`${opened.job_id}/${step}`, { status: "done", attempts: 1, approved_cents: 0 });
     repo.runs.get(opened.job_id)!.status = "suppressing";
-    assert.deepEqual(await j.resumable(opened.job_id), { phase: "quote", approved_by: null, interrupted: null });
+    assert.deepEqual(await j.resumable(opened.job_id), { phase: "quote", approved_by: null, interrupted: null, parked: null });
     const resumed = await j.resumeInterrupted("boot");
     assert.deepEqual(resumed, [opened.job_id]);
     await new Promise((res) => setTimeout(res, 20));
@@ -352,7 +352,7 @@ describe("D99 — the top-up", () => {
     assert.equal(q.counts.to_find, 500);
     assert.equal(q.counts.find_cents, findWorstCaseCents(500));
     assert.match(q.next, /500 more new people with no email/);
-    assert.doesNotMatch(q.next, /daily vendor cap/, "no cap given, no cap note");
+    assert.doesNotMatch(q.next, /daily vendor cap/, "D104: there is no daily cap");
     const card = repo.cards.find((c) => c.kind === QUOTE_CARD)!;
     assert.equal(card.payload.find_cents, findWorstCaseCents(500));
     assert.equal(card.payload.worst_case_cents, Number(card.payload.icp_cents) + Number(card.payload.find_cents) + Number(card.payload.verify_cents));
@@ -360,15 +360,6 @@ describe("D99 — the top-up", () => {
     assert.equal(done.status, "done");
     assert.equal(repo.steps.get(`${opened.job_id}/find_emails`)?.approved_cents, findWorstCaseCents(500));
     assert.equal(repo.steps.get(`${opened.job_id}/find_emails`)?.status, "done");
-  });
-
-  it("a quote above the daily vendor cap says so with the number (D103)", async () => {
-    const repo = fakeRepo({ toFind: 5000 });
-    const j = runner(repo, { icp: 1, verify: 1, find: 1, finder: true, dailyCapCents: 2500 });
-    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
-    if (!opened.ok) assert.fail(opened.message);
-    const q = await j.run(opened.job_id, "quote", { by: "mcp:operator" });
-    assert.match(q.next, /above the \$25\.00 daily vendor cap/);
   });
 
   it("without the email finder connected the people with no email are named as left out, not priced (D103)", async () => {
@@ -379,6 +370,28 @@ describe("D99 — the top-up", () => {
     const q = await j.run(opened.job_id, "quote", { by: "mcp:operator" });
     assert.equal(q.counts.find_cents, 0);
     assert.match(q.next, /email finder is not connected/);
+  });
+
+  it("a parked step waits for a person by name: a status check and a restart leave it alone; a named call tries it once more", async () => {
+    const repo = fakeRepo();
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    await j.run(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Josh" });
+    // icp failed three times and parked.
+    repo.steps.set(`${opened.job_id}/icp`, { status: "parked", attempts: 3, approved_cents: 1, counts: { approved_by: "Josh" } });
+    for (const s of ["find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import"]) repo.steps.delete(`${opened.job_id}/${s}`);
+    repo.runs.get(opened.job_id)!.status = "awaiting_operator";
+    const standing = await j.standing(opened.job_id, "mcp:operator");
+    assert.equal((standing as { status: string }).status, "parked");
+    assert.equal(repo.steps.get(`${opened.job_id}/icp`)!.status, "parked", "a status check does not re-run it");
+    assert.deepEqual(await j.resumeInterrupted("boot"), [], "a restart does not re-run it");
+    const again = await j.begin(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Josh" });
+    assert.equal(again.status, "started");
+    await new Promise((res) => setTimeout(res, 20));
+    assert.equal(repo.steps.get(`${opened.job_id}/icp`)!.status, "done", "the named call tried it once more");
+    assert.ok(repo.events.some((l) => /icp was parked; Josh asked for one more try/.test(l)));
   });
 
   it("a pool with nothing new closes the job instead of quoting zero", async () => {

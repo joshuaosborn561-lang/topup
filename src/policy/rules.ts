@@ -13,9 +13,8 @@ export const MIN_NET_NEW = 1000;
 /** A job pulls between one and this many rows. */
 export const MAX_ROWS_PER_JOB = 2000;
 
-/** Spend: nothing paid runs before a named approval (D51). The caps are a backstop, not a permission. */
+/** Spend: nothing paid runs before a named approval (D51). No daily cap: the approved amount is the limit (D104). */
 export const OPERATOR_SPEND_CAP_USD = 0;
-export const DAILY_VENDOR_CAP_USD = 25;
 
 /** Campaigns that are never topped up. 4085158 is SG Gabe Calls. 3122546 is SG Nurture. SG Cayden Calls is matched by name. */
 export const NEVER_TOPUP_CAMPAIGN_IDS: readonly number[] = [4085158, 3122546];

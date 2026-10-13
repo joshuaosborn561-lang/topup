@@ -57,7 +57,6 @@ export interface SpendCard {
   worstCaseCents: number;
   projectedUseful: number | null;
   spentTodayCents: number;
-  dailyCapCents: number;
   /** Per-campaign counts. Never lead rows. */
   report?: string;
 }
@@ -72,7 +71,7 @@ export function spendApprovalCard(c: SpendCard): Block[] {
       ["Rows", String(c.rows)],
       ["Worst case", `*${usd(c.worstCaseCents)}*`],
       ["Projected useful output", c.projectedUseful == null ? "unknown" : String(c.projectedUseful)],
-      ["Today so far", `${usd(c.spentTodayCents)} of ${usd(c.dailyCapCents)} daily cap`],
+      ["Spent today so far", usd(c.spentTodayCents)],
     ]),
     ...(c.report ? [section(c.report.slice(0, 2500))] : []),
     context("Worst case is computed from the service's price table and batch size, not a vendor cost field. Silence parks the run after 24h."),

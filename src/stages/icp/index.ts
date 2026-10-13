@@ -1,7 +1,7 @@
 import type { IcpGate } from "../../clients/icpGate.js";
 import { jevModel } from "../../clients/icpGate.js";
 import { ingestedTable } from "../../db/pool.js";
-import type { RunRow } from "../../domain/runs.js";
+import { runIsOpen, type RunRow } from "../../domain/runs.js";
 import { spendApprovalCard } from "../../console/cards.js";
 import type { JobSettings } from "../../jobs/settings.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
@@ -108,7 +108,7 @@ export class IcpStage {
         const existing = open.find((card) => card.kind === "spend_approval" && card.payload.step === "icp");
         const payload = { step: "icp", vendor: "jev+discolike", action: "icp_gate", rows: domains, worst_case_cents: worst };
         const blocks = (cardId: string) =>
-          spendApprovalCard({ cardId, runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev + discolike", action: "icp_gate", rows: domains, worstCaseCents: worst, projectedUseful: null, spentTodayCents: spentToday, dailyCapCents: this.d.rails.cfg.dailyCapCents });
+          spendApprovalCard({ cardId, runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev + discolike", action: "icp_gate", rows: domains, worstCaseCents: worst, projectedUseful: null, spentTodayCents: spentToday });
         if (existing) {
           await this.d.repo.updateCardPayload(existing.card_id, payload);
           await this.d.repo.setCardBlocks(existing.card_id, blocks(existing.card_id));
@@ -137,20 +137,27 @@ export class IcpStage {
       // 2. Fetch the sites (free). Up to three calls side by side; rows are claimed server side.
       const { fetched, fetched_ok: fetchedOk } = await fetchAll(this.d.gate, batch);
       // 3. Jev picks a category. One call at a time per batch.
-      const { graded, errors: gradeErrors, last_error: lastError } = await gradeAll((n, w) => this.d.gate!.grade(batch, model, n, w));
+      const { graded, errors: gradeErrors, last_error: lastError, remaining } = await gradeAll((n, w) => this.d.gate!.grade(batch, model, n, w));
       if (gradeErrors > 0 && graded === 0) throw new Error(`Jev graded nothing (${gradeErrors} errors${lastError ? `: ${lastError.slice(0, 120)}` : ""}); nothing is written as unreadable on an error. Try again.`);
+      // Grading stopped with domains still waiting: try again rather than write a verdict on a half-graded batch.
+      if (remaining > 0) throw new Error(`Jev stopped with ${remaining} domains still to grade; nothing is written yet. Try again.`);
       const jevCost = await this.costCents(batch, model);
       await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev", action: "grade", rows: graded, credits: graded, worstCaseCents: worst, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy });
       // 4. DiscoLike on what we could not read. One task at a time.
       let fallback = 0;
       let fallbackTally: Record<string, number> = {};
       if (variant.disco_icp) {
-        const sub = await this.d.gate.discoSubmit(batch, variant.disco_icp);
+        // A retry collects the task it already paid for; it never submits the same domains again (rail 5).
+        const ownIcp = await this.d.repo.getStep(run.run_id, "icp");
+        const sub = ownIcp?.vendor_job_id
+          ? { task_id: ownIcp.vendor_job_id, domains: Number(ownIcp.counts?.fallback_domains ?? 0) }
+          : await this.d.gate.discoSubmit(batch, variant.disco_icp);
+        if (sub.task_id && !ownIcp?.vendor_job_id) await this.d.repo.setStepVendorJob(run.run_id, "icp", sub.task_id);
         fallback = sub.domains;
         if (sub.task_id) {
           const started = this.clock.now();
           for (;;) {
-            if ((await this.d.repo.getRun(run.run_id))?.status === "aborted") return { kind: "stopped" };
+            if (!runIsOpen((await this.d.repo.getRun(run.run_id))?.status ?? "aborted")) return { kind: "stopped" };
             const c = await this.d.gate.discoCollect(sub.task_id, batch);
             if (c.status === "completed") {
               fallbackTally = c.tally ?? {};
@@ -175,8 +182,13 @@ export class IcpStage {
            where t.run_id = $1 and t.lead_status in (${statuses}) and t.icp_gate is null and ${domainSql(cols, "t.")} = v.domain`,
           [run.run_id, model],
         );
+        // Unreadable means the fetch came back and the site could not be read, and DiscoLike gave no verdict either.
+        // A domain that was read but not graded (a Jev error) stays ungraded and goes on; it is never thrown out as unreadable.
         const u = await tx.query(
-          `update ${table} set icp_gate = 'unknown', icp_gate_label = 'unreadable', icp_gate_at = now() where ${scope} and ${dsql} is not null`,
+          `update ${table} set icp_gate = 'unknown', icp_gate_label = 'unreadable', icp_gate_at = now()
+            where ${scope} and ${dsql} is not null
+              and exists (select 1 from ${SITE_TEXT} s where s.domain = ${dsql} and s.fetched_at is not null
+                            and (s.error is not null or s.http_status is null or s.http_status not between 200 and 399 or coalesce(s.chars, 0) = 0))`,
           [run.run_id],
         );
         const f = await tx.query(
