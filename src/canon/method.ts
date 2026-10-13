@@ -36,7 +36,36 @@ export const ARG_MAX_CHARS = 700;
 export const ASKED_MAX = 12;
 
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
-const PHONE = /(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}\b/g;
+/** A North American phone number on its own; a run of digits inside an identifier (a stamp, a run id) is not one. */
+const PHONE = /(?<![\d_A-Za-z])(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}(?![\d_A-Za-z])/g;
+const URL_RE = /https?:\/\/[^\s"'<>)]+/g;
+/** Keys whose values are a person's data; blanked inside any JSON argument. */
+const LEAD_KEYS = new Set(["email", "work_email", "first_name", "last_name", "full_name", "name", "phone", "mobile_phone", "phone_number", "linkedin_url", "linkedin", "address"]);
+
+/** A recorded URL (a signed export, a storage token) is never replayed; only its host is kept. */
+function blankUrls(v: string): string {
+  return v.replace(URL_RE, (u) => {
+    try {
+      return `[url ${new URL(u).hostname}]`;
+    } catch {
+      return "[url]";
+    }
+  });
+}
+
+/** Inline rows inside a JSON argument (an INSERT payload, a pasted list) are counted, never kept; lead keys are blanked. */
+function redactJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value.every((x) => x && typeof x === "object" && !Array.isArray(x))) return `[${value.length} rows not shown]`;
+    return value.map(redactJson);
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = LEAD_KEYS.has(k.toLowerCase()) ? "[redacted]" : redactJson(v);
+    return out;
+  }
+  return value;
+}
 
 function unescapeHtml(s: string): string {
   return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
@@ -45,11 +74,18 @@ function unescapeHtml(s: string): string {
 /** Blank addresses and phone numbers; cut result dumps to their first line; cap the length. */
 export function redactArg(value: string): string {
   let v = value.replace(/\r/g, "").trim();
+  if (/^[[{]/.test(v)) {
+    try {
+      v = JSON.stringify(redactJson(JSON.parse(v)));
+    } catch {
+      /* not JSON after all; the text rules below apply */
+    }
+  }
   const lines = v.split("\n");
   // A pasted result set (many lines that all look like delimited data) is not an argument the bot needs.
   const delimited = lines.filter((l) => (l.match(/[,\t|]/g) ?? []).length >= 4).length;
   if (lines.length > 8 && delimited > lines.length / 2) v = `${lines[0]}\n[${lines.length - 1} more delimited lines not shown]`;
-  v = v.replace(EMAIL, "[email]").replace(PHONE, "[phone]");
+  v = blankUrls(v).replace(EMAIL, "[email]").replace(PHONE, "[phone]");
   if (v.length > ARG_MAX_CHARS) v = `${v.slice(0, ARG_MAX_CHARS)}… [${v.length - ARG_MAX_CHARS} more chars]`;
   return v;
 }
@@ -137,7 +173,7 @@ export interface MethodAnswer {
 }
 
 export const METHOD_HOW_TO_READ =
-  "The transcript is the truth (D96). `method.steps` is every tool call in order with the arguments as typed; `asked` is what the person wanted in their words. Repeat the same calls with your own connectors and the same filters, titles, geography and sources. `process_changes_since_build` is what changed about how lists are built after this one; apply those on top. When `no_recorded_build` is true, stop: tell Josh the campaign has no recorded build and wait. Never pull a lead row into chat: every row moves through LeadPipe and this service.";
+  "The transcript is the truth (D96). `method.steps` is every tool call in order with the arguments as typed; `asked` is what the person wanted in their words. Repeat the same calls with your own connectors and the same filters, titles, geography and sources. A recorded URL is shown as its host only and is never reused: re-run the search or export and use the fresh one. `process_changes_since_build` is what changed about how lists are built after this one; apply those on top. When `no_recorded_build` is true, stop: tell Josh the campaign has no recorded build and wait. Never pull a lead row into chat: every row moves through LeadPipe and this service.";
 
 export interface MethodInput {
   client_tag: string;
@@ -181,7 +217,12 @@ export async function buildMethod(deps: BuildRecordDeps, input: MethodInput): Pr
   }
   try {
     const text = await deps.readTranscript(path);
-    answer.method = pageMethod(path, extractMethod(text), input.from ?? 1, input.limit ?? METHOD_PAGE_DEFAULT);
+    const extracted = extractMethod(text);
+    if (extracted.steps.length === 0) {
+      answer.method = { error: `no tool calls could be read from ${path} (transcript_format ${newest?.transcript_format ?? "unknown"}, ${text.length} chars). The narrative is the method for this campaign; ask Josh to re-save the transcript if that is not enough.` };
+      return answer;
+    }
+    answer.method = pageMethod(path, extracted, input.from ?? 1, input.limit ?? METHOD_PAGE_DEFAULT);
     if (paths.length > 1) answer.method = { ...answer.method, path: `${path} (${paths.length} transcripts on this campaign; pass transcript_path for another)` };
   } catch (err) {
     answer.method = { error: (err as Error).message };

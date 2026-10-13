@@ -90,7 +90,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
         campaign_id: z.number().int().optional(),
         source: poolSource.optional(),
         job_id: z.string().optional().describe("An open job: with approved_by, run the approved tail; without, show its quote or pick the job back up where a restart cut it off."),
-        approved_by: z.string().optional().describe("The approver, by first name, after they said yes to the quoted count and cost. canon says who may approve."),
+        approved_by: z.string().optional().describe(`The approver, by first name, after they said yes to the quoted count and cost. ${d.jobs.rule}`),
       },
     },
     async ({ client_tag, campaign_id, source, job_id, approved_by }) => {

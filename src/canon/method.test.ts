@@ -20,7 +20,7 @@ describe("D99 — method off the transcript", () => {
     const m = extractMethod(transcript);
     assert.deepEqual(m.steps.map((s) => s.tool), ["getleads:count_contacts", "mcp__Supabase__execute_sql", "Smartlead:stage_leads_from_url"]);
     assert.equal(m.steps[0]!.args.filters, `{"job_titles":["CIO"],"industries":["Hospitals"]}`);
-    assert.equal(m.steps[2]!.args.url, "https://x/y.csv");
+    assert.equal(m.steps[2]!.args.url, "[url x]", "a recorded URL is never replayed; only its host stays");
     assert.equal(m.tool_counts["getleads:count_contacts"], 1);
     assert.deepEqual(m.asked, ["Pull 2,000 more IT buyers in hospitals for Boulder.", "good, go."]);
   });
@@ -35,8 +35,16 @@ describe("D99 — method off the transcript", () => {
     assert.equal(pageMethod("bcp/x.md", m, 3, 5).next_from, null);
   });
 
-  it("never carries an address, a phone, or a pasted result set", () => {
+  it("never carries an address, a phone, a signed URL, or a pasted result set", () => {
     assert.equal(redactArg("mail jane.doe@acme.com or call 303-555-0100"), "mail [email] or call [phone]");
+    assert.equal(redactArg("label maps_emcor_1760312345678 run 1791912736330"), "label maps_emcor_1760312345678 run 1791912736330", "a stamp is not a phone");
+    assert.equal(redactArg("url https://getleads-storage-prod.s3.us-east-2.amazonaws.com/x.csv?X-Amz-Signature=abc"), "url [url getleads-storage-prod.s3.us-east-2.amazonaws.com]");
+    const json = JSON.stringify({ rows: [{ email: "a@b.co", first_name: "Ann" }, { email: "c@d.co", first_name: "Cy" }], filters: { job_titles: ["CIO"] }, email: "x@y.z" });
+    const red = redactArg(json);
+    assert.ok(!red.includes("a@b.co") && !red.includes("Ann"), red);
+    assert.match(red, /2 rows not shown/);
+    assert.match(red, /"job_titles":\["CIO"\]/);
+    assert.match(red, /"email":"\[redacted\]"/);
     const dump = ["email,first,last", ...Array.from({ length: 20 }, (_, i) => `p${i}@x.io,a,b,c,d`)].join("\n");
     const out = redactArg(dump);
     assert.ok(!out.includes("p3@x.io"));
