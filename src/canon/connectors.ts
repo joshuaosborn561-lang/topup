@@ -13,8 +13,8 @@ export interface ConnectorSpec {
   aliases: string[];
   /** Why the bot needs it. */
   purpose: string;
-  /** Every top-up needs it, or only when the transcript calls for it. */
-  required: "always" | "when the transcript uses it";
+  /** Every top-up needs it; only when the transcript calls for it; or the service calls it itself, server side, so the bot never needs it. */
+  required: "always" | "when the transcript uses it" | "the service calls it";
   /** How to attach it in Grokbot. Custom MCPs carry their HTTPS endpoint from this service's config. */
   how: string;
 }
@@ -38,8 +38,8 @@ export function connectorSpecs(urls: ConnectorUrls = {}): ConnectorSpec[] {
     { name: "Supabase", aliases: [], purpose: "SQL on campaignintelligence (azpapwtnrbzywlnxxecz): counts, scratch tables, the pools your transcript built in SQL", required: "always", how: "The Supabase connector, signed in to the campaignintelligence project." },
     { name: "Context_Saver", aliases: ["LeadPipe", "Context Saver"], purpose: "LeadPipe: every row moves through it (lp_plan, lp_run, lp_status, lp_export). Never a lead row in chat", required: "always", how: custom(urls.leadpipe, "LeadPipe") },
     { name: "getleads", aliases: ["GetLeads"], purpose: "count_contacts, export_contacts, check_contact_export: the pull for LinkedIn-native lists", required: "always", how: "Custom connector (OAuth). Add GetLeads in Grokbot and sign in." },
-    { name: "Smartlead", aliases: [], purpose: "campaign analytics, lead lists, staging and import checks. Never start, pause, stop or delete a campaign", required: "always", how: custom(urls.smartlead, "Smartlead") },
-    { name: "Email_Verifier_Progression", aliases: ["Email Verifier Progression"], purpose: "MillionVerifier then No2Bounce; nothing enters Smartlead unverified", required: "always", how: custom(urls.verifier, "Email Verifier Progression") },
+    { name: "Smartlead", aliases: [], purpose: "the import and the post-import check: the service calls it with its own Railway key. Never start, pause, stop or delete a campaign", required: "the service calls it", how: custom(urls.smartlead, "Smartlead") },
+    { name: "Email_Verifier_Progression", aliases: ["Email Verifier Progression"], purpose: "MillionVerifier then No2Bounce: the service calls it with its own Railway key after the quote is approved", required: "the service calls it", how: custom(urls.verifier, "Email Verifier Progression") },
     { name: "Email_Finder_Waterfall", aliases: ["Email Finder Waterfall"], purpose: "emails for named people: getleads, Smartlead, AI Ark, Prospeo, FullEnrich in order", required: "when the transcript uses it", how: custom(urls.emailWaterfall, "Email Finder Waterfall") },
     { name: "AI_Ark", aliases: ["AI Ark"], purpose: "people search, email finder, TAM preview", required: "when the transcript uses it", how: "Custom connector. Add AI Ark in Grokbot." },
     { name: "Google_Maps_Scraper", aliases: ["Google Maps Scraper"], purpose: "local-business pools (plan_leads, run_leads, sync_to_supabase)", required: "when the transcript uses it", how: custom(urls.maps, "Google Maps Scraper") },
@@ -57,12 +57,14 @@ export interface ConnectorsAnswer {
   ok: boolean;
   missing_required: Array<{ name: string; purpose: string; how: string }>;
   missing_optional: Array<{ name: string; purpose: string; how: string }>;
+  /** Servers the service calls itself; the bot needs nothing for them. */
+  handled_by_service: Array<{ name: string; purpose: string }>;
   present: string[];
   rule: string;
 }
 
 export const CONNECTORS_RULE =
-  "Check this once per session before anything else. A required connector that is missing stops the top-up: tell Josh which ones to attach in Grokbot and wait. An optional one is needed only when the campaign's transcript used it. Every lead row moves through LeadPipe (Context Saver) and this service; never pull leads, exports or dataset items into chat.";
+  "Check this once per session before anything else. A required connector that is missing stops the top-up: tell Josh which ones to attach in Grokbot and wait. An optional one is needed only when the campaign's transcript used it. The ones the service calls itself (verification, the Smartlead import) need nothing from you. Every lead row moves through LeadPipe (Context Saver) and this service; never pull leads, exports or dataset items into chat.";
 
 function matches(spec: ConnectorSpec, have: string[]): boolean {
   const names = [spec.name, ...spec.aliases].map((n) => n.toLowerCase().replace(/[\s_-]+/g, ""));
@@ -78,9 +80,14 @@ export function connectorsCheck(have: string[], urls: ConnectorUrls = {}): Conne
   const present: string[] = [];
   const missing_required: ConnectorsAnswer["missing_required"] = [];
   const missing_optional: ConnectorsAnswer["missing_optional"] = [];
+  const handled_by_service: ConnectorsAnswer["handled_by_service"] = [];
   for (const s of specs) {
+    if (s.required === "the service calls it") {
+      handled_by_service.push({ name: s.name, purpose: s.purpose });
+      continue;
+    }
     if (matches(s, have)) present.push(s.name);
     else (s.required === "always" ? missing_required : missing_optional).push({ name: s.name, purpose: s.purpose, how: s.how });
   }
-  return { ok: missing_required.length === 0, missing_required, missing_optional, present, rule: CONNECTORS_RULE };
+  return { ok: missing_required.length === 0, missing_required, missing_optional, handled_by_service, present, rule: CONNECTORS_RULE };
 }
