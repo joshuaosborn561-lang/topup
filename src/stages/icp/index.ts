@@ -43,8 +43,8 @@ export interface IcpVariant {
   disco_icp: string | null;
 }
 
-/** Statuses a row can be in before anything paid has touched it. */
-export const ICP_STATUSES = ["ingested", "needs_domain", "needs_person", "needs_email", "email_found", "needs_verify"] as const;
+/** The rows the quote counted: after dedupe and unsubscribes, with an address, waiting for verification. Nothing else is graded or paid for. */
+export const ICP_STATUSES = ["needs_verify"] as const;
 /** Share of a list the fetch usually cannot read; DiscoLike worst case is priced on this. */
 const UNREADABLE_SHARE = 0.1;
 
@@ -134,6 +134,7 @@ export class IcpStage {
       const { fetched, fetched_ok: fetchedOk } = await fetchAll(this.d.gate, batch);
       // 3. Jev picks a category. One call at a time per batch.
       const { graded, errors: gradeErrors, last_error: lastError } = await gradeAll((n, w) => this.d.gate!.grade(batch, model, n, w));
+      if (gradeErrors > 0 && graded === 0) throw new Error(`Jev graded nothing (${gradeErrors} errors${lastError ? `: ${lastError.slice(0, 120)}` : ""}); nothing is written as unreadable on an error. Try again.`);
       const jevCost = await this.costCents(batch, model);
       await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev", action: "grade", rows: graded, credits: graded, worstCaseCents: worst, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy });
       // 4. DiscoLike on what we could not read. One task at a time.

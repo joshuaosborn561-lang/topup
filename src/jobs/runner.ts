@@ -234,7 +234,15 @@ export class TopupRunner {
       if (!this.isApprover(who)) return this.result(jobId, phase, first, "refused", {}, null, null, null, `approved_by "${who || "(empty)"}" is not an approver. ${this.rule}`, `show the quote to ${this.approvers.map(cap).join(" or ")}; then topup(job_id, approved_by=their name)`);
       const quote = await this.openQuote(jobId);
       const spendCard = (await this.d.repo.openCardsForRun(jobId)).some((c) => c.kind === "spend_approval");
-      if (!quote && !spendCard) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no open quote or spend card on this job", "job(job_id); when the quote step is done the card is there, else the quote is still running");
+      if (!quote && !spendCard) {
+        // A yes was already recorded and a step failed or was cut off: the same name picks the approved tail back up.
+        const r = await this.resumable(jobId);
+        if (r && r.phase !== "quote") return this.begin(jobId, r.phase, { by: opts.by, approved_by: who, resume: true });
+        return this.result(jobId, phase, first, "refused", {}, null, null, null, "no open quote or spend card on this job", "job(job_id); when the quote step is done the card is there, else the quote is still running");
+      }
+      if (quote && quote.payload.icp_ready === false) {
+        return this.result(jobId, phase, first, "refused", {}, null, null, null, String(quote.payload.icp_note ?? "the ICP website check is not set up for this client"), "ask Josh to write the client's ICP label set (topup.icp_variants), then topup(job_id, approved_by=name)");
+      }
     }
     if ((phase === "load" || phase === "approve") && (await this.d.repo.loadsPaused())) {
       if (phase === "load") return this.result(jobId, phase, first, "refused", {}, null, null, null, "loads are paused; nothing reaches Smartlead until loads_paused is off", "loads_paused(paused=false, by=Josh) when Josh says so, then load(job_id)");
@@ -368,7 +376,8 @@ export class TopupRunner {
     }
     const existing = await this.openQuote(run.run_id);
     const belowFloor = quote.net_new < MIN_NET_NEW;
-    const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id, below_floor: belowFloor, floor: MIN_NET_NEW };
+    const icp = await this.icpReady(run.client_tag);
+    const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id, below_floor: belowFloor, floor: MIN_NET_NEW, icp_ready: icp.ready, icp_note: icp.note };
     let cardId = existing?.card_id ?? null;
     if (existing) {
       await this.d.repo.updateCardPayload(existing.card_id, payload);
@@ -386,7 +395,7 @@ export class TopupRunner {
     await this.d.repo.setRunStatus(run.run_id, "awaiting_owner", "suppress");
     await this.event(run, "card_opened", `Quote for #${settings.campaign_id}: ${quote.net_new} net new (${quote.with_email} with an address, ${quote.domains} domains), worst case ${usd(quote.worst_case_cents)}. Waiting for Josh or Cayden.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
     const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents, below_floor: belowFloor ? 1 : 0 };
-    const floorNote = belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this campaign looks exhausted unless the record shows a source not replayed; they decide.` : "";
+    const floorNote = (belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this campaign looks exhausted unless the record shows a source not replayed; they decide.` : "") + (icp.ready ? "" : ` ${icp.note}`);
     return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}.${floorNote} When they say yes: topup(job_id, approved_by="their name").`);
   }
 
@@ -420,6 +429,17 @@ export class TopupRunner {
       return { job_id: jobId, status: "quoted", quote: { net_new: q.net_new, with_email: q.with_email, domains: q.domains, worst_case_cents: q.worst_case_cents, icp_cents: q.icp_cents, verify_cents: q.verify_cents, card_id: card.card_id }, next: `tell ${this.approvers.map(cap).join(" or ")} the count and the cost; when they say yes: topup(job_id, approved_by="their name").` };
     }
     return this.resume(jobId, by);
+  }
+
+  /** The ICP website check needs the client's label set before anything paid runs (D60); the quote says so up front instead of the approved tail parking. */
+  private async icpReady(clientTag: string): Promise<{ ready: boolean; note: string }> {
+    try {
+      const { rows } = await this.d.repo.raw().query<{ n: string }>(`select count(*)::text as n from topup.icp_variants where client_tag = $1`, [clientTag]);
+      if (Number(rows[0]?.n ?? 0) > 0) return { ready: true, note: "" };
+      return { ready: false, note: `No ICP label set for ${clientTag} in topup.icp_variants: the website check cannot run, so a yes would park. Ask Josh to write it first.` };
+    } catch {
+      return { ready: true, note: "" };
+    }
   }
 
   private async openQuote(jobId: string): Promise<{ card_id: string; payload: Record<string, unknown> } | null> {

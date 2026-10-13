@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { SMARTLEAD_ALLOWED } from "../clients/smartlead.js";
+import { importStatusFromResponse, SMARTLEAD_ALLOWED } from "../clients/smartlead.js";
 import { parseJobSettings } from "../jobs/settings.js";
 import { importMatched, parseJobs } from "./import/index.js";
 import { isLaneTable, LEADPIPE_CANONICAL_COLUMNS, safeWhere, sourceLabel } from "./ingest/index.js";
@@ -47,6 +47,13 @@ describe("D99 — the referee's pure halves", () => {
     assert.equal(cellLabel({ band: "11_50", mail_class: "SEG", gift: null }, ["band"]), "band=11_50");
     assert.match(dedupeKeySql("c", "e"), /md5/);
     assert.equal(importMatched(10, { status: "completed", imported_count: 10, duplicate_count: 0, invalid_count: 0, error_message: null } as never), true);
+    assert.equal(importMatched(10, { status: "completed", imported_count: 8, duplicate_count: 2, invalid_count: 0, error_message: null } as never), true, "duplicates Smartlead already had count as accounted for");
+    assert.equal(importMatched(10, { status: "completed", imported_count: 8, duplicate_count: 0, invalid_count: 0, error_message: null } as never), false);
+    const live = importStatusFromResponse({ status: "completed", counts: { imported: 838, failed_chunks: [] }, errors: [] });
+    assert.equal(live.imported_count, 838);
+    assert.equal(live.invalid_count, 0);
+    assert.equal(importStatusFromResponse({ run: { status: "failed", error: "boom" } }).error_message, "boom");
+    assert.equal(importStatusFromResponse({ status: "running", counts: {} }).imported_count, null);
     assert.deepEqual(parseJobs('{"7":"job-a"}'), { 7: "job-a" });
     assert.equal(QA_FIELD_COLUMN.job_title, "title");
     assert.equal(scopeSql(null, "bcp")?.sql, "true");

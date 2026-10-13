@@ -41,9 +41,10 @@ export interface CampaignImport {
   per_day: number | null;
 }
 
-/** The skill's success test: imported equals submitted. Duplicates Smartlead already had are not imported. */
+/** The skill's success test: every submitted row is accounted for by Smartlead, as imported or as a duplicate it already had. */
 export function importMatched(submitted: number, s: ImportStatus): boolean {
-  return s.imported_count !== null && s.imported_count === submitted;
+  if (s.imported_count === null) return false;
+  return s.imported_count + (s.duplicate_count ?? 0) === submitted;
 }
 
 export class ImportStage {
@@ -60,6 +61,16 @@ export class ImportStage {
       const { rows: staged } = await db.query<{ campaign: string; n: string }>(`select campaign_id::text as campaign, count(*)::text as n from ${STAGING_TABLE} where run_id = $1 and imported = false group by 1 order by 1`, [run.run_id]);
       const { rows: already } = await db.query<{ campaign: string; n: string }>(`select campaign_id::text as campaign, count(*)::text as n from ${STAGING_TABLE} where run_id = $1 and imported = true group by 1 order by 1`, [run.run_id]);
       if (staged.length === 0 && already.length === 0) return { kind: "nothing" };
+      // start_lead_import drains every unimported staging row of the campaign, whoever staged it. Rows that are not this job's never ride in on its yes.
+      const { rows: foreign } = await db.query<{ campaign: string; n: string }>(
+        `select campaign_id::text as campaign, count(*)::text as n from ${STAGING_TABLE}
+          where campaign_id = any($2::bigint[]) and imported = false and (run_id is distinct from $1)
+          group by 1 order by 1`,
+        [run.run_id, staged.map((r) => Number(r.campaign))],
+      );
+      if (foreign.length) {
+        return gateUnmet("import", `${foreign.map((r) => `#${r.campaign}: ${r.n}`).join(", ")} unimported staging rows belong to another job. A Smartlead import takes every unimported row of the campaign, so those would load on this job's yes. Ask Josh what they are; clear or import them first.`, { foreign_staged: foreign.reduce((a, r) => a + Number(r.n), 0) });
+      }
 
       const own = await this.d.repo.getStep(run.run_id, "import");
       const jobs = parseJobs(own?.vendor_job_id ?? null);
