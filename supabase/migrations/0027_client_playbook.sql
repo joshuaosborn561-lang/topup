@@ -56,7 +56,7 @@ with events as (
     null::int,
     null::jsonb,
     null::text,
-    null::text[]
+    null::uuid[]
   from topup.process_changes p
 ),
 clients as (

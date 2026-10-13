@@ -31,8 +31,46 @@ export interface JobStatus {
   rows_read: number | null;
   /** Rows it inserted, when it says. */
   rows_inserted: number | null;
+  /** Rows LeadPipe's own ingest filter dropped (no usable address, off its dialect), when it says. */
+  filtered_out: number | null;
+  /** Rows it dropped as duplicates of rows already in the lane table (the client already has them), when it says. */
+  dupes_dropped: number | null;
+  /** LeadPipe's own note on the ingest, when it says (e.g. headers it could not map). */
+  note: string | null;
   error: string | null;
   raw_keys: string[];
+}
+
+/**
+ * `lp_status` answers `{ok, tool, result}` like every other LeadPipe tool;
+ * the status and the counts live on `result`, the ingest counts on
+ * `result.results_summary`. The flat shape is still accepted. Job 756c7271
+ * (13 Oct 2026) sat at "running" for 15 minutes because the top level was
+ * read instead.
+ */
+export function jobStatusFromResponse(payload: unknown): JobStatus {
+  const root = asRecord(parseJson(payload)) ?? {};
+  const result = asRecord(parseJson(root.result)) ?? root;
+  const summary = asRecord(parseJson(result.results_summary)) ?? {};
+  const counts = asRecord(result.counts) ?? {};
+  const pick = (...keys: string[]): number | null => {
+    for (const k of keys) {
+      const v = summary[k] ?? counts[k] ?? result[k];
+      if (v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v))) return Number(v);
+    }
+    return null;
+  };
+  const error = firstMessage(result) ?? (root !== result ? firstMessage(root) : null);
+  return {
+    status: String(result.status ?? root.status ?? "unknown").toLowerCase(),
+    rows_read: pick("rows_read", "read", "total_rows", "total"),
+    rows_inserted: pick("rows_inserted", "inserted", "useful_output_count", "useful_output"),
+    filtered_out: pick("filtered_out"),
+    dupes_dropped: pick("dupes_dropped"),
+    note: typeof summary.note === "string" && summary.note.trim() ? summary.note.trim() : null,
+    error,
+    raw_keys: [...Object.keys(root), ...Object.keys(result).map((k) => `result.${k}`), ...Object.keys(summary).map((k) => `summary.${k}`)],
+  };
 }
 
 export const JOB_DONE = ["completed", "complete", "done", "finished", "succeeded", "success"];
@@ -189,20 +227,8 @@ export class LeadPipeClient implements LeadPipe {
     if (!this.url) throw new Error("LEADPIPE_MCP_URL is not configured");
     const res = await this.mcp.call<Record<string, unknown>>("lp_status", { job_id: jobId });
     if (res.ok === false) throw new Error(`lp_status ${jobId}: ${String(res.code ?? "error")} ${String(res.error ?? "")}`.trim());
-    const counts = (res.counts && typeof res.counts === "object" ? res.counts : {}) as Record<string, unknown>;
-    const pick = (...keys: string[]): number | null => {
-      for (const k of keys) {
-        const v = counts[k] ?? res[k];
-        if (v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v))) return Number(v);
-      }
-      return null;
-    };
-    return {
-      status: String(res.status ?? "unknown").toLowerCase(),
-      rows_read: pick("rows_read", "read", "rows_total", "total_rows", "total"),
-      rows_inserted: pick("rows_inserted", "inserted", "useful_output_count", "useful_output"),
-      error: typeof res.error === "string" ? res.error : null,
-      raw_keys: [...Object.keys(res), ...Object.keys(counts).map((k) => `counts.${k}`)],
-    };
+    const status = jobStatusFromResponse(res);
+    log.info("lp_status", { job_id: jobId, status: status.status, rows_read: status.rows_read, rows_inserted: status.rows_inserted, filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped });
+    return status;
   }
 }

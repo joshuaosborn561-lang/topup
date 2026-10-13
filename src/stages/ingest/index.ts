@@ -78,10 +78,13 @@ export class IngestStage {
       const already = await this.rowsForLabel(table, label);
       let rowsRead: number | null = null;
       let expected: number | null = null;
+      let vendor: { filtered_out: number | null; dupes_dropped: number | null; rows_inserted: number | null; note: string | null } = { filtered_out: null, dupes_dropped: null, rows_inserted: null, note: null };
       if (already === 0) {
         if (settings.source.kind === "file_url") {
-          rowsRead = await this.ingestFiles(run, settings.source.urls, label, cols);
-          expected = rowsRead;
+          const status = await this.ingestFiles(run, settings.source.urls, label);
+          rowsRead = status.rows_read;
+          expected = status.rows_inserted ?? status.rows_read;
+          vendor = { filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped, rows_inserted: status.rows_inserted, note: status.note };
         } else {
           rowsRead = await this.copyTable(run, settings.source.table, settings.source.where, label, cols);
           expected = rowsRead;
@@ -101,12 +104,30 @@ export class IngestStage {
         return Number(rows[0]?.n ?? 0);
       });
       const landed = await this.landedCounts(table, run.run_id, cols);
-      const counts: Record<string, number> = { rows_exported: expected ?? claimed, rows_read: rowsRead ?? -1, rows_claimed: claimed, dedupe_dropped: deduped, ...landed };
+      const counts: Record<string, number> = {
+        rows_exported: expected ?? claimed,
+        rows_read: rowsRead ?? -1,
+        rows_claimed: claimed,
+        dedupe_dropped: deduped,
+        ...(vendor.filtered_out != null ? { leadpipe_filtered_out: vendor.filtered_out } : {}),
+        ...(vendor.dupes_dropped != null ? { already_in_lane: vendor.dupes_dropped } : {}),
+        ...(vendor.rows_inserted != null ? { rows_inserted: vendor.rows_inserted } : {}),
+        ...landed,
+      };
+      // Every row read is accounted for: inserted + already in the lane + LeadPipe's own filter + duplicates within the pool.
+      const accounted = (vendor.rows_inserted ?? claimed) + (vendor.dupes_dropped ?? 0) + (vendor.filtered_out ?? 0);
+      if (rowsRead != null && vendor.rows_inserted != null && accounted !== rowsRead) counts.rows_unaccounted = rowsRead - accounted;
+      const vendorWords =
+        vendor.rows_inserted != null
+          ? ` · of ${rowsRead ?? "?"} read: ${vendor.dupes_dropped ?? 0} already in the lane table (the client has them), ${vendor.filtered_out ?? 0} dropped by LeadPipe's own filter${vendor.note ? ` (${vendor.note.slice(0, 160)})` : ""}, ${vendor.rows_inserted} new`
+          : "";
       if (claimed === 0) {
         await this.d.repo.finishStep(run.run_id, "ingest", { useful_output: 0, counts });
         const why =
           settings.source.kind === "file_url"
-            ? "the file: check it has rows and an email or a name column"
+            ? vendor.rows_inserted === 0
+              ? `the file(s): LeadPipe read ${rowsRead ?? 0} rows and inserted none (${vendor.dupes_dropped ?? 0} already in the lane table, ${vendor.filtered_out ?? 0} dropped by its own filter${vendor.note ? `: ${vendor.note.slice(0, 160)}` : ""})`
+              : "the file: check it has rows and an email or a name column"
             : isLaneTable(settings.source.table, run.client_tag)
               ? `${settings.source.table} is the lane table itself: the where must pick rows with run_id null (for example source_label = 'your label'); rows another job already claimed do not count`
               : `table ${settings.source.table}: every email it holds is already in ${table}, or no row matched the where`;
@@ -115,6 +136,7 @@ export class IngestStage {
       const nulls = Object.entries(landed).filter(([k, n]) => k.startsWith("null_") && n > 0).map(([k, n]) => `${k.replace("null_", "")} ${n}`);
       const line =
         `Ingest done: ${claimed} rows landed for this job from ${settings.source.kind === "file_url" ? `${settings.source.urls.length} file(s)` : `table ${settings.source.table}`}` +
+        vendorWords +
         (already > 0 ? " (rows already ingested under this job's label were reused)" : "") +
         (deduped > 0 ? ` · ${deduped} duplicate people removed within the pool` : "") +
         (nulls.length ? ` · empty after ingest: ${nulls.join(", ")}` : "") +
@@ -123,7 +145,7 @@ export class IngestStage {
     });
   }
 
-  private async ingestFiles(run: RunRow, urls: string[], label: string, cols: Set<string>): Promise<number | null> {
+  private async ingestFiles(run: RunRow, urls: string[], label: string): Promise<JobStatus> {
     const own = await this.d.repo.getStep(run.run_id, "ingest");
     let jobId = own?.vendor_job_id ?? null;
     if (!jobId) {
@@ -142,7 +164,7 @@ export class IngestStage {
       { pollMs: this.d.cfg.pollMs, deadMs: this.d.cfg.deadMs, clock: this.clock, what: `LeadPipe ingest ${jobId}`, stop: async () => (await this.d.repo.getRun(run.run_id))?.status === "aborted" },
     );
     await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "leadpipe", action: "ingest_csv", rows: status.rows_read ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: jobId, approvedBy: null });
-    return status.rows_read;
+    return status;
   }
 
   /**

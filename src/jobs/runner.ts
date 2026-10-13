@@ -3,7 +3,7 @@ import type { Repo } from "../db/repo.js";
 import { presentRun, runIsOpen, type RunRow, type Step } from "../domain/runs.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
-import { isColdCall, isNeverTopUp, isOwnerApprover, OWNER_APPROVER_NAMES } from "../policy/rules.js";
+import { isColdCall, isNeverTopUp, OWNER_APPROVER_NAMES } from "../policy/rules.js";
 import { topupQuoteCard } from "../console/cards.js";
 import { usd } from "../spend/prices.js";
 import { domainSql, icpWorstCaseCents } from "../stages/icp/index.js";
@@ -100,14 +100,88 @@ export interface TopupRunnerDeps {
   ledger?: Pick<LaneLedger, "event">;
   now?: () => number;
   backgroundTimeoutMs?: number;
+  /** Who may approve a top-up, by first name (TOPUP_APPROVERS in Railway). Default: Josh and Cayden (D92). */
+  approvers?: readonly string[];
 }
 
-export const APPROVER_RULE = `Only ${OWNER_APPROVER_NAMES.map((n) => n[0]!.toUpperCase() + n.slice(1)).join(" or ")} approves a top-up (D92). Pass approved_by with their name after they said yes to the quoted count and cost.`;
+const cap = (n: string) => n[0]!.toUpperCase() + n.slice(1);
+
+export function approverRule(names: readonly string[]): string {
+  return `Only ${names.map(cap).join(" or ")} approves a top-up. Pass approved_by with their name after they said yes to the quoted count and cost.`;
+}
+
+/** Comma-separated first names, lower-cased; empty falls back to the D92 default. */
+export function parseApprovers(raw: string | null | undefined): string[] {
+  const names = (raw ?? "").split(",").map((n) => n.trim().toLowerCase()).filter(Boolean);
+  return names.length ? names : [...OWNER_APPROVER_NAMES];
+}
 
 export class TopupRunner {
   private readonly inFlight = new Set<string>();
+  readonly approvers: readonly string[];
 
-  constructor(private readonly d: TopupRunnerDeps) {}
+  constructor(private readonly d: TopupRunnerDeps) {
+    this.approvers = d.approvers && d.approvers.length ? d.approvers.map((n) => n.toLowerCase()) : [...OWNER_APPROVER_NAMES];
+  }
+
+  isApprover(name: string | null | undefined): boolean {
+    return this.approvers.includes((name ?? "").trim().toLowerCase());
+  }
+
+  get rule(): string {
+    return approverRule(this.approvers);
+  }
+
+  /**
+   * Where an open job stands and what would move it: the quote phase until
+   * its three free steps are done; the approve phase once a named yes was
+   * recorded (the quote card resolved, icp or verify holding approved
+   * cents); the load phase when it stopped at staged and loads resumed.
+   * A deploy kills background phases (13 Oct 2026); boot calls this for
+   * every open job with a step left 'running' and picks each one back up.
+   */
+  async resumable(jobId: string): Promise<{ phase: Phase; approved_by: string | null; interrupted: Step | null } | null> {
+    const run = await this.d.repo.getRun(jobId);
+    if (!run || !runIsOpen(presentRun(run).status) || Number(run.counts_by_status?.grok_job) !== 1) return null;
+    const stepRows = new Map<Step, Awaited<ReturnType<Repo["getStep"]>>>();
+    for (const step of [...PHASE_STEPS.quote, ...PHASE_STEPS.approve]) stepRows.set(step, await this.d.repo.getStep(jobId, step));
+    const interrupted = [...stepRows.entries()].find(([, r]) => r?.status === "running")?.[0] ?? null;
+    const done = (step: Step) => stepRows.get(step)?.status === "done";
+    if (!PHASE_STEPS.quote.every(done)) return { phase: "quote", approved_by: null, interrupted };
+    const icp = stepRows.get("icp");
+    const verify = stepRows.get("verify");
+    const recorded = [icp, verify].map((r) => (typeof r?.counts?.approved_by === "string" ? String(r.counts.approved_by) : null)).find(Boolean) ?? null;
+    const approved = (icp?.approved_cents ?? 0) > 0 || (verify?.approved_cents ?? 0) > 0 || !!recorded;
+    if (!approved) return null;
+    if (!PHASE_STEPS.approve.every(done)) {
+      const loadOnly = PHASE_STEPS.approve.filter((st) => st !== "import" && st !== "post_import").every(done);
+      return { phase: loadOnly ? "load" : "approve", approved_by: recorded, interrupted };
+    }
+    return null;
+  }
+
+  /** Pick an interrupted job back up: reset the step the restart cut off (its attempts are not its fault) and run the phase it was in. */
+  async resume(jobId: string, by: string): Promise<TopupResult | null> {
+    const r = await this.resumable(jobId);
+    if (!r) return null;
+    if (r.interrupted) await this.d.repo.resetStep(jobId, r.interrupted);
+    const run = await this.d.repo.getRun(jobId);
+    if (run) await this.event(run, "step", `${r.phase}: resumed by ${by}${r.interrupted ? ` at ${r.interrupted}` : ""}.`, by);
+    return this.begin(jobId, r.phase, { by, approved_by: r.approved_by, resume: true });
+  }
+
+  /** On boot: every open job a restart cut off mid-phase. Nothing new starts; what a person already started finishes. */
+  async resumeInterrupted(by: string): Promise<string[]> {
+    const resumed: string[] = [];
+    for (const run of await this.d.repo.openRuns()) {
+      if (Number(run.counts_by_status?.grok_job) !== 1) continue;
+      const r = await this.resumable(run.run_id);
+      if (!r || !r.interrupted) continue;
+      const out = await this.resume(run.run_id, by);
+      if (out && out.status === "started") resumed.push(run.run_id);
+    }
+    return resumed;
+  }
 
   /** A campaign with no recorded build has no method to replay: the top-up waits for Josh to record it (D99). */
   async hasRecordedBuild(clientTag: string, campaignId: number): Promise<boolean> {
@@ -148,16 +222,16 @@ export class TopupRunner {
   }
 
   /** Start a phase in the background and answer at once. */
-  async begin(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null }): Promise<TopupResult> {
+  async begin(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null; resume?: boolean }): Promise<TopupResult> {
     const first = PHASE_STEPS[phase][0]!;
     const run = await this.d.repo.getRun(jobId);
     if (!run) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no such job", "jobs() lists them");
     if (Number(run.counts_by_status?.grok_job) !== 1) return this.result(jobId, phase, first, "refused", {}, null, null, null, "not a top-up job", "topup(...) opens one");
     const shown = presentRun(run);
     if (!runIsOpen(shown.status)) return this.result(jobId, phase, first, "refused", {}, null, null, null, `job is ${shown.status}`, "open a new job with topup(...)");
-    if (phase === "approve") {
+    if (phase === "approve" && !opts.resume) {
       const who = opts.approved_by?.trim() ?? "";
-      if (!isOwnerApprover(who)) return this.result(jobId, phase, first, "refused", {}, null, null, null, `approved_by "${who || "(empty)"}" is not an approver. ${APPROVER_RULE}`, "show the quote to Josh or Cayden; then topup(job_id, approved_by=their name)");
+      if (!this.isApprover(who)) return this.result(jobId, phase, first, "refused", {}, null, null, null, `approved_by "${who || "(empty)"}" is not an approver. ${this.rule}`, `show the quote to ${this.approvers.map(cap).join(" or ")}; then topup(job_id, approved_by=their name)`);
       const quote = await this.openQuote(jobId);
       if (!quote) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no open quote on this job", "job(job_id); when the quote step is done the card is there, else the quote is still running");
     }
@@ -172,7 +246,7 @@ export class TopupRunner {
     return this.result(jobId, phase, first, "started", {}, null, null, null, null, `job(job_id) until the ${phase} phase is done`);
   }
 
-  private async runInBackground(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null }): Promise<void> {
+  private async runInBackground(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null; resume?: boolean }): Promise<void> {
     const timeoutMs = Math.max(1, Math.floor(this.d.backgroundTimeoutMs ?? PHASE_BACKGROUND_TIMEOUT_MS));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
@@ -210,7 +284,7 @@ export class TopupRunner {
   }
 
   /** Run one phase to its end, or to the first thing a person must see. */
-  async run(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null }): Promise<TopupResult> {
+  async run(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null; resume?: boolean }): Promise<TopupResult> {
     const run = await this.d.repo.getRun(jobId);
     const steps = PHASE_STEPS[phase];
     const first = steps[0]!;
@@ -219,7 +293,7 @@ export class TopupRunner {
     if (!rec) return this.result(jobId, phase, first, "refused", {}, null, null, null, `job settings ${run.recipe_id} are missing`, "open a new job");
     const settings = parseJobSettings(rec.body);
     let approver: string | null = null;
-    if (phase === "approve" && opts.approved_by) approver = await this.approveQuote(run, opts.approved_by, opts.by);
+    if (phase === "approve" && opts.approved_by) approver = (await this.approveQuote(run, opts.approved_by, opts.by)) ?? (opts.resume ? opts.approved_by : null);
 
     for (const step of steps) {
       const already = await this.d.repo.getStep(jobId, step);
@@ -245,7 +319,7 @@ export class TopupRunner {
       if (kind === "waiting") {
         const card = (await this.d.repo.openCardsForRun(jobId)).find((c) => c.kind === "spend_approval" && c.payload?.step === step) ?? null;
         const worst = typeof o.worstCaseCents === "number" ? o.worstCaseCents : Number(card?.payload?.worst_case_cents ?? 0);
-        return this.result(jobId, phase, step, "waiting_approval", {}, worst, card?.card_id ?? null, null, str("why"), `show Josh or Cayden the new cost; topup(job_id, approved_by=their name) runs it`);
+        return this.result(jobId, phase, step, "waiting_approval", {}, worst, card?.card_id ?? null, null, str("why"), `show ${this.approvers.map(cap).join(" or ")} the new cost; topup(job_id, approved_by=their name) runs it`);
       }
       if (kind === "parked") return this.result(jobId, phase, step, "parked", {}, null, null, approver, str("reason"), "read job(job_id); fix the cause or abort(job_id)");
       if (kind === "retry") return this.result(jobId, phase, step, "retry", {}, null, null, approver, str("error"), `call the same phase again; the third failure parks`);
@@ -275,6 +349,13 @@ export class TopupRunner {
   /** The count and the cost, as one card to Josh or Cayden. Nothing paid has run. */
   private async postQuote(run: RunRow, settings: JobSettings, by: string): Promise<TopupResult> {
     const quote = await this.quote(run);
+    if (quote.net_new === 0) {
+      const counts = await this.funnel(run);
+      const why = `0 new leads for #${settings.campaign_id}: every row in the pool is already held by the client, unsubscribed, or without an address (ingested ${counts.rows_claimed ?? 0}, held ${counts.held ?? 0}, suppressed ${counts.suppressed ?? 0}).`;
+      await this.d.repo.setRunStatus(run.run_id, "done", "suppress");
+      await this.event(run, "receipt", why, by, "Nothing to approve. A bigger or different pool, or the TAM is exhausted.");
+      return this.result(run.run_id, "quote", "suppress", "nothing", counts, 0, null, null, why, "nothing to approve; the job closed. Say the TAM for this campaign is exhausted unless the record shows a source you did not replay.");
+    }
     const existing = await this.openQuote(run.run_id);
     const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id };
     let cardId = existing?.card_id ?? null;
@@ -294,7 +375,7 @@ export class TopupRunner {
     await this.d.repo.setRunStatus(run.run_id, "awaiting_owner", "suppress");
     await this.event(run, "card_opened", `Quote for #${settings.campaign_id}: ${quote.net_new} net new (${quote.with_email} with an address, ${quote.domains} domains), worst case ${usd(quote.worst_case_cents)}. Waiting for Josh or Cayden.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
     const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents };
-    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell Josh or Cayden: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}. When one of them says yes: topup(job_id, approved_by="their name").`);
+    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}. When they say yes: topup(job_id, approved_by="their name").`);
   }
 
   /** Net new after held and unsubscribes, and the worst case of everything paid that follows (ICP check + verification). */
@@ -315,6 +396,18 @@ export class TopupRunner {
     const icp = icpWorstCaseCents(domains);
     const verify = verifyWorstCaseCents(withEmail);
     return { net_new: netNew, with_email: withEmail, domains, worst_case_cents: icp + verify, icp_cents: icp, verify_cents: verify };
+  }
+
+  /** What an open job is waiting for, for `topup(job_id)` with no name: the quote if one is posted, else the phase to resume. */
+  async standing(jobId: string, by: string): Promise<TopupResult | { job_id: string; status: "quoted"; quote: Record<string, unknown>; next: string } | null> {
+    const run = await this.d.repo.getRun(jobId);
+    if (!run) return null;
+    const card = await this.openQuote(jobId);
+    if (card) {
+      const q = card.payload;
+      return { job_id: jobId, status: "quoted", quote: { net_new: q.net_new, with_email: q.with_email, domains: q.domains, worst_case_cents: q.worst_case_cents, icp_cents: q.icp_cents, verify_cents: q.verify_cents, card_id: card.card_id }, next: `tell ${this.approvers.map(cap).join(" or ")} the count and the cost; when they say yes: topup(job_id, approved_by="their name").` };
+    }
+    return this.resume(jobId, by);
   }
 
   private async openQuote(jobId: string): Promise<{ card_id: string; payload: Record<string, unknown> } | null> {

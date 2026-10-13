@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { RunRow } from "../domain/runs.js";
-import { PHASE_STEPS, QUOTE_CARD, TopupRunner } from "./runner.js";
+import { parseApprovers, PHASE_STEPS, QUOTE_CARD, TopupRunner } from "./runner.js";
 
 /**
  * D99 — a top-up is one job per campaign: free quote first, then the paid
@@ -26,6 +26,8 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; needsVerify
       return { ok: true as const, run };
     },
     getRun: async (id: string) => runs.get(id) ?? null,
+    openRuns: async () => [...runs.values()].filter((r) => !["done", "aborted", "failed", "declined"].includes(r.status)),
+    resetStep: async (id: string, step: string) => { const k = `${id}/${step}`; const s = steps.get(k); if (s) { s.status = "pending"; s.attempts = 0; } },
     mergeRunCounts: async (id: string, counts: Record<string, number>) => { const r = runs.get(id)!; r.counts_by_status = { ...r.counts_by_status, ...counts }; },
     beginStep: async (id: string, step: string) => { const k = `${id}/${step}`; const s = steps.get(k) ?? { status: "pending", attempts: 0, approved_cents: 0 }; s.attempts += 1; s.status = "running"; steps.set(k, s); return { ok: true, attempts: s.attempts }; },
     finishStep: async (id: string, step: string) => { const k = `${id}/${step}`; const s = steps.get(k) ?? { status: "pending", attempts: 1, approved_cents: 0 }; s.status = "done"; steps.set(k, s); },
@@ -80,7 +82,7 @@ function freeStage(repo: ReturnType<typeof fakeRepo>, step: string, counts: Reco
   return { run: async (run: RunRow) => { await repo.finishStep(run.run_id, step); return { kind: "done", counts }; } };
 }
 
-function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: number } = { icp: 50, verify: 900 }) {
+function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: number } = { icp: 50, verify: 900 }, approvers?: string[]) {
   const stages = {
     ingest: freeStage(repo, "ingest", { rows_claimed: 1500 }),
     dedupe: freeStage(repo, "dedupe", { held: 200 }),
@@ -110,7 +112,7 @@ function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: 
       return card;
     },
   };
-  return new TopupRunner({ repo: repo as never, stages: stages as never, console: console_ as never, ledger: ledger as never, now: () => 1700000000000 });
+  return new TopupRunner({ repo: repo as never, stages: stages as never, console: console_ as never, ledger: ledger as never, now: () => 1700000000000, ...(approvers ? { approvers } : {}) });
 }
 
 const spec = { client_tag: "bcp", smartlead_client_id: 542838, campaign_id: 3921850, source: { kind: "file_url" as const, urls: ["https://example.invalid/pool.csv"] } };
@@ -213,5 +215,72 @@ describe("D99 — the top-up", () => {
     assert.equal(repo.cards.find((c) => c.kind === QUOTE_CARD)!.status, "resolved");
     const after = await j.begin(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Josh" });
     assert.equal(after.status, "refused");
+  });
+
+  it("the approver list comes from Railway: with TOPUP_APPROVERS=Josh, Cayden's yes is refused for now", async () => {
+    assert.deepEqual(parseApprovers(""), ["josh", "cayden"]);
+    assert.deepEqual(parseApprovers(" Josh "), ["josh"]);
+    const repo = fakeRepo();
+    const j = runner(repo, undefined, ["josh"]);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    const cayden = await j.begin(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Cayden" });
+    assert.equal(cayden.status, "refused");
+    assert.match(cayden.why!, /Only Josh approves/);
+    const josh = await j.run(opened.job_id, "approve", { by: "mcp:operator", approved_by: "josh" });
+    assert.equal(josh.status, "done");
+  });
+
+  it("a restart mid-quote is picked up on boot: the cut-off step is reset and the quote finishes", async () => {
+    const repo = fakeRepo();
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    // The deploy killed the process while ingest was running.
+    repo.steps.set(`${opened.job_id}/ingest`, { status: "running", attempts: 1, approved_cents: 0 });
+    repo.runs.get(opened.job_id)!.status = "ingesting";
+    const r = await j.resumable(opened.job_id);
+    assert.deepEqual(r, { phase: "quote", approved_by: null, interrupted: "ingest" });
+    const resumed = await j.resumeInterrupted("boot");
+    assert.deepEqual(resumed, [opened.job_id]);
+    await new Promise((res) => setTimeout(res, 20));
+    assert.equal(repo.steps.get(`${opened.job_id}/suppress`)?.status, "done");
+    assert.ok(repo.cards.some((c) => c.kind === QUOTE_CARD && c.status === "open"));
+    assert.ok(repo.events.some((l) => /resumed by boot at ingest/.test(l)));
+    const standing = await j.standing(opened.job_id, "mcp:operator");
+    assert.equal((standing as { status: string }).status, "quoted");
+  });
+
+  it("a restart after the yes resumes the approved tail under the recorded name, with no card needed", async () => {
+    const repo = fakeRepo();
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    // Approve, but pretend the process died while verify was running.
+    const approving = j.run(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Cayden" });
+    await approving;
+    for (const st of ["verify", "normalize", "qa", "route", "stage", "import", "post_import"]) repo.steps.delete(`${opened.job_id}/${st}`);
+    repo.steps.set(`${opened.job_id}/verify`, { status: "running", attempts: 1, approved_cents: 900, counts: { approved_by: "Cayden" } });
+    repo.runs.get(opened.job_id)!.status = "verifying";
+    const r = await j.resumable(opened.job_id);
+    assert.equal(r?.phase, "approve");
+    assert.equal(r?.approved_by, "Cayden");
+    const out = await j.run(opened.job_id, "approve", { by: "boot", approved_by: r!.approved_by, resume: true });
+    assert.equal(out.status, "done");
+    assert.equal(out.approved_by, "Cayden");
+  });
+
+  it("a pool with nothing new closes the job instead of quoting zero", async () => {
+    const repo = fakeRepo({ needsVerify: 0 });
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    const q = await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    assert.equal(q.status, "nothing");
+    assert.match(q.why!, /0 new leads/);
+    assert.equal(repo.runs.get(opened.job_id)!.status, "done");
+    assert.ok(!repo.cards.some((c) => c.kind === QUOTE_CARD));
   });
 });

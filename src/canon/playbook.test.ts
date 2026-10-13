@@ -179,7 +179,7 @@ describe("D100 — playbook", () => {
         session_date date not null default current_date,
         written_by text not null default 'claude',
         created_at timestamptz not null default now(),
-        receipt_ids text[],
+        receipt_ids uuid[],
         transcript_paths text[],
         source_refs jsonb,
         provenance_confidence text
