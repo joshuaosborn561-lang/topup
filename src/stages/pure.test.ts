@@ -3,9 +3,9 @@ import { describe, it } from "node:test";
 import { importStatusFromResponse, SMARTLEAD_ALLOWED } from "../clients/smartlead.js";
 import { parseJobSettings } from "../jobs/settings.js";
 import { importMatched, parseJobs } from "./import/index.js";
-import { isLaneTable, LEADPIPE_CANONICAL_COLUMNS, safeWhere, sourceLabel } from "./ingest/index.js";
+import { isLaneTable, jobSourceLabel, LEADPIPE_CANONICAL_COLUMNS, safeWhere, sourceLabel } from "./ingest/index.js";
 import { QA_FIELD_COLUMN, scopeSql } from "./qa/index.js";
-import { bandSegment, cellLabel, dropStoppedRouting, mailClassSegment, matchRule } from "./route/index.js";
+import { bandSegment, campaignIdFromSourceLabel, cellLabel, dropStoppedRouting, mailClassSegment, matchRule } from "./route/index.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 /** The pure halves of the referee stages. Vendor calls are never made here; the stages that make them are exercised against fakes. */
@@ -42,6 +42,10 @@ describe("D99 — the referee's pure halves", () => {
   it("labels, keys and matches", () => {
     const run = { run_id: "0123456789abcdef", client_tag: "bcp", lane: "job_7_1" } as never;
     assert.equal(sourceLabel(run, 7), "topup_bcp_job_7_1_01234567_c7");
+    // D105: a lane job's rows carry no campaign stamp, so the recorded split decides each row.
+    assert.equal(jobSourceLabel(run, { scope: "campaign", campaign_id: 7 }), "topup_bcp_job_7_1_01234567_c7");
+    assert.equal(jobSourceLabel(run, { scope: "lane", campaign_id: 7 }), "topup_bcp_job_7_1_01234567");
+    assert.equal(campaignIdFromSourceLabel("topup_bcp_job_7_1_01234567", [7]), null);
     assert.equal(bandSegment("11 to 50"), "11_50");
     assert.equal(mailClassSegment("seg"), "SEG");
     assert.equal(cellLabel({ band: "11_50", mail_class: "SEG", gift: null }, ["band"]), "band=11_50");
