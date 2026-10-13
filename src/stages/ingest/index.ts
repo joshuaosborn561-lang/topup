@@ -1,6 +1,7 @@
 import { JOB_DONE, JOB_FAILED, type JobStatus, type LeadPipe } from "../../clients/leadpipe.js";
 import { dedupeMatchSql } from "./dedupe.js";
 import { ingestedTable } from "../../db/pool.js";
+import { columnMapFor, fetchHeader } from "../../jobs/preflight.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { JobSettings } from "../../jobs/settings.js";
 import type { SpendRails } from "../../spend/rails.js";
@@ -23,6 +24,8 @@ export interface IngestDeps extends StageDeps {
   rails: SpendRails;
   cfg: { pollMs: number; deadMs: number };
   clock?: Clock;
+  /** For tests: how the file's header line is fetched. */
+  fetchImpl?: typeof fetch;
 }
 
 export function sourceLabel(run: RunRow, campaignId?: number): string {
@@ -30,7 +33,7 @@ export function sourceLabel(run: RunRow, campaignId?: number): string {
   return campaignId ? `${base}_c${campaignId}` : base;
 }
 
-/** LeadPipe's canonical ingest columns. It refuses a header mapping onto anything else (a phone column included), so the service sends none. */
+/** LeadPipe's canonical ingest columns. A header mapping may name only these as keys (a phone column is refused), with the file's own header cell as the value. */
 export const LEADPIPE_CANONICAL_COLUMNS = ["first_name", "last_name", "email", "title", "company_name", "company_domain", "city", "state", "industry", "employee_range"] as const;
 
 /** Lane column → the names a hand-built table may use for it. First present wins. */
@@ -194,7 +197,11 @@ export class IngestStage {
     const own = await this.d.repo.getStep(run.run_id, "ingest");
     let jobId = own?.vendor_job_id ?? null;
     if (!jobId) {
-      const started = await this.d.leadpipe.ingestCsv(run.client_tag, { urls, source_label: label, dedupe_key: "email" });
+      // The file's own header names for LeadPipe's canonical columns, so a hand-built export still lands (keys canonical, values the file's cells).
+      const header = await fetchHeader(urls[0]!, this.d.fetchImpl ?? fetch);
+      const map = header ? columnMapFor(header) : {};
+      const canonicalOnly = Object.fromEntries(Object.entries(map).filter(([k]) => (LEADPIPE_CANONICAL_COLUMNS as readonly string[]).includes(k)));
+      const started = await this.d.leadpipe.ingestCsv(run.client_tag, { urls, source_label: label, dedupe_key: "email", ...(Object.keys(canonicalOnly).length ? { column_map: canonicalOnly } : {}) });
       jobId = started.job_id;
       await this.d.repo.setStepVendorJob(run.run_id, "ingest", jobId);
       await this.d.console.postInThread(run, `Ingest: LeadPipe ingest_csv started (job \`${jobId}\`, source_label \`${label}\`).`);

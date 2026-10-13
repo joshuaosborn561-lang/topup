@@ -120,6 +120,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D98 | Live; held is every lead this client already has (lead store, Smartlead history and mirror, sends, provenance, plus suppressions); match by email, else LinkedIn URL, else normalized name+company; generic exact join (D80); net new splits has_email vs needs_enrich |
 | D99 | Live; the lean top-up: Grokbot replays the recorded build with its own connectors and hands the pool over; the service dedupes against everything held, removes unsubscribes, quotes count and cost, waits for Josh or Cayden by name, runs the ICP website check and verification, and loads; eleven tools; LeadPipe always; no recorded build means wait; legacy pull, recipes, counts, sizes and per-client code removed; the twelfth tool is the playbook read by D100 |
 | D100 | Live; one living playbook per client: view `topup.client_playbook` over list builds and process changes, read as `playbook(client_tag)` |
+| D101 | Live; who approves is a Railway setting (`TOPUP_APPROVERS`, default Josh and Cayden per D92; Josh alone for the first EMCOR, BCP and Insight top-ups); a yes is to an amount: a paid step priced more than a tenth above the quote waits for a fresh named yes; a job a restart cut off resumes on boot; an aborted job's unloaded rows leave the lane table |
 
 ---
 
@@ -3314,3 +3315,34 @@ repeated on every client's playbook so one SELECT is the whole story.
 **Guard.** `src/guards/d100_client_playbook.test.ts`; unit tests in
 `src/canon/playbook.test.ts`. Ask Josh.
 
+## D101 — Who approves is a setting; a yes is to an amount; a restart finishes what a person started
+
+**Decision.** The names that may approve a top-up come from Railway
+(`TOPUP_APPROVERS`, first names, comma separated). Empty means the D92
+default, Josh and Cayden. For the first EMCOR, BCP and Insight top-ups
+production says `Josh`, so only his name runs anything paid. A yes is a
+yes to the quoted count and cost: when a paid step prices itself more
+than a tenth above what the quote said, the job stops and says the new
+number, and a second `topup(job_id, approved_by)` after the person has
+seen it runs it. Every paid ledger row carries the approver's name.
+
+A job a person started finishes: on boot the service picks up every open
+job a restart cut off mid-phase (the cut-off step is reset, the phase
+re-runs; an approved job resumes under the recorded name with no new
+card). `topup(job_id)` with no name shows the job's quote or resumes it.
+Nothing new starts on its own (D51). An aborted job takes the rows it
+brought in and never loaded back out of the lane table, so the next
+faithful pull of the same people is not counted as already held.
+
+**Why.** Josh, 13 Oct 2026: "For these first EMCOR, BCP and Insight
+top-ups, only I can approve, not Cayden." Both of the morning's jobs
+sat at "running" after a redeploy killed the process mid-ingest. A
+rebuild of EMCOR A Property came back as 127 "already in the lane"
+because the aborted job's rows were still there.
+
+**What it does not do.** It does not let a name outside the list spend.
+It does not approve a higher number under an older yes. It does not
+start a job nobody opened. It does not delete a row that reached
+staging or Smartlead.
+
+**Guard.** `src/guards/d101_approvers.test.ts`. Ask Josh.

@@ -20,10 +20,53 @@ export function csvHeader(head: string): string[] {
   return line.split(",").map((c) => c.trim().replace(/^"|"$/g, "").toLowerCase());
 }
 
+/** A header cell as a column key: lower case, spaces and dashes to underscores. */
+export function headerKey(cell: string): string {
+  return cell.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
 /** Does a header carry a column the lane table can take as email or first_name? Returns what it found. */
 export function headerUsable(header: string[]): { email: string | null; first: string | null } {
-  const find = (lane: string) => TABLE_COLUMN_SYNONYMS[lane]?.find((n) => header.includes(n)) ?? null;
+  const keys = header.map(headerKey);
+  const find = (lane: string) => TABLE_COLUMN_SYNONYMS[lane]?.find((n) => keys.includes(n)) ?? null;
   return { email: find("email"), first: find("first_name") };
+}
+
+/** What a file calls LeadPipe's canonical columns, when it does not use the canonical name itself. Keys are canonical; values are the file's header cells. */
+export const HEADER_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  email: ["work_email", "wf_email", "candidate_email", "person_email", "email_address", "business_email"],
+  first_name: ["first", "firstname", "given_name"],
+  last_name: ["last", "lastname", "surname", "family_name"],
+  title: ["job_title", "current_job_title", "owner_title", "current_title", "position"],
+  company_name: ["company", "company_n", "current_employer", "organization", "current_company_name", "org_name"],
+  company_domain: ["domain", "wf_domain", "website", "company_website", "org_domain"],
+  city: ["person_city", "city_name"],
+  state: ["region", "person_state", "state_name"],
+  industry: ["vertical", "company_industry", "org_industry", "org_industry_linkedin"],
+  employee_range: ["company_size", "size_band", "headcount", "employee_count_range", "employees", "org_size"],
+};
+
+export function columnMapFor(header: string[]): Record<string, string> {
+  const byKey = new Map<string, string>();
+  for (const cell of header) if (cell.trim()) byKey.set(headerKey(cell), cell.trim());
+  const map: Record<string, string> = {};
+  for (const [canonical, aliases] of Object.entries(HEADER_ALIASES)) {
+    if (byKey.has(canonical)) continue;
+    const hit = aliases.find((a) => byKey.has(a));
+    if (hit) map[canonical] = byKey.get(hit)!;
+  }
+  return map;
+}
+
+/** The header line of a CSV at a signed URL, read with a Range request. Never more than the first bytes; never a row kept. */
+export async function fetchHeader(url: string, fetchImpl: typeof fetch = fetch): Promise<string[] | null> {
+  try {
+    const res = await fetchImpl(url, { headers: { Range: `bytes=0-${HEADER_BYTES - 1}` } });
+    if (!res.ok) return null;
+    return csvHeader((await res.text()).slice(0, HEADER_BYTES));
+  } catch {
+    return null;
+  }
 }
 
 export async function preflightPool(
