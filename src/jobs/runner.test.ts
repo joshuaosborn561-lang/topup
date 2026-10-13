@@ -211,6 +211,7 @@ describe("D99 — the top-up", () => {
     await j.run(opened.job_id, "quote", { by: "mcp:operator" });
     const a = await j.abort(opened.job_id, "mcp:operator");
     assert.ok(a.ok);
+    assert.equal(a.ok && a.removed, 3, "a file pool's unloaded rows leave the lane table on abort");
     assert.equal(repo.runs.get(opened.job_id)!.status, "aborted");
     assert.equal(repo.cards.find((c) => c.kind === QUOTE_CARD)!.status, "resolved");
     const after = await j.begin(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Josh" });

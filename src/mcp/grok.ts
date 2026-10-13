@@ -142,10 +142,10 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
 
   server.registerTool(
     "abort",
-    { description: "Abort an open job. Running steps stop, claimed rows go back, open cards close. Nothing is loaded by an aborted job.", inputSchema: { job_id: z.string() } },
+    { description: "Abort an open job. Running steps stop, open cards close, and the rows the job brought in and never loaded leave the lane table (so a fresh pull of the same people is not counted as already held). Nothing is loaded by an aborted job.", inputSchema: { job_id: z.string() } },
     async ({ job_id }) => {
       const res = await d.jobs.abort(job_id, d.by);
-      return text(res.ok ? { ok: true, job_id, released_rows: res.released } : { ok: false, message: res.message });
+      return text(res.ok ? { ok: true, job_id, rows_removed_from_lane: res.removed, rows_released: res.released } : { ok: false, message: res.message });
     },
   );
 }
