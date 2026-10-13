@@ -114,8 +114,9 @@ export class EmailFinderClient implements EmailFinder {
     return {
       client_tag: clientTag,
       source: finderSourceArg(src),
+      // need "email" alone: never a phone endpoint. Passing any find_* flag overrides need, and find_phone=false by itself
+      // turns email off too (seen on the live estimate, 13 Oct 2026: need "none", nothing looked up).
       need: "email",
-      find_phone: false,
       max_tier: maxTier,
       require_title_match: false,
       writeback: true,

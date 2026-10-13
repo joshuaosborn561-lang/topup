@@ -25,7 +25,7 @@ describe("D103 — top-ups find emails", () => {
     assert.equal(findWorstCaseCents(100), worstCaseCents("aiark", "find_email", 100));
     const client = await readFile(new URL("src/clients/emailFinder.ts", root), "utf8");
     assert.match(client, /need: "email"/);
-    assert.match(client, /find_phone: false/);
+    assert.doesNotMatch(client, /\bfind_(phone|email|people):/, "D103: a find_* flag overrides need; find_phone=false alone switches email off. need \"email\" never calls a phone endpoint.");
     assert.match(client, /approve_cost_usd: ceilingUsd/, "D103: the finder is told the approved ceiling");
     assert.match(loadConfig({}).EMAIL_WATERFALL_MCP_URL, /^https:\/\//);
     assert.match(loadConfig({ EMAIL_WATERFALL_MCP_URL: "" }).EMAIL_WATERFALL_MCP_URL, /^https:\/\//, "an empty Railway variable means the default address");
