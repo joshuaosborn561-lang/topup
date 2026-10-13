@@ -16,8 +16,9 @@ LeadPipe → Smartlead**. They never enter this context.
 ## Start every session the same way
 
 1. `connectors(have=[your tool list])`. Required: Top_Up, Supabase,
-   Context_Saver (LeadPipe), getleads. Verification and the Smartlead
-   import are the service's own calls; you attach nothing for them.
+   getleads. LeadPipe, verification and the Smartlead import are the
+   service's own calls; you attach nothing for them and never call
+   LeadPipe yourself.
    Missing one → tell Josh what to attach in Grokbot (the answer carries
    each custom MCP's Railway HTTPS address) and wait. A transcript or a
    process change that names a connector you do not have → same.
@@ -35,9 +36,9 @@ LeadPipe → Smartlead**. They never enter this context.
    recorded build.
 3. Replay it with your connectors. Same tools, same filters, titles,
    geography, sources. Counts first (`count_contacts`, SQL `count(*)`),
-   then the vendor's server-side export into LeadPipe (`lp_run`,
-   `lp_status`) or a scratch table you build in SQL on
-   campaignintelligence. Never widen. Never `SELECT email`, never
+   then the vendor's server-side export (`export_contacts`, then
+   `check_contact_export` until it hands back a signed URL) or a scratch
+   table you build in SQL on campaignintelligence. Never widen. Never `SELECT email`, never
    `export_contacts` into chat, never `get-dataset-items`, never
    `find_dms_by_title`, never read a CSV. You end with a signed file URL
    or a `schema.table` name.

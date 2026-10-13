@@ -44,7 +44,7 @@ describe("D99 — the lean top-up", () => {
     assert.match(LEADPIPE_RULE, /LeadPipe/);
     const canon = await readFile(new URL("CANON.md", root), "utf8");
     assert.match(canon, /## Connect first/);
-    assert.match(canon, /Every lead row moves through LeadPipe/);
+    assert.match(canon, /Every lead row moves through this service and LeadPipe/);
     assert.match(canon, /Josh or Cayden approves every spend/);
     assert.match(canon, /No recorded build means wait/);
     assert.ok(canon.split("\n").length < 140, "D99: the canon is one page");
