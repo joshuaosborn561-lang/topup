@@ -118,6 +118,13 @@ export async function processChangesSince(db: Queryable, since: string | null, c
   return rows.map((r) => ({ id: Number(r.id), client_tag: r.client_tag, summary: r.summary, created_at: r.created_at }));
 }
 
+/** Postgres hands timestamps back as Date objects; the record maps them with String(), which is not a timestamptz literal. */
+export function isoOrNull(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 export interface MethodAnswer {
   client_tag: string;
   campaign_id: number;
@@ -146,7 +153,7 @@ export async function buildMethod(deps: BuildRecordDeps, input: MethodInput): Pr
   if ("error" in base) return base;
   const records = base.records;
   const newest = records[0] ?? null;
-  const changes = await processChangesSince(deps.db, newest ? newest.created_at : null, input.client_tag);
+  const changes = await processChangesSince(deps.db, newest ? isoOrNull(newest.created_at) : null, input.client_tag);
   const answer: MethodAnswer = {
     client_tag: input.client_tag,
     campaign_id: input.campaign_id,

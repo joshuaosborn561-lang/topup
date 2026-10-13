@@ -42,8 +42,8 @@ const schema = z.object({
    * Addresses of the other custom MCPs, only so `connectors` can tell Grokbot
    * where to attach them. This service calls none of them (D99).
    */
-  MAPS_MCP_URL: z.string().default(""),
-  PERMITSTACK_MCP_URL: z.string().default(""),
+  MAPS_MCP_URL: z.string().default("https://google-maps-mcp-production-88a3.up.railway.app/mcp"),
+  PERMITSTACK_MCP_URL: z.string().default("https://permitstack-mcp-production.up.railway.app/mcp"),
   DOMAIN_WATERFALL_MCP_URL: z.string().default(""),
   PEOPLE_WATERFALL_MCP_URL: z.string().default(""),
   EMAIL_WATERFALL_MCP_URL: z.string().default(""),

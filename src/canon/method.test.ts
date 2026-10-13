@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { extractMethod, pageMethod, redactArg } from "./method.js";
+import { extractMethod, isoOrNull, pageMethod, redactArg } from "./method.js";
 
 /** D99 — the method comes off the transcript, in order, with no lead row in it. */
 describe("D99 — method off the transcript", () => {
@@ -42,5 +42,12 @@ describe("D99 — method off the transcript", () => {
     assert.ok(!out.includes("p3@x.io"));
     assert.match(out, /20 more delimited lines not shown/);
     assert.ok(redactArg("x".repeat(2000)).length < 800);
+  });
+
+  it("turns the record's JS-formatted created_at back into a timestamptz literal", () => {
+    assert.equal(isoOrNull("Sun Oct 11 2026 02:38:14 GMT+0000 (Coordinated Universal Time)"), "2026-10-11T02:38:14.000Z");
+    assert.equal(isoOrNull(new Date("2026-10-11T02:38:14Z")), "2026-10-11T02:38:14.000Z");
+    assert.equal(isoOrNull(null), null);
+    assert.equal(isoOrNull("not a date"), null);
   });
 });
