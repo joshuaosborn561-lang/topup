@@ -9,7 +9,7 @@ import { findWorstCaseCents } from "../stages/find_emails/index.js";
  * tail only after Josh or Cayden says yes by name, then the load. Nothing
  * runs without a recorded build. Ask Josh or Cayden.
  */
-function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedError?: boolean; needsVerify?: number; toFind?: number } = {}) {
+function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedError?: boolean; needsVerify?: number; toFind?: number; registry?: Record<string, unknown>[]; records?: Array<Record<string, unknown>>; statuses?: Array<{ id: number; status: string; name?: string }> } = {}) {
   const runs = new Map<string, RunRow>();
   const steps = new Map<string, { status: string; attempts: number; approved_cents: number; counts?: Record<string, unknown> }>();
   const cards: Array<{ card_id: string; run_id: string; kind: string; payload: Record<string, unknown>; status: string; audience: string }> = [];
@@ -22,7 +22,7 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedErr
     upsertRecipe: async (r: { recipe_id: string; body: unknown }) => { recipes.set(r.recipe_id, r.body); },
     getRecipe: async (id: string) => (recipes.has(id) ? { recipe_id: id, body: recipes.get(id), owner_approved_at: null } : null),
     openRun: async (input: { recipe_id: string; client_tag: string; lane: string; campaign_id: number | null; trigger: string; opened_by: string | null }) => {
-      if ([...runs.values()].some((r) => r.campaign_id === input.campaign_id && !["done", "aborted", "failed"].includes(r.status))) return { ok: false as const, reason: "already_open" as const };
+      if ([...runs.values()].some((r) => !["done", "aborted", "failed"].includes(r.status) && (r.campaign_id === input.campaign_id || (input.lane && r.lane === input.lane && r.client_tag === input.client_tag)))) return { ok: false as const, reason: "already_open" as const };
       const run = { run_id: `run-${++n}`, status: "open", current_step: null, counts_by_status: {}, spend_cents_by_vendor: {}, opened_at: "2026-10-13", closed_at: null, last_error: null, slack_channel: null, slack_thread_ts: null, ...input } as unknown as RunRow;
       runs.set(run.run_id, run);
       return { ok: true as const, run };
@@ -45,6 +45,7 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedErr
     updateCardPayload: async (card_id: string, payload: Record<string, unknown>) => { const c = cards.find((x) => x.card_id === card_id)!; c.payload = payload; },
     resolveCard: async (card_id: string, by: string, resolution: string) => { const c = cards.find((x) => x.card_id === card_id)!; c.status = "resolved"; (c as Record<string, unknown>).resolved_by = by; (c as Record<string, unknown>).resolution = resolution; return c; },
     loadsPaused: async () => opts.loadsPaused ?? false,
+    campaignRegistry: async () => opts.registry ?? [],
     cancelRunningSteps: async () => 0,
     withRun: async (_id: string, fn: (tx: { query: (sql: string, params?: unknown[]) => Promise<{ rowCount: number; rows: unknown[] }> }) => Promise<unknown>) =>
       fn({ query: async (q: string) => { sql.push(q); return { rowCount: 3, rows: [] }; } }),
@@ -52,7 +53,11 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedErr
       query: async (sql: string) => {
         if (sql.includes("list_build_records")) {
           if (opts.recordedError) throw new Error("permission denied for table list_build_records");
+          if (sql.includes("yield_by_step") || sql.includes("source_refs")) return { rows: opts.records ?? [] };
           return { rows: [{ n: opts.recorded === false ? "0" : "1" }] };
+        }
+        if (sql.includes("from public.campaigns") && sql.includes("smartlead_campaign_id = any")) {
+          return { rows: (opts.statuses ?? []).map((s) => ({ id: String(s.id), status: s.status, name: s.name ?? `c${s.id}` })) };
         }
         if (sql.includes("icp_variants")) return { rows: [{ n: "1" }] };
         if (sql.includes("information_schema.columns")) return { rows: ["email", "company_domain", "first_name", "last_name", "company_name"].map((column_name) => ({ column_name })) };
@@ -404,5 +409,83 @@ describe("D99 — the top-up", () => {
     assert.match(q.why!, /0 new leads/);
     assert.equal(repo.runs.get(opened.job_id)!.status, "done");
     assert.ok(!repo.cards.some((c) => c.kind === QUOTE_CARD));
+  });
+
+  it("a campaign_id top-up points at its lane and quotes the whole lane (D105)", async () => {
+    const repo = fakeRepo({
+      registry: [
+        { campaign_id: "3921850", client_tag: "bcp", lane: "it_dm", band: "11_50" },
+        { campaign_id: "3921851", client_tag: "bcp", lane: "it_dm", band: "51_200" },
+      ],
+      records: [{ campaign_ids: [3921850, 3921851], lanes: ["it_dm"], yield_by_step: null, source_refs: null }],
+      statuses: [
+        { id: 3921850, status: "ACTIVE" },
+        { id: 3921851, status: "PAUSED" },
+      ],
+    });
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    assert.equal(opened.scope, "lane");
+    assert.equal(opened.lane, "it_dm");
+    assert.deepEqual(opened.campaign_ids, [3921850, 3921851]);
+    assert.equal(opened.pointed_from_campaign_id, 3921850);
+    const q = await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    assert.equal(q.status, "quoted");
+    assert.match(q.next, /lane it_dm/);
+    assert.match(q.next, /#3921850/);
+    const body = repo.recipes.get(repo.runs.get(opened.job_id)!.recipe_id) as { routing: Array<{ campaign_id: number }>; scope: string };
+    assert.equal(body.scope, "lane");
+    assert.deepEqual(body.routing.map((r) => r.campaign_id).sort(), [3921850, 3921851]);
+  });
+
+  it("refuses a lane whose segmentation cannot be determined instead of guessing (D105)", async () => {
+    const repo = fakeRepo({
+      registry: [
+        { campaign_id: "3921850", client_tag: "bcp", lane: "it_dm" },
+        { campaign_id: "3921851", client_tag: "bcp", lane: "it_dm" },
+      ],
+      records: [{ campaign_ids: [3921850, 3921851], lanes: ["it_dm"], yield_by_step: null, source_refs: null }],
+      statuses: [
+        { id: 3921850, status: "ACTIVE" },
+        { id: 3921851, status: "ACTIVE" },
+      ],
+    });
+    const r = await runner(repo).open({ ...spec, lane: "it_dm" }, "mcp:operator", "Healthcare IT");
+    assert.ok(!r.ok);
+    assert.match(r.message, /cannot be determined/);
+  });
+
+  it("never opens a STOPPED campaign as a lane target; PAUSED stays (D105)", async () => {
+    const repo = fakeRepo({
+      registry: [
+        { campaign_id: "3921850", client_tag: "bcp", lane: "it_dm" },
+        { campaign_id: "3921851", client_tag: "bcp", lane: "it_dm" },
+        { campaign_id: "3921852", client_tag: "bcp", lane: "it_dm" },
+      ],
+      records: [
+        {
+          campaign_ids: [3921850, 3921851, 3921852],
+          lanes: ["it_dm"],
+          yield_by_step: {
+            routing: [
+              { when: { mail_class: "SEG" }, campaign_id: 3921850 },
+              { when: { mail_class: "OTHER" }, campaign_id: 3921851 },
+              { when: { gift: "x" }, campaign_id: 3921852 },
+            ],
+          },
+          source_refs: null,
+        },
+      ],
+      statuses: [
+        { id: 3921850, status: "ACTIVE" },
+        { id: 3921851, status: "PAUSED" },
+        { id: 3921852, status: "STOPPED" },
+      ],
+    });
+    const opened = await runner(repo).open({ ...spec, lane: "it_dm", campaign_id: undefined }, "mcp:operator", null);
+    if (!opened.ok) assert.fail(opened.message);
+    assert.deepEqual(opened.campaign_ids, [3921850, 3921851]);
+    assert.ok(!opened.campaign_ids.includes(3921852));
   });
 });

@@ -8,12 +8,13 @@ first. `DECISIONS.md` is the ledger of why.
 
 ## What it does
 
-When a campaign runs low, Grokbot reads the client's living playbook
-(`playbook`) and how that campaign's list was built (`build_record`: the
+When a lane runs low, Grokbot reads the client's living playbook
+(`playbook`) and how that lane's list was built (`build_record`: the
 saved transcript's tool calls in order, what the person asked, and the
-process changes since), replays it with its own connectors, and hands
-the pool to this service as a signed file URL or a table on
-campaignintelligence; the service runs it through LeadPipe. The service:
+process changes since), replays the lane's search once with its own
+connectors, and hands the pool to this service as a signed file URL or a
+table on campaignintelligence; the service runs it through LeadPipe. The
+service:
 
 1. ingests the pool into `lp.<tag>_ingested_leads` (`ingest`), keeping the
    people the export names without an email (D103),
@@ -22,8 +23,9 @@ campaignintelligence; the service runs it through LeadPipe. The service:
 4. posts one card: new-lead count and worst-case cost (`topup` → quoted),
 5. after the approver says yes by name (`TOPUP_APPROVERS` in Railway): the website ICP check (D60),
    the email finder for the people with no email (D103), verification, normalization, QA, routing, staging, the Smartlead import
-   and the post-import check, then writes its own top-up into
-   `topup.list_build_records`.
+   and the post-import check (split across the lane's refillable campaigns
+   the recorded build already named; STOPPED is never refilled), then
+   writes its own top-up into `topup.list_build_records`.
 
 Loads paused: it stops at staged; `load(job_id)` finishes later. Josh flips
 ACTIVE by hand.
@@ -55,10 +57,10 @@ any Supabase project other than campaignintelligence (D6).
 | --- | --- |
 | `canon` | The one page. Also the server instructions. |
 | `connectors(have)` | First call of every session: which required connectors are missing and how to attach them in Grokbot. |
-| `campaigns(client_tag?)` | Every ACTIVE campaign with sends, positives, rate per 2,000, leads left. |
+| `campaigns(client_tag?)` | Campaigns plus a lane rollup: runway is the sum across refillable campaigns (STOPPED excluded). |
 | `playbook(client_tag)` | The living how-we-build for this client: list builds, disqualifications and method changes in order, plus transcript object names. |
 | `build_record(client_tag, campaign_id, from?, limit?)` | The build record, the method off the transcript (paged), and the process changes since. |
-| `topup(client_tag, campaign_id, source)` | Open a job on the pool and quote it. `topup(job_id, approved_by)` runs the approved tail and loads. |
+| `topup(client_tag, lane\|campaign_id, source)` | Quote the whole lane as one pull (`campaign_id` points at its lane). `topup(job_id, approved_by)` runs the approved tail, splits, and loads. |
 | `load(job_id)` | Import a staged job once loads resume. |
 | `job(job_id)` / `jobs()` | Steps with counts, cards waiting, the last events. |
 | `spend()` | Spend today, by vendor, month to date, cards waiting for a name. |
@@ -75,7 +77,7 @@ Nothing is posted to Slack.
 
 ```
 CANON.md                  the one page; served as the MCP instructions
-DECISIONS.md              the append-only ledger (D1 … D100)
+DECISIONS.md              the append-only ledger (D1 … D105)
 src/mcp/                  the twelve tools (grok.ts) and the HTTP server
 src/jobs/runner.ts        the top-up: quote → approve → load
 src/jobs/settings.ts      a job's settings (pool source, campaign); no recipes

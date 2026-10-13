@@ -26,8 +26,10 @@ LeadPipe → Smartlead**. They never enter this context.
 
 ## The loop
 
-1. `campaigns()`: the low campaign (untouched under about two weeks of
+1. `campaigns()`: the low lane (untouched under about two weeks of
    sends, passing one positive per 2,000, not cold call, not SG Nurture).
+   The answer rolls campaigns up by lane and shows the lane runway
+   (STOPPED is out of the sum). Size the lane, not one segment.
 2. `playbook(client_tag)`. The living how-we-build for this client: every
    list build, disqualification and method change in chronological order,
    plus transcript object names in `list-build-transcripts`. Then
@@ -37,7 +39,7 @@ LeadPipe → Smartlead**. They never enter this context.
    since; apply it on top, e.g. a newer TAM check or a new source).
    `no_recorded_build: true` → stop; tell Josh the campaign has no
    recorded build.
-3. Replay it with your connectors. Same tools, same filters, titles,
+3. Replay the lane's search once with your connectors. Same tools, same filters, titles,
    geography, sources. Counts first (`count_contacts`, SQL `count(*)`),
    then the vendor's server-side export (`export_contacts`, then
    `check_contact_export` until it hands back a signed URL) or a scratch
@@ -48,13 +50,15 @@ LeadPipe → Smartlead**. They never enter this context.
    `export_contacts` into chat, never `get-dataset-items`, never
    `find_dms_by_title`, never read a CSV. You end with a signed file URL
    or a `schema.table` name.
-4. `topup(client_tag, campaign_id, source)` then `job(job_id)` until
+4. `topup(client_tag, lane, source)` (or `campaign_id`, which points at
+   its lane) then `job(job_id)` until
    `quoted`. Say to the approver the answer names: "`N` new leads with an
-   email for #campaign after everything you hold and unsubscribes, plus `M`
+   email for lane X after everything you hold and unsubscribes, plus `M`
    more with no email that the finder will look up; up to `$X` (website ICP
    check, email finder, verification)." Only the emails it finds are
    verified and loaded (D103). Under 1,000 new the answer says so: tell
-   them it is under the floor (D46); they decide (D102).
+   them it is under the floor (D46); they decide (D102). If the service
+   says the split cannot be determined, stop and tell Josh; do not guess.
 5. When the approver says yes: `topup(job_id, approved_by="their name")`.
    Only the names the service lists count. `job(job_id)` until `done`.
    If it answers `waiting_approval` with a higher number, say that number

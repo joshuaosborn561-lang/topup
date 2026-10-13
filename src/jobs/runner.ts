@@ -10,6 +10,7 @@ import { domainSql, icpWorstCaseCents } from "../stages/icp/index.js";
 import { verifyWorstCaseCents } from "../stages/verify/verify.js";
 import { columnsOf } from "../stages/common.js";
 import { jobLane, jobSettings, parseJobSettings, type JobSettings, type JobSpec } from "./settings.js";
+import { planLaneJob } from "./lanePlan.js";
 import { plainError } from "./preflight.js";
 import { isSelfStart, isWatchActor } from "./selfStart.js";
 import type { DedupeStage } from "../stages/dedupe/index.js";
@@ -219,39 +220,66 @@ export class TopupRunner {
     return Number(rows[0]?.n ?? 0) > 0;
   }
 
-  /** Open a job for one campaign with the pool Grokbot handed over, then start the free quote in the background. */
-  async open(spec: JobSpec, by: string, campaignName: string | null): Promise<{ ok: true; job_id: string; lane: string } | { ok: false; message: string }> {
+  /** Open a job for a lane (or one campaign, which points at its lane) with the pool Grokbot handed over. */
+  async open(spec: JobSpec, by: string, campaignName: string | null): Promise<{ ok: true; job_id: string; lane: string; scope: "lane" | "campaign"; campaign_ids: number[]; pointed_from_campaign_id: number | null } | { ok: false; message: string }> {
     if (isWatchActor(by) || isSelfStart(by, "manual")) return { ok: false, message: "Nothing starts on its own (D51). Grokbot calls topup when a campaign runs low." };
-    if (isColdCall(campaignName)) return { ok: false, message: `#${spec.campaign_id} ${campaignName} is marked as cold call; the service ignores it (D54).` };
-    if (isNeverTopUp(spec.campaign_id, campaignName)) return { ok: false, message: `#${spec.campaign_id} is never topped up (D46).` };
-    let recorded: boolean;
-    try {
-      recorded = await this.hasRecordedBuild(spec.client_tag, spec.campaign_id);
-    } catch (err) {
-      return { ok: false, message: `Could not read topup.list_build_records (${plainError(err)}). That is a database error, not a missing build: try again, and ask Josh if it keeps failing.` };
+    if (spec.campaign_id != null && isColdCall(campaignName)) return { ok: false, message: `#${spec.campaign_id} ${campaignName} is marked as cold call; the service ignores it (D54).` };
+    if (spec.campaign_id != null && isNeverTopUp(spec.campaign_id, campaignName)) return { ok: false, message: `#${spec.campaign_id} is never topped up (D46).` };
+    if (spec.campaign_id == null && !spec.lane) return { ok: false, message: "topup needs client_tag and a lane, or client_tag and campaign_id, plus source." };
+
+    let split: Parameters<typeof jobSettings>[2] = null;
+    let stoppedIds: number[] = [];
+    const registry = await this.d.repo.campaignRegistry(spec.client_tag).catch(() => [] as Record<string, unknown>[]);
+    const planned = await planLaneJob(this.d.repo.raw(), {
+      client_tag: spec.client_tag,
+      lane: spec.lane,
+      campaign_id: spec.campaign_id,
+      registry,
+      names: campaignName && spec.campaign_id != null ? new Map([[spec.campaign_id, campaignName]]) : undefined,
+    });
+    if (planned.ok) {
+      split = planned.split;
+      stoppedIds = planned.stopped_ids;
+    } else if (!planned.no_lane) {
+      return { ok: false, message: planned.message };
+    } else if (spec.campaign_id == null) {
+      return { ok: false, message: `lane ${spec.lane ?? "(none)"} is not in campaign_registry. Adding it is a row in that table. Ask Josh.` };
+    } else {
+      let recorded: boolean;
+      try {
+        recorded = await this.hasRecordedBuild(spec.client_tag, spec.campaign_id);
+      } catch (err) {
+        return { ok: false, message: `Could not read topup.list_build_records (${plainError(err)}). That is a database error, not a missing build: try again, and ask Josh if it keeps failing.` };
+      }
+      if (!recorded) {
+        return { ok: false, message: `#${spec.campaign_id} has no recorded build in topup.list_build_records. There is no method to replay; wait for Josh to record how this campaign was built (D99).` };
+      }
     }
-    if (!recorded) {
-      return { ok: false, message: `#${spec.campaign_id} has no recorded build in topup.list_build_records. There is no method to replay; wait for Josh to record how this campaign was built (D99).` };
-    }
+
     const stamp = (this.d.now ?? Date.now)();
     let settings: JobSettings;
     try {
-      settings = jobSettings(spec, stamp);
+      settings = jobSettings(spec, stamp, split);
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
-    await this.d.repo.upsertRecipe({ recipe_id: settings.id, client_tag: settings.client_tag, lane: jobLane(spec, stamp), version: 1, body: settings, owner_approved_at: null });
-    const opened = await this.d.repo.openRun({ recipe_id: settings.id, client_tag: spec.client_tag, lane: settings.lane, campaign_id: spec.campaign_id, trigger: "manual", opened_by: by });
+    const recipeLane = jobLane({ campaign_id: settings.campaign_id }, stamp);
+    await this.d.repo.upsertRecipe({ recipe_id: settings.id, client_tag: settings.client_tag, lane: recipeLane, version: 1, body: settings, owner_approved_at: null });
+    const opened = await this.d.repo.openRun({ recipe_id: settings.id, client_tag: spec.client_tag, lane: settings.lane, campaign_id: settings.campaign_id, trigger: "manual", opened_by: by });
     if (!opened.ok) {
       if (opened.reason === "self_start") return { ok: false, message: "Nothing starts on its own (D51)." };
-      return { ok: false, message: `A job is already open for #${spec.campaign_id}. Read jobs(), then job(job_id); finish it or abort it first.` };
+      const who = settings.scope === "lane" ? `lane ${settings.lane}` : `#${settings.campaign_id}`;
+      return { ok: false, message: `A job is already open for ${who}. Read jobs(), then job(job_id); finish it or abort it first.` };
     }
     const runId = opened.run.run_id;
-    await this.d.repo.mergeRunCounts(runId, { [`target_${spec.campaign_id}`]: 1, grok_job: 1 });
+    const targets = settings.campaign_ids.length ? settings.campaign_ids : [settings.campaign_id];
+    await this.d.repo.mergeRunCounts(runId, { [`target_${settings.campaign_id}`]: 1, grok_job: 1, targets: targets.length, stopped_excluded: stoppedIds.length, lane_job: settings.scope === "lane" ? 1 : 0 });
     const trig = await this.d.repo.beginStep(runId, "trigger");
-    if (trig.ok) await this.d.repo.finishStep(runId, "trigger", { useful_output: 1, counts: { job: 1, campaign_id: spec.campaign_id } });
-    await this.event(opened.run, "run_opened", `Top-up ${runId.slice(0, 8)} opened by ${by} for #${spec.campaign_id}: pool from ${spec.source.kind === "file_url" ? `${spec.source.urls.length} file(s)` : `table ${spec.source.table}`}.`, by, "quote runs now; job(job_id) for the count and the cost.");
-    return { ok: true, job_id: runId, lane: settings.lane };
+    if (trig.ok) await this.d.repo.finishStep(runId, "trigger", { useful_output: 1, counts: { job: 1, campaign_id: settings.campaign_id, targets: targets.length } });
+    const targetNote = settings.scope === "lane" ? `lane ${settings.lane} (${targets.map((id) => `#${id}`).join(", ")}${stoppedIds.length ? `; ${stoppedIds.length} STOPPED excluded` : ""})` : `#${settings.campaign_id}`;
+    const pointed = settings.pointed_from_campaign_id && settings.scope === "lane" ? ` (opened from #${settings.pointed_from_campaign_id}; top-ups size the lane)` : "";
+    await this.event(opened.run, "run_opened", `Top-up ${runId.slice(0, 8)} opened by ${by} for ${targetNote}${pointed}: pool from ${spec.source.kind === "file_url" ? `${spec.source.urls.length} file(s)` : `table ${spec.source.table}`}.`, by, "quote runs now; job(job_id) for the count and the cost.");
+    return { ok: true, job_id: runId, lane: settings.lane, scope: settings.scope, campaign_ids: targets, pointed_from_campaign_id: settings.pointed_from_campaign_id };
   }
 
   /** Start a phase in the background and answer at once. */
@@ -399,8 +427,8 @@ export class TopupRunner {
     }
     const closed = await this.d.repo.getRun(jobId);
     if (closed && runIsOpen(closed.status)) await this.d.repo.setRunStatus(jobId, "done", "post_import");
-    await this.event(run, "receipt", `Top-up done: ${counts.imported ?? 0} loaded into #${settings.campaign_id}. Josh flips ACTIVE by hand (D5).`, opts.by, "Nothing. Josh flips ACTIVE.");
-    return this.result(jobId, phase, "post_import", "done", counts, null, null, approver, null, "nothing: the leads are in the campaign. Josh sets it ACTIVE by hand.");
+    await this.event(run, "receipt", `Top-up done: ${counts.imported ?? 0} loaded into ${quoteTarget(settings)}. Josh flips ACTIVE by hand (D5).`, opts.by, "Nothing. Josh flips ACTIVE.");
+    return this.result(jobId, phase, "post_import", "done", counts, null, null, approver, null, "nothing: the leads are in the campaign(s). Josh sets ACTIVE by hand.");
   }
 
   /** The count and the cost, as one card to Josh or Cayden. Nothing paid has run. */
@@ -408,7 +436,7 @@ export class TopupRunner {
     const quote = await this.quote(run);
     if (quote.net_new === 0 && (quote.to_find === 0 || !quote.finder_ready)) {
       const counts = await this.funnel(run);
-      const why = `0 new leads for #${settings.campaign_id}: every row in the pool is already held by the client, unsubscribed, or without an address (ingested ${counts.rows_claimed ?? 0}, held ${counts.held ?? 0}, suppressed ${counts.suppressed ?? 0}).`;
+      const why = `0 new leads for ${quoteTarget(settings)}: every row in the pool is already held by the client, unsubscribed, or without an address (ingested ${counts.rows_claimed ?? 0}, held ${counts.held ?? 0}, suppressed ${counts.suppressed ?? 0}).`;
       await this.d.repo.setRunStatus(run.run_id, "done", "suppress");
       await this.event(run, "receipt", why, by, "Nothing to approve. A bigger or different pool, or the TAM is exhausted.");
       return this.result(run.run_id, "quote", "suppress", "nothing", counts, 0, null, null, why, "nothing to approve; the job closed. Say the TAM for this campaign is exhausted unless the record shows a source you did not replay.");
@@ -417,7 +445,7 @@ export class TopupRunner {
     // The floor (D46) is on everyone new: those with an email plus those the finder will look up (D103).
     const belowFloor = quote.net_new + (quote.finder_ready ? quote.to_find : 0) < MIN_NET_NEW;
     const icp = await this.icpReady(run.client_tag);
-    const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id, below_floor: belowFloor, floor: MIN_NET_NEW, icp_ready: icp.ready, icp_note: icp.note };
+    const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id, campaign_ids: settings.campaign_ids, lane: settings.scope === "lane" ? settings.lane : null, scope: settings.scope, pointed_from_campaign_id: settings.pointed_from_campaign_id, below_floor: belowFloor, floor: MIN_NET_NEW, icp_ready: icp.ready, icp_note: icp.note };
     let cardId = existing?.card_id ?? null;
     if (existing) {
       await this.d.repo.updateCardPayload(existing.card_id, payload);
@@ -427,21 +455,21 @@ export class TopupRunner {
         kind: QUOTE_CARD,
         audience: "owner",
         payload,
-        text: `Top-up #${settings.campaign_id}: ${quote.net_new} new leads with an email${quote.to_find ? ` plus ${quote.to_find} to look up` : ""} for ${usd(quote.worst_case_cents)} worst case.`,
-        blocks: (id) => topupQuoteCard({ cardId: id, runId: run.run_id, clientTag: run.client_tag, campaignId: settings.campaign_id, quote }),
+        text: `Top-up ${quoteTarget(settings)}: ${quote.net_new} new leads with an email${quote.to_find ? ` plus ${quote.to_find} to look up` : ""} for ${usd(quote.worst_case_cents)} worst case.`,
+        blocks: (id) => topupQuoteCard({ cardId: id, runId: run.run_id, clientTag: run.client_tag, campaignId: settings.campaign_id, lane: settings.scope === "lane" ? settings.lane : null, campaignIds: settings.campaign_ids, quote }),
       });
       cardId = card.card_id;
     }
     await this.d.repo.setRunStatus(run.run_id, "awaiting_owner", "suppress");
-    await this.event(run, "card_opened", `Quote for #${settings.campaign_id}: ${quote.net_new} net new with an address, ${quote.to_find} more to look up, ${quote.domains} domains, worst case ${usd(quote.worst_case_cents)}. Waiting for ${this.approvers.map(cap).join(" or ")}.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
+    await this.event(run, "card_opened", `Quote for ${quoteTarget(settings)}: ${quote.net_new} net new with an address, ${quote.to_find} more to look up, ${quote.domains} domains, worst case ${usd(quote.worst_case_cents)}. Waiting for ${this.approvers.map(cap).join(" or ")}.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
     const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents, to_find: quote.to_find, find_cents: quote.find_cents, below_floor: belowFloor ? 1 : 0 };
-    const floorNote = (belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this campaign looks exhausted unless the record shows a source not replayed; they decide (D102).` : "") + (icp.ready ? "" : ` ${icp.note}`);
+    const floorNote = (belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this ${settings.scope === "lane" ? "lane" : "campaign"} looks exhausted unless the record shows a source not replayed; they decide (D102).` : "") + (icp.ready ? "" : ` ${icp.note}`);
     const findNote = quote.to_find
       ? quote.finder_ready
         ? ` Plus ${quote.to_find} more new people with no email that the email finder will look up after the yes (up to ${usd(quote.find_cents)} of the total; only the ones it finds are verified and loaded).`
         : ` ${quote.to_find} more new people have no email and the email finder is not connected on the service, so they are left out. Ask Josh.`
       : "";
-    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads with an email for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)} in all (ICP check ${usd(quote.icp_cents)}, email finder ${usd(quote.find_cents)}, verification ${usd(quote.verify_cents)}).${findNote}${floorNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
+    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads with an email for ${quoteTarget(settings)}, up to ${usd(quote.worst_case_cents)} in all (ICP check ${usd(quote.icp_cents)}, email finder ${usd(quote.find_cents)}, verification ${usd(quote.verify_cents)}).${findNote}${floorNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
   }
 
   /** Loads start paused (D102); the quote answer says so, so the yes and the unpause are asked for together. */
@@ -669,6 +697,14 @@ export class TopupRunner {
   private result(job_id: string, phase: Phase, step: Step, status: TopupStatus, counts: Record<string, number>, worst: number | null, card: string | null, approved_by: string | null, why: string | null, next: string): TopupResult {
     return { job_id, phase, step, status, counts: numbers(counts), worst_case_cents: worst, card_id: card, approved_by, why, next };
   }
+}
+
+function quoteTarget(settings: JobSettings): string {
+  if (settings.scope === "lane") {
+    const ids = (settings.campaign_ids.length ? settings.campaign_ids : [settings.campaign_id]).map((id) => `#${id}`).join(", ");
+    return `lane ${settings.lane} (${ids})`;
+  }
+  return `#${settings.campaign_id}`;
 }
 
 function numbers(v: unknown): Record<string, number> {

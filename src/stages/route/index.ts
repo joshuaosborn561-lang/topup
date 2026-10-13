@@ -2,6 +2,8 @@ import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import type { JobSettings } from "../../jobs/settings.js";
+import { campaignStatuses } from "../../ledger/health.js";
+import { isStoppedStatus } from "../../policy/rules.js";
 import { pendingCampaignCard } from "../../console/cards.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
@@ -49,6 +51,11 @@ export function campaignIdFromSourceLabel(label: string | null | undefined, targ
   return targets.includes(id) ? id : null;
 }
 
+/** Drop STOPPED targets from a recorded split. Never refill them (D105). */
+export function dropStoppedRouting<T extends { campaign_id: number }>(routing: readonly T[], statusOf: (id: number) => string | null | undefined): T[] {
+  return routing.filter((r) => !isStoppedStatus(statusOf(r.campaign_id)));
+}
+
 /** First routing rule whose every `when` matches the cell; null when none does. */
 export function matchRule(cell: Cell, routing: JobSettings["routing"]): JobSettings["routing"][number] | null {
   for (const rule of routing) {
@@ -70,7 +77,13 @@ export class RouteStage {
       const table = ingestedTable(run.client_tag);
       const db = this.d.repo.raw();
       const dims = Object.keys(settings.segments);
-      const targets = [...new Set(settings.routing.map((r) => r.campaign_id))];
+      const live = await campaignStatuses(db, [...new Set(settings.routing.map((r) => r.campaign_id))]).catch(() => ({ status: new Map<number, string | null>(), names: new Map<number, string | null>() }));
+      const routing = dropStoppedRouting(settings.routing, (id) => live.status.get(id));
+      const stoppedTargets = [...new Set(settings.routing.map((r) => r.campaign_id).filter((id) => isStoppedStatus(live.status.get(id))))];
+      const targets = [...new Set(routing.map((r) => r.campaign_id))];
+      if (targets.length === 0) {
+        return gateUnmet("route", `every campaign this lane would split into is STOPPED. STOPPED is never refilled (D105). Ask Josh.`, { stopped: stoppedTargets.length });
+      }
       const cols = await columnsOf(this.d.repo, table);
       const labelSql = cols.has("source_label") ? "source_label" : "null::text as source_label";
 
@@ -94,7 +107,7 @@ export class RouteStage {
       for (const r of rows) {
         const cell: Cell = { band: bandSegment(r.company_size), mail_class: mailClassSegment(r.mail_class), gift: r.gift };
         const stamped = campaignIdFromSourceLabel(r.source_label, targets);
-        const rule = stamped ? null : matchRule(cell, settings.routing);
+        const rule = stamped ? null : matchRule(cell, routing);
         const campaign = stamped ?? rule?.campaign_id ?? null;
         if (campaign) {
           const ids = byCampaign.get(campaign) ?? [];
@@ -136,7 +149,7 @@ export class RouteStage {
       const { rows: totals } = await db.query<{ campaign: string | null; n: string }>(`select routed_campaign_id::text as campaign, count(*)::text as n from ${table} where run_id = $1 and lead_status = 'routed' group by 1`, [run.run_id]);
       const routedTotal = totals.reduce((a, t) => a + Number(t.n), 0);
       const perCampaign = Object.fromEntries(totals.filter((t) => t.campaign).map((t) => [`routed_${t.campaign}`, Number(t.n)]));
-      const counts: Record<string, number> = { routed: routedTotal, routed_this_pass: routed, pending_campaign: pendingTotal, reclaimed_pending: reclaimed, ...perCampaign };
+      const counts: Record<string, number> = { routed: routedTotal, routed_this_pass: routed, pending_campaign: pendingTotal, reclaimed_pending: reclaimed, stopped_excluded: stoppedTargets.length, ...perCampaign };
 
       if (pendingTotal > 0) {
         const open = await this.d.repo.openCardsForRun(run.run_id);

@@ -124,6 +124,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D102 | Live; under the 1,000 floor the quote still posts and the approver decides; loads start paused until an approver flips `loads_paused`; the ICP label set in `topup.icp_variants` is a precondition for a yes; audit fixes: a job cut off before its quote card is resumed on boot, lane-table writes carry the run, abort gives a table pool its label back, a database error is never reported as "no recorded build" |
 | D103 | Live; top-ups find emails: the service keeps the people an export names without an email (LeadPipe drops them), the quote counts and prices them, and after the named yes the Email Finder Waterfall looks them up between the ICP check and verification; found addresses pass the same held and unsubscribe checks; exports run without the VALID filter |
 | D104 | Live; no daily vendor cap: what the approver says yes to is the only spend limit; supersedes the $25 daily backstop of D9. With it, the last six audit findings: a parked step is closed as parked and only a named call retries it, every wait loop stops when its job closes, a resumed ingest waits for LeadPipe to finish, the ICP check never throws out a site it read but did not grade and never pays DiscoLike twice, SQL row literals are cut from build records |
+| D105 | Live; top-ups size the lane, not one segment campaign; STOPPED is never refilled |
 
 ---
 
@@ -3473,3 +3474,42 @@ approve.
 raise the auto cap. It does not let a step spend past the amount approved.
 
 **Guard.** `src/guards/d104_no_daily_cap.test.ts`. Ask Josh.
+
+## D105 — Top-ups size the lane, not one segment campaign; STOPPED is never refilled
+
+**Decision.** A top-up is per lane, not per segment campaign. Transcripts
+pull one list per lane; that list is then split into the lane's segment
+campaigns. The service follows that.
+
+1. *Sizing.* `campaigns` rolls low campaigns up by client and the existing
+   `lane` field on `topup.campaign_registry`. Each lane row shows the
+   runway as the sum of untouched (and a combined days figure) across its
+   refillable campaigns. Each campaign row carries that same lane total
+   beside it.
+2. *Quote.* `topup` accepts a lane (`client_tag` + `lane`) and quotes one
+   pull. A `campaign_id` still works: it is resolved to its lane and the
+   quote names the lane. Held subtraction is the existing D98 join
+   (everyone the client already has, plus unsubscribes). The 1,000 floor
+   and the named-approval ceiling stay. No new tool.
+3. *Split.* After a named yes, new leads go to that lane's refillable
+   campaigns the way `list_build_records` / the playbook already segmented
+   them (routing stored on the record, or unique stored cells on the
+   campaigns the records named). **STOPPED is never refilled** and is
+   excluded from the split and from runway. PAUSED may still be refilled.
+   If the split cannot be determined, the job stops and reports; it does
+   not guess. No per-client code, no recipes, no client facts in canon.
+
+**Why.** Josh, 13 Oct 2026: top-ups work per lane, not per segment
+campaign. Quoting one segment alone made a lane look exhausted (one
+segment showed 198 net new) when the lane still had runway.
+
+**What it does not do.** It does not add a tool. It does not invent a
+segment name, a recipe or a client rule. It does not refill STOPPED. It
+does not touch `dl_status`, `sg_exclude` or `skip_*`. It does not unsuppress.
+It does not start, pause, stop or delete a campaign. It does not spend
+or pull live in this change.
+
+**Guard.** `src/guards/d105_lane_topup.test.ts`; unit tests in
+`src/canon/laneSplit.test.ts`, `src/canon/campaigns.test.ts`,
+`src/jobs/runner.test.ts`. Ask Josh.
+

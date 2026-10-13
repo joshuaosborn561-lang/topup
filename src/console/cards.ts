@@ -246,13 +246,17 @@ export interface TopupQuoteCard {
   runId: string;
   clientTag: string;
   campaignId: number;
+  lane?: string | null;
+  campaignIds?: number[];
   quote: { net_new: number; with_email: number; domains: number; worst_case_cents: number; icp_cents: number; verify_cents: number; to_find?: number; find_cents?: number };
 }
 
-/** The one card a top-up asks: how many new leads, and the most it can cost (D99). Counts only. */
+/** The one card a top-up asks: how many new leads, and the most it can cost (D99, D105). Counts only. */
 export function topupQuoteCard(c: TopupQuoteCard): Block[] {
+  const ids = (c.campaignIds?.length ? c.campaignIds : [c.campaignId]).map((id) => `#${id}`).join(", ");
+  const title = c.lane ? `lane ${c.lane} (${ids})` : `#${c.campaignId}`;
   return [
-    section(`:inbox_tray: *Top-up #${c.campaignId} — ${c.clientTag}* · job \`${c.runId.slice(0, 8)}\``),
+    section(`:inbox_tray: *Top-up ${title} — ${c.clientTag}* · job \`${c.runId.slice(0, 8)}\``),
     fields([
       ["New leads (after everything the client holds and unsubscribes)", String(c.quote.net_new)],
       ["With an email address", String(c.quote.with_email)],
@@ -260,7 +264,7 @@ export function topupQuoteCard(c: TopupQuoteCard): Block[] {
       ["Companies for the website check", String(c.quote.domains)],
       ["Worst case", `*${usd(c.quote.worst_case_cents)}* (ICP check ${usd(c.quote.icp_cents)} + email finder ${usd(c.quote.find_cents ?? 0)} + verification ${usd(c.quote.verify_cents)})`],
     ]),
-    context("Nothing paid has run. Yes means: ICP website check, find emails for the people without one, verify, normalize, stage, load into the campaign. Josh flips ACTIVE by hand."),
+    context("Nothing paid has run. Yes means: ICP website check, find emails for the people without one, verify, normalize, stage, split into the lane's refillable campaigns the way the recorded build already did, load. STOPPED is never refilled. Josh flips ACTIVE by hand."),
     actions(c.cardId, [
       { choice: "approve_spend", label: `Yes, ${usd(c.quote.worst_case_cents)}`, style: "primary" },
       { choice: "decline_spend", label: "No", style: "danger" },

@@ -5,7 +5,7 @@ import { parseJobSettings } from "../jobs/settings.js";
 import { importMatched, parseJobs } from "./import/index.js";
 import { isLaneTable, LEADPIPE_CANONICAL_COLUMNS, safeWhere, sourceLabel } from "./ingest/index.js";
 import { QA_FIELD_COLUMN, scopeSql } from "./qa/index.js";
-import { bandSegment, cellLabel, mailClassSegment, matchRule } from "./route/index.js";
+import { bandSegment, cellLabel, dropStoppedRouting, mailClassSegment, matchRule } from "./route/index.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 /** The pure halves of the referee stages. Vendor calls are never made here; the stages that make them are exercised against fakes. */
@@ -59,5 +59,10 @@ describe("D99 — the referee's pure halves", () => {
     assert.equal(scopeSql(null, "bcp")?.sql, "true");
     assert.equal(scopeSql("other", "bcp"), null);
     for (const path of SMARTLEAD_ALLOWED) assert.ok(!/update_campaign_status|delete/i.test(String(path)), `D6: ${String(path)}`);
+    const kept = dropStoppedRouting(
+      [{ campaign_id: 1 }, { campaign_id: 2 }, { campaign_id: 3 }],
+      (id) => (id === 2 ? "STOPPED" : id === 3 ? "PAUSED" : "ACTIVE"),
+    );
+    assert.deepEqual(kept.map((r) => r.campaign_id), [1, 3], "D105: STOPPED is dropped; PAUSED stays");
   });
 });
