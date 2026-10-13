@@ -2,6 +2,13 @@ import type { Queryable } from "../db/pool.js";
 import { ingestedTable } from "../db/pool.js";
 import type { PoolSource } from "./settings.js";
 import { isLaneTable, safeWhere, TABLE_COLUMN_SYNONYMS } from "../stages/ingest/index.js";
+import { redact } from "../lib/log.js";
+
+/** An error from Postgres or a vendor, with quoted literals (which may be a value off a row) and addresses taken out. */
+export function plainError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return String(redact(msg.replace(/"[^"]*"/g, '"…"').replace(/'[^']*'/g, "'…'"))).slice(0, 300);
+}
 
 /**
  * Before a job opens, look at the pool the bot is handing over (D99). A
@@ -82,7 +89,7 @@ export async function preflightPool(
       try {
         res = await fetchImpl(url, { headers: { Range: `bytes=0-${HEADER_BYTES - 1}` } });
       } catch (err) {
-        return { ok: false, message: `the file could not be fetched (${(err as Error).message}). Export it again and pass the fresh signed URL.` };
+        return { ok: false, message: `the file could not be fetched (${plainError(err)}). Export it again and pass the fresh signed URL.` };
       }
       if (!res.ok) return { ok: false, message: `the file URL answered HTTP ${res.status}. A signed URL that expired or a private object: export it again and pass the fresh URL.` };
       const head = (await res.text()).slice(0, HEADER_BYTES);
@@ -121,7 +128,7 @@ export async function preflightPool(
     const { rows } = await db.query<{ n: string }>(sql);
     n = Number(rows[0]?.n ?? 0);
   } catch (err) {
-    return { ok: false, message: `the where could not run against ${source.table}: ${(err as Error).message}` };
+    return { ok: false, message: `the where could not run against ${source.table}: ${plainError(err)}` };
   }
   if (n === 0) {
     return {

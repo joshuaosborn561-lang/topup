@@ -137,12 +137,13 @@ export function buildMcpServer(role: Role, d: McpDeps): McpServer {
   server.registerTool(
     "loads_paused",
     {
-      description: "Global switch. While paused, nothing reaches Smartlead: topup stops at staged and load refuses. Omit paused to read the flag. Only Josh or Cayden flips it; say who.",
-      inputSchema: { paused: z.boolean().optional().describe("Set true to pause loads, false to resume. Omit to read."), by: z.string().optional().describe("Who said so.") },
+      description: `Global switch. While paused, nothing reaches Smartlead: topup stops at staged and load refuses. Omit paused to read the flag. Only an approver flips it, by name. ${d.grok.jobs.rule}`,
+      inputSchema: { paused: z.boolean().optional().describe("Set true to pause loads, false to resume. Omit to read."), by: z.string().optional().describe("The approver who said so, by first name.") },
     },
     async ({ paused, by: who }) => {
       if (paused === undefined) return text({ paused: await d.repo.loadsPaused() });
-      return text({ paused: await d.repo.setLoadsPaused(paused, who ? `${who} via ${by}` : by) });
+      if (!d.grok.jobs.isApprover(who)) return text({ error: `loads_paused moves only on an approver's name. ${d.grok.jobs.rule}` });
+      return text({ paused: await d.repo.setLoadsPaused(paused, `${who} via ${by}`) });
     },
   );
 

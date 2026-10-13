@@ -1,4 +1,5 @@
 import type { Queryable } from "../db/pool.js";
+import { redact } from "../lib/log.js";
 import type { Repo } from "../db/repo.js";
 import { presentRun, type RunRow } from "../domain/runs.js";
 import type { LaneLedger } from "../ledger/lane.js";
@@ -75,7 +76,7 @@ export async function jobStatus(
   return {
     job: jobLine(run),
     counts: numbers(run.counts_by_status),
-    steps: steps.map((s) => ({ ...s, counts: numbers(s.counts), last_error: s.last_error ? s.last_error.slice(0, 200) : null })),
+    steps: steps.map((s) => ({ ...s, counts: numbers(s.counts), last_error: s.last_error ? String(redact(s.last_error.replace(/"[^"]*"/g, '"…"'))).slice(0, 200) : null })),
     campaign_report: Array.isArray(report.campaign_report) ? report.campaign_report : [],
     vendor_calls: Array.isArray((size?.counts as Record<string, unknown> | undefined)?.vendor_log) ? ((size!.counts as Record<string, unknown>).vendor_log as unknown[]) : [],
     open_cards: cards.map((c) => ({ card_id: c.card_id, kind: c.kind, step: typeof c.payload?.step === "string" ? (c.payload.step as string) : null, worst_case_cents: c.payload?.worst_case_cents == null ? null : Number(c.payload.worst_case_cents), audience: c.audience })),
