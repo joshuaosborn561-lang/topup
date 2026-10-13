@@ -18,7 +18,7 @@ export async function loadLaneRecords(db: Queryable, clientTag: string, lane: st
     `select campaign_ids, lanes, yield_by_step, source_refs
        from topup.list_build_records
       where client_tag = $1
-        and ($2 = any(lanes) or campaign_ids && $3::bigint[])
+        and ($2 = any(lanes) or campaign_ids::bigint[] && $3::bigint[])
       order by session_date desc, id desc`,
     [clientTag, lane, memberIds],
   );
