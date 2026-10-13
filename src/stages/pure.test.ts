@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { SMARTLEAD_ALLOWED } from "../clients/smartlead.js";
 import { parseJobSettings } from "../jobs/settings.js";
 import { importMatched, parseJobs } from "./import/index.js";
-import { safeWhere, sourceLabel } from "./ingest/index.js";
+import { isLaneTable, LEADPIPE_CANONICAL_COLUMNS, safeWhere, sourceLabel } from "./ingest/index.js";
 import { QA_FIELD_COLUMN, scopeSql } from "./qa/index.js";
 import { bandSegment, cellLabel, mailClassSegment, matchRule } from "./route/index.js";
 import { dedupeKeySql } from "./stage/index.js";
@@ -22,6 +22,15 @@ describe("D99 — the referee's pure halves", () => {
     assert.equal(safeWhere(""), "true");
     assert.throws(() => safeWhere("true; drop table x"));
     assert.throws(() => safeWhere("true -- x"));
+  });
+
+  it("the pool may be the lane table itself, and LeadPipe gets no column_map", async () => {
+    assert.equal(isLaneTable("lp.bcp_ingested_leads", "bcp"), true);
+    assert.equal(isLaneTable("scratch.bcp_pool", "bcp"), false);
+    assert.ok(!(LEADPIPE_CANONICAL_COLUMNS as readonly string[]).includes("phone"));
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("./ingest/index.ts", import.meta.url), "utf8");
+    assert.ok(!/column_map/.test(src), "D99: LeadPipe refuses a column_map onto a phone column; the service sends none.");
   });
 
   it("labels, keys and matches", () => {
