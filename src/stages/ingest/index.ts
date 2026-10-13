@@ -3,7 +3,7 @@ import { dedupeMatchSql } from "./dedupe.js";
 import { ingestedTable } from "../../db/pool.js";
 import { columnMapFor, fetchHeader } from "../../jobs/preflight.js";
 import { peopleWithoutEmail, type NoEmailPerson } from "./noEmail.js";
-import type { RunRow } from "../../domain/runs.js";
+import { runIsOpen, type RunRow } from "../../domain/runs.js";
 import type { JobSettings } from "../../jobs/settings.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
@@ -116,31 +116,21 @@ export class IngestStage {
       let expected: number | null = null;
       let vendor: { filtered_out: number | null; dupes_dropped: number | null; rows_inserted: number | null; note: string | null } = { filtered_out: null, dupes_dropped: null, rows_inserted: null, note: null };
       let leadpipeDone = false;
-      if (already === 0) {
-        if (settings.source.kind === "file_url") {
-          const status = await this.ingestFiles(run, settings.source.urls, label);
-          if (JOB_FAILED.includes(status.status)) return park(this.d, run, "ingest", `LeadPipe could not ingest the file(s): ${status.error ?? status.status}. Export again and open a new job.`, attempts);
-          rowsRead = status.rows_read;
-          expected = status.rows_inserted ?? status.rows_read;
-          vendor = { filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped, rows_inserted: status.rows_inserted, note: status.note };
-          leadpipeDone = true;
-        } else {
-          const copied = await this.copyTable(run, settings.source.table, settings.source.where, label, cols);
-          rowsRead = copied.read;
-          expected = copied.inserted;
-          vendor = { filtered_out: null, dupes_dropped: copied.already_in_lane, rows_inserted: copied.inserted, note: null };
-        }
-      } else if (settings.source.kind === "file_url") {
-        // A resumed ingest: the rows are here; the counts come from LeadPipe's finished job.
-        const own = await this.d.repo.getStep(run.run_id, "ingest");
-        if (own?.vendor_job_id) {
-          const status = await this.d.leadpipe.jobStatus(own.vendor_job_id).catch(() => null);
-          if (status && JOB_DONE.includes(status.status)) {
-            rowsRead = status.rows_read;
-            vendor = { filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped, rows_inserted: status.rows_inserted, note: status.note };
-            leadpipeDone = true;
-          }
-        }
+      const own = await this.d.repo.getStep(run.run_id, "ingest");
+      if (settings.source.kind === "file_url" && (already === 0 || own?.vendor_job_id)) {
+        // A started LeadPipe job is always polled to its end before anything is counted: a resumed or retried
+        // ingest must not claim a pool LeadPipe is still writing. ingestFiles skips the start when the job exists.
+        const status = await this.ingestFiles(run, settings.source.urls, label);
+        if (JOB_FAILED.includes(status.status)) return park(this.d, run, "ingest", `LeadPipe could not ingest the file(s): ${status.error ?? status.status}. Export again and open a new job.`, attempts);
+        rowsRead = status.rows_read;
+        expected = status.rows_inserted ?? status.rows_read;
+        vendor = { filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped, rows_inserted: status.rows_inserted, note: status.note };
+        leadpipeDone = true;
+      } else if (already === 0 && settings.source.kind === "table") {
+        const copied = await this.copyTable(run, settings.source.table, settings.source.where, label, cols);
+        rowsRead = copied.read;
+        expected = copied.inserted;
+        vendor = { filtered_out: null, dupes_dropped: copied.already_in_lane, rows_inserted: copied.inserted, note: null };
       }
       // D103: LeadPipe drops a row with no email; the email finder needs exactly those people. Same file, server to server.
       const noEmail = settings.source.kind === "file_url" && leadpipeDone ? await this.addPeopleWithoutEmail(run, settings.source.urls, label, cols) : null;
@@ -221,7 +211,7 @@ export class IngestStage {
         if (JOB_DONE.includes(s.status)) return { state: "done", value: s };
         return { state: "running" };
       },
-      { pollMs: this.d.cfg.pollMs, deadMs: this.d.cfg.deadMs, clock: this.clock, what: `LeadPipe ingest ${jobId}`, stop: async () => (await this.d.repo.getRun(run.run_id))?.status === "aborted" },
+      { pollMs: this.d.cfg.pollMs, deadMs: this.d.cfg.deadMs, clock: this.clock, what: `LeadPipe ingest ${jobId}`, stop: async () => !runIsOpen((await this.d.repo.getRun(run.run_id))?.status ?? "aborted") },
     );
     await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "leadpipe", action: "ingest_csv", rows: status.rows_read ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: jobId, approvedBy: null });
     return status;

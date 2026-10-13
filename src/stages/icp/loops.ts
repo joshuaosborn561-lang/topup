@@ -42,6 +42,8 @@ export interface GradeTally {
   graded: number;
   errors: number;
   last_error: string | null;
+  /** Domains still waiting for a grade when the loop stopped. */
+  remaining: number;
 }
 
 function clampInt(n: number, min: number, max: number, fallback: number): number {
@@ -96,5 +98,5 @@ export async function gradeAll(grade: (n: number, w: number) => Promise<GradeRes
     left = Math.min(...results.map((r) => r.remaining));
     idle = results.every((r) => r.processed === 0) ? idle + 1 : 0;
   }
-  return { graded, errors, last_error: lastError };
+  return { graded, errors, last_error: lastError, remaining: Number.isFinite(left) ? left : 0 };
 }

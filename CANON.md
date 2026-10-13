@@ -1,6 +1,6 @@
 # Canon — how a campaign gets topped up
 
-Canon as of **D103** (2026-10-13). One page. `DECISIONS.md` is the append-only
+Canon as of **D104** (2026-10-13). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -44,7 +44,10 @@ ask Josh to connect it, then continue.
    Josh and Cayden by default, D92).
    The auto cap is $0. `topup` quotes first; `topup(job_id, approved_by)`
    runs. A yes is to an amount: a step priced more than a tenth above the
-   quote stops and asks again with the new number (D51, D101).
+   quote stops and asks again with the new number (D51, D101). There is no
+   daily cap: whatever the approver says yes to is the limit (D104). A
+   parked step waits for a named `topup(job_id, approved_by)`; nothing
+   re-runs it on its own.
 3. **Nothing starts on its own.** No watch, no cron, no routine that
    re-reads lists. You call the next tool or nothing moves (D51, D88).
 4. **The transcript is the truth.** Replay the recorded build: the same

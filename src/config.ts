@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DAILY_VENDOR_CAP_USD, OPERATOR_SPEND_CAP_USD } from "./policy/rules.js";
+import { OPERATOR_SPEND_CAP_USD } from "./policy/rules.js";
 
 /**
  * All configuration comes from the environment. Railway holds the secrets;
@@ -68,9 +68,8 @@ const schema = z.object({
   JOB_POLL_SECONDS: numberWithDefault(30),
   JOB_DEAD_MINUTES: numberWithDefault(90),
 
-  /** D51: zero. Every paid call waits for a named approval. The daily cap is a backstop. */
+  /** D51: zero. Every paid call waits for a named approval. No daily cap (D104): the approved amount is the limit. */
   AUTO_SPEND_CAP_USD: numberWithDefault(OPERATOR_SPEND_CAP_USD),
-  DAILY_VENDOR_CAP_USD: numberWithDefault(DAILY_VENDOR_CAP_USD),
   SPEND_CARD_TIMEOUT_MINUTES: numberWithDefault(24 * 60),
 
   VERIFY_POLL_SECONDS: numberWithDefault(60),

@@ -139,7 +139,7 @@ async function main(): Promise<void> {
   log.info("client_map tags", { count: clientTags.length });
   await repo.repairCampaignRegistry().catch((err) => log.warn("registry repair at boot failed", { error: (err as Error).message }));
   const approvers = parseApprovers(cfg.TOPUP_APPROVERS);
-  const runner = new TopupRunner({ repo, stages, console: console_, ledger, approvers, dailyCapCents: rails.cfg.dailyCapCents });
+  const runner = new TopupRunner({ repo, stages, console: console_, ledger, approvers });
   log.info("approvers", { names: approvers });
 
   app.use(
