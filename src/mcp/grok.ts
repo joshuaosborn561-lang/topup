@@ -12,7 +12,7 @@ import { campaignNameBySmartleadId } from "../ledger/health.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { preflightPool } from "../jobs/preflight.js";
 import { poolSource, type JobSpec } from "../jobs/settings.js";
-import { APPROVER_RULE, type TopupRunner } from "../jobs/runner.js";
+import type { TopupRunner } from "../jobs/runner.js";
 
 /**
  * The tools Grokbot calls (D99, D100). Reads return counts, ids, labels and the
@@ -84,19 +84,21 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "topup",
     {
       description:
-        "Top up one campaign with the pool you built by replaying its record. First call: client_tag, campaign_id and the pool (source.kind=file_url with the vendor's signed export URL(s), which the service ingests through LeadPipe itself, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). The service ingests it through LeadPipe, removes everyone the client already has anywhere, removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost. Nothing paid runs. Show that count and cost to Josh or Cayden. When one of them says yes: topup(job_id, approved_by=\"Josh\" or \"Cayden\") runs the ICP website check, verification, normalization, QA, staging and the load into the campaign, then writes the record. Loads paused: it stops at staged; load(job_id) later. Refuses a campaign with no recorded build, a cold-call campaign, and a second open job on the campaign. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
+        "Top up one campaign with the pool you built by replaying its record. First call: client_tag, campaign_id and the pool (source.kind=file_url with the vendor's signed export URL(s), which the service ingests through LeadPipe itself, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). The service ingests it through LeadPipe, removes everyone the client already has anywhere, removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost. Nothing paid runs. Show that count and cost to Josh or Cayden. When they say yes: topup(job_id, approved_by=\"their name\") runs the ICP website check, verification, normalization, QA, staging and the load into the campaign, then writes the record. Loads paused: it stops at staged; load(job_id) later. Refuses a campaign with no recorded build, a cold-call campaign, and a second open job on the campaign. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
       inputSchema: {
         client_tag: snake.optional(),
         campaign_id: z.number().int().optional(),
         source: poolSource.optional(),
-        job_id: z.string().optional().describe("An open job: with approved_by, run the approved tail; without, re-read it with job(job_id) instead."),
-        approved_by: z.string().optional().describe("Josh or Cayden, by name, after they said yes to the quoted count and cost."),
+        job_id: z.string().optional().describe("An open job: with approved_by, run the approved tail; without, show its quote or pick the job back up where a restart cut it off."),
+        approved_by: z.string().optional().describe("The approver, by first name, after they said yes to the quoted count and cost. canon says who may approve."),
       },
     },
     async ({ client_tag, campaign_id, source, job_id, approved_by }) => {
       if (job_id) {
-        if (!approved_by) return text({ error: `job ${job_id} is open. Pass approved_by with the name of the person who said yes to the quote, or read job(job_id). ${APPROVER_RULE}` });
-        return text(await d.jobs.begin(job_id, "approve", { by: d.by, approved_by }));
+        if (approved_by) return text(await d.jobs.begin(job_id, "approve", { by: d.by, approved_by }));
+        const standing = await d.jobs.standing(job_id, d.by);
+        if (!standing) return text({ error: `job ${job_id} is not open, or has nothing to resume. Read job(job_id).` });
+        return text(standing);
       }
       if (!client_tag || campaign_id == null || !source) return text({ error: "topup needs client_tag, campaign_id and source (the pool), or job_id with approved_by." });
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);

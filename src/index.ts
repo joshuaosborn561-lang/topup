@@ -13,7 +13,7 @@ import { downloadListBuildTranscript } from "./canon/buildRecord.js";
 import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
 import { buildHealth } from "./health.js";
-import { TopupRunner, type Stages } from "./jobs/runner.js";
+import { parseApprovers, TopupRunner, type Stages } from "./jobs/runner.js";
 import { isSelfStart } from "./jobs/selfStart.js";
 import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
@@ -84,7 +84,6 @@ async function main(): Promise<void> {
   rails = new SpendRails(repo, railsConfigFrom(cfg));
 
   const locks = await repo.installLeadLocks();
-  await repo.ensureCore08().catch((err) => log.error(`sized status ensure failed: ${(err as Error).message}`));
   log.info("database ready", { lead_tables_locked: locks });
 
   const console_ = new Console(repo);
@@ -133,6 +132,9 @@ async function main(): Promise<void> {
   });
   log.info("client_map tags", { count: clientTags.length });
   await repo.repairCampaignRegistry().catch((err) => log.warn("registry repair at boot failed", { error: (err as Error).message }));
+  const approvers = parseApprovers(cfg.TOPUP_APPROVERS);
+  const runner = new TopupRunner({ repo, stages, console: console_, ledger, approvers });
+  log.info("approvers", { names: approvers });
 
   app.use(
     "/mcp",
@@ -145,7 +147,7 @@ async function main(): Promise<void> {
       grok: {
         repo,
         ledger,
-        jobs: new TopupRunner({ repo, stages, console: console_, ledger }),
+        jobs: runner,
         connectorUrls: {
           leadpipe: cfg.LEADPIPE_MCP_URL || undefined,
           smartlead: cfg.SMARTLEAD_MCP_URL || undefined,
@@ -170,7 +172,12 @@ async function main(): Promise<void> {
   const open = await repo.openRuns();
   const leftoverWatch = open.filter((r) => isSelfStart(r.opened_by, r.trigger));
   if (leftoverWatch.length) log.warn("open runs were opened by the watch; nothing will drive them (D61)", { count: leftoverWatch.length });
-  log.info("open jobs wait for their next call; nothing is driven on boot (D51)", { count: open.length });
+  // A restart cut some jobs off mid-phase; a person started those, so they finish. Nothing new starts (D51).
+  const resumed = await runner.resumeInterrupted("boot").catch((err) => {
+    log.error("resume on boot failed", { error: (err as Error).message });
+    return [] as string[];
+  });
+  log.info("open jobs", { count: open.length, resumed_after_restart: resumed.length });
 
   const shutdown = async (signal: string) => {
     log.info("shutting down", { signal });

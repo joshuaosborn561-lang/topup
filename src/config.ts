@@ -26,6 +26,9 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().default(""),
   DATABASE_URL: z.string().default(""),
 
+  /** Who may approve a top-up, by first name, comma separated. Empty means the D92 default (Josh and Cayden). */
+  TOPUP_APPROVERS: z.string().default(""),
+
   /** D41: no login. The owner token elevates a caller to owner; operator is the default. */
   MCP_OWNER_TOKEN: z.string().default(""),
   MCP_OPERATOR_TOKEN: z.string().default(""),

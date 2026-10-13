@@ -123,30 +123,6 @@ export class Repo {
     );
   }
 
-  /**
-   * Teach an already-migrated database that sized is terminal, and create the
-   * loads_paused flag. Failure is logged by the caller; the size-only close
-   * falls back to done plus counts.sized so the lane lock still releases.
-   */
-  async ensureCore08(): Promise<void> {
-    await this.db.query(
-      `create or replace function topup.run_is_open(s text) returns boolean
-       language sql immutable as $$
-         select s not in ('done','failed','capacity_bound','not_working','pool_thin','declined','aborted','sized')
-       $$`,
-    );
-    await this.db.query(
-      `create table if not exists topup.service_flags (
-         flag text primary key,
-         enabled boolean not null,
-         updated_at timestamptz not null default now(),
-         updated_by text
-       )`,
-    );
-    await this.db.query(
-      `insert into topup.service_flags (flag, enabled) values ('loads_paused', false) on conflict (flag) do nothing`,
-    );
-  }
 
 
 
