@@ -29,13 +29,14 @@ describe("D99 — the referee's pure halves", () => {
     assert.throws(() => safeWhere("(state = 'CO'"), /parentheses/);
   });
 
-  it("the pool may be the lane table itself, and LeadPipe gets no column_map", async () => {
+  it("the pool may be the lane table itself, and LeadPipe's column map only ever names its canonical columns", async () => {
     assert.equal(isLaneTable("lp.bcp_ingested_leads", "bcp"), true);
     assert.equal(isLaneTable("scratch.bcp_pool", "bcp"), false);
     assert.ok(!(LEADPIPE_CANONICAL_COLUMNS as readonly string[]).includes("phone"));
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("./ingest/index.ts", import.meta.url), "utf8");
-    assert.ok(!/column_map/.test(src), "D99: LeadPipe refuses a column_map onto a phone column; the service sends none.");
+    assert.match(src, /LEADPIPE_CANONICAL_COLUMNS as readonly string\[\]\)\.includes\(k\)/, "D99: every column_map key is filtered to LeadPipe's canonical columns before the call.");
+    assert.ok(!/PHONE_HEADER_MAP/.test(src), "D99: no phone mapping; LeadPipe refuses it.");
   });
 
   it("labels, keys and matches", () => {

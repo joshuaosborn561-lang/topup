@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { csvHeader, headerUsable, preflightPool } from "./preflight.js";
+import { columnMapFor, csvHeader, headerUsable, preflightPool } from "./preflight.js";
 
 /** D99 — a pool the service cannot ingest is refused before a job opens, in plain English. */
 describe("D99 — pool preflight", () => {
@@ -17,6 +17,13 @@ describe("D99 — pool preflight", () => {
     const noCols = (async () => new Response("mobile_phone,title\n", { status: 200 })) as unknown as typeof fetch;
     const unusable = await preflightPool({ query: async () => ({ rows: [] }) } as never, "bcp", { kind: "file_url", urls: ["https://example.invalid/pool.csv"] }, noCols);
     assert.ok(!unusable.ok && /no email or first_name column/.test(unusable.message));
+  });
+
+  it("tells LeadPipe what a file calls its canonical columns, keys canonical, and nothing for a phone", () => {
+    const map = columnMapFor(["First Name", "Last Name", "Work Email", "Current Job Title", "Company Name", "Company Domain", "Employee Count Range", "Mobile Phone", "City", "State"]);
+    assert.deepEqual(map, { email: "Work Email", title: "Current Job Title", employee_range: "Employee Count Range" });
+    assert.deepEqual(columnMapFor(["email", "first_name", "company_name"]), {});
+    assert.ok(!("phone" in columnMapFor(["mobile_phone", "email"])));
   });
 
   it("refuses the whole lane table, a missing table, and an empty match before anything opens", async () => {

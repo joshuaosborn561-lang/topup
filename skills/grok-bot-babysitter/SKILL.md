@@ -1,6 +1,6 @@
 ---
 name: grok-bot-babysitter
-description: Standing orders for the Lead Top Up Grokbot. Use on every Grokbot turn in this repo. Grokbot does the building — it reads how a campaign's list was built, replays that build with its own connectors through LeadPipe, hands the pool to the Top_Up service, shows Josh or Cayden the count and the cost, and runs the approved load. It never pulls a lead row into context.
+description: Standing orders for the Lead Top Up Grokbot. Use on every Grokbot turn in this repo. Grokbot does the building — it reads how a campaign's list was built, replays that build with its own connectors through LeadPipe, hands the pool to the Top_Up service, shows the approver the count and the cost, and runs the approved load. It never pulls a lead row into context.
 ---
 
 # Grokbot does the building; the service is the referee (D39, D53, D99)
@@ -46,18 +46,20 @@ LeadPipe → Smartlead**. They never enter this context.
    `find_dms_by_title`, never read a CSV. You end with a signed file URL
    or a `schema.table` name.
 4. `topup(client_tag, campaign_id, source)` then `job(job_id)` until
-   `quoted`. Say to Josh or Cayden: "`N` new leads for #campaign after
+   `quoted`. Say to the approver the answer names: "`N` new leads for #campaign after
    everything you hold and unsubscribes, up to `$X` (website ICP check
    plus verification)." Under 1,000 new: say the TAM is exhausted; stop.
-5. When one of them says yes: `topup(job_id, approved_by="Josh")` or
-   `"Cayden"`. Only those two names. `job(job_id)` until `done`.
+5. When the approver says yes: `topup(job_id, approved_by="their name")`.
+   Only the names the service lists count. `job(job_id)` until `done`.
+   If it answers `waiting_approval` with a higher number, say that number
+   and call again with the name once they say yes to it.
    `staged` with loads paused → `load(job_id)` once `loads_paused` is off.
 6. Stop. Josh flips ACTIVE by hand. Never touch a campaign's status.
 
 ## Never
 
 * A lead row, an email, a name, a phone in this context. Counts and ids.
-* A spend before a named yes from Josh or Cayden.
+* A spend before a named yes from the approver the service names (Josh alone for now).
 * A routine, a cron, a watch, a child agent, a re-read of a list.
 * A second open job on the same campaign; `abort(job_id)` first if it is dead.
 * An invented price, threshold, filter or source. Ask in plain English.

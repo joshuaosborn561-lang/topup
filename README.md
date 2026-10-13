@@ -19,7 +19,7 @@ table on campaignintelligence. The service:
 2. removes everyone the client already has anywhere (`dedupe`, D98),
 3. removes real unsubscribes and the DNC list (`suppress`, D81),
 4. posts one card: new-lead count and worst-case cost (`topup` → quoted),
-5. after Josh or Cayden says yes by name: the website ICP check (D60),
+5. after the approver says yes by name (`TOPUP_APPROVERS` in Railway): the website ICP check (D60),
    verification, normalization, QA, routing, staging, the Smartlead import
    and the post-import check, then writes its own top-up into
    `topup.list_build_records`.
@@ -30,7 +30,7 @@ ACTIVE by hand.
 ## What it refuses to do
 
 * Read a lead row into chat, or return one from any tool.
-* Spend a cent before Josh or Cayden says yes by name. The auto cap is $0.
+* Spend a cent before a named approver says yes. The auto cap is $0. A step priced more than a tenth above the quote asks again.
 * Start on its own. No watch, no cron, no planner.
 * Top up a campaign with no recorded build, a cold-call campaign, or SG Nurture.
 * Start, pause, stop, delete, create or edit a campaign in Smartlead.

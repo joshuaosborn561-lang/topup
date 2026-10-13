@@ -1,6 +1,6 @@
 # Canon — how a campaign gets topped up
 
-Canon as of **D100** (2026-10-13). One page. `DECISIONS.md` is the append-only
+Canon as of **D101** (2026-10-13). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -9,7 +9,7 @@ page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 A campaign runs low. Grokbot reads how that campaign's list was built,
 builds more of the same people the same way with its own connectors, and
 hands the pool to this service. The service removes everyone the client
-already has and every real unsubscribe, shows Josh or Cayden the new-lead
+already has and every real unsubscribe, shows the approver the new-lead
 count and the cost, waits for a yes, runs the website ICP check and
 verification, and loads the campaign. Josh flips ACTIVE by hand.
 
@@ -38,9 +38,12 @@ ask Josh to connect it, then continue.
    LeadPipe. Never SELECT emails, names or phones; never read an export, a
    dataset or a CSV into chat; never paste a row. Count, never read (D2,
    D39, D99).
-2. **Josh or Cayden approves every spend, by name, before it runs.** The
-   auto cap is $0. `topup` quotes first; `topup(job_id, approved_by)` runs.
-   Nobody else's name counts (D51, D92).
+2. **A named approver says yes to every spend before it runs.** Who may
+   approve is a Railway setting (`TOPUP_APPROVERS`; Josh alone for now;
+   Josh and Cayden by default, D92).
+   The auto cap is $0. `topup` quotes first; `topup(job_id, approved_by)`
+   runs. A yes is to an amount: a step priced more than a tenth above the
+   quote stops and asks again with the new number (D51, D101).
 3. **Nothing starts on its own.** No watch, no cron, no routine that
    re-reads lists. You call the next tool or nothing moves (D51, D88).
 4. **The transcript is the truth.** Replay the recorded build: the same
@@ -77,11 +80,15 @@ ask Josh to connect it, then continue.
 5. `topup(client_tag, campaign_id, source)`. Poll `job(job_id)`. The quote
    says how many new leads are left after everyone the client already holds
    and the unsubscribes, and the most it can cost (website ICP check plus
-   verification). Tell Josh or Cayden those two numbers.
-6. When one of them says yes: `topup(job_id, approved_by="Josh")` or
-   `"Cayden"`. Poll `job(job_id)` to `done`. Loads paused → it stops at
-   `staged`; `load(job_id)` once `loads_paused` is off. Then stop. Josh
-   flips ACTIVE.
+   verification). Tell the approver those two numbers (the answer names
+   them). Under 1,000 net new the answer says so: that is the exhausted
+   line (D46); the approver decides.
+6. When the approver says yes: `topup(job_id, approved_by="their name")`.
+   Poll `job(job_id)` to `done`. A restart does not lose a job: the
+   service picks it back up on boot, and `topup(job_id)` with no name
+   shows where it stands. Loads paused → it stops at `staged`;
+   `load(job_id)` once `loads_paused` is off. Then stop. Josh flips
+   ACTIVE.
 
 ## The tools
 

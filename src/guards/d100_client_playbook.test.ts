@@ -50,7 +50,7 @@ describe("D100 — client playbook", () => {
 
   it("canon names D100 and the loop reads the playbook before a top-up", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D100\*\*/, "D100: fold the decision into CANON.md. Ask Josh.");
+    assert.match(canon, /Canon as of \*\*D1\d\d\*\*/, "D100: fold the decision into CANON.md (D100 or later). Ask Josh.");
     assert.match(canon, /playbook\(client_tag\)/, "D100: the loop names playbook(client_tag). Ask Josh.");
     assert.ok(!/parlay|peterson|basco|goliath/i.test(canon), "D100: no client facts in canon. Ask Josh.");
   });
