@@ -29,11 +29,12 @@ describe("D99 — the lean top-up", () => {
   });
 
   it("the legacy pull, recipe, count and per-client code is gone", async () => {
-    for (const rel of ["src/stages/pull/", "src/stages/puzzle/", "src/stages/find_emails/", "src/recipes/", "src/pilot/", "src/clients/getleads.ts", "src/clients/aiArkPreview.ts", "src/canon/count.ts", "src/canon/held.ts", "src/canon/size.ts", "src/canon/siteCheck.ts", "src/jobs/recipe.ts", "src/orchestrator.ts"]) {
+    // src/stages/find_emails/ came back under D103: the service finds emails itself after a named yes.
+    for (const rel of ["src/stages/pull/", "src/stages/puzzle/", "src/recipes/", "src/pilot/", "src/clients/getleads.ts", "src/clients/aiArkPreview.ts", "src/canon/count.ts", "src/canon/held.ts", "src/canon/size.ts", "src/canon/siteCheck.ts", "src/jobs/recipe.ts", "src/orchestrator.ts"]) {
       assert.equal(await exists(rel), false, `D99: ${rel} is legacy and must not come back`);
     }
     const clients = (await readdir(new URL("src/clients/", root))).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts")).sort();
-    assert.deepEqual(clients, ["icpGate.ts", "leadpipe.ts", "mcpHttp.ts", "smartlead.ts", "verifier.ts"], "D99: the service calls LeadPipe, the verifier, Smartlead and the ICP gate. Nothing else.");
+    assert.deepEqual(clients, ["emailFinder.ts", "icpGate.ts", "leadpipe.ts", "mcpHttp.ts", "smartlead.ts", "verifier.ts"], "D99, D103: the service calls LeadPipe, the email finder, the verifier, Smartlead and the ICP gate. Nothing else.");
     const cfg = loadConfig({});
     for (const k of ["GETLEADS_TOKEN", "AI_ARK_TOKEN", "PROSPEO_API_KEY", "SITE_PEOPLE_KEY", "NAME_TO_EMAIL_MCP_URL"]) assert.ok(!(k in cfg), `D99: config no longer carries ${k}`);
   });

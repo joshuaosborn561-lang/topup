@@ -20,6 +20,7 @@ const numberWithDefault = (d: number) =>
 /** Addresses `connectors` names so Grokbot can attach them; an empty Railway variable means the default, not nothing. */
 const MAPS_MCP_DEFAULT = "https://google-maps-mcp-production-88a3.up.railway.app/mcp";
 const PERMITSTACK_MCP_DEFAULT = "https://permitstack-mcp-production.up.railway.app/mcp";
+const EMAIL_WATERFALL_DEFAULT = "https://email-waterfall-production-021b.up.railway.app/mcp";
 
 const schema = z.object({
   PORT: numberWithDefault(3000),
@@ -53,7 +54,8 @@ const schema = z.object({
   PERMITSTACK_MCP_URL: z.string().default(PERMITSTACK_MCP_DEFAULT).transform((s) => s || PERMITSTACK_MCP_DEFAULT),
   DOMAIN_WATERFALL_MCP_URL: z.string().default(""),
   PEOPLE_WATERFALL_MCP_URL: z.string().default(""),
-  EMAIL_WATERFALL_MCP_URL: z.string().default(""),
+  /** D103: the service calls the email finder itself after a named yes. An address, not a secret; empty on Railway means this default. */
+  EMAIL_WATERFALL_MCP_URL: z.string().default(EMAIL_WATERFALL_DEFAULT).transform((s) => s || EMAIL_WATERFALL_DEFAULT),
 
   /** The ICP website gate's edge functions on campaignintelligence (D60). Keys are the functions' own access keys; empty parks the icp step. */
   SUPABASE_FUNCTIONS_URL: z.string().default("https://azpapwtnrbzywlnxxecz.supabase.co/functions/v1"),
@@ -117,6 +119,7 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     verifier: Boolean(cfg.VERIFIER_BASE_URL),
     smartlead: Boolean(cfg.SMARTLEAD_MCP_URL),
     icp_gate: Boolean(cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY),
+    email_finder: Boolean(cfg.EMAIL_WATERFALL_MCP_URL),
     transcripts: Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_SERVICE_ROLE_KEY),
   };
 }

@@ -17,6 +17,7 @@ const CLIENT_SERVER: Readonly<Record<string, string>> = {
   "verifier.ts": "Email Verifier Progression",
   "smartlead.ts": "Smartlead server",
   "icpGate.ts": "ICP gate",
+  "emailFinder.ts": "Email Finder Waterfall",
 };
 
 /** The ten servers the addendum names (section 4). */

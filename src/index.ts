@@ -21,6 +21,8 @@ import { mcpRouter } from "./mcp/server.js";
 import { railsConfigFrom, SpendRails } from "./spend/rails.js";
 import { DedupeStage } from "./stages/dedupe/index.js";
 import { IcpStage } from "./stages/icp/index.js";
+import { FindEmailsStage } from "./stages/find_emails/index.js";
+import { EmailFinderClient } from "./clients/emailFinder.js";
 import { ImportStage } from "./stages/import/index.js";
 import { IngestStage } from "./stages/ingest/index.js";
 import { NormalizeStage } from "./stages/normalize/index.js";
@@ -96,11 +98,15 @@ async function main(): Promise<void> {
   const icpGate = cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY ? new IcpGateClient(cfg.SUPABASE_FUNCTIONS_URL, { fetch: cfg.ICP_SITE_FETCH_KEY, llm: cfg.ICP_LLM_KEY, disco: cfg.ICP_DISCO_KEY }) : null;
   const base = { repo, console: console_ };
 
+  const dedupe = new DedupeStage(base);
+  const suppress = new SuppressStage({ ...base, ledger });
+  const finder = cfg.EMAIL_WATERFALL_MCP_URL ? new EmailFinderClient(cfg.EMAIL_WATERFALL_MCP_URL) : null;
   const stages: Stages = {
     ingest: new IngestStage({ ...base, leadpipe, rails, cfg: jobs }),
-    dedupe: new DedupeStage(base),
-    suppress: new SuppressStage({ ...base, ledger }),
+    dedupe,
+    suppress,
     icp: new IcpStage({ ...base, rails, gate: icpGate, cfg: { jevModel: cfg.ICP_JEV_MODEL, pollMs: 20_000, deadMs: jobs.deadMs } }),
+    findEmails: new FindEmailsStage({ ...base, rails, finder, dedupe, suppress, cfg: { pollMs: 20_000, deadMs: jobs.deadMs } }),
     verify: new VerifyStage({
       repo,
       rails,
@@ -133,7 +139,7 @@ async function main(): Promise<void> {
   log.info("client_map tags", { count: clientTags.length });
   await repo.repairCampaignRegistry().catch((err) => log.warn("registry repair at boot failed", { error: (err as Error).message }));
   const approvers = parseApprovers(cfg.TOPUP_APPROVERS);
-  const runner = new TopupRunner({ repo, stages, console: console_, ledger, approvers });
+  const runner = new TopupRunner({ repo, stages, console: console_, ledger, approvers, dailyCapCents: rails.cfg.dailyCapCents });
   log.info("approvers", { names: approvers });
 
   app.use(

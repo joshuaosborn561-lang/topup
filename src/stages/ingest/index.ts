@@ -2,6 +2,7 @@ import { JOB_DONE, JOB_FAILED, type JobStatus, type LeadPipe } from "../../clien
 import { dedupeMatchSql } from "./dedupe.js";
 import { ingestedTable } from "../../db/pool.js";
 import { columnMapFor, fetchHeader } from "../../jobs/preflight.js";
+import { peopleWithoutEmail, type NoEmailPerson } from "./noEmail.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { JobSettings } from "../../jobs/settings.js";
 import type { SpendRails } from "../../spend/rails.js";
@@ -114,6 +115,7 @@ export class IngestStage {
       let rowsRead: number | null = null;
       let expected: number | null = null;
       let vendor: { filtered_out: number | null; dupes_dropped: number | null; rows_inserted: number | null; note: string | null } = { filtered_out: null, dupes_dropped: null, rows_inserted: null, note: null };
+      let leadpipeDone = false;
       if (already === 0) {
         if (settings.source.kind === "file_url") {
           const status = await this.ingestFiles(run, settings.source.urls, label);
@@ -121,6 +123,7 @@ export class IngestStage {
           rowsRead = status.rows_read;
           expected = status.rows_inserted ?? status.rows_read;
           vendor = { filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped, rows_inserted: status.rows_inserted, note: status.note };
+          leadpipeDone = true;
         } else {
           const copied = await this.copyTable(run, settings.source.table, settings.source.where, label, cols);
           rowsRead = copied.read;
@@ -135,9 +138,12 @@ export class IngestStage {
           if (status && JOB_DONE.includes(status.status)) {
             rowsRead = status.rows_read;
             vendor = { filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped, rows_inserted: status.rows_inserted, note: status.note };
+            leadpipeDone = true;
           }
         }
       }
+      // D103: LeadPipe drops a row with no email; the email finder needs exactly those people. Same file, server to server.
+      const noEmail = settings.source.kind === "file_url" && leadpipeDone ? await this.addPeopleWithoutEmail(run, settings.source.urls, label, cols) : null;
       const deduped = await this.dedupeLanded(table, run.run_id, label, cols);
       const fills: string[] = [];
       if (cols.has("employee_range") && cols.has("company_size")) fills.push("company_size = coalesce(company_size, employee_range)");
@@ -160,6 +166,7 @@ export class IngestStage {
         ...(vendor.filtered_out != null ? { leadpipe_filtered_out: vendor.filtered_out } : {}),
         ...(vendor.dupes_dropped != null ? { already_in_lane: vendor.dupes_dropped } : {}),
         ...(vendor.rows_inserted != null ? { rows_inserted: vendor.rows_inserted } : {}),
+        ...(noEmail ? { no_email_kept: noEmail.kept, no_email_without_name: noEmail.no_name, no_email_without_company: noEmail.no_company } : {}),
         ...landed,
       };
       // Every row read is accounted for: inserted + already in the lane + LeadPipe's own filter + duplicates within the pool.
@@ -167,7 +174,8 @@ export class IngestStage {
       if (rowsRead != null && vendor.rows_inserted != null && accounted !== rowsRead) counts.rows_unaccounted = rowsRead - accounted;
       const vendorWords =
         vendor.rows_inserted != null
-          ? ` · of ${rowsRead ?? "?"} read: ${vendor.dupes_dropped ?? 0} already in the lane table (the client has them), ${vendor.filtered_out ?? 0} dropped by LeadPipe's own filter${vendor.note ? ` (${vendor.note.slice(0, 160)})` : ""}, ${vendor.rows_inserted} new`
+          ? ` · of ${rowsRead ?? "?"} read: ${vendor.dupes_dropped ?? 0} already in the lane table (the client has them), ${vendor.filtered_out ?? 0} dropped by LeadPipe's own filter${vendor.note ? ` (${vendor.note.slice(0, 160)})` : ""}, ${vendor.rows_inserted} new` +
+            (noEmail ? ` · ${noEmail.kept} people with no email kept for the email finder (${noEmail.no_name} without a full name and ${noEmail.no_company} without a company were left out)` : "")
           : "";
       if (claimed === 0) {
         await this.d.repo.finishStep(run.run_id, "ingest", { useful_output: 0, counts });
@@ -272,6 +280,57 @@ export class IngestStage {
     );
     await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "supabase", action: "table_copy", rows: rowCount ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: null, approvedBy: null });
     return { read, inserted: rowCount ?? 0, already_in_lane: alreadyInLane };
+  }
+
+  /**
+   * D103. The people in the file(s) with no email, added under this job's
+   * label so the claim below picks them up with LeadPipe's rows. Once per
+   * job: a resumed ingest finds them already there. Rows never leave the
+   * process except into Postgres; nothing is logged.
+   */
+  private async addPeopleWithoutEmail(run: RunRow, urls: string[], label: string, cols: Set<string>): Promise<{ kept: number; no_name: number; no_company: number }> {
+    const table = ingestedTable(run.client_tag);
+    const { rows: had } = await this.d.repo.raw().query<{ n: string }>(
+      `select count(*)::text as n from ${table} where source_label = $1 and qa_flags->>'email_source' = 'none_in_file'`,
+      [label],
+    );
+    const prior = Number(had[0]?.n ?? 0);
+    if (prior > 0) return { kept: prior, no_name: 0, no_company: 0 };
+    const people: NoEmailPerson[] = [];
+    const seen = new Set<string>();
+    let noName = 0;
+    let noCompany = 0;
+    for (const url of urls) {
+      const res = await (this.d.fetchImpl ?? fetch)(url);
+      if (!res.ok) throw new Error(`could not read the export file for its people without an email (HTTP ${res.status}); export again and open a new job`);
+      const scan = peopleWithoutEmail(await res.text());
+      noName += scan.no_name;
+      noCompany += scan.no_company;
+      for (const p of scan.kept) {
+        const key = `${p.first_name.toLowerCase()}|${p.last_name.toLowerCase()}|${p.company_domain ?? (p.company_name ?? "").toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        people.push(p);
+      }
+    }
+    if (people.length === 0) return { kept: 0, no_name: noName, no_company: noCompany };
+    const fields = (["first_name", "last_name", "title", "company_name", "company_domain", "city", "state", "industry", "employee_range"] as const).filter((c) => cols.has(c));
+    const flag = JSON.stringify({ email_source: "none_in_file" });
+    let kept = 0;
+    for (let i = 0; i < people.length; i += 1000) {
+      const chunk = people.slice(i, i + 1000);
+      const arrays = fields.map((f) => chunk.map((p) => p[f]));
+      const { rowCount } = await this.d.repo.withRun(run.run_id, (tx) =>
+        tx.query(
+          `insert into ${table} (${fields.join(", ")}, source_label, qa_flags)
+           select ${fields.map((f) => `v.${f}`).join(", ")}, $1, $2::jsonb
+             from unnest(${fields.map((_, j) => `$${j + 3}::text[]`).join(", ")}) as v(${fields.join(", ")})`,
+          [label, flag, ...arrays],
+        ),
+      );
+      kept += rowCount ?? 0;
+    }
+    return { kept, no_name: noName, no_company: noCompany };
   }
 
   private async rowsForLabel(table: string, label: string): Promise<number> {

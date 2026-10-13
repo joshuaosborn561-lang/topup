@@ -19,6 +19,12 @@ except where the section says so.
 > edge functions. Every other server below is one Grokbot attaches as its
 > own connector when a campaign's build transcript uses it; the sections
 > stay as the reference for what those servers do and cost.
+>
+> **D103 (2026-10-13).** The service also calls the Email Finder Waterfall
+> (§7) itself, after a named yes, on the job's `needs_email` rows in the
+> lane table (`source` = schema `lp`, keyed by `id`, need `email`, deepest
+> tier AI Ark, `approve_cost_usd` = the approved amount). Its writeback of
+> `wf_*` columns passes the lane lock through migration 0029.
 
 ## How to read a section
 

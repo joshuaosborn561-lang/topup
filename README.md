@@ -15,12 +15,13 @@ process changes since), replays it with its own connectors, and hands
 the pool to this service as a signed file URL or a table on
 campaignintelligence; the service runs it through LeadPipe. The service:
 
-1. ingests the pool into `lp.<tag>_ingested_leads` (`ingest`),
+1. ingests the pool into `lp.<tag>_ingested_leads` (`ingest`), keeping the
+   people the export names without an email (D103),
 2. removes everyone the client already has anywhere (`dedupe`, D98),
 3. removes real unsubscribes and the DNC list (`suppress`, D81),
 4. posts one card: new-lead count and worst-case cost (`topup` → quoted),
 5. after the approver says yes by name (`TOPUP_APPROVERS` in Railway): the website ICP check (D60),
-   verification, normalization, QA, routing, staging, the Smartlead import
+   the email finder for the people with no email (D103), verification, normalization, QA, routing, staging, the Smartlead import
    and the post-import check, then writes its own top-up into
    `topup.list_build_records`.
 
@@ -79,8 +80,8 @@ src/mcp/                  the twelve tools (grok.ts) and the HTTP server
 src/jobs/runner.ts        the top-up: quote → approve → load
 src/jobs/settings.ts      a job's settings (pool source, campaign); no recipes
 src/canon/                build record + method extraction, connectors, campaigns, held keys
-src/stages/               ingest, dedupe, suppress, icp, verify, normalize, qa, route, stage, import, post_import
-src/clients/              LeadPipe, the verifier, Smartlead, the ICP gate. Nothing else.
+src/stages/               ingest, dedupe, suppress, icp, find_emails, verify, normalize, qa, route, stage, import, post_import
+src/clients/              LeadPipe, the email finder (D103), the verifier, Smartlead, the ICP gate. Nothing else.
 src/spend/                SpendRails: every paid call passes the gate; $0 auto cap
 src/guards/               tests that fail the build when a decision is broken
 supabase/migrations/      the topup schema on campaignintelligence
