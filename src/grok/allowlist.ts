@@ -1,36 +1,32 @@
 /**
- * D39, D53 — what Grok bot may call and what it must never pull into
- * context. Grok reads counts and runs verbs. Rows move server to server.
- * Ask Josh.
+ * D99 — what Grokbot may call on this service and what it must never pull
+ * into context. Grokbot reads the record, replays the build with its own
+ * connectors, hands the pool over, and calls the next tool. Rows move
+ * server to server. Ask Josh or Cayden.
  */
 
-/** Hard ceiling shared with D2. Ten masked samples, never a list. */
+/** Ten masked samples on a card, never a list (D2). */
 export const GROK_SAMPLE_MAX = 10;
 
-/** The reads (D52). Each returns counts, ids, labels and the written notes, with the rule stated. */
-export const CANON_READS = ["canon", "campaigns", "campaign_record", "build_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers", "holds", "loads_paused"] as const;
+/** The reads. Counts, ids, labels and the written record, never a row. */
+export const CANON_READS = ["canon", "connectors", "campaigns", "build_record", "jobs", "job", "spend", "loads_paused"] as const;
 
-/** The verbs (D52). Each runs one or two stages on a job, once, and returns counts. */
-export const CANON_VERBS = ["pull", "suppress", "icp", "site_check", "classify_leftover", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "confirm_filters", "abort", "resolve", "note"] as const;
+/** The verbs. */
+export const CANON_VERBS = ["topup", "load", "abort"] as const;
 
-/** Every tool on this service's MCP. Nothing else is registered (D53). */
+/** Every tool on this service's MCP. Nothing else is registered. */
 export const CANON_TOOLS = [...CANON_READS, ...CANON_VERBS] as const;
 
-/**
- * Tools Grok bot may call. Returns are counts, ids, a job_id, or a signed
- * URL the bot does not open. LeadPipe and this service move the rows.
- */
-export const GROK_MAY = [...CANON_TOOLS, "lp_plan", "lp_run", "lp_status", "lp_export", "lp_sample", "lp_inventory", "lp_ensure_client", "lp_list_clients"] as const;
-
-export type GrokMay = (typeof GROK_MAY)[number];
+/** LeadPipe (Context Saver) tools: every row moves through them, never through chat. */
+export const LEADPIPE_TOOLS = ["lp_plan", "lp_run", "lp_status", "lp_export", "lp_sample", "lp_inventory", "lp_ensure_client", "lp_list_clients"] as const;
 
 /**
- * Tools that return contact payloads, export files into chat, or cost
- * ~$0.10/company. Grok bot must not call these. This service may,
- * server-side, through SpendRails after a named approval.
+ * Tools that put contact payloads, exports or dataset items into chat.
+ * Grokbot replays a build through LeadPipe and the vendor's own server-side
+ * exports; it never reads the rows.
  */
 export const GROK_MUST_NOT = [
-  "export_contacts",
+  "export_contacts into chat",
   "search_contacts",
   "getleads_enrich_person_batch",
   "getleads_get_emails_from_linkedin_batch",
@@ -43,35 +39,8 @@ export const GROK_MUST_NOT = [
   "find_dms_by_title",
 ] as const;
 
-export type GrokMustNot = (typeof GROK_MUST_NOT)[number];
-
-/** Columns Grok must never SELECT into chat (Supabase execute_sql / table reads). */
+/** Columns Grokbot must never SELECT into chat (Supabase execute_sql). Count them; never read them. */
 export const GROK_MUST_NOT_SELECT = ["email", "first_name", "last_name", "phone", "linkedin_url"] as const;
 
-/** The four legs every receipt carries. `campaign_record` reads them; `write_receipt` writes them. */
-export const GROK_SOURCE_TAGS = ["company_source", "domain_source", "person_source", "email_source"] as const;
-
-/** Receipt columns Grok reads (counts, keys, method names). */
-export const GROK_RECEIPT_TAGS = [
-  "icp_kind",
-  "persona",
-  "company_source",
-  "company_filters",
-  "domain_source",
-  "person_source",
-  "email_source",
-  "email_max_tier",
-  "campaign_ids",
-  "segment",
-  "yield_by_step",
-  "how_i_did_it",
-  "build_label",
-  "granularity",
-  "notes",
-] as const;
-
-/**
- * Tables Grok may read tags from. Counts, keys, and method names only.
- * `lead_provenance` is the per-lead stamp — COUNT tags, never SELECT email.
- */
-export const GROK_TAG_TABLES = ["topup.pull_receipts", "topup.campaign_method", "topup.campaign_registry", "topup.lead_provenance", "topup.campaign_builds", "topup.list_build_records"] as const;
+/** The hard rule, in one line, for every tool description that moves rows. */
+export const LEADPIPE_RULE = "Every lead row moves through LeadPipe (Context Saver) or this service. Never SELECT emails or names, never read an export, never paste a row into chat.";

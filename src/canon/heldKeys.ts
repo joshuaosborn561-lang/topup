@@ -1,5 +1,5 @@
 import type { Queryable } from "../db/pool.js";
-import { discoverStores } from "./leftovers.js";
+import { discoverStores } from "./stores.js";
 
 /**
  * Identifiers this client already holds (D98). Email first; LinkedIn URL
@@ -20,7 +20,6 @@ export interface PoolRow {
   company: string | null;
 }
 
-export const HELD_EXPORT_COLUMNS = ["work_email", "linkedin_url", "first_name", "last_name", "company_name"] as const;
 
 const IDENT = /^[a-z][a-z0-9_]*$/;
 const EMAIL_COLUMNS = ["email", "work_email", "wf_email", "candidate_email", "person_email"] as const;
@@ -105,74 +104,6 @@ export function rowIsHeld(row: PoolRow, keys: HeldKeys): boolean {
   return Boolean(nc && keys.nameCompanies.has(nc));
 }
 
-export function rowHasEmail(row: PoolRow): boolean {
-  return normalizeEmail(row.email) != null;
-}
-
-/** Parse an identifier CSV. Addresses stay in memory. Quoted newlines stay in-field. */
-export function poolRowsFromCsv(text: string): PoolRow[] {
-  const table = parseCsv(text);
-  if (table.length < 2) return [];
-  const header = table[0]!.map((cell) => cell.trim().toLowerCase());
-  const emailIdx = header.findIndex((cell) => cell === "email" || cell === "work_email" || cell === "person_email");
-  const liIdx = header.findIndex((cell) => cell === "linkedin_url" || cell === "linkedin_profile" || cell === "linkedin");
-  const firstIdx = header.findIndex((cell) => cell === "first_name");
-  const lastIdx = header.findIndex((cell) => cell === "last_name");
-  const companyIdx = header.findIndex(
-    (cell) => cell === "company_name" || cell === "current_employer" || cell === "company",
-  );
-  if (emailIdx < 0 && liIdx < 0 && (firstIdx < 0 || lastIdx < 0 || companyIdx < 0)) return [];
-  const out: PoolRow[] = [];
-  for (const cells of table.slice(1)) {
-    out.push({
-      email: cellAt(cells, emailIdx),
-      linkedin: cellAt(cells, liIdx),
-      first: cellAt(cells, firstIdx),
-      last: cellAt(cells, lastIdx),
-      company: cellAt(cells, companyIdx),
-    });
-  }
-  return out;
-}
-
-function cellAt(cells: string[], idx: number): string | null {
-  if (idx < 0) return null;
-  const v = (cells[idx] ?? "").trim();
-  return v.length ? v : null;
-}
-
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cur = "";
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quoted) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          cur += '"';
-          i += 1;
-        } else quoted = false;
-      } else cur += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ",") {
-      row.push(cur);
-      cur = "";
-    } else if (ch === "\n") {
-      row.push(cur);
-      if (row.some((c) => c.trim().length > 0)) rows.push(row);
-      row = [];
-      cur = "";
-    } else if (ch !== "\r") cur += ch;
-  }
-  if (cur.length || row.length) {
-    row.push(cur);
-    if (row.some((c) => c.trim().length > 0)) rows.push(row);
-  }
-  return rows;
-}
-
 async function clientTagFor(db: Queryable, clientId: number): Promise<string | null> {
   try {
     const { rows } = await db.query<{ client_tag: string }>(
@@ -195,7 +126,12 @@ async function tableExists(db: Queryable, qual: string): Promise<boolean> {
  * (via the mirror), provenance, DNC, the lane ingest table, and the
  * client / waterfall people stores. Generic: no per-client list.
  */
-export async function loadHeldKeys(db: Queryable, clientId: number, clientTag?: string | null): Promise<HeldKeys> {
+export interface HeldExclude {
+  /** Rows of this run in the lane table are the pool being checked, not something the client holds. */
+  runId: string;
+}
+
+export async function loadHeldKeys(db: Queryable, clientId: number, clientTag?: string | null, exclude?: HeldExclude): Promise<HeldKeys> {
   const keys = emptyHeldKeys();
   const tag = (clientTag && IDENT.test(clientTag) ? clientTag : null) ?? (await clientTagFor(db, clientId));
 
@@ -247,7 +183,7 @@ export async function loadHeldKeys(db: Queryable, clientId: number, clientTag?: 
     for (const r of rows) addHeldRow(keys, r.email, null, null, null, null);
   }
 
-  if (tag) await loadStoreKeys(db, tag, keys);
+  if (tag) await loadStoreKeys(db, tag, keys, exclude);
   return keys;
 }
 
@@ -260,7 +196,7 @@ function storeIsHeldPeople(tag: string, schema: string, table: string): boolean 
   return false;
 }
 
-async function loadStoreKeys(db: Queryable, tag: string, keys: HeldKeys): Promise<void> {
+async function loadStoreKeys(db: Queryable, tag: string, keys: HeldKeys, exclude?: HeldExclude): Promise<void> {
   const stores = await discoverStores(db, tag);
   for (const f of stores) {
     if (!storeIsHeldPeople(tag, f.schema, f.table)) continue;
@@ -283,7 +219,8 @@ async function loadStoreKeys(db: Queryable, tag: string, keys: HeldKeys): Promis
       company: string | null;
     }>(
       `select ${emailSql} as email, ${liSql} as linkedin, ${firstSql} as first, ${lastSql} as last, ${companySql} as company
-         from ${q(f.schema)}.${q(f.table)}`,
+         from ${q(f.schema)}.${q(f.table)}${exclude && f.schema === "lp" && f.table === `${tag}_ingested_leads` && f.columns.has("run_id") ? " where run_id is distinct from $1" : ""}`,
+      exclude && f.schema === "lp" && f.table === `${tag}_ingested_leads` && f.columns.has("run_id") ? [exclude.runId] : [],
     );
     for (const r of rows) addHeldRow(keys, r.email, r.linkedin, r.first, r.last, r.company);
   }

@@ -1,119 +1,93 @@
 # leadtopup
 
-The lead top-up service for SalesGlider clients. A dumb, flat pipeline on
-Railway with an MCP on top. **Grok bot does the reasoning**; this service
-counts, moves rows and writes receipts. Read `CANON.md` first: it is the
-one page of rules, reads and verbs. `AGENTS.md` says how to work in the
-repo. `DECISIONS.md` is the ledger of why.
+The lead top-up service for Lead Top Up on Railway: a Streamable HTTP MCP at
+`https://leadtopup-production.up.railway.app/mcp` (no login) with eleven
+tools, on top of a flat pipeline that moves rows **MCP → Supabase → LeadPipe
+→ Smartlead**. `CANON.md` is the one page that says what is true; read it
+first. `DECISIONS.md` is the ledger of why.
 
 ## What it does
 
-* Serves the **reads**: what Supabase and the vendors hold about every
-  campaign and how it was pulled, as counts, ids, labels and notes.
-* Runs the **verbs**: one stage of the pipeline on a job, once, when Grok
-  calls it. pull → suppress → enrich → verify → normalize → qa → stage →
-  import → write_receipt.
-* Gates **spend**: every paid call posts a card with the worst case and
-  waits for a person's name. The auto cap is $0.
+When a campaign runs low, Grokbot reads how that campaign's list was built
+(`build_record`: the saved transcript's tool calls in order, what the
+person asked, and the process changes since), replays it with its own
+connectors through LeadPipe, and hands the pool to this service as a
+signed file URL or a table on campaignintelligence. The service:
+
+1. ingests the pool into `lp.<tag>_ingested_leads` (`ingest`),
+2. removes everyone the client already has anywhere (`dedupe`, D98),
+3. removes real unsubscribes and the DNC list (`suppress`, D81),
+4. posts one card: new-lead count and worst-case cost (`topup` → quoted),
+5. after Josh or Cayden says yes by name: the website ICP check (D60),
+   verification, normalization, QA, routing, staging, the Smartlead import
+   and the post-import check, then writes its own top-up into
+   `topup.list_build_records`.
+
+Loads paused: it stops at staged; `load(job_id)` finishes later. Josh flips
+ACTIVE by hand.
 
 ## What it refuses to do
 
-* Start anything on its own. There is no watch, no cron, no planner.
-* Decide what to pull. No recipes, no inference, no policy gates.
-* Spend without a named approval. Import while loads are paused.
-* Return a lead row or a file URL from any tool.
-* Set a Smartlead campaign ACTIVE, or pause, stop, edit or delete one.
-* Touch a campaign marked as cold call. It is not listed, read or pulled (D54).
-* Drop a phone. Every table it writes carries one; the stage passes it to Smartlead (D56).
+* Read a lead row into chat, or return one from any tool.
+* Spend a cent before Josh or Cayden says yes by name. The auto cap is $0.
+* Start on its own. No watch, no cron, no planner.
+* Top up a campaign with no recorded build, a cold-call campaign, or SG Nurture.
+* Start, pause, stop, delete, create or edit a campaign in Smartlead.
+* Pull, count, size, enrich or widen. Grokbot does the building.
 
 ## Running it
 
 ```
-cp .env.example .env     # names only; values live in Railway
 npm install
+cp .env.example .env     # Railway holds the real values
 npm run typecheck && npm test
-npm run dev              # tsx src/index.ts
+npm run dev
 ```
 
-Railway deploys `main`. `/health` reports the commit, the database, the
-spend and the open cards. `/mcp` is the Streamable HTTP MCP (no login,
-D41; an owner token elevates). `CANON.md` is served as the MCP
-instructions and by the `canon` read.
+`/health` reports readiness, spend, open cards and open jobs. Boot refuses
+any Supabase project other than campaignintelligence (D6).
 
 ## The MCP surface
 
-Reads (counts, ids, labels, notes; the rule stated; no verdict):
-
-| Tool | Answers |
-|---|---|
-| `canon` | The canon page. |
-| `campaigns` | Every ACTIVE campaign with sends, positives, rate per 2,000, leads left, `passes_reply_bar`. |
-| `campaign_record` | Every receipt, build row, lead stamp count, registry row and note for one campaign. |
-| `build_record` | The operator write-up of how this list was built (`topup.list_build_records`): narrative, receipt_ids, campaign ids, transcript path. Optional paged transcript. Receipts stay the at-a-glance source of record. |
-| `sources` | The source vocabulary. |
-| `count` | A count on getleads (free), AI Ark (paid, needs a name), Prospeo (page 1 of search-person, paid, needs a name), Maps (stored pool by `plan_id`; used is live + ingested + contacted) or permits with the filters you pass. |
-| `held` | How much of a getleads pool the client already holds, and net new. |
-| `size` | Free dry-run of the stored Maps pool: already held, suppression by reason, net new. Opens no job. |
-| `jobs`, `job` | The job log and one job with its steps, report, vendor calls and waiting cards. |
-| `spend` | Today, thirty days, month to date, cards waiting. |
-| `leftovers` | Where past pulls left rows that may never have been sent, per client, as counts, with the gap each store still has (domain, person, email, phone) and the step that fills it. |
-| `holds` | Open cards. |
-| `loads_paused` | The global switch. |
-
-Verbs (one stage each, counts back):
-
-| Tool | Runs |
-|---|---|
-| `pull` | Opens a job, returns the `job_id` at once, and pulls 1 to 2,000 rows from getleads, Maps, permits or a table in the background; poll `job(job_id)`. A hang or throw ends failed with `last_error`. Maps copies the named ICP view (not the companion join) and skips emails already in the ingest table before `max_rows`. |
-| `suppress` | Per-client unsubscribes, hard bounces (pending Josh), and the existing DNC list (D81). Returns raw, dropped by reason, net new. |
-| `icp` | The ICP website gate (our own site fetch, Jev picks a category, DiscoLike on unreadable sites). Flagged rows are suppressed with a reason. Paid; estimate first. |
-| `site_check` | The website checker on a job or a store `leftovers` named: our own site fetch, then a question over what the site says. `icp` grades each company with the client's label set; `people` crawls the people pages, has Gemini list every person the site presents and asks Jev which of them is `looking_for` (the owner by default). The people found are rows of `topup.site_people_found`. Paid; estimate first. Nothing on the rows changes. |
-| `classify_leftover` | Leftover Smartlead negatives that text/category could not class. Jev (same OpenRouter path as icp-llm) reads each inbound body. Explicit stop/remove = unsubscribe; anything else = not_interested; no body stays unclassified. Estimate first; `approved_by` runs it. Hard cap $0.05. Idempotent. |
-| `enrich` | Domains, people, emails through the waterfalls. Paid tiers estimate first. |
-| `verify` | MillionVerifier then No2Bounce. Paid; estimate first. |
-| `normalize` | Names, companies, locations, sports team. |
-| `qa` | Merge-field QA; holds go to `holds`. |
-| `stage` | Route and stage. |
-| `import` | LeadPipe into Smartlead. Refuses while loads are paused. |
-| `write_receipt` | The receipt the next top-up reads. |
-| `confirm_filters` | Stamp `owner_confirmed_at` on a backfill receipt. Josh or Cayden only. Does not rewrite filters. |
-| `abort` | Stop a job and release its rows. |
-| `resolve` | Resolve a card by id (QA choices, resume, abort; spend needs the owner token or `approved_by` on the verb). |
-| `note` | One line in a lane's event log. |
-
-Everything older (`topup_queue`, `client_overview`, `size_client`,
-`start_topup`, `run_status`, `list_holds`, `resolve_hold`, `lane_state`,
-…) is retired; `GET /mcp` lists the names.
+| Tool | What it does |
+| --- | --- |
+| `canon` | The one page. Also the server instructions. |
+| `connectors(have)` | First call of every session: which required connectors are missing and how to attach them in Grokbot. |
+| `campaigns(client_tag?)` | Every ACTIVE campaign with sends, positives, rate per 2,000, leads left. |
+| `build_record(client_tag, campaign_id, from?, limit?)` | The build record, the method off the transcript (paged), and the process changes since. |
+| `topup(client_tag, campaign_id, source)` | Open a job on the pool and quote it. `topup(job_id, approved_by)` runs the approved tail and loads. |
+| `load(job_id)` | Import a staged job once loads resume. |
+| `job(job_id)` / `jobs()` | Steps with counts, cards waiting, the last events. |
+| `spend()` | Spend today, by vendor, month to date, cards waiting for a name. |
+| `abort(job_id)` | Stop a job; nothing is loaded. |
+| `loads_paused(paused?, by?)` | The global switch. |
 
 ## How to watch it
 
-* `jobs` and `job(job_id)` from any MCP client.
-* `holds` and `spend` for what is waiting on a person.
-* `/health` for the deploy, the database and the open cards.
-* `topup.lane_events` in Supabase is the event log; `note` writes to it.
+`jobs()` then `job(job_id)`: every step's counts, the quote or spend card
+waiting for a name, the last ten events. The logger redacts lead fields.
+Nothing is posted to Slack.
 
 ## Layout
 
 ```
-CANON.md            the canon (served to Grok)
-DECISIONS.md        the ledger of why (append only)
-src/canon/          the reads
-src/jobs/           the verbs, the job recipe, the filter mapping
-src/stages/         pull ingest suppress icp puzzle find_emails verify normalize qa route stage import post_import
-src/console/        cards and the role table (D18)
-src/spend/          SpendRails: the gate, prices, the ledger
-src/mcp/            the surface (server.ts, grok.ts)
-src/db/             pool and repo
-src/ledger/         lane events and campaign health
-src/clients/        vendor clients (getleads, AI Ark, Maps, permits, LeadPipe, Smartlead, waterfalls, verifier)
-src/guards/         tests that name a decision
-skills/             the business's skills; grok-bot-babysitter is Grok's standing orders
-supabase/           migrations
+CANON.md                  the one page; served as the MCP instructions
+DECISIONS.md              the append-only ledger (D1 … D99)
+src/mcp/                  the eleven tools (grok.ts) and the HTTP server
+src/jobs/runner.ts        the top-up: quote → approve → load
+src/jobs/settings.ts      a job's settings (pool source, campaign); no recipes
+src/canon/                build record + method extraction, connectors, campaigns, held keys
+src/stages/               ingest, dedupe, suppress, icp, verify, normalize, qa, route, stage, import, post_import
+src/clients/              LeadPipe, the verifier, Smartlead, the ICP gate. Nothing else.
+src/spend/                SpendRails: every paid call passes the gate; $0 auto cap
+src/guards/               tests that fail the build when a decision is broken
+supabase/migrations/      the topup schema on campaignintelligence
+skills/grok-bot-babysitter  standing orders for Grokbot
 ```
 
 ## Adding a rule
 
-A new rule is a new decision. Append `## Dn — title` to `DECISIONS.md`,
-add its row to the status index, fold it into `CANON.md`, and write a
-guard in `src/guards/` whose failure message names the decision and who
-to ask. `npm test` fails otherwise.
+A new rule is a new decision: append `## Dn — title` to `DECISIONS.md`,
+add its status row, fold it into `CANON.md`, write a guard in `src/guards/`
+whose failure message names the decision and who to ask. The meta guard
+fails the build otherwise.

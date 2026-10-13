@@ -70,13 +70,10 @@ export function presentRun(row: RunRow): RunRow {
 /** Stage names, in pipeline order. run_steps.step takes one of these. */
 export const STEPS = [
   "trigger",
-  "size",
-  "pull",
   "ingest",
+  "dedupe",
   "suppress",
   "icp",
-  "puzzle",
-  "find_emails",
   "verify",
   "normalize",
   "qa",
@@ -84,7 +81,6 @@ export const STEPS = [
   "stage",
   "import",
   "post_import",
-  "flip",
 ] as const;
 export type Step = (typeof STEPS)[number];
 

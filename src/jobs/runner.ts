@@ -3,45 +3,50 @@ import type { Repo } from "../db/repo.js";
 import { presentRun, runIsOpen, type RunRow, type Step } from "../domain/runs.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { logger } from "../lib/log.js";
-import { targetCountPatch } from "../recipes/campaigns.js";
-import { parseRecipe, type Recipe } from "../recipes/schema.js";
-import { statusCounts } from "../stages/common.js";
-import { jobLane, jobRecipe, type JobSpec } from "./recipe.js";
-import { stepRulesHash, storedRulesHash } from "./rules.js";
+import { isColdCall, isNeverTopUp, isOwnerApprover, OWNER_APPROVER_NAMES } from "../policy/rules.js";
+import { topupQuoteCard } from "../console/cards.js";
+import { usd } from "../spend/prices.js";
+import { domainSql, icpWorstCaseCents } from "../stages/icp/index.js";
+import { verifyWorstCaseCents } from "../stages/verify/verify.js";
+import { columnsOf } from "../stages/common.js";
+import { jobLane, jobSettings, parseJobSettings, type JobSettings, type JobSpec } from "./settings.js";
 import { isSelfStart, isWatchActor } from "./selfStart.js";
-import type { FindEmailsStage } from "../stages/find_emails/index.js";
+import type { DedupeStage } from "../stages/dedupe/index.js";
 import type { IcpStage } from "../stages/icp/index.js";
 import type { ImportStage } from "../stages/import/index.js";
 import type { IngestStage } from "../stages/ingest/index.js";
 import type { NormalizeStage } from "../stages/normalize/index.js";
 import type { PostImportStage } from "../stages/post_import/index.js";
-import type { PullStage } from "../stages/pull/index.js";
-import type { PuzzleStage } from "../stages/puzzle/index.js";
 import type { QaStage } from "../stages/qa/index.js";
 import type { RouteStage } from "../stages/route/index.js";
 import type { StageStage } from "../stages/stage/index.js";
 import type { SuppressStage } from "../stages/suppress/index.js";
 import type { VerifyStage } from "../stages/verify/verify.js";
 
-const log = logger("jobs");
+const log = logger("topup");
 
 /**
- * The verbs (D52). A job is one run row for one campaign with its own job
- * recipe. Each verb runs one or two of the existing stages, once, and
- * reports counts. Nothing chains on its own: the next verb runs when Grok
- * calls it. A stage that needs money posts a spend card and the verb
- * returns the estimate; the same verb called again with approved_by
- * approves that card, records who, and runs. import refuses while loads
- * are paused. Rows never leave the server.
+ * The top-up (D99). One job per campaign. Grokbot has already replayed the
+ * campaign's recorded build with its own connectors and handed the pool
+ * over as a file URL or a table. The service is the referee and the loader:
+ *
+ *   quote    ingest → dedupe against everything the client holds →
+ *            unsubscribes and the DNC list → one card with the net-new
+ *            count and the worst-case cost. Free. Nothing paid runs.
+ *   approve  Josh or Cayden says yes by name → ICP website check → verify →
+ *            normalize → qa → route → stage → import (when loads are not
+ *            paused) → post-import check → the record is written.
+ *   load     import a staged job later, once loads resume.
+ *
+ * Each phase runs in the background and `job(job_id)` reads it. Nothing
+ * starts on its own. Nothing here sets a campaign ACTIVE. No row leaves
+ * Postgres except to LeadPipe, the verifier and Smartlead.
  */
-/** The dumb pipeline: thirteen stages, each run once by a verb. Nothing sizes, triggers or flips (D53). The ICP gate sits between suppress and enrich (D60). */
 export interface Stages {
-  pull: PullStage;
   ingest: IngestStage;
+  dedupe: DedupeStage;
   suppress: SuppressStage;
   icp: IcpStage;
-  puzzle: PuzzleStage;
-  findEmails: FindEmailsStage;
   verify: VerifyStage;
   normalize: NormalizeStage;
   qa: QaStage;
@@ -51,70 +56,26 @@ export interface Stages {
   postImport: PostImportStage;
 }
 
-export type Verb = "pull" | "suppress" | "icp" | "enrich" | "verify" | "normalize" | "qa" | "stage" | "import";
+export type Phase = "quote" | "approve" | "load";
 
-export const VERB_STEPS: Readonly<Record<Verb, readonly Step[]>> = {
-  pull: ["pull", "ingest"],
-  suppress: ["suppress"],
-  icp: ["icp"],
-  enrich: ["puzzle", "find_emails"],
-  verify: ["verify"],
-  normalize: ["normalize"],
-  qa: ["qa"],
-  stage: ["route", "stage"],
-  import: ["import", "post_import"],
+export const PHASE_STEPS: Readonly<Record<Phase, readonly Step[]>> = {
+  quote: ["ingest", "dedupe", "suppress"],
+  approve: ["icp", "verify", "normalize", "qa", "route", "stage", "import", "post_import"],
+  load: ["import", "post_import"],
 };
 
-export const VERB_ORDER: readonly Verb[] = ["pull", "suppress", "icp", "enrich", "verify", "normalize", "qa", "stage", "import"];
+export const QUOTE_CARD = "topup_quote";
 
-/** Statuses that mean a step still has work queued for it (D65). */
-export const STEP_QUEUE_STATUSES: Readonly<Record<string, readonly string[]>> = {
-  puzzle: ["needs_person", "needs_domain"],
-  find_emails: ["needs_email"],
-  normalize: ["qa_hold"],
-};
+/** How long a background phase may run before the job is marked failed. Verification of 2,000 rows can take an hour. */
+export const PHASE_BACKGROUND_TIMEOUT_MS = 4 * 60 * 60_000;
 
-/**
- * Reopen a done step when: force is on; its rules hash changed since it ran
- * (D66); rows are still queued for it; or useful_output is 0 of N (D65).
- * Ask Josh.
- */
-export function shouldReopenStep(input: {
-  step: string;
-  status: string;
-  useful_output: number | null;
-  counts: Record<string, number>;
-  queued: Record<string, number>;
-  force?: boolean;
-  rules_hash?: string | null;
-  stored_rules_hash?: string | null;
-}): boolean {
-  if (input.status !== "done") return false;
-  if (input.force) return true;
-  const current = input.rules_hash ?? stepRulesHash(input.step);
-  const stored = input.stored_rules_hash ?? null;
-  if (current && stored !== current) return true;
-  const keys = STEP_QUEUE_STATUSES[input.step];
-  if (!keys) return false;
-  const queuedN = keys.reduce((a, k) => a + (input.queued[k] ?? 0), 0);
-  if (input.step === "normalize") {
-    const held = (input.counts.held ?? 0) + (input.counts.held_merge_field ?? 0);
-    return queuedN > 0 && held > 0;
-  }
-  if (queuedN > 0) return true;
-  const claimed = keys.reduce((a, k) => a + (input.counts[k] ?? 0), 0);
-  const processed = input.useful_output ?? input.counts.people_ran ?? input.counts.people_resolved ?? input.counts.domain_ran ?? 0;
-  return claimed > 0 && processed === 0;
-}
+export type TopupStatus = "started" | "done" | "quoted" | "waiting_approval" | "staged" | "parked" | "retry" | "gate" | "declined" | "stopped" | "refused" | "nothing";
 
-/** How long a background verb may sit before the job is marked failed (D62). Ask Josh if 90s is wrong. */
-export const VERB_BACKGROUND_TIMEOUT_MS = 90_000;
-
-export interface VerbResult {
+export interface TopupResult {
   job_id: string;
-  verb: Verb;
+  phase: Phase;
   step: Step;
-  status: "started" | "done" | "nothing" | "waiting_approval" | "parked" | "retry" | "gate" | "declined" | "stopped" | "refused";
+  status: TopupStatus;
   counts: Record<string, number>;
   worst_case_cents: number | null;
   card_id: string | null;
@@ -123,103 +84,118 @@ export interface VerbResult {
   next: string;
 }
 
-export interface JobRunnerDeps {
+export interface Quote {
+  net_new: number;
+  with_email: number;
+  domains: number;
+  worst_case_cents: number;
+  icp_cents: number;
+  verify_cents: number;
+}
+
+export interface TopupRunnerDeps {
   repo: Repo;
   stages: Stages;
-  /** D18: only the console resolves a card. A named approval relayed by Grok is the tap. */
-  console: { resolveAs(actor: string, role: "owner" | "operator" | null, cardId: string, choice: string): Promise<{ ok: boolean; message?: string; reason?: string }> };
-  ledger?: LaneLedger;
+  console: { resolveAs(actor: string, role: "owner" | "operator" | null, cardId: string, choice: string): Promise<{ ok: boolean; message?: string; reason?: string }>; ask(input: { run: RunRow | null; kind: string; audience: "owner" | "operator"; payload: Record<string, unknown>; text: string; blocks: (cardId: string) => unknown[] }): Promise<{ card_id: string }> };
+  ledger?: Pick<LaneLedger, "event">;
   now?: () => number;
-  /** Override for tests. Live default is VERB_BACKGROUND_TIMEOUT_MS. */
   backgroundTimeoutMs?: number;
 }
 
-export class JobRunner {
+export const APPROVER_RULE = `Only ${OWNER_APPROVER_NAMES.map((n) => n[0]!.toUpperCase() + n.slice(1)).join(" or ")} approves a top-up (D92). Pass approved_by with their name after they said yes to the quoted count and cost.`;
+
+export class TopupRunner {
   private readonly inFlight = new Set<string>();
 
-  constructor(private readonly d: JobRunnerDeps) {}
+  constructor(private readonly d: TopupRunnerDeps) {}
 
-  /** Open a job: a run row, its job recipe, the target campaign. Nothing runs yet. */
-  async open(spec: JobSpec, by: string): Promise<{ ok: true; job_id: string; recipe_id: string; lane: string } | { ok: false; message: string }> {
-    if (isWatchActor(by) || isSelfStart(by, "manual")) {
-      return { ok: false, message: "Nothing starts on its own (D51, D61). The watch is gone; Grok calls pull. Ask Josh." };
+  /** A campaign with no recorded build has no method to replay: the top-up waits for Josh to record it (D99). */
+  async hasRecordedBuild(clientTag: string, campaignId: number): Promise<boolean> {
+    const { rows } = await this.d.repo
+      .raw()
+      .query<{ n: string }>(`select count(*)::text as n from topup.list_build_records where client_tag = $1 and $2::bigint = any(campaign_ids)`, [clientTag, campaignId])
+      .catch(() => ({ rows: [] as Array<{ n: string }> }));
+    return Number(rows[0]?.n ?? 0) > 0;
+  }
+
+  /** Open a job for one campaign with the pool Grokbot handed over, then start the free quote in the background. */
+  async open(spec: JobSpec, by: string, campaignName: string | null): Promise<{ ok: true; job_id: string; lane: string } | { ok: false; message: string }> {
+    if (isWatchActor(by) || isSelfStart(by, "manual")) return { ok: false, message: "Nothing starts on its own (D51). Grokbot calls topup when a campaign runs low." };
+    if (isColdCall(campaignName)) return { ok: false, message: `#${spec.campaign_id} ${campaignName} is marked as cold call; the service ignores it (D54).` };
+    if (isNeverTopUp(spec.campaign_id, campaignName)) return { ok: false, message: `#${spec.campaign_id} is never topped up (D46).` };
+    if (!(await this.hasRecordedBuild(spec.client_tag, spec.campaign_id))) {
+      return { ok: false, message: `#${spec.campaign_id} has no recorded build in topup.list_build_records. There is no method to replay; wait for Josh to record how this campaign was built (D99).` };
     }
-    let recipe: Recipe;
     const stamp = (this.d.now ?? Date.now)();
+    let settings: JobSettings;
     try {
-      recipe = jobRecipe(spec, stamp);
+      settings = jobSettings(spec, stamp);
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
-    // Filed under its own lane name (D52): findRecipe(client, lane) must never hand a job recipe to a lane start.
-    await this.d.repo.upsertRecipe({ recipe_id: recipe.recipe_id, client_tag: recipe.client_tag, lane: jobLane(spec, stamp), version: 1, body: recipe, owner_approved_at: recipe.owner_approved_at ?? null });
-    const opened = await this.d.repo.openRun({ recipe_id: recipe.recipe_id, client_tag: spec.client_tag, lane: spec.lane, campaign_id: spec.campaign_id, trigger: "manual", opened_by: by });
+    await this.d.repo.upsertRecipe({ recipe_id: settings.id, client_tag: settings.client_tag, lane: jobLane(spec, stamp), version: 1, body: settings, owner_approved_at: null });
+    const opened = await this.d.repo.openRun({ recipe_id: settings.id, client_tag: spec.client_tag, lane: settings.lane, campaign_id: spec.campaign_id, trigger: "manual", opened_by: by });
     if (!opened.ok) {
-      if (opened.reason === "self_start") {
-        return { ok: false, message: "Nothing starts on its own (D51, D61). The watch is gone; Grok calls pull. Ask Josh." };
-      }
-      const existing = await this.d.repo.openRunFor(spec.client_tag, spec.lane);
-      return { ok: false, message: existing ? `A job is already open for ${spec.client_tag}/${spec.lane}: ${existing.run_id}. Finish it with the next verb, or abort it.` : `The database refused a second open job for ${spec.client_tag}/${spec.lane} or campaign #${spec.campaign_id}.` };
+      if (opened.reason === "self_start") return { ok: false, message: "Nothing starts on its own (D51)." };
+      return { ok: false, message: `A job is already open for #${spec.campaign_id}. Read jobs(), then job(job_id); finish it or abort it first.` };
     }
     const runId = opened.run.run_id;
-    await this.d.repo.mergeRunCounts(runId, { ...targetCountPatch([spec.campaign_id]), grok_job: 1, requested_leads: spec.max_rows });
+    await this.d.repo.mergeRunCounts(runId, { [`target_${spec.campaign_id}`]: 1, grok_job: 1 });
     const trig = await this.d.repo.beginStep(runId, "trigger");
-    if (trig.ok) await this.d.repo.finishStep(runId, "trigger", { useful_output: 1, counts: { job: 1, campaign_id: spec.campaign_id, max_rows: spec.max_rows } });
-    await this.d.ledger
-      ?.event({ client_tag: spec.client_tag, lane: spec.lane, run_id: runId, event: "run_opened", line: `Job ${runId.slice(0, 8)} opened by ${by} for #${spec.campaign_id}: ${spec.source} with ${Object.keys(spec.filters).length} filter keys, up to ${spec.max_rows} rows.`, next_intent: "pull(job_id) when a person has approved the spend.", actor: by })
-      .catch(() => undefined);
-    return { ok: true, job_id: runId, recipe_id: recipe.recipe_id, lane: spec.lane };
+    if (trig.ok) await this.d.repo.finishStep(runId, "trigger", { useful_output: 1, counts: { job: 1, campaign_id: spec.campaign_id } });
+    await this.event(opened.run, "run_opened", `Top-up ${runId.slice(0, 8)} opened by ${by} for #${spec.campaign_id}: pool from ${spec.source.kind === "file_url" ? `${spec.source.urls.length} file(s)` : `table ${spec.source.table}`}.`, by, "quote runs now; job(job_id) for the count and the cost.");
+    return { ok: true, job_id: runId, lane: settings.lane };
   }
 
-  /**
-   * Start a verb in the background and return the job id at once (D61).
-   * Poll job(job_id) for the step. The verb still only runs because Grok
-   * called it; nothing schedules the next one. A throw or a timeout writes
-   * last_error and closes the job as failed (D62).
-   */
-  async begin(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null; force?: boolean }): Promise<VerbResult> {
-    const first = VERB_STEPS[verb][0]!;
+  /** Start a phase in the background and answer at once. */
+  async begin(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null }): Promise<TopupResult> {
+    const first = PHASE_STEPS[phase][0]!;
     const run = await this.d.repo.getRun(jobId);
-    if (!run) return this.result(jobId, verb, first, "refused", {}, null, null, null, "no such job", "jobs() lists them");
-    const key = `${jobId}:${verb}`;
+    if (!run) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no such job", "jobs() lists them");
+    if (Number(run.counts_by_status?.grok_job) !== 1) return this.result(jobId, phase, first, "refused", {}, null, null, null, "not a top-up job", "topup(...) opens one");
+    const shown = presentRun(run);
+    if (!runIsOpen(shown.status)) return this.result(jobId, phase, first, "refused", {}, null, null, null, `job is ${shown.status}`, "open a new job with topup(...)");
+    if (phase === "approve") {
+      const who = opts.approved_by?.trim() ?? "";
+      if (!isOwnerApprover(who)) return this.result(jobId, phase, first, "refused", {}, null, null, null, `approved_by "${who || "(empty)"}" is not an approver. ${APPROVER_RULE}`, "show the quote to Josh or Cayden; then topup(job_id, approved_by=their name)");
+      const quote = await this.openQuote(jobId);
+      if (!quote) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no open quote on this job", "job(job_id); when the quote step is done the card is there, else the quote is still running");
+    }
+    if ((phase === "load" || phase === "approve") && (await this.d.repo.loadsPaused())) {
+      if (phase === "load") return this.result(jobId, phase, first, "refused", {}, null, null, null, "loads are paused; nothing reaches Smartlead until loads_paused is off", "loads_paused(paused=false, by=Josh) when Josh says so, then load(job_id)");
+    }
+    const key = `${jobId}:${phase}`;
     if (!this.inFlight.has(key)) {
       this.inFlight.add(key);
-      void this.runInBackground(jobId, verb, opts).finally(() => this.inFlight.delete(key));
+      void this.runInBackground(jobId, phase, opts).finally(() => this.inFlight.delete(key));
     }
-    return this.result(jobId, verb, first, "started", {}, null, null, null, null, `job(job_id) until ${verb} is done, then ${this.nextLine(verb)}`);
+    return this.result(jobId, phase, first, "started", {}, null, null, null, null, `job(job_id) until the ${phase} phase is done`);
   }
 
-  private async runInBackground(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null; force?: boolean }): Promise<void> {
-    const timeoutMs = Math.max(1, Math.floor(this.d.backgroundTimeoutMs ?? VERB_BACKGROUND_TIMEOUT_MS));
+  private async runInBackground(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null }): Promise<void> {
+    const timeoutMs = Math.max(1, Math.floor(this.d.backgroundTimeoutMs ?? PHASE_BACKGROUND_TIMEOUT_MS));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error(`${verb} still running after ${Math.round(timeoutMs / 1000)}s; the background job timed out. Ask Josh.`));
-      }, timeoutMs);
+      timer = setTimeout(() => reject(new Error(`${phase} still running after ${Math.round(timeoutMs / 60_000)} min; the background phase timed out. Ask Josh.`)), timeoutMs);
     });
     try {
-      await Promise.race([this.run(jobId, verb, opts), deadline]);
+      await Promise.race([this.run(jobId, phase, opts), deadline]);
     } catch (err) {
-      await this.recordBackgroundFailure(jobId, verb, err);
+      await this.recordBackgroundFailure(jobId, phase, err);
     } finally {
       if (timer) clearTimeout(timer);
     }
   }
 
-  /** A background verb that throws or times out must not sit at running with empty counts (D62). */
-  private async recordBackgroundFailure(jobId: string, verb: Verb, err: unknown): Promise<void> {
+  private async recordBackgroundFailure(jobId: string, phase: Phase, err: unknown): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
-    log.error("verb failed in the background", { job_id: jobId, verb, error: message });
+    log.error("phase failed in the background", { job_id: jobId, phase, error: message });
     try {
       const run = await this.d.repo.getRun(jobId);
       if (!run || !runIsOpen(run.status)) return;
-      let step: Step = VERB_STEPS[verb][0]!;
-      for (const s of VERB_STEPS[verb]) {
+      let step: Step = PHASE_STEPS[phase][0]!;
+      for (const s of PHASE_STEPS[phase]) {
         const row = await this.d.repo.getStep(jobId, s);
-        if (row?.status === "running") {
-          step = s;
-          break;
-        }
         if (row?.status !== "done") {
           step = s;
           break;
@@ -227,191 +203,217 @@ export class JobRunner {
       }
       await this.d.repo.failStep(jobId, step, message, false);
       await this.d.repo.setRunStatus(jobId, "failed", step, message);
-      await this.d.ledger
-        ?.event({ client_tag: run.client_tag, lane: run.lane, run_id: jobId, event: "step", line: `${verb}: ${step} failed: ${message.slice(0, 200)}`, actor: "job-timeout" })
-        .catch(() => undefined);
+      await this.event(run, "step", `${phase}: ${step} failed: ${message.slice(0, 200)}`, "service");
     } catch (writeErr) {
-      log.error("could not record background failure", { job_id: jobId, verb, error: (writeErr as Error).message });
+      log.error("could not record background failure", { job_id: jobId, phase, error: (writeErr as Error).message });
     }
   }
 
-  /** Run one verb on a job. */
-  async run(jobId: string, verb: Verb, opts: { by: string; approved_by?: string | null; force?: boolean }): Promise<VerbResult> {
+  /** Run one phase to its end, or to the first thing a person must see. */
+  async run(jobId: string, phase: Phase, opts: { by: string; approved_by?: string | null }): Promise<TopupResult> {
     const run = await this.d.repo.getRun(jobId);
-    const steps = VERB_STEPS[verb];
+    const steps = PHASE_STEPS[phase];
     const first = steps[0]!;
-    if (!run) return this.result(jobId, verb, first, "refused", {}, null, null, null, "no such job", "jobs() lists them");
-    if (Number(run.counts_by_status?.grok_job) !== 1) return this.result(jobId, verb, first, "refused", {}, null, null, null, "not a job opened by pull(); runs the service opened are read with job() and aborted with abort()", "open a job with pull(...)");
-    const shown = presentRun(run);
-    if (["done", "sized", "aborted", "declined", "failed"].includes(shown.status)) return this.result(jobId, verb, first, "refused", {}, null, null, null, `job is ${shown.status}`, "open a new job with pull(...)");
-    if (verb === "import" && (await this.d.repo.loadsPaused())) {
-      return this.result(jobId, verb, first, "refused", {}, null, null, null, "loads are paused; nothing reaches Smartlead until loads_paused is off", "loads_paused(paused=false) when Josh says so, then import(job_id) again");
-    }
+    if (!run) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no such job", "jobs()");
     const rec = await this.d.repo.getRecipe(run.recipe_id);
-    if (!rec) return this.result(jobId, verb, first, "refused", {}, null, null, null, `job recipe ${run.recipe_id} is missing`, "open a new job");
-    const recipe = parseRecipe(rec.body);
-
+    if (!rec) return this.result(jobId, phase, first, "refused", {}, null, null, null, `job settings ${run.recipe_id} are missing`, "open a new job");
+    const settings = parseJobSettings(rec.body);
     let approver: string | null = null;
+    if (phase === "approve" && opts.approved_by) approver = await this.approveQuote(run, opts.approved_by, opts.by);
+
     for (const step of steps) {
       const already = await this.d.repo.getStep(jobId, step);
-      if (already?.status === "done") {
-        const queued = await this.queuedFor(run);
-        if (
-          shouldReopenStep({
-            step,
-            status: already.status,
-            useful_output: already.useful_output,
-            counts: numbers(already.counts),
-            queued,
-            force: opts.force === true,
-            rules_hash: stepRulesHash(step),
-            stored_rules_hash: storedRulesHash(already.counts),
-          })
-        ) {
-          await this.reopen(run, step, opts.by, opts.force === true ? "force" : stepRulesHash(step) && storedRulesHash(already.counts) !== stepRulesHash(step) ? "rules" : "queued");
-        } else {
-          continue;
-        }
+      if (already?.status === "done") continue;
+      if ((step === "import" || step === "post_import") && (await this.d.repo.loadsPaused())) {
+        const counts = await this.funnel(run);
+        await this.event(run, "step", `${phase}: staged and waiting; loads are paused. load(job_id) when Josh resumes loads.`, opts.by, "load(job_id) when loads_paused is off.");
+        return this.result(jobId, phase, "stage", "staged", counts, null, null, approver, "loads are paused; the rows are staged and nothing reached Smartlead", "loads_paused(paused=false, by=Josh) when Josh says so, then load(job_id)");
       }
-      if (opts.approved_by) approver = (await this.approve(run, step, opts.approved_by, opts.by)) ?? approver;
-      let outcome = await this.runStage(step, run, recipe);
-      // A name given before the estimate existed: the stage has now posted its card; approve it and run once more.
-      if (String((outcome as { kind: string }).kind) === "waiting" && opts.approved_by) {
-        const named = await this.approve(run, step, opts.approved_by, opts.by);
-        if (named) {
-          approver = named;
-          outcome = await this.runStage(step, run, recipe);
-        }
+      let outcome = await this.runStage(step, run, settings);
+      if (String(outcome.kind) === "waiting" && approver) {
+        // A paid step priced itself above what the quote approved (the pool changed under it). Approve by the same name and run once more.
+        const named = await this.approveStepCards(run, step, approver, opts.by);
+        if (named) outcome = await this.runStage(step, run, settings);
       }
       const o = outcome as unknown as Record<string, unknown>;
       const kind = String(o.kind);
       const str = (k: string): string | null => (typeof o[k] === "string" ? (o[k] as string) : null);
-      if (kind === "done") {
-        const counts = (o.counts && typeof o.counts === "object" ? (o.counts as Record<string, number>) : {});
-        await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: jobId, event: "step", line: `${verb}: ${step} done by ${opts.by}${approver ? `, spend approved by ${approver}` : ""}.`, actor: opts.by }).catch(() => undefined);
-        if (step === steps[steps.length - 1]) return this.result(jobId, verb, step, "done", counts, null, null, approver, null, this.nextLine(verb));
+      if (kind === "done" || kind === "nothing") {
+        await this.event(run, "step", `${phase}: ${step} ${kind === "done" ? "done" : "had nothing to do"}${approver ? ` (approved by ${approver})` : ""}.`, opts.by);
         continue;
       }
-      if (kind === "nothing") return this.result(jobId, verb, step, "nothing", {}, null, null, approver, "no rows to work on", this.nextLine(verb));
       if (kind === "waiting") {
         const card = (await this.d.repo.openCardsForRun(jobId)).find((c) => c.kind === "spend_approval" && c.payload?.step === step) ?? null;
         const worst = typeof o.worstCaseCents === "number" ? o.worstCaseCents : Number(card?.payload?.worst_case_cents ?? 0);
-        return this.result(jobId, verb, step, "waiting_approval", {}, worst, card?.card_id ?? null, null, str("why"), `ask a person; then ${verb}(job_id, approved_by="their name") runs it`);
+        return this.result(jobId, phase, step, "waiting_approval", {}, worst, card?.card_id ?? null, null, str("why"), `show Josh or Cayden the new cost; topup(job_id, approved_by=their name) runs it`);
       }
-      if (kind === "parked") return this.result(jobId, verb, step, "parked", {}, null, null, approver, str("reason"), "read job(job_id); fix the cause or abort(job_id)");
-      if (kind === "retry") return this.result(jobId, verb, step, "retry", {}, null, null, approver, str("error"), `${verb}(job_id) again; the third failure parks`);
-      if (kind === "gate") return this.result(jobId, verb, step, "gate", {}, null, null, approver, str("why") ?? str("reason") ?? "the step's gate did not pass", "read job(job_id)");
-      if (kind === "declined") return this.result(jobId, verb, step, "declined", {}, null, null, approver, "the spend was declined", "open a new job if the decision changes");
-      if (kind === "stopped") return this.result(jobId, verb, step, "stopped", {}, null, null, approver, "the job was aborted", "jobs()");
-      return this.result(jobId, verb, step, "refused", {}, null, null, approver, `unexpected outcome ${kind}`, "read job(job_id)");
+      if (kind === "parked") return this.result(jobId, phase, step, "parked", {}, null, null, approver, str("reason"), "read job(job_id); fix the cause or abort(job_id)");
+      if (kind === "retry") return this.result(jobId, phase, step, "retry", {}, null, null, approver, str("error"), `call the same phase again; the third failure parks`);
+      if (kind === "gate") return this.result(jobId, phase, step, "gate", {}, null, null, approver, str("why") ?? str("reason") ?? "the step's gate did not pass", "read job(job_id)");
+      if (kind === "declined") return this.result(jobId, phase, step, "declined", {}, null, null, approver, "the spend was declined", "open a new job if the decision changes");
+      if (kind === "stopped") return this.result(jobId, phase, step, "stopped", {}, null, null, approver, "the job was aborted", "jobs()");
+      return this.result(jobId, phase, step, "refused", {}, null, null, approver, `unexpected outcome ${kind}`, "read job(job_id)");
     }
-    return this.result(jobId, verb, steps[steps.length - 1]!, "done", {}, null, null, null, "every step of this verb was already done", this.nextLine(verb));
+
+    if (phase === "quote") return this.postQuote(run, settings, opts.by);
+    const counts = await this.funnel(run);
+    const closed = await this.d.repo.getRun(jobId);
+    if (closed && runIsOpen(closed.status)) await this.d.repo.setRunStatus(jobId, "done", "post_import");
+    await this.event(run, "receipt", `Top-up done: ${counts.imported ?? 0} loaded into #${settings.campaign_id}. Josh flips ACTIVE by hand (D5).`, opts.by, "Nothing. Josh flips ACTIVE.");
+    return this.result(jobId, phase, "post_import", "done", counts, null, null, approver, null, "nothing: the leads are in the campaign. Josh sets it ACTIVE by hand.");
   }
 
-  /**
-   * Approve the open spend card for a step, by name, and give the step its
-   * approval. A leftover parked card for the same step (the old puzzle
-   * cap-park) is closed the same way so approved_by is not a no-op (D64).
-   */
-  private async approve(run: RunRow, step: Step, approvedBy: string, by: string): Promise<string | null> {
-    const open = await this.d.repo.openCardsForRun(run.run_id);
-    const cards = open.filter((c) => (c.kind === "spend_approval" || c.kind === "parked") && c.payload?.step === step);
-    const stepRow = await this.d.repo.getStep(run.run_id, step);
-    const prior = Number(stepRow?.approved_cents ?? 0);
-    const priorBy = typeof stepRow?.counts?.approved_by === "string" ? String(stepRow.counts.approved_by) : null;
-    let cents = 0;
-    for (const card of cards) {
-      const worst = Number(card.payload?.worst_case_cents ?? 0);
-      const tapped = await this.d.console.resolveAs(`${approvedBy} via ${by}`, "owner", card.card_id, "approve_spend");
-      if (!tapped.ok) {
-        log.warn("approval tap refused", { run_id: run.run_id, step, card_id: card.card_id, reason: tapped.reason, message: tapped.message });
-        continue;
-      }
-      cents += Number.isFinite(worst) ? worst : 0;
+  /** The count and the cost, as one card to Josh or Cayden. Nothing paid has run. */
+  private async postQuote(run: RunRow, settings: JobSettings, by: string): Promise<TopupResult> {
+    const quote = await this.quote(run);
+    const existing = await this.openQuote(run.run_id);
+    const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id };
+    let cardId = existing?.card_id ?? null;
+    if (existing) {
+      await this.d.repo.updateCardPayload(existing.card_id, payload);
+    } else {
+      const card = await this.d.console.ask({
+        run,
+        kind: QUOTE_CARD,
+        audience: "owner",
+        payload,
+        text: `Top-up #${settings.campaign_id}: ${quote.net_new} new leads for ${usd(quote.worst_case_cents)} worst case.`,
+        blocks: (id) => topupQuoteCard({ cardId: id, runId: run.run_id, clientTag: run.client_tag, campaignId: settings.campaign_id, quote }),
+      });
+      cardId = card.card_id;
     }
-    if (cents <= 0) cents = Number(stepRow?.worst_case_cents ?? 0);
-    if (cents > 0) await this.d.repo.approveStep(run.run_id, step, cents, approvedBy);
-    if (cards.length === 0 && cents <= 0) return null;
-    const same = prior >= cents && cents > 0 && (!priorBy || priorBy === approvedBy);
-    if (same) {
-      log.info("spend approval already recorded", { run_id: run.run_id, step, cents, approved_by: approvedBy, by });
-      return approvedBy;
+    await this.d.repo.setRunStatus(run.run_id, "awaiting_owner", "suppress");
+    await this.event(run, "card_opened", `Quote for #${settings.campaign_id}: ${quote.net_new} net new (${quote.with_email} with an address, ${quote.domains} domains), worst case ${usd(quote.worst_case_cents)}. Waiting for Josh or Cayden.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
+    const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents };
+    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell Josh or Cayden: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}. When one of them says yes: topup(job_id, approved_by="their name").`);
+  }
+
+  /** Net new after held and unsubscribes, and the worst case of everything paid that follows (ICP check + verification). */
+  async quote(run: RunRow): Promise<Quote> {
+    const table = ingestedTable(run.client_tag);
+    const cols = await columnsOf(this.d.repo, table);
+    const dsql = domainSql(cols);
+    const { rows } = await this.d.repo
+      .raw()
+      .query<{ n: string; with_email: string; domains: string }>(
+        `select count(*)::text as n, count(*) filter (where coalesce(email, '') <> '')::text as with_email, count(distinct ${dsql})::text as domains
+           from ${table} where run_id = $1 and lead_status = 'needs_verify'`,
+        [run.run_id],
+      );
+    const netNew = Number(rows[0]?.n ?? 0);
+    const withEmail = Number(rows[0]?.with_email ?? 0);
+    const domains = Number(rows[0]?.domains ?? 0);
+    const icp = icpWorstCaseCents(domains);
+    const verify = verifyWorstCaseCents(withEmail);
+    return { net_new: netNew, with_email: withEmail, domains, worst_case_cents: icp + verify, icp_cents: icp, verify_cents: verify };
+  }
+
+  private async openQuote(jobId: string): Promise<{ card_id: string; payload: Record<string, unknown> } | null> {
+    return (await this.d.repo.openCardsForRun(jobId)).find((c) => c.kind === QUOTE_CARD) ?? null;
+  }
+
+  /** Josh or Cayden said yes to the quote: resolve the card by name and give the paid steps their ceiling. */
+  private async approveQuote(run: RunRow, approvedBy: string, by: string): Promise<string | null> {
+    const card = await this.openQuote(run.run_id);
+    if (!card) return null;
+    const tapped = await this.d.console.resolveAs(`${approvedBy} via ${by}`, "owner", card.card_id, "approve_spend");
+    if (!tapped.ok) {
+      log.warn("quote approval refused", { run_id: run.run_id, card_id: card.card_id, reason: tapped.reason });
+      return null;
     }
-    await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "approved", line: `${step}: spend of $${(cents / 100).toFixed(2)} approved by ${approvedBy}.`, actor: by }).catch(() => undefined);
-    log.info("spend approved", { run_id: run.run_id, step, cents, approved_by: approvedBy, by });
+    const icp = Number(card.payload.icp_cents ?? 0);
+    const verify = Number(card.payload.verify_cents ?? 0);
+    if (icp > 0) await this.d.repo.approveStep(run.run_id, "icp", icp, approvedBy);
+    if (verify > 0) await this.d.repo.approveStep(run.run_id, "verify", verify, approvedBy);
+    await this.d.repo.setRunStatus(run.run_id, "open", "icp");
+    await this.event(run, "approved", `Quote approved by ${approvedBy}: ${card.payload.net_new} net new, worst case ${usd(icp + verify)}.`, by, "ICP check, verify, normalize, qa, stage, load.");
     return approvedBy;
   }
 
-  /** Reopen a done step (queued work, rules hash change, or force). Closes its leftover parked card. */
-  private async reopen(run: RunRow, step: Step, by: string, why: "queued" | "rules" | "force" = "queued"): Promise<void> {
-    await this.d.repo.resetStep(run.run_id, step);
-    const open = await this.d.repo.openCardsForRun(run.run_id);
-    for (const card of open.filter((c) => (c.kind === "parked" || c.kind === "spend_approval") && c.payload?.step === step)) {
-      const choice = card.kind === "parked" ? "resume_run" : "approve_spend";
-      await this.d.console.resolveAs(`${by} reopen`, card.kind === "parked" ? "operator" : "owner", card.card_id, choice).catch(() => ({ ok: false }));
+  /** A step's own spend card, approved by the same name (the pool moved under the quote). */
+  private async approveStepCards(run: RunRow, step: Step, approvedBy: string, by: string): Promise<string | null> {
+    const cards = (await this.d.repo.openCardsForRun(run.run_id)).filter((c) => c.kind === "spend_approval" && c.payload?.step === step);
+    let cents = 0;
+    for (const card of cards) {
+      const tapped = await this.d.console.resolveAs(`${approvedBy} via ${by}`, "owner", card.card_id, "approve_spend");
+      if (tapped.ok) cents += Number(card.payload?.worst_case_cents ?? 0);
     }
-    const line =
-      why === "force"
-        ? `${step}: reopened; force=true.`
-        : why === "rules"
-          ? `${step}: reopened; rules hash changed (${stepRulesHash(step)}).`
-          : `${step}: reopened; pre-D64 marked it done with work still queued.`;
-    await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "step", line, actor: by }).catch(() => undefined);
-    log.info("step reopened", { run_id: run.run_id, step, by, why });
+    if (cents <= 0) return null;
+    await this.d.repo.approveStep(run.run_id, step, cents, approvedBy);
+    await this.event(run, "approved", `${step}: ${usd(cents)} approved by ${approvedBy} (above the quote).`, by);
+    return approvedBy;
   }
 
-  private async queuedFor(run: RunRow): Promise<Record<string, number>> {
+  /** Abort any open job: running steps stop, claimed rows go back, open cards close. Nothing is loaded by an aborted job. */
+  async abort(jobId: string, by: string): Promise<{ ok: true; released: number } | { ok: false; message: string }> {
+    const run = await this.d.repo.getRun(jobId);
+    if (!run) return { ok: false, message: "no such job" };
+    if (!runIsOpen(presentRun(run).status)) return { ok: false, message: `job ${jobId.slice(0, 8)} is already ${presentRun(run).status}` };
+    await this.d.repo.cancelRunningSteps(jobId, `aborted by ${by}`);
+    let released = 0;
     try {
-      return await statusCounts(this.d.repo, ingestedTable(run.client_tag), run.run_id);
-    } catch {
-      return {};
+      released = await this.d.repo.withRun(jobId, async (tx) => {
+        const { rowCount } = await tx.query(
+          `update ${ingestedTable(run.client_tag)} set lead_status = 'needs_verify', run_id = null, verify_batch = null, status_changed_at = now()
+           where run_id = $1 and lead_status in ('verifying', 'claimed', 'reserved', 'pulling')`,
+          [jobId],
+        );
+        return rowCount ?? 0;
+      });
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      if (!(e.code === "42P01" || /does not exist/i.test(e.message ?? ""))) throw err;
     }
+    for (const card of await this.d.repo.openCardsForRun(jobId)) {
+      if (card.kind === "stall") continue;
+      await this.d.console.resolveAs(by, "operator", card.card_id, "abort").catch(() => undefined);
+    }
+    await this.d.repo.setRunStatus(jobId, "aborted", undefined, `aborted by ${by}`);
+    await this.event(run, "receipt", `Aborted by ${by}. ${released} rows released. Nothing was sent.`, by, "Nothing queued.");
+    return { ok: true, released };
   }
 
-  private async runStage(step: Step, run: RunRow, recipe: Recipe): Promise<{ kind: string }> {
+  private async funnel(run: RunRow): Promise<Record<string, number>> {
+    const fresh = await this.d.repo.getRun(run.run_id);
+    return numbers(fresh?.counts_by_status ?? {});
+  }
+
+  private async event(run: RunRow, event: string, line: string, actor: string, nextIntent?: string): Promise<void> {
+    await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event, line, actor, next_intent: nextIntent ?? null }).catch(() => undefined);
+  }
+
+  private async runStage(step: Step, run: RunRow, settings: JobSettings): Promise<{ kind: string }> {
     const s = this.d.stages;
     switch (step) {
-      case "pull":
-        return s.pull.run(run, recipe);
       case "ingest":
-        return s.ingest.run(run, recipe);
+        return s.ingest.run(run, settings);
+      case "dedupe":
+        return s.dedupe.run(run, settings);
       case "suppress":
-        return s.suppress.run(run, recipe);
+        return s.suppress.run(run, settings);
       case "icp":
-        return s.icp.run(run, recipe);
-      case "puzzle":
-        return s.puzzle.run(run, recipe);
-      case "find_emails":
-        return s.findEmails.run(run, recipe);
+        return s.icp.run(run, settings);
       case "verify":
-        return s.verify.run(run, recipe);
+        return s.verify.run(run, settings);
       case "normalize":
-        return s.normalize.run(run, recipe);
+        return s.normalize.run(run, settings);
       case "qa":
-        return s.qa.run(run, recipe);
+        return s.qa.run(run, settings);
       case "route":
-        return s.route.run(run, recipe);
+        return s.route.run(run, settings);
       case "stage":
-        return s.stage.run(run, recipe);
+        return s.stage.run(run, settings);
       case "import":
-        return s.import.run(run, recipe);
+        return s.import.run(run, settings);
       case "post_import":
-        return s.postImport.run(run, recipe);
+        return s.postImport.run(run, settings);
       default:
-        throw new Error(`no verb runs step ${step}`);
+        throw new Error(`no phase runs step ${step}`);
     }
   }
 
-  private nextLine(verb: Verb): string {
-    const i = VERB_ORDER.indexOf(verb);
-    const next = VERB_ORDER[i + 1];
-    if (!next) return "write_receipt(job_id, ...) so the next top-up can read how this one was pulled";
-    if (next === "import") return "stage is done; import(job_id) when loads_paused is off and a person has said yes";
-    return `${next}(job_id)`;
-  }
-
-  private result(job_id: string, verb: Verb, step: Step, status: VerbResult["status"], counts: Record<string, number>, worst: number | null, card: string | null, approved_by: string | null, why: string | null, next: string): VerbResult {
-    return { job_id, verb, step, status, counts: numbers(counts), worst_case_cents: worst, card_id: card, approved_by, why, next };
+  private result(job_id: string, phase: Phase, step: Step, status: TopupStatus, counts: Record<string, number>, worst: number | null, card: string | null, approved_by: string | null, why: string | null, next: string): TopupResult {
+    return { job_id, phase, step, status, counts: numbers(counts), worst_case_cents: worst, card_id: card, approved_by, why, next };
   }
 }
 

@@ -38,7 +38,7 @@ describe("campaign health", () => {
     assert.deepEqual(fine.flags, []);
   });
 
-  it("the recipe floor wins over the default", () => {
+  it("the settings floor wins over the default", () => {
     const h = assessCampaign(snap({ untouched: 100 * 10, sends_window: 100 * WINDOW_DAYS }), 14);
     assert.deepEqual(h.flags, ["low"]);
   });

@@ -10,7 +10,7 @@ describe("spine gates — D24/D25", () => {
     assert.match(g.gate, /^sendable count and reject rate reported/);
     assert.match(g.why, /0 sendable of 400 verified/);
     assert.match(g.why, /reject rate 100\.0%/);
-    assert.equal(rejectRateGate({ sendable: 1, rejected: 399, stalled: 0 }, null), null, "no norm on the recipe: only the unarguable case fires");
+    assert.equal(rejectRateGate({ sendable: 1, rejected: 399, stalled: 0 }, null), null, "no norm on the settings: only the unarguable case fires");
     assert.equal(rejectRateGate({ sendable: 0, rejected: 0, stalled: 0 }, null), null, "nothing verified is 'nothing', not a failed gate");
   });
 
@@ -33,7 +33,7 @@ describe("spine gates — D24/D25", () => {
     assert.equal(rejectRate({ sendable: 0, rejected: 0, stalled: 5 }), null);
   });
 
-  it("step 7: the fields the copy uses are the recipe's required fields, minus the team (no team routes to AirPods, it is not a hold)", () => {
+  it("step 7: the fields the copy uses are the settings's required fields, minus the team (no team routes to AirPods, it is not a hold)", () => {
     assert.deepEqual(mergeFieldsToHold(["first_name_n", "company_n", "location", "local_sports_team", "job_title", "company_size", "vertical"]), [
       "first_name_n",
       "company_n",

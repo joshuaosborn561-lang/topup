@@ -8,7 +8,7 @@ const log = logger("spend");
 /**
  * The five spend rails (design 3.5), as one gate every paid call must pass.
  *
- * 1. No ideas — a call must name the recipe step that authorises it.
+ * 1. No ideas — a call must name the settings step that authorises it.
  * 2. Auto cap — worst case over AUTO_SPEND_CAP_USD posts a card and waits.
  * 3. Worst case is computed here from the price table and batch size.
  * 4. Balance watch — vendor balance before/during; drift past approval + 10% kills.
@@ -32,7 +32,7 @@ export interface SpendRequest {
   vendor: string;
   action: string;
   rows: number;
-  /** Proof the step is in the lane recipe. `false` is refused before any math. */
+  /** Proof the step is in the lane settings. `false` is refused before any math. */
   recipeAuthorised: boolean;
   /** Cents already approved for this step by an owner tap (from run_steps.approved_cents). */
   approvedCents?: number;
@@ -82,7 +82,7 @@ export class SpendRails {
       return {
         kind: "blocked",
         worstCaseCents: 0,
-        reason: `step ${req.step} on ${req.vendor} is not in the lane recipe; the service does not have ideas`,
+        reason: `step ${req.step} on ${req.vendor} is not in the lane settings; the service does not have ideas`,
       };
     }
     const computed = worstCaseCents(req.vendor, req.action, req.rows);

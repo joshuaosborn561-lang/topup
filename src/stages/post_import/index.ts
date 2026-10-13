@@ -1,6 +1,6 @@
 import type { Smartlead } from "../../clients/smartlead.js";
 import type { RunRow } from "../../domain/runs.js";
-import type { Recipe } from "../../recipes/schema.js";
+import type { JobSettings } from "../../jobs/settings.js";
 import { preLaunchBlocks } from "../../console/cards.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
@@ -43,7 +43,7 @@ export const STAGING_TO_SMARTLEAD: ReadonlyArray<[string, string]> = [
 export class PostImportStage {
   constructor(private readonly d: PostImportDeps) {}
 
-  async run(run: RunRow, _recipe: Recipe): Promise<StageOutcome> {
+  async run(run: RunRow, _recipe: JobSettings): Promise<StageOutcome> {
     return attempt(this.d, run, "post_import", "checking", async () => {
       const db = this.d.repo.raw();
       const importStep = await this.d.repo.getStep(run.run_id, "import");

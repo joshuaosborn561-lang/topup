@@ -20,32 +20,17 @@ export const SITE_TEXT = "client_salesglider.icp_site_text";
 export const LLM_RESULTS = "client_salesglider.icp_llm_results";
 export const DISCO_MODEL = "discolike:website";
 
-/** Defaults for site_check(people): ~50 fetch workers, ~28 Gemini / Jev. Env and params override (D73). */
-export const PEOPLE_FETCH_PARALLEL = 2;
 export const PEOPLE_FETCH_WORKERS = 25;
-export const PEOPLE_FETCH_PER_CALL = 50;
 export const PEOPLE_FETCH_PER_HOST = 2;
-export const PEOPLE_EXTRACT_PARALLEL = 4;
 export const PEOPLE_EXTRACT_WORKERS = 7;
-export const PEOPLE_EXTRACT_PER_CALL = 28;
 export const PEOPLE_ASK_PARALLEL = 4;
-export const PEOPLE_ASK_WORKERS = 7;
 export const PEOPLE_ASK_PER_CALL = 28;
-export const PEOPLE_GEMINI_RPM = 200;
 
 export interface LoopOpts {
   parallel: number;
   perCall: number;
   workers: number;
   maxCalls?: number;
-}
-
-export interface PeopleLoopConfig {
-  fetch: LoopOpts;
-  extract: LoopOpts;
-  ask: LoopOpts;
-  perHost: number;
-  geminiRpm: number;
 }
 
 export interface FetchTally {
@@ -72,42 +57,6 @@ export function loopOpts(partial: Partial<LoopOpts> | undefined, fallback: LoopO
     perCall: clampInt(partial?.perCall ?? fallback.perCall, 1, 500, fallback.perCall),
     workers: clampInt(partial?.workers ?? fallback.workers, 1, 60, fallback.workers),
     maxCalls: clampInt(partial?.maxCalls ?? fallback.maxCalls ?? MAX_CALLS, 1, 400, MAX_CALLS),
-  };
-}
-
-export function peopleLoopConfig(env: NodeJS.ProcessEnv = process.env, overrides: Partial<{
-  fetch_parallel: number;
-  fetch_workers: number;
-  fetch_per_call: number;
-  extract_parallel: number;
-  extract_workers: number;
-  extract_per_call: number;
-  ask_parallel: number;
-  ask_workers: number;
-  ask_per_call: number;
-  per_host: number;
-  gemini_rpm: number;
-}> = {}): PeopleLoopConfig {
-  const num = (k: string, d: number) => {
-    const v = env[k];
-    if (v == null || v === "") return d;
-    return Number(v);
-  };
-  return {
-    fetch: loopOpts(
-      { parallel: overrides.fetch_parallel ?? num("SITE_PEOPLE_FETCH_PARALLEL", PEOPLE_FETCH_PARALLEL), workers: overrides.fetch_workers ?? num("SITE_PEOPLE_FETCH_WORKERS", PEOPLE_FETCH_WORKERS), perCall: overrides.fetch_per_call ?? num("SITE_PEOPLE_FETCH_PER_CALL", PEOPLE_FETCH_PER_CALL) },
-      { parallel: PEOPLE_FETCH_PARALLEL, workers: PEOPLE_FETCH_WORKERS, perCall: PEOPLE_FETCH_PER_CALL },
-    ),
-    extract: loopOpts(
-      { parallel: overrides.extract_parallel ?? num("SITE_PEOPLE_EXTRACT_PARALLEL", PEOPLE_EXTRACT_PARALLEL), workers: overrides.extract_workers ?? num("SITE_PEOPLE_EXTRACT_WORKERS", PEOPLE_EXTRACT_WORKERS), perCall: overrides.extract_per_call ?? num("SITE_PEOPLE_EXTRACT_PER_CALL", PEOPLE_EXTRACT_PER_CALL) },
-      { parallel: PEOPLE_EXTRACT_PARALLEL, workers: PEOPLE_EXTRACT_WORKERS, perCall: PEOPLE_EXTRACT_PER_CALL },
-    ),
-    ask: loopOpts(
-      { parallel: overrides.ask_parallel ?? num("SITE_PEOPLE_ASK_PARALLEL", PEOPLE_ASK_PARALLEL), workers: overrides.ask_workers ?? num("SITE_PEOPLE_ASK_WORKERS", PEOPLE_ASK_WORKERS), perCall: overrides.ask_per_call ?? num("SITE_PEOPLE_ASK_PER_CALL", PEOPLE_ASK_PER_CALL) },
-      { parallel: PEOPLE_ASK_PARALLEL, workers: PEOPLE_ASK_WORKERS, perCall: PEOPLE_ASK_PER_CALL },
-    ),
-    perHost: clampInt(overrides.per_host ?? num("SITE_PEOPLE_FETCH_PER_HOST", PEOPLE_FETCH_PER_HOST), 1, 4, PEOPLE_FETCH_PER_HOST),
-    geminiRpm: clampInt(overrides.gemini_rpm ?? num("SITE_PEOPLE_GEMINI_RPM", PEOPLE_GEMINI_RPM), 1, 4000, PEOPLE_GEMINI_RPM),
   };
 }
 

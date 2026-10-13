@@ -1,199 +1,63 @@
 ---
 name: grok-bot-babysitter
-description: Standing orders for the Lead Top Up Grok bot. Use on every Grok / Cursor Grok / Slack Cursor turn in this repo. Grok does the reasoning — it reads the canon, reads what Supabase holds about how a campaign was pulled, counts, asks a person before any spend, and runs the verbs one at a time on the Railway service. It never pulls lead rows into context, never walks the thirteen-step skill in chat, and never fans out GetLeads child agents.
+description: Standing orders for the Lead Top Up Grokbot. Use on every Grokbot turn in this repo. Grokbot does the building — it reads how a campaign's list was built, replays that build with its own connectors through LeadPipe, hands the pool to the Top_Up service, shows Josh or Cayden the count and the cost, and runs the approved load. It never pulls a lead row into context.
 ---
 
-# Grok bot does the reasoning (D39, D53)
+# Grokbot does the building; the service is the referee (D39, D53, D99)
 
 Josh, 2026-09-24: "I nuked our grok bot usage again trying to do lead top up."
-The desktop Grok agent "Lead top-up service" spawned dozens of child runs
-named "Fire GetLeads n=…" and "Apply leftover … CSVs". That is the opposite
-of this skill.
+Josh, 2026-10-13: "It needs to run things through LeadPipe 100% of the
+time. It should not pull anything into the context."
 
-Josh, 2026-10-09: "This app is dumb, flat pipeline. Grokbot should figure
-out how I initially pulled the leads and run that again." So: the service
-counts and moves rows. You decide. You read the record, you count, you
-ask a person, you call the next verb. You stop. Rows move **MCP →
-Supabase → LeadPipe → Smartlead**. They do not enter this context.
+So: you read the record, you replay it, you hand the pool over, you ask a
+person, you call the next tool. You stop. Rows move **MCP → Supabase →
+LeadPipe → Smartlead**. They never enter this context.
 
-Read `skills/leadpipe/SKILL.md` and `skills/supabase-csv-endpoint/SKILL.md`
-before you move a single row by hand. Those are how Claude already kept
-tokens down. Copy that, do not invent a chat pipeline.
+## Start every session the same way
 
-## Start here: the canon
+1. `connectors(have=[your tool list])`. Required: Top_Up, Supabase,
+   Context_Saver (LeadPipe), getleads, Smartlead, Email_Verifier_Progression.
+   Missing one → tell Josh what to attach in Grokbot (the answer carries
+   each custom MCP's Railway HTTPS address) and wait. A transcript or a
+   process change that names a connector you do not have → same.
+2. `canon`. One page. Those are the rules.
 
-Call `canon` once per session. It is one page: the rules, the reads, the
-verbs, how to read a record, when to stop. It is also the MCP server's
-instructions. Everything below is the short form.
+## The loop
 
-The rules you apply:
+1. `campaigns()`: the low campaign (untouched under about two weeks of
+   sends, passing one positive per 2,000, not cold call, not SG Nurture).
+2. `build_record(client_tag, campaign_id)`. Read `asked` (what Josh
+   wanted), `method.steps` (every tool call in order with its arguments),
+   `process_changes_since_build` (what changed about how lists are built
+   since; apply it on top, e.g. a newer TAM check or a new source).
+   `no_recorded_build: true` → stop; tell Josh the campaign has no
+   recorded build.
+3. Replay it with your connectors. Same tools, same filters, titles,
+   geography, sources. Counts first (`count_contacts`, SQL `count(*)`),
+   then the vendor's server-side export into LeadPipe (`lp_run`,
+   `lp_status`) or a scratch table you build in SQL on
+   campaignintelligence. Never widen. Never `SELECT email`, never
+   `export_contacts` into chat, never `get-dataset-items`, never
+   `find_dms_by_title`, never read a CSV. You end with a signed file URL
+   or a `schema.table` name.
+4. `topup(client_tag, campaign_id, source)` then `job(job_id)` until
+   `quoted`. Say to Josh or Cayden: "`N` new leads for #campaign after
+   everything you hold and unsubscribes, up to `$X` (website ICP check
+   plus verification)." Under 1,000 new: say the TAM is exhausted; stop.
+5. When one of them says yes: `topup(job_id, approved_by="Josh")` or
+   `"Cayden"`. Only those two names. `job(job_id)` until `done`.
+   `staged` with loads paused → `load(job_id)` once `loads_paused` is off.
+6. Stop. Josh flips ACTIVE by hand. Never touch a campaign's status.
 
-* **One positive reply per 2,000 sends** is the bar. Under it, no top-up.
-* **At least 1,000 net new** or say *the TAM for this campaign is
-  exhausted* and stop. Do not widen unasked.
-* **1 to 2,000 rows per job.**
-* **A person approves every spend before it runs.** Name them.
-* **Nothing starts on its own.** You call the next verb or nothing moves.
-* **Josh flips ACTIVE.** Never SG Nurture. Cold call campaigns (Gabe Calls,
-  Cayden Calls, Cold Call, Post-call) are ignored: the service leaves them
-  off `campaigns` and refuses `pull` on them.
+## Never
 
-## The loop (one campaign at a time)
+* A lead row, an email, a name, a phone in this context. Counts and ids.
+* A spend before a named yes from Josh or Cayden.
+* A routine, a cron, a watch, a child agent, a re-read of a list.
+* A second open job on the same campaign; `abort(job_id)` first if it is dead.
+* An invented price, threshold, filter or source. Ask in plain English.
 
-Replicate the hand search. Do not reason about stamps, lane meta, key
-formats, or sampling (D95).
+## How to watch
 
-1. `campaigns(client_tag)`. Keep `passes_reply_bar: true` and
-   `never_top_up: false`. One line on the rest and why. Skip registry
-   lane `unassigned` — it is a parking lot, not a top-up lane (D96).
-2. `campaign_record(client_tag, campaign_id)`. Find the receipt or build
-   that fed most of the leads (`rows_imported`, and `leads_by_leg`). Its
-   four legs and its `company_filters` are the method. Read
-   `how_i_did_it` and `notes`. `sources` tells you what a leg value means
-   and how to repeat it. A missing leg or empty filters: ask Josh.
-   `build_record(client_tag, campaign_id)` is the operator write-up of
-   that same list. Read the narrative first. Fetch the transcript only
-   for an edge case (`fetch_transcript` or `offset`/`limit`; it can be
-   large). The transcript / narrative is the source of truth when a
-   backfilled receipt disagrees or is thinner (D96). Receipts stay the
-   at-a-glance source of record after that fix (D75).
-   `leftovers(client_tag)` shows rows earlier pulls left in the stores
-   (lane table, client schema, waterfall tables) as counts, and for each
-   store the obvious gap: `need_domain`, `need_person`, `need_email`,
-   `need_phone`, with `next` naming the step that fills it. If a store
-   holds what the campaign needs, or is one step from it, name it to the
-   person who approves instead of pulling again. Phones are kept
-   everywhere (D56); Josh cold calls now, so say how many rows carry one.
-   `site_check("icp", client_tag, table)` runs Josh's website checker on
-   a store before any paid step: how many companies fit the ICP.
-   `site_check("people", client_tag, table, looking_for)` crawls each
-   site's people pages, has Gemini list everyone the site presents and
-   asks Jev who is `looking_for` (the owner by default; say who you want
-   in plain words: "the service manager", "the person who buys IT"). The
-   people found stay in `topup.site_answers` / `site_people`; the answer
-   tells you `pull(job_id, source="site_owners")` attaches them to this
-   job's businesses only (place_id or normalized domain). Cached owners
-   on those businesses belong to the job. Never pull the shared
-   view `topup.site_people_found` or a client owner table (D94).
-   The first call is the estimate (about $0.11 per 1,000 for icp, about
-   $1.11 per 1,000 sites for people); a name runs it. A deploy does
-   not resume a running `people` check — call the same verb again with
-   the same `client_tag` / `table` (or `job_id`), the same
-   `looking_for`, and `approved_by`. Already-extracted and
-   already-answered domains are skipped. Nothing on the rows changes;
-   you read the counts and say what you would do (D71, D72, D73).
-3. `count(client_tag, source, filters)` with those filters. getleads is
-   free; `ai_ark` and `prospeo` need `approved_by`. Honor `max_per_company`,
-   `industries_by_campaign` and `over_1k_campaign` when the receipt
-   carries them (D84). Pass `campaign_id` when the industries map names
-   more than one campaign. Every other getleads key
-   stays as stored and is mapped, or count fails (D74). Titles are exact
-   (`lower(current_title) IN`) unless the receipt says
-   `title_match=substring` (D82). AI Ark counts use STRICT unless that
-   same receipt key asks for substring.    `filters_applied` lists every filter that actually ran. Maps keeps `plan_id`
-   and the categories list (D57); it never scopes by ZIP or `client_tag`
-   alone.    Companion `v_*_companies` ∪ `v_*_needs_domain` is the ICP pool
-   when those exist. Companions that omit `plan_id` join `maps_raw`
-   so the bind is `$1::text` (D59). On `v_lane_e_*` the receipt
-   categories match `main_category` and preschool–high school are
-   dropped (D68). Already used is the union of live
-   `public.leads` on the receipt's campaigns, emails already in
-   `lp.<tag>_ingested_leads`, and this-client prior contact /
-   suppression (D64). `size(client_tag, campaign_id, source, filters)`
-   is the free dry-run of that pool plus suppression by reason. It
-   returns a `size_id` at once; poll `size(size_id)` (D65). Pool
-   binds are `$11` / `$12` so they do not collide with recycle `$2`
-   (D69). The suppress CTE types `$1::text` so `$1` is not unused
-   (D70). A normalize reopen replaces step counts; do not trust a
-   leftover `held_company_n` from a prior hash.
-4. `held(client_tag, campaign_id, filters, tam)`. It returns a
-   `held_id` at once (`status` started). Poll `held(held_id)` until
-   done or failed. Held is every lead this client already has (lead
-   store, Smartlead history and mirror, sends, provenance, plus
-   suppressions), matched by email, else LinkedIn URL or normalized
-   name+company (D98). A failed export names its class; do not invent a
-   sample or a lane total. Net new splits `has_email` vs
-   `needs_enrich`. If `net_new` < 1,000: *the TAM for this
-   campaign is exhausted.* Stop there. If Josh asks for options, give
-   each option with its count.
-5. Tell Cayden or Josh: campaign, source, filters, count, net new, rows
-   you will pull, worst-case cost. Wait for the yes.
-6. `pull(client_tag, campaign_id, source, filters, max_rows)`. It returns
-   the `job_id` at once (`status` started). Poll `job(job_id)` until pull
-   is done or failed. If it failed, read `last_error` and stop; do not
-   wait on an empty running step. Then
-   `suppress`, `icp`, `enrich`, `verify`, `normalize`, `qa`, `stage`, each
-   with the `job_id`. `icp` is the website gate from `icp-website-gate`:
-   it costs about $0.25 per 1,000 domains, needs a name, and reports the
-   label counts; if one label swallows a big share, stop and say so. Each answer has `next`. `waiting_approval` means name the
-   worst case to a person and call the same verb with
-   `approved_by="Their name"`. `parked` means read `job(job_id)` and fix
-   or `abort`. QA holds show in `holds`; clear them with `resolve`.
-   A done normalize whose rules changed (or `force=true`) runs again
-   so the Maps-name company fill can write. Do not pass a lead
-   table with no `domain` column to Find Named Person — this service
-   hands it `topup.<tag>_ingested_leads_ew` (apply migration 0021
-   first; the service never CREATE VIEW).
-7. `import(job_id)` only when `loads_paused` is off and a person said so.
-8. `write_receipt(job_id, …)` with the four legs, the filters you used and
-   one plain sentence. The next top-up reads it. A backfill row that still
-   says "Josh to confirm" or "Cayden to confirm" is a proposal until
-   `confirm_filters(receipt_id, approved_by)` stamps it. Pass Josh or
-   Cayden. Do not confirm it yourself.
-9. Post counts and ids: campaign, pulled, net new after suppression,
-   sendable, staged, imported, spend by vendor, job id. Josh flips ACTIVE.
-
-## What a good answer looks like
-
-```
-BCP #3921850 IT AirPods: 1.6 per 2,000 (passes). Record: getleads company,
-already domain, getleads person, getleads email; filters as stored.
-count getleads 18,776; held 3,200; net new 15,576. Pulling 2,000.
-Worst case $0 pull, ~$18 verify. Need a yes.
-```
-
-Not: a walkthrough of the thirteen steps, a list of names, a CSV in chat.
-
-## Allow list (you may call these)
-
-On this service (`leadtopup`, no login): `canon`, `campaigns`,
-`campaign_record`, `build_record`, `sources`, `count`, `held`, `size`, `jobs`, `job`, `spend`,
-`leftovers`, `holds`, `loads_paused`, `pull`, `icp`, `site_check`, `classify_leftover`, `suppress`, `enrich`, `verify`,
-`normalize`, `qa`, `stage`, `import`, `write_receipt`, `confirm_filters`, `abort`,
-`resolve`, `note`.
-
-On LeadPipe (Context Saver), for a CSV Josh hands you: `lp_plan`,
-`lp_run`, `lp_status`, `lp_export` (a signed URL you do not open),
-`lp_sample` (ten rows, masked), `lp_inventory`, `lp_ensure_client`,
-`lp_list_clients`.
-
-On Supabase: `COUNT`, `GROUP BY` over `topup.pull_receipts`,
-`topup.campaign_builds`, `topup.campaign_registry`, `topup.lead_provenance`
-by `build_label` and the four legs. `build_record` reads
-`topup.list_build_records` (narrative, ids, path). Never SELECT `email`,
-`first_name`, `last_name`, `phone`, `linkedin_url`.
-
-## Ban list (you must not call these)
-
-`export_contacts`, `search_contacts`, `getleads_enrich_person_batch`,
-`getleads_get_emails_from_linkedin_batch`,
-`get_decision_makers_batch_result`, `get_enrichment_result`,
-`list_profile_monitoring_leads`, `list_website_visitor_leads`,
-`export_website_visitor_leads`, `get-dataset-items`, `find_dms_by_title`
-(~$0.10 a company; Josh only). Any Smartlead tool that starts, pauses,
-stops, edits or deletes a campaign. Any child agent. Any routine that
-re-reads a list.
-
-## If you are stuck
-
-* A leg or a filter is missing on the record: ask Josh for that line. Do
-  not guess one.
-* A count comes back far from the record's `tam_count`: say both numbers
-  and stop.
-* A verb says `refused`: read `why`. A job the service opened on its own
-  cannot exist any more; if you see one, `abort` it and say so.
-* `job(job_id)` shows pull `failed`: read `last_error`. Do not wait on a
-  running step with empty counts.
-* `loads_paused` is on: nothing imports. Say who can flip it.
-* Anything else: `note(client_tag, lane, line)` what you did and what you
-  meant to do next, and ask.
+`jobs()`, `job(job_id)`: every step's counts, the card waiting for a name,
+the last ten events. `spend()`: what was spent and what waits.

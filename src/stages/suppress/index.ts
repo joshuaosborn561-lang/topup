@@ -1,7 +1,7 @@
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
-import type { Recipe } from "../../recipes/schema.js";
+import type { JobSettings } from "../../jobs/settings.js";
 import { classifyArrivingNegatives } from "../../replies/arrive.js";
 import { hasNegativeClassColumn } from "../../replies/store.js";
 import { attempt, finish, type StageDeps, type StageOutcome } from "../common.js";
@@ -40,19 +40,19 @@ interface Tables {
 export class SuppressStage {
   constructor(private readonly d: SuppressDeps) {}
 
-  async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
+  async run(run: RunRow, settings: JobSettings): Promise<StageOutcome> {
     return attempt(this.d, run, "suppress", "suppressing", async () => {
       const table = ingestedTable(run.client_tag);
       const db = this.d.repo.raw();
       const t = await this.tables();
       const hasClass = await hasNegativeClassColumn(db);
-      const arriving = await classifyArrivingNegatives(db, { clientId: recipe.smartlead_client_id, apply: hasClass });
+      const arriving = await classifyArrivingNegatives(db, { clientId: settings.smartlead_client_id, apply: hasClass });
 
       const { rows: rawRows } = await db.query<{ n: string }>(`select count(*)::text as n from ${table} where run_id = $1 and lead_status = 'ingested'`, [run.run_id]);
       const raw = Number(rawRows[0]?.n ?? 0);
 
       const removed = await this.d.repo.withRun(run.run_id, async (tx) => {
-        const reasonSql = this.reasonCase(recipe, t, hasClass);
+        const reasonSql = this.reasonCase(settings, t, hasClass);
         const { rows } = await tx.query<{ reason: string; n: string }>(
           `with p as (
              select $2::int[] as unused_positive, $3::int as unused_dnc, $4::int as unused_wrong, $5::int as bounce,
@@ -70,7 +70,7 @@ export class SuppressStage {
              returning j.reason
            )
            select reason, count(*)::text as n from hit group by reason`,
-          [run.run_id, [] as number[], DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, recipe.smartlead_client_id],
+          [run.run_id, [] as number[], DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, settings.smartlead_client_id],
         );
         const byReason: Record<string, number> = Object.fromEntries(SUPPRESS_REASONS.map((r) => [r, 0]));
         for (const r of rows) byReason[r.reason] = Number(r.n);
@@ -118,11 +118,11 @@ export class SuppressStage {
   }
 
   /** The CASE that names the first reason a row is removed. $5 bounce, $6 client. */
-  private reasonCase(recipe: Recipe, t: Tables, hasClass: boolean): string {
+  private reasonCase(settings: JobSettings, t: Tables, hasClass: boolean): string {
     const whens: string[] = [];
     if (t.leads) whens.push(`when ${thisClientUnsubscribeSql(hasClass)} then 'unsubscribed'`);
-    if (recipe.suppression.public_suppression && t.suppression) whens.push(`when ${dncListSql()} then 'suppression_list'`);
-    if (recipe.suppression.bounced_any_client && t.leads) whens.push(`when ${hardBounceSql(t.sends)} then 'bounced'`);
+    if (settings.suppression.public_suppression && t.suppression) whens.push(`when ${dncListSql()} then 'suppression_list'`);
+    if (settings.suppression.bounced_any_client && t.leads) whens.push(`when ${hardBounceSql(t.sends)} then 'bounced'`);
     return whens.length ? `case ${whens.join(" ")} end` : "null::text";
   }
 

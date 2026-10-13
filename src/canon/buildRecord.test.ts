@@ -60,8 +60,7 @@ describe("D75 — build_record", () => {
     assert.equal((r.records[0] as { email?: string }).email, undefined);
     assert.ok(!JSON.stringify(r).includes("@"), "D2/D75: a stray email column never reaches the answer");
     assert.equal(r.transcript, undefined, "D75: the transcript is opt-in");
-    assert.match(r.how_to_read, /narrative first/);
-    assert.match(r.how_to_read, /at-a-glance source of record/);
+    assert.match(r.how_to_read, /transcript is the method/);
     assert.ok(fake.sql.some((q) => q.includes("from topup.list_build_records") && q.includes("$2::int = any(campaign_ids)")));
     assert.ok(fake.sql.every((q) => !/\b(insert|update|delete|create|alter|drop|grant)\b/i.test(q)));
   });

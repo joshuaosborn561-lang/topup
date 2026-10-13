@@ -7,7 +7,7 @@ import type { Queryable } from "../db/pool.js";
  * variant with at least 1,000 sends (D35 item 12) clears the bar the campaign
  * counts as working and the dead variant is named. One interested reply in
  * under 2,000 sends is also acceptable (D44). An owner override from Slack
- * wins. The function takes `variantMinSends` so a recipe can set the floor.
+ * wins. The function takes `variantMinSends` so a settings can set the floor.
  */
 
 /** Smartlead lead categories that count as interested (design 3.3 A). */

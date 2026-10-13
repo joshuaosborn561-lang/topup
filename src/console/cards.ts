@@ -1,5 +1,4 @@
 import { usd } from "../spend/prices.js";
-import { orderCounts } from "../domain/runs.js";
 
 /**
  * Block Kit builders. Every card with buttons references a topup.cards row by
@@ -84,20 +83,6 @@ export function spendApprovalCard(c: SpendCard): Block[] {
   ];
 }
 
-export interface NotWorkingCard {
-  cardId: string;
-  runId: string;
-  clientTag: string;
-  campaignId: number;
-  campaignName: string;
-  runwayDays: number;
-  sends: number;
-  interested: number;
-  variants: Array<{ label: string; sends: number; interested: number }>;
-  /** D40: last-pull recipe counts. Builds, interested per build, any_reconstructed, leads_without_method. */
-  recipeSummary: string;
-}
-
 export interface StallCard {
   cardId: string;
   runId: string;
@@ -175,13 +160,6 @@ export function qaSummaryBlocks(input: { clientTag: string; runId: string; rows:
   ];
 }
 
-export interface ClientDomainListCard {
-  cardId: string;
-  runId: string;
-  clientTag: string;
-  lane: string;
-}
-
 export interface PendingCampaignCard {
   cardId: string;
   runId: string;
@@ -192,12 +170,12 @@ export interface PendingCampaignCard {
   cells: Array<{ cell: string; count: number }>;
 }
 
-/** Step 9: leads with no campaign in the recipe's routing. New campaigns are Josh's; the service never clones or creates one. */
+/** Step 9: leads with no campaign in the settings's routing. New campaigns are Josh's; the service never clones or creates one. */
 export function pendingCampaignCard(c: PendingCampaignCard): Block[] {
   const cells = c.cells.slice(0, 10).map((x) => `• \`${x.cell}\` ${x.count}`).join("\n");
   return [
     section(`:signpost: *No campaign for ${c.pending} leads — ${c.clientTag} / ${c.lane}* · run \`${c.runId.slice(0, 8)}\``),
-    section(`These cells match no routing rule in the recipe:\n${cells}\nThey wait as \`pending_campaign\` in the lane. A new campaign or a routing rule is a recipe change (Josh).`),
+    section(`These cells match no routing rule in the settings:\n${cells}\nThey wait as \`pending_campaign\` in the lane. A new campaign or a routing rule is a settings change (Josh).`),
     context("Continue without: the routed leads go on to staging and these wait for a later run. Abort: nothing is staged."),
     actions(c.cardId, [
       { choice: "continue_without", label: `Continue without ${c.pending}`, style: "primary" },
@@ -264,28 +242,28 @@ export function parkedCard(c: ParkedCard): Block[] {
   ];
 }
 
-export interface GateCard {
+export interface TopupQuoteCard {
   cardId: string;
   runId: string;
   clientTag: string;
-  lane: string;
-  /** Spine step label, e.g. "Step 7". */
-  stepLabel: string;
-  gate: string;
-  why: string;
-  counts: Record<string, number>;
-  report?: string;
+  campaignId: number;
+  quote: { net_new: number; with_email: number; domains: number; worst_case_cents: number; icp_cents: number; verify_cents: number };
 }
 
-export interface ReceiptInput {
-  runId: string;
-  clientTag: string;
-  lane: string;
-  status: string;
-  counts: Record<string, number>;
-  spendCentsByVendor: Record<string, number>;
-  stallEvents: number;
-  holdsOpen: number;
-  note?: string;
+/** The one card a top-up asks: how many new leads, and the most it can cost (D99). Counts only. */
+export function topupQuoteCard(c: TopupQuoteCard): Block[] {
+  return [
+    section(`:inbox_tray: *Top-up #${c.campaignId} — ${c.clientTag}* · job \`${c.runId.slice(0, 8)}\``),
+    fields([
+      ["New leads (after everything the client holds and unsubscribes)", String(c.quote.net_new)],
+      ["With an email address", String(c.quote.with_email)],
+      ["Companies for the website check", String(c.quote.domains)],
+      ["Worst case", `*${usd(c.quote.worst_case_cents)}* (ICP check ${usd(c.quote.icp_cents)} + verification ${usd(c.quote.verify_cents)})`],
+    ]),
+    context("Nothing paid has run. Yes means: ICP website check, verify, normalize, stage, load into the campaign. Josh flips ACTIVE by hand."),
+    actions(c.cardId, [
+      { choice: "approve_spend", label: `Yes, ${usd(c.quote.worst_case_cents)}`, style: "primary" },
+      { choice: "decline_spend", label: "No", style: "danger" },
+    ]),
+  ];
 }
-

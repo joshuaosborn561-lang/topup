@@ -1,8 +1,7 @@
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
-import { recipeCampaignIds } from "../../recipes/campaigns.js";
-import type { Recipe } from "../../recipes/schema.js";
+import type { JobSettings } from "../../jobs/settings.js";
 import { pendingCampaignCard } from "../../console/cards.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
@@ -10,23 +9,23 @@ import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from ".
 /**
  * Step 9 — Route to campaigns (skill lead-list-build; skill
  * smartlead-campaign-settings for what a new campaign needs). Every routed
- * lead lands on a campaign the recipe names for this client. A lead whose
+ * lead lands on a campaign the settings names for this client. A lead whose
  * cell matches no rule waits as `pending_campaign` — a new campaign is a
- * recipe change and Josh's — and one card asks him whether the routed rows go
+ * settings change and Josh's — and one card asks him whether the routed rows go
  * on without them. The service never creates or clones a campaign.
  *
  * Gate: every routed campaign belongs to this client (the mirror's
- * smartlead_client_id equals the recipe's). A campaign the mirror does not
+ * smartlead_client_id equals the settings's). A campaign the mirror does not
  * know is a halt, not a guess.
  */
 export interface RouteDeps extends StageDeps {
   ledger?: LaneLedger;
 }
 
-/** The recipe's segment dimensions, as computed from a row's columns. */
+/** The settings's segment dimensions, as computed from a row's columns. */
 export type Cell = Record<"band" | "mail_class" | "gift", string | null> & Record<string, string | null>;
 
-/** getleads band label "11 to 50" → recipe segment "11_50"; "10001+" → "10001_plus". */
+/** getleads band label "11 to 50" → settings segment "11_50"; "10001+" → "10001_plus". */
 export function bandSegment(companySize: string | null): string | null {
   if (!companySize) return null;
   const s = companySize.trim().toLowerCase();
@@ -51,7 +50,7 @@ export function campaignIdFromSourceLabel(label: string | null | undefined, targ
 }
 
 /** First routing rule whose every `when` matches the cell; null when none does. */
-export function matchRule(cell: Cell, routing: Recipe["routing"]): Recipe["routing"][number] | null {
+export function matchRule(cell: Cell, routing: JobSettings["routing"]): JobSettings["routing"][number] | null {
   for (const rule of routing) {
     const ok = Object.entries(rule.when).every(([dim, value]) => cell[dim] === value);
     if (ok) return rule;
@@ -66,12 +65,12 @@ export function cellLabel(cell: Cell, dims: readonly string[]): string {
 export class RouteStage {
   constructor(private readonly d: RouteDeps) {}
 
-  async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
+  async run(run: RunRow, settings: JobSettings): Promise<StageOutcome> {
     return attempt(this.d, run, "route", "routing", async () => {
       const table = ingestedTable(run.client_tag);
       const db = this.d.repo.raw();
-      const dims = Object.keys(recipe.segments);
-      const targets = recipeCampaignIds(recipe);
+      const dims = Object.keys(settings.segments);
+      const targets = [...new Set(settings.routing.map((r) => r.campaign_id))];
       const cols = await columnsOf(this.d.repo, table);
       const labelSql = cols.has("source_label") ? "source_label" : "null::text as source_label";
 
@@ -95,7 +94,7 @@ export class RouteStage {
       for (const r of rows) {
         const cell: Cell = { band: bandSegment(r.company_size), mail_class: mailClassSegment(r.mail_class), gift: r.gift };
         const stamped = campaignIdFromSourceLabel(r.source_label, targets);
-        const rule = stamped ? null : matchRule(cell, recipe.routing);
+        const rule = stamped ? null : matchRule(cell, settings.routing);
         const campaign = stamped ?? rule?.campaign_id ?? null;
         if (campaign) {
           const ids = byCampaign.get(campaign) ?? [];
@@ -111,9 +110,9 @@ export class RouteStage {
 
       // Gate: every campaign routed to is this client's, in the mirror.
       const campaignIds = [...byCampaign.keys()];
-      const wrong = await this.foreignCampaigns(campaignIds, recipe.smartlead_client_id);
+      const wrong = await this.foreignCampaigns(campaignIds, settings.smartlead_client_id);
       if (wrong.length) {
-        return gateUnmet("route", `campaign(s) ${wrong.map((w) => `#${w.id} (${w.reason})`).join(", ")} are not this client's in public.campaigns (smartlead_client_id ${recipe.smartlead_client_id})`, { routed_campaigns: campaignIds.length, foreign: wrong.length });
+        return gateUnmet("route", `campaign(s) ${wrong.map((w) => `#${w.id} (${w.reason})`).join(", ")} are not this client's in public.campaigns (smartlead_client_id ${settings.smartlead_client_id})`, { routed_campaigns: campaignIds.length, foreign: wrong.length });
       }
 
       const routed = await this.d.repo.withRun(run.run_id, async (tx) => {
@@ -150,14 +149,14 @@ export class RouteStage {
             kind: "pending_campaign",
             audience: "owner",
             payload: { step: "route", pending: pendingTotal, cells: Object.fromEntries([...pending.entries()].map(([k, v]) => [k, v.length])) },
-            text: `Step 9: ${pendingTotal} leads match no campaign in the recipe`,
+            text: `Step 9: ${pendingTotal} leads match no campaign in the settings`,
             blocks: (cardId) => pendingCampaignCard({ cardId, runId: run.run_id, clientTag: run.client_tag, lane: run.lane, pending: pendingTotal, cells: [...pending.entries()].map(([cell, ids]) => ({ cell, count: ids.length })) }),
           });
-          await this.d.ledger?.block(run.client_tag, run.lane, "owner", `${pendingTotal} leads have no campaign in the recipe's routing (new campaign or routing rule is Josh's)`, run.run_id);
+          await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "blocked", line: `${pendingTotal} leads have no campaign in the job's routing`, actor: "service" }).catch(() => undefined);
           return { kind: "waiting", on: "owner", why: `${pendingTotal} leads match no routing rule` };
         }
         if (card) return { kind: "waiting", on: "owner", why: `${pendingTotal} leads match no routing rule` };
-        await this.d.ledger?.unblock(run.client_tag, run.lane, `Josh chose to continue without the ${pendingTotal} pending leads; they wait in the lane.`, run.run_id);
+        await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "unblocked", line: `Continuing without the ${pendingTotal} pending leads; they wait in the lane.`, actor: "service" }).catch(() => undefined);
       }
 
       const line =

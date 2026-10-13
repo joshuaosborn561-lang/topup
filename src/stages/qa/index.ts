@@ -1,18 +1,18 @@
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
-import type { Recipe } from "../../recipes/schema.js";
+import type { JobSettings } from "../../jobs/settings.js";
 import { qaHoldCard, qaSummaryBlocks } from "../../console/cards.js";
 import { attempt, columnsOf, finish, statusCounts, type StageDeps, type StageOutcome } from "../common.js";
 
 /**
  * Step 8 — QA (skill lead-list-build; skill lead-list-qa). Cayden clears the
- * holds. Rules are data in topup.qa_rules; the recipe names which apply.
+ * holds. Rules are data in topup.qa_rules; the settings names which apply.
  *
  *   purge    silent, counted (junk titles, retail and school districts)
  *   hold     one card per rule to Cayden with up to ten sample values —
  *            company names or titles, never an address; Accept, Purge, or
- *            Reroute when the recipe maps the rule's target to a campaign
+ *            Reroute when the settings maps the rule's target to a campaign
  *   reroute  the skill's automatic reroute is a hold here with Reroute
  *            offered as the primary tap: a row leaving the lane for another
  *            offer is a human tap in this service, not a silent move (D26)
@@ -63,11 +63,11 @@ export function scopeSql(scope: string | null, clientTag: string): { sql: string
 export class QaStage {
   constructor(private readonly d: QaDeps) {}
 
-  async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
+  async run(run: RunRow, settings: JobSettings): Promise<StageOutcome> {
     return attempt(this.d, run, "qa", "qa", async () => {
       const table = ingestedTable(run.client_tag);
       const cols = await columnsOf(this.d.repo, table);
-      const rules = await this.rules(recipe);
+      const rules = await this.rules(settings);
       const skipped: string[] = [];
       const applied: Array<{ ruleId: string; action: string; count: number; samples: string[] }> = [];
 
@@ -133,7 +133,7 @@ export class QaStage {
           if (open.some((c) => c.kind === "qa_hold" && c.payload.rule_id === g.rule)) continue;
           const rule = rules.find((r) => r.rule_id === g.rule);
           const rerouteTo = rule?.reroute_to ?? null;
-          const rerouteCampaign = rerouteTo ? recipe.reroute[rerouteTo] ?? null : null;
+          const rerouteCampaign = rerouteTo ? settings.reroute[rerouteTo] ?? null : null;
           const reason = g.rule === MERGE_FIELD_EMPTY_RULE ? `A required merge field came out empty in step 7${g.fields ? ` (${g.fields})` : ""}. Accept sends them with the field blank; Purge drops them.` : rule?.reason ?? g.rule;
           await this.d.console.ask({
             run,
@@ -144,7 +144,7 @@ export class QaStage {
             blocks: (cardId) => qaHoldCard({ cardId, runId: run.run_id, clientTag: run.client_tag, ruleId: g.rule, reason, count: g.count, samples: g.samples, rerouteTo: rerouteCampaign ? `${rerouteTo} (#${rerouteCampaign})` : null }),
           });
         }
-        await this.d.ledger?.block(run.client_tag, run.lane, "operator", `${groups.length} QA hold group(s) open: ${groups.map((g) => `${g.rule} ${g.count}`).join(", ")}`, run.run_id);
+        await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "blocked", line: `${groups.length} QA hold group(s) open: ${groups.map((g) => `${g.rule} ${g.count}`).join(", ")}`, actor: "service" }).catch(() => undefined);
         return { kind: "waiting", on: "operator", why: `${groups.reduce((a, g) => a + g.count, 0)} leads held in ${groups.length} group(s)` };
       }
 
@@ -155,17 +155,17 @@ export class QaStage {
         qa_rerouted: await this.rerouted(table, run.run_id),
         ...Object.fromEntries(applied.map((a) => [`qa_${a.action}_${a.ruleId}`, a.count])),
       };
-      await this.d.ledger?.unblock(run.client_tag, run.lane, "Every QA hold has a resolution.", run.run_id);
+      await this.d.ledger?.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "unblocked", line: "Every QA hold has a resolution.", actor: "service" }).catch(() => undefined);
       const line = `QA done: ${counts.qa_passed} passed · ${counts.qa_purged} purged · ${counts.qa_rerouted} rerouted by tap${skipped.length ? ` · rules not applied: ${skipped.join("; ")}` : ""}.`;
       return finish(this.d, run, "qa", counts.qa_passed, counts, line);
     });
   }
 
-  private async rules(recipe: Recipe): Promise<QaRule[]> {
-    if (recipe.qa.length === 0) return [];
-    const { rows } = await this.d.repo.raw().query<QaRule>(`select rule_id, action, field, pattern, scope, reroute_to, reason from topup.qa_rules where rule_id = any($1::text[]) and enabled order by rule_id`, [recipe.qa]);
-    const missing = recipe.qa.filter((id) => !rows.some((r) => r.rule_id === id));
-    if (missing.length) throw new Error(`recipe names QA rules that are not in topup.qa_rules (or are disabled): ${missing.join(", ")}`);
+  private async rules(settings: JobSettings): Promise<QaRule[]> {
+    if (settings.qa.length === 0) return [];
+    const { rows } = await this.d.repo.raw().query<QaRule>(`select rule_id, action, field, pattern, scope, reroute_to, reason from topup.qa_rules where rule_id = any($1::text[]) and enabled order by rule_id`, [settings.qa]);
+    const missing = settings.qa.filter((id) => !rows.some((r) => r.rule_id === id));
+    if (missing.length) throw new Error(`settings names QA rules that are not in topup.qa_rules (or are disabled): ${missing.join(", ")}`);
     return rows;
   }
 

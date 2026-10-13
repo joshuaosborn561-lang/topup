@@ -32,10 +32,14 @@ describe("per-campaign report (D53)", () => {
   });
 
   it("words a source, its titles and its filters", () => {
-    const source = { kind: "getleads" as const, params: { job_titles: ["CIO"], company_size: ["11 to 50" as const], email_status: ["VALID" as const], industries: ["IT Services"] }, widening_candidates: [] };
-    assert.equal(sourceWords(source), "getleads people search, IT Services");
-    assert.equal(titlesWords(source, "it_dm"), "CIO");
-    assert.equal(filtersWords(source), "industries IT Services; company size 11 to 50; email VALID");
+    const files = { kind: "file_url" as const, urls: ["https://example.invalid/a.csv", "https://example.invalid/b.csv"] };
+    const table = { kind: "table" as const, table: "scratch.bcp_pool", where: "state = 'CO'" };
+    assert.equal(sourceWords(files), "2 file(s) handed over by Grokbot");
+    assert.equal(sourceWords(table), "table scratch.bcp_pool");
+    assert.equal(titlesWords(files, "it_dm"), "it_dm");
+    assert.equal(titlesWords(files, ""), "as the transcript says");
+    assert.equal(filtersWords(table), "where state = 'CO'");
+    assert.equal(filtersWords({ ...table, where: "true" }), "the whole table");
     assert.equal(replyRateText(10, 1, true), "too early to judge (1 interested in 10 sends)");
   });
 });

@@ -1,6 +1,4 @@
-import { logger } from "../lib/log.js";
 
-const log = logger("repo");
 import type { Db, Queryable } from "./pool.js";
 import type { Role, RunRow, RunStepRow, RunStatus, Step } from "../domain/runs.js";
 import { MAX_STEP_ATTEMPTS } from "../domain/runs.js";
@@ -86,13 +84,6 @@ export class Repo {
     }
   }
 
-  async openRunFor(clientTag: string, lane: string): Promise<RunRow | null> {
-    const { rows } = await this.db.query<RunRow>(
-      `select * from topup.runs where client_tag = $1 and lane = $2 and topup.run_is_open(status) limit 1`,
-      [clientTag, lane],
-    );
-    return rows[0] ?? null;
-  }
 
   async getRun(runId: string): Promise<RunRow | null> {
     const { rows } = await this.db.query<RunRow>(`select * from topup.runs where run_id = $1`, [runId]);
@@ -108,79 +99,9 @@ export class Repo {
     return rows;
   }
 
-  /** Fingerprint stored on the last size step that passed its pilot. Null when this lane has not passed one. */
-  async lastGoodSizeFingerprint(clientTag: string, lane: string): Promise<string | null> {
-    const { rows } = await this.db.query<{ fp: string | null }>(
-      `select s.counts->>'recipe_fingerprint' as fp
-         from topup.runs r
-         join topup.run_steps s on s.run_id = r.run_id and s.step = 'size' and s.status = 'done'
-        where r.client_tag = $1 and r.lane = $2
-          and s.counts->>'pilot_gate' = 'ok'
-          and coalesce(s.counts->>'recipe_fingerprint', '') <> ''
-        order by r.opened_at desc
-        limit 1`,
-      [clientTag, lane],
-    );
-    return rows[0]?.fp ?? null;
-  }
 
-  async lastRunForLane(clientTag: string, lane: string): Promise<RunRow | null> {
-    const { rows } = await this.db.query<RunRow>(
-      `select * from topup.runs where client_tag = $1 and lane = $2 order by opened_at desc limit 1`,
-      [clientTag, lane],
-    );
-    return rows[0] ?? null;
-  }
 
-  /**
-   * An abort tap can resolve the card and then fail before the run closes
-   * (Peterson has no lp ingest table). Finish those closes. A run with any
-   * card still open is left alone.
-   */
-  async closeRunsResolvedAbort(): Promise<Array<{ run_id: string; client_tag: string; lane: string }>> {
-    const { rows } = await this.db.query<{ run_id: string; client_tag: string; lane: string }>(
-      `update topup.runs r
-          set status = 'aborted',
-              last_error = 'aborted: the card was already resolved abort; closing the run did not finish',
-              closed_at = now()
-        where topup.run_is_open(r.status)
-          and not exists (select 1 from topup.cards c where c.run_id = r.run_id and c.status = 'open')
-          and exists (
-            select 1 from topup.cards c
-             where c.run_id = r.run_id and c.status = 'resolved' and c.resolution = 'abort'
-          )
-        returning run_id::text, client_tag, lane`,
-    );
-    return rows;
-  }
 
-  /**
-   * After an abort the watch used to see the lane still under the floor and
-   * reopen it. Close those empty restarts: an open watch run with no card and
-   * no work past the trigger step, whose previous run on the lane was aborted.
-   */
-  async closeWatchRestartsAfterAbort(): Promise<Array<{ run_id: string; client_tag: string; lane: string }>> {
-    const { rows } = await this.db.query<{ run_id: string; client_tag: string; lane: string }>(
-      `update topup.runs r
-          set status = 'aborted',
-              last_error = 'aborted: the watch reopened this lane right after an abort; closing the empty restart',
-              closed_at = now()
-        where topup.run_is_open(r.status)
-          and r.opened_by = 'watch'
-          and not exists (select 1 from topup.cards c where c.run_id = r.run_id)
-          and not exists (select 1 from topup.run_steps s where s.run_id = r.run_id and s.step <> 'trigger')
-          and (
-            select p.status
-              from topup.runs p
-             where p.client_tag = r.client_tag and p.lane = r.lane and p.run_id <> r.run_id
-               and p.opened_at < r.opened_at
-             order by p.opened_at desc
-             limit 1
-          ) = 'aborted'
-        returning run_id::text, client_tag, lane`,
-    );
-    return rows;
-  }
 
   async openRuns(): Promise<RunRow[]> {
     const { rows } = await this.db.query<RunRow>(
@@ -227,48 +148,7 @@ export class Repo {
     );
   }
 
-  /**
-   * campaign_registry is owned by the migration role, so ALTER can fail.
-   * client_icp is the copy this service can create. The code default still
-   * applies when neither store is writable.
-   */
-  async ensureIcpKind(): Promise<void> {
-    const nonLinkedin = ["peterson", "peterson_earthworks", "emcor", "vector_energy", "deep_roots"];
-    try {
-      await this.db.query(`alter table topup.campaign_registry add column if not exists icp_kind text`);
-      await this.db.query(
-        `update topup.campaign_registry set icp_kind = 'non_linkedin'
-          where icp_kind is null and client_tag = any($1::text[])`,
-        [nonLinkedin],
-      );
-      await this.db.query(`update topup.campaign_registry set icp_kind = 'linkedin_native' where icp_kind is null`);
-    } catch (err) {
-      log.error(`campaign_registry.icp_kind was not added: ${(err as Error).message}`);
-    }
-    try {
-      await this.db.query(
-        `create table if not exists topup.client_icp (
-           client_tag text primary key,
-           icp_kind text not null check (icp_kind in ('linkedin_native', 'non_linkedin'))
-         )`,
-      );
-      await this.db.query(
-        `insert into topup.client_icp (client_tag, icp_kind)
-         select distinct client_tag, case when client_tag = any($1::text[]) then 'non_linkedin' else 'linkedin_native' end
-           from topup.campaign_registry
-         on conflict (client_tag) do nothing`,
-        [nonLinkedin],
-      );
-    } catch (err) {
-      log.error(`client_icp was not created: ${(err as Error).message}`);
-    }
-  }
 
-  /** True only when the live function treats sized as closed. */
-  async sizedIsTerminal(): Promise<boolean> {
-    const { rows } = await this.db.query<{ open: boolean }>(`select topup.run_is_open('sized') as open`);
-    return rows[0]?.open === false;
-  }
 
   /** Global operator switch. Service flag when the table exists, otherwise the latest lane event. */
   async loadsPaused(): Promise<boolean> {
@@ -323,20 +203,6 @@ export class Repo {
     return rowCount ?? 0;
   }
 
-  async setRunThread(runId: string, channel: string, ts: string): Promise<void> {
-    await this.db.query(`update topup.runs set slack_channel = $2, slack_thread_ts = $3 where run_id = $1`, [
-      runId,
-      channel,
-      ts,
-    ]);
-  }
-
-  async mergeRunCounts(runId: string, counts: Record<string, number>): Promise<void> {
-    await this.db.query(
-      `update topup.runs set counts_by_status = counts_by_status || $2::jsonb where run_id = $1`,
-      [runId, JSON.stringify(counts)],
-    );
-  }
 
   async addRunSpend(runId: string, vendor: string, cents: number): Promise<void> {
     await this.db.query(
@@ -347,6 +213,14 @@ export class Repo {
       [runId, vendor, cents],
     );
   }
+
+  async mergeRunCounts(runId: string, counts: Record<string, number>): Promise<void> {
+    await this.db.query(
+      `update topup.runs set counts_by_status = counts_by_status || $2::jsonb where run_id = $1`,
+      [runId, JSON.stringify(counts)],
+    );
+  }
+
 
   // ----- steps ------------------------------------------------------------
 
@@ -430,14 +304,6 @@ export class Repo {
     );
   }
 
-  /** Add to a step's counts while it is still running (a marker such as "summary posted", or partial progress). */
-  async mergeStepExtra(runId: string, step: Step, extra: Record<string, unknown>): Promise<void> {
-    await this.db.query(
-      `insert into topup.run_steps (run_id, step, status, counts) values ($1, $2, 'running', $3::jsonb)
-       on conflict (run_id, step) do update set counts = topup.run_steps.counts || $3::jsonb`,
-      [runId, step, JSON.stringify(extra)],
-    );
-  }
 
   async mergeStepCounts(runId: string, step: Step, counts: Record<string, number>): Promise<void> {
     await this.db.query(
@@ -561,13 +427,6 @@ export class Repo {
     return rows[0];
   }
 
-  async setCardMessage(cardId: string, channel: string, ts: string): Promise<void> {
-    await this.db.query(`update topup.cards set slack_channel = $2, slack_ts = $3 where card_id = $1`, [
-      cardId,
-      channel,
-      ts,
-    ]);
-  }
 
   /** Keep the rendered blocks so a resolution can redraw the card without its buttons. */
   async setCardBlocks(cardId: string, blocks: unknown[]): Promise<void> {
@@ -697,199 +556,11 @@ export class Repo {
     return rows[0] ?? null;
   }
 
-  async findRecipe(clientTag: string, lane: string): Promise<{ recipe_id: string; body: unknown } | null> {
-    const { rows } = await this.db.query<{ recipe_id: string; body: unknown }>(
-      `select recipe_id, body from topup.lane_recipes where client_tag = $1 and lane = $2
-       order by version desc limit 1`,
-      [clientTag, lane],
-    );
-    return rows[0] ?? null;
-  }
 
-  /**
-   * Pull receipts for a client (optional lane / campaign). Tags, filters,
-   * notes, ids. Never emails.
-   */
-  async listPullReceipts(input: {
-    clientTag: string;
-    lane?: string | null;
-    campaignId?: number | null;
-  }): Promise<
-    Array<{
-      written_by: string;
-      written_at: string;
-      client_tag: string;
-      smartlead_client_id: number | null;
-      lane: string;
-      campaign_ids: number[];
-      icp_kind: string;
-      persona: string;
-      company_source: string;
-      company_filters: Record<string, unknown>;
-      domain_source: string | null;
-      person_source: string | null;
-      email_source: string;
-      email_max_tier: string | null;
-      how_i_did_it: string;
-      notes: string | null;
-      segment: Record<string, unknown> | null;
-      granularity: string;
-      rows_imported: number | null;
-      rows_found: number | null;
-      tam_count: number | null;
-      build_label: string | null;
-    }>
-  > {
-    const { rows } = await this.db.query<{
-      written_by: string;
-      written_at: string;
-      client_tag: string;
-      smartlead_client_id: string | null;
-      lane: string;
-      campaign_ids: Array<string | number> | null;
-      icp_kind: string;
-      persona: string;
-      company_source: string;
-      company_filters: Record<string, unknown> | null;
-      domain_source: string | null;
-      person_source: string | null;
-      email_source: string;
-      email_max_tier: string | null;
-      how_i_did_it: string;
-      notes: string | null;
-      segment: Record<string, unknown> | null;
-      granularity: string;
-      rows_imported: string | null;
-      rows_found: string | null;
-      tam_count: string | null;
-      build_label: string | null;
-    }>(
-      `select written_by, written_at::text, client_tag, smartlead_client_id::text, lane, campaign_ids,
-              icp_kind, persona, company_source, company_filters, domain_source, person_source,
-              email_source, email_max_tier, how_i_did_it, notes, segment, granularity,
-              rows_imported::text, rows_found::text, tam_count::text, build_label
-         from topup.pull_receipts
-        where client_tag = $1
-          and ($2::text is null or lane = $2)
-          and ($3::bigint is null or $3 = any(campaign_ids))
-          and ($4::text is null or lane = $4)
-        order by written_at desc`,
-      [input.clientTag, input.lane ?? null, input.campaignId ?? null, await this.registryLane(input.clientTag, input.campaignId)],
-    );
-    return rows.map((r) => ({
-      written_by: r.written_by,
-      written_at: r.written_at,
-      client_tag: r.client_tag,
-      smartlead_client_id: r.smartlead_client_id == null ? null : Number(r.smartlead_client_id),
-      lane: r.lane,
-      campaign_ids: (r.campaign_ids ?? []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0),
-      icp_kind: r.icp_kind,
-      persona: r.persona,
-      company_source: r.company_source,
-      company_filters: r.company_filters ?? {},
-      domain_source: r.domain_source,
-      person_source: r.person_source,
-      email_source: r.email_source,
-      email_max_tier: r.email_max_tier,
-      how_i_did_it: r.how_i_did_it,
-      notes: r.notes,
-      segment: r.segment,
-      granularity: r.granularity,
-      rows_imported: r.rows_imported == null ? null : Number(r.rows_imported),
-      rows_found: r.rows_found == null ? null : Number(r.rows_found),
-      tam_count: r.tam_count == null ? null : Number(r.tam_count),
-      build_label: r.build_label,
-    }));
-  }
 
-  /** Registry lane only. Null if the campaign has no row — do not infer from a bloated receipt list (D92). */
-  async registryLane(clientTag: string, campaignId?: number | null): Promise<string | null> {
-    if (campaignId == null) return null;
-    try {
-      const { rows } = await this.db.query<{ lane: string | null }>(
-        `select lane from topup.campaign_registry
-          where client_tag = $1 and campaign_id = $2 and lane is not null
-          limit 1`,
-        [clientTag, campaignId],
-      );
-      return rows[0]?.lane ?? null;
-    } catch {
-      return null;
-    }
-  }
 
-  async listReceiptLanes(clientTag?: string): Promise<Array<{ client_tag: string; lane: string }>> {
-    const { rows } = await this.db.query<{ client_tag: string; lane: string }>(
-      `select distinct client_tag, lane from topup.pull_receipts
-        where ($1::text is null or client_tag = $1)
-        order by 1, 2`,
-      [clientTag ?? null],
-    );
-    return rows;
-  }
 
-  async laneForCampaign(clientTag: string, campaignId: number): Promise<string | null> {
-    try {
-      const registry = await this.db.query<{ lane: string | null }>(
-        `select lane from topup.campaign_registry
-          where client_tag = $1 and campaign_id = $2 and lane is not null
-          limit 1`,
-        [clientTag, campaignId],
-      );
-      if (registry.rows[0]?.lane) return registry.rows[0].lane;
-    } catch {
-      /* an older database has no campaign_registry; receipts still name a lane */
-    }
-    const { rows } = await this.db.query<{ lane: string }>(
-      `select lane from topup.pull_receipts
-        where client_tag = $1 and $2 = any(campaign_ids)
-        order by (granularity = 'lane') desc, written_at desc
-        limit 1`,
-      [clientTag, campaignId],
-    );
-    if (rows[0]?.lane) return rows[0].lane;
-    try {
-      const method = await this.db.query<{ lane: string | null }>(
-        `select lane from topup.campaign_method where smartlead_campaign_id = $1 limit 1`,
-        [campaignId],
-      );
-      return method.rows[0]?.lane ?? null;
-    } catch {
-      return null;
-    }
-  }
 
-  /**
-   * Builds that fed these campaigns, from topup.campaign_builds.
-   * An empty view falls through to pull receipts for the same campaigns.
-   */
-  async campaignBuilds(clientTag: string, campaignIds: number[]): Promise<Record<string, unknown>[]> {
-    if (campaignIds.length === 0) return [];
-    try {
-      const { rows } = await this.db.query(
-        `select cb.*
-           from topup.campaign_builds cb
-           left join topup.campaign_registry cr
-             on cr.client_tag = cb.client_tag and cr.campaign_id = cb.smartlead_campaign_id
-          where cb.client_tag = $1 and cb.smartlead_campaign_id = any($2::bigint[])
-            and (cr.lane is null or cb.lane is null or cb.lane = cr.lane)`,
-        [clientTag, campaignIds],
-      );
-      return rows;
-    } catch {
-      /* the view is not on every database; the receipt rows below are the same facts */
-    }
-    const registryLane = campaignIds.length === 1 ? await this.registryLane(clientTag, campaignIds[0]!) : null;
-    const { rows } = await this.db.query(
-        `select r.build_label, r.company_source, r.company_filters, r.written_at, r.rows_found, c.campaign_id
-         from topup.pull_receipts r
-         cross join lateral unnest(r.campaign_ids) as c(campaign_id)
-        where r.client_tag = $1 and c.campaign_id = any($2::bigint[])
-          and ($3::text is null or r.lane = $3)`,
-      [clientTag, campaignIds, registryLane],
-    );
-    return rows;
-  }
 
   async campaignRegistry(clientTag?: string): Promise<Record<string, unknown>[]> {
     try {
@@ -914,43 +585,8 @@ export class Repo {
     }
   }
 
-  /** Registry column, else client_icp, else the client default. */
-  async clientIcpKind(clientTag: string): Promise<IcpKind> {
-    try {
-      const { rows } = await this.db.query<{ icp_kind: string | null }>(
-        `select coalesce(
-            (select icp_kind from topup.client_icp where client_tag = $1),
-            nullif(to_jsonb(cr)->>'icp_kind', '')
-          ) as icp_kind
-           from topup.campaign_registry cr
-          where cr.client_tag = $1
-          limit 1`,
-        [clientTag],
-      );
-      return icpKindOf(rows[0]?.icp_kind ?? null);
-    } catch {
-      return icpKindOf(null);
-    }
-  }
 
-  async setWorkingOverride(campaignId: number, value: boolean | null): Promise<boolean> {
-    const { rowCount } = await this.db.query(
-      `update topup.campaign_registry set working_override = $2, updated_at = now() where campaign_id = $1`,
-      [campaignId, value],
-    );
-    return (rowCount ?? 0) > 0;
-  }
 
-  async workingOverrides(campaignIds: readonly number[]): Promise<Map<number, boolean | null>> {
-    const out = new Map<number, boolean | null>();
-    if (campaignIds.length === 0) return out;
-    const { rows } = await this.db.query<{ campaign_id: string; working_override: boolean | null }>(
-      `select campaign_id::text, working_override from topup.campaign_registry where campaign_id = any($1::bigint[])`,
-      [campaignIds],
-    );
-    for (const r of rows) out.set(Number(r.campaign_id), r.working_override);
-    return out;
-  }
 
   /**
    * Retag registry rows from public.campaigns and topup.client_map, then
@@ -988,135 +624,10 @@ export class Repo {
     );
   }
 
-  /** Keep the registry in step with the recipe so `/working` has a row to flip. Never overwrites the override, the client, or the lane. */
-  async upsertCampaignRegistry(rows: Array<{
-    campaign_id: number;
-    campaign_name: string | null;
-    client_tag: string;
-    smartlead_client_id: number;
-    lane: string;
-    recipe_id: string;
-    status: string | null;
-  }>): Promise<void> {
-    for (const r of rows) {
-      await this.db.query(
-        `insert into topup.campaign_registry (campaign_id, campaign_name, client_tag, smartlead_client_id, lane, recipe_id, status, updated_at)
-         values ($1,$2,$3,$4,$5,$6,$7, now())
-         on conflict (campaign_id) do update set
-           campaign_name = excluded.campaign_name,
-           recipe_id = excluded.recipe_id,
-           status = excluded.status,
-           updated_at = now()`,
-        [r.campaign_id, r.campaign_name, r.client_tag, r.smartlead_client_id, r.lane, r.recipe_id, r.status],
-      );
-    }
-  }
 
-  /** Insert-only. Latest row wins; never update a receipt in place (D32). */
-  async insertPullReceipt(row: {
-    written_by: string;
-    client_tag: string;
-    smartlead_client_id: number | null;
-    lane: string;
-    campaign_ids: number[];
-    icp_kind: string;
-    persona: string;
-    company_source: string;
-    company_filters: Record<string, unknown>;
-    domain_source: string;
-    person_source: string;
-    email_source: string;
-    email_max_tier: string | null;
-    rows_found: number | null;
-    rows_imported: number | null;
-    tam_count: number | null;
-    how_i_did_it: string;
-    notes: string | null;
-    segment: Record<string, unknown> | null;
-    yield_by_step: Record<string, unknown> | null;
-    spend_cents: number | null;
-    suppression_scope: string | null;
-    build_label: string | null;
-    granularity: "build" | "lane";
-  }): Promise<string> {
-    const { rows } = await this.db.query<{ receipt_id: string }>(
-      `insert into topup.pull_receipts (
-         written_by, client_tag, smartlead_client_id, lane, campaign_ids,
-         icp_kind, persona, company_source, company_filters,
-         domain_source, person_source, email_source, email_max_tier,
-         rows_found, rows_imported, tam_count, how_i_did_it, notes,
-         segment, yield_by_step, spend_cents, suppression_scope, build_label, granularity
-       ) values (
-         $1,$2,$3,$4,$5::bigint[],$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24
-       ) returning receipt_id::text`,
-      [
-        row.written_by,
-        row.client_tag,
-        row.smartlead_client_id,
-        row.lane,
-        row.campaign_ids,
-        row.icp_kind,
-        row.persona,
-        row.company_source,
-        JSON.stringify(row.company_filters),
-        row.domain_source,
-        row.person_source,
-        row.email_source,
-        row.email_max_tier,
-        row.rows_found,
-        row.rows_imported,
-        row.tam_count,
-        row.how_i_did_it,
-        row.notes,
-        row.segment ? JSON.stringify(row.segment) : null,
-        row.yield_by_step ? JSON.stringify(row.yield_by_step) : null,
-        row.spend_cents,
-        row.suppression_scope,
-        row.build_label,
-        row.granularity,
-      ],
-    );
-    return rows[0]!.receipt_id;
-  }
 
-  /**
-   * Stamp owner_confirmed_at on a backfill receipt. Josh or Cayden (D92).
-   * Does not rewrite filters. Insert-only still holds for the receipt body (D32).
-   */
-  async confirmPullReceipt(receiptId: string, approvedBy: string): Promise<{ receipt_id: string; already: boolean } | null> {
-    const { rows: found } = await this.db.query<{ receipt_id: string; owner_confirmed_at: string | null }>(
-      `select receipt_id::text, owner_confirmed_at::text from topup.pull_receipts where receipt_id = $1`,
-      [receiptId],
-    );
-    if (!found[0]) return null;
-    if (found[0].owner_confirmed_at) return { receipt_id: found[0].receipt_id, already: true };
-    await this.db.query(
-      `update topup.pull_receipts
-          set owner_confirmed_at = now()
-        where receipt_id = $1 and owner_confirmed_at is null`,
-      [receiptId],
-    );
-    return { receipt_id: found[0].receipt_id, already: false };
-  }
 
-  async clientDomainListConfirmedEmpty(clientTag: string): Promise<boolean> {
-    const { rows: t } = await this.db.query<{ ok: boolean }>(`select to_regclass('topup.client_domain_list_state') is not null as ok`);
-    if (!t[0]?.ok) return false;
-    const { rows } = await this.db.query<{ ok: boolean }>(
-      `select confirmed_empty_at is not null as ok from topup.client_domain_list_state where client_tag = $1`,
-      [clientTag],
-    );
-    return Boolean(rows[0]?.ok);
-  }
 
-  async confirmClientDomainListEmpty(clientTag: string, by: string): Promise<void> {
-    await this.db.query(
-      `insert into topup.client_domain_list_state (client_tag, confirmed_empty_at, confirmed_empty_by)
-       values ($1, now(), $2)
-       on conflict (client_tag) do update set confirmed_empty_at = now(), confirmed_empty_by = excluded.confirmed_empty_by`,
-      [clientTag, by],
-    );
-  }
 
   async missingTopupTables(required: readonly string[]): Promise<string[]> {
     const missing: string[] = [];
@@ -1127,13 +638,6 @@ export class Repo {
     return missing;
   }
 
-  async missingPieceGroups(clientTag?: string): Promise<Record<string, unknown>[]> {
-    const { rows } = await this.db.query(
-      `select * from topup.missing_piece_groups where ($1::text is null or client_tag = $1) order by 1,2,3`,
-      [clientTag ?? null],
-    );
-    return rows;
-  }
 
   // Exposed for stages that need a run-scoped transaction.
   withRun<T>(runId: string, fn: (tx: Queryable) => Promise<T>): Promise<T> {
