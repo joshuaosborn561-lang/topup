@@ -32,18 +32,33 @@ function readBuildStamp(): string | null {
   return null;
 }
 
-/** Tables a run needs. /health is ok: false until they exist (D34). */
+/**
+ * Tables a top-up reads or writes (D99 path: open, ingest, dedupe, suppress,
+ * quote, icp, verify, normalize, qa, route, stage, import, plus the build
+ * record and the service flags). /health is ok: false until they exist (D34).
+ */
 export const REQUIRED_TOPUP_TABLES = [
+  "topup.runs",
+  "topup.run_steps",
+  "topup.cards",
+  "topup.spend_ledger",
+  "topup.lane_events",
+  "topup.lane_state",
+  "topup.lane_recipes",
+  "topup.verify_batches",
+  "topup.stall_events",
+  "topup.client_map",
+  "topup.campaign_registry",
+  "topup.list_build_records",
+  "topup.process_changes",
+  "topup.service_flags",
+  "topup.icp_variants",
   "topup.qa_rules",
   "topup.ref_cities",
   "topup.ref_acronyms",
-  "topup.campaign_registry",
   "topup.client_domain_blocklist",
   "topup.client_domain_list_state",
   "topup.mx_class",
-  "topup.lane_state",
-  "topup.runs",
-  "topup.spend_ledger",
   "topup.pull_receipts",
 ] as const;
 

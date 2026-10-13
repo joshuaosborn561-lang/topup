@@ -10,6 +10,7 @@ import { domainSql, icpWorstCaseCents } from "../stages/icp/index.js";
 import { verifyWorstCaseCents } from "../stages/verify/verify.js";
 import { columnsOf } from "../stages/common.js";
 import { jobLane, jobSettings, parseJobSettings, type JobSettings, type JobSpec } from "./settings.js";
+import { plainError } from "./preflight.js";
 import { isSelfStart, isWatchActor } from "./selfStart.js";
 import type { DedupeStage } from "../stages/dedupe/index.js";
 import type { IcpStage } from "../stages/icp/index.js";
@@ -152,7 +153,12 @@ export class TopupRunner {
     const verify = stepRows.get("verify");
     const recorded = [icp, verify].map((r) => (typeof r?.counts?.approved_by === "string" ? String(r.counts.approved_by) : null)).find(Boolean) ?? null;
     const approved = (icp?.approved_cents ?? 0) > 0 || (verify?.approved_cents ?? 0) > 0 || !!recorded;
-    if (!approved) return null;
+    if (!approved) {
+      // The three free steps are done. With the quote card up the job is
+      // standing, waiting for a name; without one the process died between
+      // the last step and the card, and the quote phase re-runs to post it.
+      return (await this.openQuote(jobId)) ? null : { phase: "quote", approved_by: null, interrupted };
+    }
     if (!PHASE_STEPS.approve.every(done)) {
       const loadOnly = PHASE_STEPS.approve.filter((st) => st !== "import" && st !== "post_import").every(done);
       return { phase: loadOnly ? "load" : "approve", approved_by: recorded, interrupted };
@@ -176,19 +182,24 @@ export class TopupRunner {
     for (const run of await this.d.repo.openRuns()) {
       if (Number(run.counts_by_status?.grok_job) !== 1) continue;
       const r = await this.resumable(run.run_id);
-      if (!r || !r.interrupted) continue;
+      // A step left running, or a free quote with no card yet: both are a
+      // cut-off. An approved tail waiting on a card or on paused loads is not.
+      if (!r || !(r.interrupted || r.phase === "quote")) continue;
       const out = await this.resume(run.run_id, by);
       if (out && out.status === "started") resumed.push(run.run_id);
     }
     return resumed;
   }
 
-  /** A campaign with no recorded build has no method to replay: the top-up waits for Josh to record it (D99). */
+  /**
+   * A campaign with no recorded build has no method to replay: the top-up
+   * waits for Josh to record it (D99). A database error is not a missing
+   * build; it propagates so open() can say what actually failed.
+   */
   async hasRecordedBuild(clientTag: string, campaignId: number): Promise<boolean> {
     const { rows } = await this.d.repo
       .raw()
-      .query<{ n: string }>(`select count(*)::text as n from topup.list_build_records where client_tag = $1 and $2::bigint = any(campaign_ids)`, [clientTag, campaignId])
-      .catch(() => ({ rows: [] as Array<{ n: string }> }));
+      .query<{ n: string }>(`select count(*)::text as n from topup.list_build_records where client_tag = $1 and $2::bigint = any(campaign_ids)`, [clientTag, campaignId]);
     return Number(rows[0]?.n ?? 0) > 0;
   }
 
@@ -197,7 +208,13 @@ export class TopupRunner {
     if (isWatchActor(by) || isSelfStart(by, "manual")) return { ok: false, message: "Nothing starts on its own (D51). Grokbot calls topup when a campaign runs low." };
     if (isColdCall(campaignName)) return { ok: false, message: `#${spec.campaign_id} ${campaignName} is marked as cold call; the service ignores it (D54).` };
     if (isNeverTopUp(spec.campaign_id, campaignName)) return { ok: false, message: `#${spec.campaign_id} is never topped up (D46).` };
-    if (!(await this.hasRecordedBuild(spec.client_tag, spec.campaign_id))) {
+    let recorded: boolean;
+    try {
+      recorded = await this.hasRecordedBuild(spec.client_tag, spec.campaign_id);
+    } catch (err) {
+      return { ok: false, message: `Could not read topup.list_build_records (${plainError(err)}). That is a database error, not a missing build: try again, and ask Josh if it keeps failing.` };
+    }
+    if (!recorded) {
       return { ok: false, message: `#${spec.campaign_id} has no recorded build in topup.list_build_records. There is no method to replay; wait for Josh to record how this campaign was built (D99).` };
     }
     const stamp = (this.d.now ?? Date.now)();
@@ -395,8 +412,14 @@ export class TopupRunner {
     await this.d.repo.setRunStatus(run.run_id, "awaiting_owner", "suppress");
     await this.event(run, "card_opened", `Quote for #${settings.campaign_id}: ${quote.net_new} net new (${quote.with_email} with an address, ${quote.domains} domains), worst case ${usd(quote.worst_case_cents)}. Waiting for Josh or Cayden.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
     const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents, below_floor: belowFloor ? 1 : 0 };
-    const floorNote = (belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this campaign looks exhausted unless the record shows a source not replayed; they decide.` : "") + (icp.ready ? "" : ` ${icp.note}`);
-    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}.${floorNote} When they say yes: topup(job_id, approved_by="their name").`);
+    const floorNote = (belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this campaign looks exhausted unless the record shows a source not replayed; they decide (D102).` : "") + (icp.ready ? "" : ` ${icp.note}`);
+    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}.${floorNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
+  }
+
+  /** Loads start paused (D102); the quote answer says so, so the yes and the unpause are asked for together. */
+  private async pauseNote(): Promise<string> {
+    const paused = await this.d.repo.loadsPaused().catch(() => false);
+    return paused ? ` Loads are paused: after the yes the job stops at staged; an approver's loads_paused(paused=false, by="their name") and then load(job_id) sends it to Smartlead.` : "";
   }
 
   /** Net new after held and unsubscribes, and the worst case of everything paid that follows (ICP check + verification). */
@@ -426,7 +449,7 @@ export class TopupRunner {
     const card = await this.openQuote(jobId);
     if (card) {
       const q = card.payload;
-      return { job_id: jobId, status: "quoted", quote: { net_new: q.net_new, with_email: q.with_email, domains: q.domains, worst_case_cents: q.worst_case_cents, icp_cents: q.icp_cents, verify_cents: q.verify_cents, card_id: card.card_id }, next: `tell ${this.approvers.map(cap).join(" or ")} the count and the cost; when they say yes: topup(job_id, approved_by="their name").` };
+      return { job_id: jobId, status: "quoted", quote: { net_new: q.net_new, with_email: q.with_email, domains: q.domains, worst_case_cents: q.worst_case_cents, icp_cents: q.icp_cents, verify_cents: q.verify_cents, card_id: card.card_id }, next: `tell ${this.approvers.map(cap).join(" or ")} the count and the cost; when they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}` };
     }
     return this.resume(jobId, by);
   }
@@ -527,8 +550,13 @@ export class TopupRunner {
           const del = await tx.query(`delete from ${table} where run_id = $1 and lead_status not in ${keep}`, [jobId]);
           return { released: 0, removed: del.rowCount ?? 0 };
         }
+        // A table pool pointed at the lane table was relabelled for this job
+        // (ingest keeps the bot's label under qa_flags.pool_label); give the
+        // label back so the same table + where finds the rows again.
         const rel = await tx.query(
-          `update ${table} set lead_status = 'ingested', run_id = null, verify_batch = null, status_changed_at = now()
+          `update ${table} set lead_status = 'ingested', run_id = null, verify_batch = null, status_changed_at = now(),
+             source_label = coalesce(qa_flags->>'pool_label', source_label),
+             qa_flags = coalesce(qa_flags, '{}'::jsonb) - 'pool_label'
            where run_id = $1 and lead_status not in ${keep}`,
           [jobId],
         );

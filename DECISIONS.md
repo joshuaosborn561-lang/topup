@@ -121,6 +121,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D99 | Live; the lean top-up: Grokbot replays the recorded build with its own connectors and hands the pool over; the service dedupes against everything held, removes unsubscribes, quotes count and cost, waits for Josh or Cayden by name, runs the ICP website check and verification, and loads; eleven tools; LeadPipe always; no recorded build means wait; legacy pull, recipes, counts, sizes and per-client code removed; the twelfth tool is the playbook read by D100 |
 | D100 | Live; one living playbook per client: view `topup.client_playbook` over list builds and process changes, read as `playbook(client_tag)` |
 | D101 | Live; who approves is a Railway setting (`TOPUP_APPROVERS`, default Josh and Cayden per D92; Josh alone for the first EMCOR, BCP and Insight top-ups); a yes is to an amount: a paid step priced more than a tenth above the quote waits for a fresh named yes; a job a restart cut off resumes on boot; an aborted job's unloaded rows leave the lane table |
+| D102 | Live; under the 1,000 floor the quote still posts and the approver decides; loads start paused until an approver flips `loads_paused`; the ICP label set in `topup.icp_variants` is a precondition for a yes; audit fixes: a job cut off before its quote card is resumed on boot, lane-table writes carry the run, abort gives a table pool its label back, a database error is never reported as "no recorded build" |
 
 ---
 
@@ -3346,3 +3347,43 @@ start a job nobody opened. It does not delete a row that reached
 staging or Smartlead.
 
 **Guard.** `src/guards/d101_approvers.test.ts`. Ask Josh.
+
+## D102 — Below the floor the approver decides; loads start paused; the ICP label set comes first
+
+**Decision.** Three things the code already did and the canon did not
+say, said in one place. (1) Under the 1,000-net-new floor (D46) the
+quote still posts. The answer says the floor is not met; Grokbot tells
+the approver the count, the cost and that it is under the floor, and
+the approver decides. "Exhausted" is a report, not a refusal: the
+service never withholds a quote it can compute. (2) Loads start paused:
+`topup.service_flags` seeds `loads_paused = true` where no lane event
+says otherwise, an approved job stops at `staged`, and only an
+approver's `loads_paused(paused=false, by=name)` followed by
+`load(job_id)` moves rows to Smartlead. The quote answer says so, so the
+yes and the unpause are asked for together. (3) The website ICP check
+needs the client's label set in `topup.icp_variants`; the quote says
+when it is missing and a yes is refused until Josh writes it.
+
+Four audit findings land with it. A job cut off after its last free
+step and before the quote card is posted is picked up on boot like any
+interrupted job. Every lane-table write a stage makes carries the run
+id, so the write lock from migration 0002 lets it through (verify's
+mail-class fill did not). An aborted table pool gets its label back, so
+the same table and where find the rows again. A database error while
+reading the build record is reported as a database error, never as "no
+recorded build".
+
+**Why.** Josh, 13 Oct 2026: "give me the honest new-lead count after
+removing existing leads, plus a cost quote, or a plain one-line reason
+it's truly exhausted. Then a single approval from me loads them." And,
+earlier the same day: "Loads stay paused." The first EMCOR and BCP
+quotes were 120 and 302 net new, both under the floor; a hard stop
+would have loaded nothing. The audit found CANON rule 9 saying stop
+while loop step 5 and the code said the approver decides.
+
+**What it does not do.** It does not lower the floor or hide it: the
+answer always says when the count is under 1,000. It does not let the
+service unpause loads on its own. It does not run the ICP check without
+a label set. It does not touch D11's reply bar or the never-top-up list.
+
+**Guard.** `src/guards/d102_floor_pause_icp.test.ts`. Ask Josh.

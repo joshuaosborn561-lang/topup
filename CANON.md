@@ -1,6 +1,6 @@
 # Canon — how a campaign gets topped up
 
-Canon as of **D101** (2026-10-13). One page. `DECISIONS.md` is the append-only
+Canon as of **D102** (2026-10-13). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -56,8 +56,9 @@ ask Josh to connect it, then continue.
 7. **Only campaignintelligence.** Secrets live in Railway (D3, D6).
 8. **Never top up** SG Nurture (3122546); **ignore any cold-call campaign**
    (Cold Call, Gabe Calls, Cayden Calls, Post-call) (D46, D54).
-9. **Under 1,000 new leads after dedupe**, say *the TAM for this campaign is
-   exhausted* and stop (D46). A campaign under **one positive reply per
+9. **Under 1,000 new leads after dedupe** the quote says the floor is not
+   met (D46): tell the approver the count, the cost and that it is under
+   the floor; they decide (D102). A campaign under **one positive reply per
    2,000 sends** is not topped up (D11).
 10. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
     in here, write a guard (D46).
@@ -86,9 +87,10 @@ ask Josh to connect it, then continue.
 6. When the approver says yes: `topup(job_id, approved_by="their name")`.
    Poll `job(job_id)` to `done`. A restart does not lose a job: the
    service picks it back up on boot, and `topup(job_id)` with no name
-   shows where it stands. Loads paused → it stops at `staged`;
-   `load(job_id)` once `loads_paused` is off. Then stop. Josh flips
-   ACTIVE.
+   shows where it stands. Loads start paused (D102): the approved job
+   stops at `staged` until an approver calls
+   `loads_paused(paused=false, by="their name")`, then `load(job_id)`.
+   Then stop. Josh flips ACTIVE.
 
 ## The tools
 
@@ -104,5 +106,7 @@ The living per-client playbook is the view `topup.client_playbook` (D100).
 Process changes: `topup.process_changes`. Jobs: `topup.runs`, `run_steps`,
 `cards`, `spend_ledger`, `lane_events`. The pool lands in
 `lp.<tag>_ingested_leads` and moves to `public.leads_staging`, then Smartlead
-through LeadPipe. The service writes its own top-up into
-`topup.list_build_records` when it loads.
+through the Smartlead server's `start_lead_import`. The website ICP check
+reads one label set per client in `topup.icp_variants`; a client without
+one cannot be approved until Josh writes it (D102). The service writes its
+own top-up into `topup.list_build_records` when it loads.

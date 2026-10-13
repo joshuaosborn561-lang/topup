@@ -16,7 +16,8 @@ For humans and coding agents alike.
 5. **Grokbot does the building; the service is the referee and the loader
    (D39, D53, D99).** Read `CANON.md` and `skills/grok-bot-babysitter`.
    Grokbot reads `build_record`, replays the campaign's recorded build
-   with its own connectors through LeadPipe, hands the pool to `topup`,
+   with its own connectors, hands the pool to `topup` (which runs it
+   through LeadPipe),
    shows Josh or Cayden the count and the cost, and runs
    `topup(job_id, approved_by)` after a yes. Lead rows move MCP → Supabase
    → LeadPipe → Smartlead. They do not enter Grokbot's context: no

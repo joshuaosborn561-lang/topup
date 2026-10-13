@@ -17,6 +17,10 @@ const numberWithDefault = (d: number) =>
     .transform((s) => (s === undefined || s === "" ? d : Number(s)))
     .pipe(z.number().finite());
 
+/** Addresses `connectors` names so Grokbot can attach them; an empty Railway variable means the default, not nothing. */
+const MAPS_MCP_DEFAULT = "https://google-maps-mcp-production-88a3.up.railway.app/mcp";
+const PERMITSTACK_MCP_DEFAULT = "https://permitstack-mcp-production.up.railway.app/mcp";
+
 const schema = z.object({
   PORT: numberWithDefault(3000),
   NODE_ENV: z.string().default("development"),
@@ -45,8 +49,8 @@ const schema = z.object({
    * Addresses of the other custom MCPs, only so `connectors` can tell Grokbot
    * where to attach them. This service calls none of them (D99).
    */
-  MAPS_MCP_URL: z.string().default("https://google-maps-mcp-production-88a3.up.railway.app/mcp"),
-  PERMITSTACK_MCP_URL: z.string().default("https://permitstack-mcp-production.up.railway.app/mcp"),
+  MAPS_MCP_URL: z.string().default(MAPS_MCP_DEFAULT).transform((s) => s || MAPS_MCP_DEFAULT),
+  PERMITSTACK_MCP_URL: z.string().default(PERMITSTACK_MCP_DEFAULT).transform((s) => s || PERMITSTACK_MCP_DEFAULT),
   DOMAIN_WATERFALL_MCP_URL: z.string().default(""),
   PEOPLE_WATERFALL_MCP_URL: z.string().default(""),
   EMAIL_WATERFALL_MCP_URL: z.string().default(""),

@@ -8,16 +8,27 @@ import { REQUIRED_TOPUP_TABLES, buildHealth, deployIdentity } from "./health.js"
 describe("health — D34 required tables", () => {
   it("names the tables a run needs before the first unattended pull", () => {
     for (const t of [
+      "topup.runs",
+      "topup.run_steps",
+      "topup.cards",
+      "topup.spend_ledger",
+      "topup.lane_events",
+      "topup.lane_state",
+      "topup.lane_recipes",
+      "topup.verify_batches",
+      "topup.stall_events",
+      "topup.client_map",
+      "topup.campaign_registry",
+      "topup.list_build_records",
+      "topup.process_changes",
+      "topup.service_flags",
+      "topup.icp_variants",
       "topup.qa_rules",
       "topup.ref_cities",
       "topup.ref_acronyms",
-      "topup.campaign_registry",
       "topup.client_domain_blocklist",
       "topup.client_domain_list_state",
       "topup.mx_class",
-      "topup.lane_state",
-      "topup.runs",
-      "topup.spend_ledger",
       "topup.pull_receipts",
     ]) {
       assert.ok(REQUIRED_TOPUP_TABLES.includes(t as (typeof REQUIRED_TOPUP_TABLES)[number]), t);

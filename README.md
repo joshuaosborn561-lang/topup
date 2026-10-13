@@ -11,9 +11,9 @@ first. `DECISIONS.md` is the ledger of why.
 When a campaign runs low, Grokbot reads the client's living playbook
 (`playbook`) and how that campaign's list was built (`build_record`: the
 saved transcript's tool calls in order, what the person asked, and the
-process changes since), replays it with its own connectors through
-LeadPipe, and hands the pool to this service as a signed file URL or a
-table on campaignintelligence. The service:
+process changes since), replays it with its own connectors, and hands
+the pool to this service as a signed file URL or a table on
+campaignintelligence; the service runs it through LeadPipe. The service:
 
 1. ingests the pool into `lp.<tag>_ingested_leads` (`ingest`),
 2. removes everyone the client already has anywhere (`dedupe`, D98),
