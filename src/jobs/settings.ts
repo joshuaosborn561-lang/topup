@@ -25,6 +25,9 @@ export const jobSettingsSchema = z
     lane: ident,
     smartlead_client_id: z.number().int().positive(),
     campaign_id: z.number().int().positive(),
+    campaign_ids: z.array(z.number().int().positive()).default([]),
+    scope: z.enum(["lane", "campaign"]).default("campaign"),
+    pointed_from_campaign_id: z.number().int().positive().nullable().default(null),
     source: poolSource,
     suppression: z.object({ public_suppression: z.boolean().default(true), bounced_any_client: z.boolean().default(true) }).default({}),
     verify: z.object({ reject_rate_norm: z.number().min(0).max(1).nullable().default(null), drop_gateway_catchalls: z.boolean().default(false) }).default({}),
@@ -60,8 +63,17 @@ export function parseJobSettings(input: unknown): JobSettings {
 export interface JobSpec {
   client_tag: string;
   smartlead_client_id: number;
-  campaign_id: number;
+  campaign_id?: number;
+  lane?: string;
   source: PoolSource;
+}
+
+export interface LaneJobSplit {
+  lane: string;
+  campaign_ids: number[];
+  routing: JobSettings["routing"];
+  segments: JobSettings["segments"];
+  pointed_from_campaign_id: number | null;
 }
 
 /** The lane a job files under: its own name, so no lane lookup ever hands a job's settings to anything else. */
@@ -69,8 +81,25 @@ export function jobLane(spec: Pick<JobSpec, "campaign_id">, stamp: number): stri
   return `job_${spec.campaign_id}_${stamp}`;
 }
 
-/** Every row routes to the one campaign; no segments, no reroutes, no merge-field holds unless a later decision adds them. */
-export function jobSettings(spec: JobSpec, stamp = Date.now()): JobSettings {
+/** Every row routes to the one campaign unless a lane split was recorded (D105). */
+export function jobSettings(spec: JobSpec, stamp = Date.now(), split?: LaneJobSplit | null): JobSettings {
+  if (split && split.campaign_ids.length > 0) {
+    const campaign_id = spec.campaign_id && split.campaign_ids.includes(spec.campaign_id) ? spec.campaign_id : split.campaign_ids[0]!;
+    return parseJobSettings({
+      id: `${spec.client_tag}.${split.lane}.${stamp}`,
+      client_tag: spec.client_tag,
+      lane: split.lane,
+      smartlead_client_id: spec.smartlead_client_id,
+      campaign_id,
+      campaign_ids: split.campaign_ids,
+      scope: "lane",
+      pointed_from_campaign_id: split.pointed_from_campaign_id,
+      source: spec.source,
+      routing: split.routing,
+      segments: split.segments,
+    });
+  }
+  if (spec.campaign_id == null) throw new Error("topup needs a campaign_id or a lane.");
   const lane = jobLane(spec, stamp);
   return parseJobSettings({
     id: `${spec.client_tag}.${lane}.v1`,
@@ -78,6 +107,9 @@ export function jobSettings(spec: JobSpec, stamp = Date.now()): JobSettings {
     lane,
     smartlead_client_id: spec.smartlead_client_id,
     campaign_id: spec.campaign_id,
+    campaign_ids: [spec.campaign_id],
+    scope: "campaign",
+    pointed_from_campaign_id: null,
     source: spec.source,
     routing: [{ when: {}, campaign_id: spec.campaign_id }],
   });

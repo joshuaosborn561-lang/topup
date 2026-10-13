@@ -48,7 +48,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "campaigns",
     {
       description:
-        "Every ACTIVE campaign with lifetime sends, positive replies, the rate per 2,000, leads left (untouched), and passes_reply_bar. A campaign is low when untouched is under about two weeks of sends. client_tag narrows to one client; include_inactive lists the rest. Counts and ids only.",
+        "Every refillable campaign (ACTIVE and PAUSED) with lifetime sends, positive replies, the rate per 2,000, leads left (untouched), and passes_reply_bar, rolled up by client and lane. lanes[] is the lane runway (sum of untouched across refillable campaigns; STOPPED is excluded). Each campaign row also carries lane_untouched. A campaign is low when untouched is under about two weeks of sends; size the lane, not the segment. client_tag narrows to one client; include_inactive lists STOPPED and the rest (they still do not count toward runway). Counts and ids only.",
       inputSchema: { client_tag: snake.optional(), include_inactive: z.boolean().optional() },
     },
     async ({ client_tag, include_inactive }) => text(await listCampaigns(d.repo.raw(), d.repo, client_tag ?? null, { include_inactive })),
@@ -84,32 +84,33 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "topup",
     {
       description:
-        "Top up one campaign with the pool you built by replaying its record. First call: client_tag, campaign_id and the pool (source.kind=file_url with the vendor's signed export URL(s), which the service ingests through LeadPipe itself, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). The service ingests it through LeadPipe, removes everyone the client already has anywhere, removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost. Nothing paid runs. Show that count and cost to Josh or Cayden. When they say yes: topup(job_id, approved_by=\"their name\") runs the ICP website check, verification, normalization, QA, staging and the load into the campaign, then writes the record. Loads paused: it stops at staged; load(job_id) later. Refuses a campaign with no recorded build, a cold-call campaign, and a second open job on the campaign. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
+        "Top up one lane (the usual call) or one campaign (which points at its lane). First call: client_tag plus lane or campaign_id, and the pool (source.kind=file_url with the vendor's signed export URL(s), which the service ingests through LeadPipe itself, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). Replay the lane's search once. The service ingests it through LeadPipe, removes everyone the client already has anywhere (D98), removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost for the whole lane. Nothing paid runs. Show that count and cost to Josh or Cayden. When they say yes: topup(job_id, approved_by=\"their name\") runs the ICP website check, verification, normalization, QA, then splits into the lane's refillable campaigns the way the playbook / list_build_records already segmented them (STOPPED is never refilled; PAUSED may be), then loads. If the split cannot be determined, the job refuses instead of guessing. Loads paused: it stops at staged; load(job_id) later. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
       inputSchema: {
         client_tag: snake.optional(),
         campaign_id: z.number().int().optional(),
+        lane: snake.optional().describe("The registry lane to quote as one pull. Prefer this. A campaign_id without a lane is resolved to its lane."),
         source: poolSource.optional(),
         job_id: z.string().optional().describe("An open job: with approved_by, run the approved tail; without, show its quote or pick the job back up where a restart cut it off."),
         approved_by: z.string().optional().describe(`The approver, by first name, after they said yes to the quoted count and cost. ${d.jobs.rule}`),
       },
     },
-    async ({ client_tag, campaign_id, source, job_id, approved_by }) => {
+    async ({ client_tag, campaign_id, lane, source, job_id, approved_by }) => {
       if (job_id) {
         if (approved_by) return text(await d.jobs.begin(job_id, "approve", { by: d.by, approved_by }));
         const standing = await d.jobs.standing(job_id, d.by);
         if (!standing) return text({ error: `job ${job_id} is not open, or has nothing to resume. Read job(job_id).` });
         return text(standing);
       }
-      if (!client_tag || campaign_id == null || !source) return text({ error: "topup needs client_tag, campaign_id and source (the pool), or job_id with approved_by." });
+      if (!client_tag || !source || (campaign_id == null && !lane)) return text({ error: "topup needs client_tag, a lane or campaign_id, and source (the pool), or job_id with approved_by." });
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
       if (!client) return text({ error: `${client_tag} is not in topup.client_map. Adding a client is a row in that table. Ask Josh.` });
-      const name = await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null);
+      const name = campaign_id != null ? await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null) : null;
       const pool = await preflightPool(d.repo.raw(), client_tag, source);
       if (!pool.ok) return text({ error: `The pool cannot land, so no job was opened: ${pool.message}` });
-      const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_id, source };
+      const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_id, lane, source };
       const opened = await d.jobs.open(spec, d.by, name);
       if (!opened.ok) return text({ error: opened.message });
-      return text({ ...(await d.jobs.begin(opened.job_id, "quote", { by: d.by })), pool: pool.note });
+      return text({ ...(await d.jobs.begin(opened.job_id, "quote", { by: d.by })), pool: pool.note, scope: opened.scope, lane: opened.lane, campaign_ids: opened.campaign_ids, pointed_from_campaign_id: opened.pointed_from_campaign_id });
     },
   );
 

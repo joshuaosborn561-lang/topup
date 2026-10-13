@@ -1,15 +1,17 @@
 import { campaignPerformance } from "../builds/load.js";
 import type { Queryable } from "../db/pool.js";
-import { assessCampaign, campaignIdsForClient, campaignSnapshots } from "../ledger/health.js";
+import { assessCampaign, campaignIdsForClient, campaignSnapshots, WINDOW_DAYS } from "../ledger/health.js";
 import { loadClientMap } from "./clients.js";
-import { isColdCall, isNeverTopUp, ratePer2000, REPLY_BAR_PER_2000 } from "../policy/rules.js";
+import { isColdCall, isNeverTopUp, isStoppedStatus, ratePer2000, REPLY_BAR_PER_2000 } from "../policy/rules.js";
 import { isUnassignedLane } from "./lanes.js";
 import { registryRows } from "./registry.js";
 
 /**
- * Every campaign, with the numbers Grok picks on (D52): lifetime sends and
- * positive replies, the rate per 2,000, what is left to send, and whether the
- * reply bar is met. No other judgement. Counts and ids only.
+ * Every campaign, with the numbers Grok picks on (D52, D105): lifetime sends
+ * and positive replies, the rate per 2,000, what is left to send, and whether
+ * the reply bar is met. Low campaigns roll up by client and lane; the lane
+ * runway is the sum across its refillable campaigns (STOPPED is out). Counts
+ * and ids only.
  */
 export interface CampaignLine {
   client_tag: string;
@@ -25,19 +27,37 @@ export interface CampaignLine {
   leads_total: number;
   untouched: number;
   sends_last_14d: number;
+  sends_window: number;
   runway_days: number | null;
   last_send_at: string | null;
   never_top_up: boolean;
+  /** False when Smartlead status is STOPPED (D105). */
+  refillable: boolean;
+  /** Lane runway in untouched leads, STOPPED excluded. Null when the campaign has no lane. */
+  lane_untouched: number | null;
+}
+
+export interface LaneLine {
+  client_tag: string;
+  lane: string;
+  campaign_ids: number[];
+  stopped_excluded: number;
+  campaigns: number;
+  untouched: number;
+  sends_last_14d: number;
+  runway_days: number | null;
+  passing_reply_bar: number;
 }
 
 export interface CampaignsRead {
   rule: string;
   clients: string[];
-  counts: { campaigns: number; passing_reply_bar: number; passing_and_under_1000_untouched: number; never_top_up: number; ignored_cold_call: number };
+  counts: { campaigns: number; passing_reply_bar: number; passing_and_under_1000_untouched: number; never_top_up: number; ignored_cold_call: number; lanes: number };
   campaigns: CampaignLine[];
+  lanes: LaneLine[];
 }
 
-export const REPLY_BAR_RULE = `A campaign qualifies for a top-up with at least ${REPLY_BAR_PER_2000} positive reply per 2,000 sends, lifetime. Zero positives never qualifies. Under 1,000 leads available on its query, the TAM for this campaign is exhausted.`;
+export const REPLY_BAR_RULE = `A campaign qualifies for a top-up with at least ${REPLY_BAR_PER_2000} positive reply per 2,000 sends, lifetime. Zero positives never qualifies. Top-ups size the lane, not one segment: the lane runway is the sum across its refillable campaigns (STOPPED never counts). Under 1,000 new leads after the lane dedupe, the quote says the floor is not met.`;
 
 export async function listCampaigns(
   db: Queryable,
@@ -70,6 +90,7 @@ export async function listCampaigns(
       const p = perf.get(snap.smartlead_campaign_id) ?? { sends: 0, positives: 0 };
       const rate = Math.round(ratePer2000(p.sends, p.positives) * 100) / 100;
       const lane = lanes.get(snap.smartlead_campaign_id) ?? null;
+      const refillable = !isStoppedStatus(snap.status);
       out.push({
         client_tag: client.client_tag,
         smartlead_client_id: client.smartlead_client_id,
@@ -84,11 +105,20 @@ export async function listCampaigns(
         leads_total: snap.leads_total,
         untouched: snap.untouched,
         sends_last_14d: snap.sends_last_14d,
+        sends_window: snap.sends_window,
         runway_days: h.runway_days,
         last_send_at: snap.last_send_at,
         never_top_up: isNeverTopUp(snap.smartlead_campaign_id, snap.name) || isUnassignedLane(lane),
+        refillable,
+        lane_untouched: null,
       });
     }
+  }
+  const lanesOut = rollupLanes(out);
+  const laneUntouched = new Map(lanesOut.map((l) => [`${l.client_tag}\0${l.lane}`, l.untouched]));
+  for (const row of out) {
+    if (!row.lane || isUnassignedLane(row.lane)) continue;
+    row.lane_untouched = laneUntouched.get(`${row.client_tag}\0${row.lane}`) ?? 0;
   }
   out.sort((a, b) => Number(b.passes_reply_bar) - Number(a.passes_reply_bar) || a.untouched - b.untouched || a.campaign_id - b.campaign_id);
   return {
@@ -96,11 +126,46 @@ export async function listCampaigns(
     clients: clients.map((c) => c.client_tag),
     counts: {
       campaigns: out.length,
-      passing_reply_bar: out.filter((c) => c.passes_reply_bar && !c.never_top_up).length,
-      passing_and_under_1000_untouched: out.filter((c) => c.passes_reply_bar && !c.never_top_up && c.untouched < 1000).length,
+      passing_reply_bar: out.filter((c) => c.passes_reply_bar && !c.never_top_up && c.refillable).length,
+      passing_and_under_1000_untouched: out.filter((c) => c.passes_reply_bar && !c.never_top_up && c.refillable && c.untouched < 1000).length,
       never_top_up: out.filter((c) => c.never_top_up).length,
       ignored_cold_call: ignoredColdCall,
+      lanes: lanesOut.length,
     },
     campaigns: out,
+    lanes: lanesOut,
   };
+}
+
+/** Sum runway across a lane's refillable campaigns. STOPPED is left out of the sum (D105). */
+export function rollupLanes(rows: readonly CampaignLine[]): LaneLine[] {
+  const groups = new Map<string, CampaignLine[]>();
+  for (const row of rows) {
+    if (!row.lane || isUnassignedLane(row.lane)) continue;
+    const key = `${row.client_tag}\0${row.lane}`;
+    const list = groups.get(key) ?? [];
+    list.push(row);
+    groups.set(key, list);
+  }
+  const out: LaneLine[] = [];
+  for (const group of groups.values()) {
+    const refillable = group.filter((c) => c.refillable && !c.never_top_up);
+    const stopped = group.filter((c) => !c.refillable).length;
+    const untouched = refillable.reduce((a, c) => a + c.untouched, 0);
+    const sendsWindow = refillable.reduce((a, c) => a + c.sends_window, 0);
+    const perDay = sendsWindow / WINDOW_DAYS;
+    out.push({
+      client_tag: group[0]!.client_tag,
+      lane: group[0]!.lane!,
+      campaign_ids: refillable.map((c) => c.campaign_id).sort((a, b) => a - b),
+      stopped_excluded: stopped,
+      campaigns: refillable.length,
+      untouched,
+      sends_last_14d: refillable.reduce((a, c) => a + c.sends_last_14d, 0),
+      runway_days: perDay > 0 ? Math.round((untouched / perDay) * 10) / 10 : null,
+      passing_reply_bar: refillable.filter((c) => c.passes_reply_bar).length,
+    });
+  }
+  out.sort((a, b) => a.client_tag.localeCompare(b.client_tag) || a.untouched - b.untouched || a.lane.localeCompare(b.lane));
+  return out;
 }

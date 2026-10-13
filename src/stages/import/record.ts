@@ -28,7 +28,7 @@ export async function writeTopupRecord(
     `insert into topup.list_build_records (client_tag, campaign_ids, lanes, narrative, transcript_path, transcript_format, spend_cents, yield_by_step, session_date, written_by, provenance_confidence)
      values ($1, $2::bigint[], $3::text[], $4, null, null, $5, $6::jsonb, current_date, 'leadtopup', 'service_topup')
      returning id`,
-    [run.client_tag, [settings.campaign_id], [run.lane], narrative, spend, JSON.stringify({ ...c, imported: counts.imported ?? 0 })],
+    [run.client_tag, settings.campaign_ids.length ? settings.campaign_ids : [settings.campaign_id], [run.lane], narrative, spend, JSON.stringify({ ...c, imported: counts.imported ?? 0 })],
   );
   return rows[0]?.id ?? null;
 }

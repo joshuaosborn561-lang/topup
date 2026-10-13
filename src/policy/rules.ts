@@ -20,8 +20,10 @@ export const OPERATOR_SPEND_CAP_USD = 0;
 export const NEVER_TOPUP_CAMPAIGN_IDS: readonly number[] = [4085158, 3122546];
 export const NEVER_TOPUP_NAME_PATTERNS: readonly RegExp[] = [/cayden calls/i, /gabe calls/i, /sg nurture/i];
 
-/** Smartlead statuses. Only ACTIVE is a target. */
+/** Smartlead statuses. ACTIVE and PAUSED may be refilled; STOPPED never is (D105). */
 export const ACTIVE_CAMPAIGN_STATUS = "ACTIVE";
+export const PAUSED_CAMPAIGN_STATUS = "PAUSED";
+export const STOPPED_CAMPAIGN_STATUS = "STOPPED";
 export const NON_TARGET_CAMPAIGN_STATUSES: readonly string[] = ["COMPLETED", "DRAFTED", "DRAFT", "PAUSED", "ARCHIVED"];
 
 /** Campaigns marked as cold call are not email campaigns; the service ignores them everywhere (D54). The mark is in the name. */
@@ -55,6 +57,16 @@ export function isActiveStatus(status: string | null | undefined): boolean {
   const name = status.trim().toUpperCase();
   if (!name) return true;
   return name === ACTIVE_CAMPAIGN_STATUS;
+}
+
+/** A campaign Smartlead has stopped. Never refilled, never counted in lane runway (D105). */
+export function isStoppedStatus(status: string | null | undefined): boolean {
+  return (status ?? "").trim().toUpperCase() === STOPPED_CAMPAIGN_STATUS;
+}
+
+/** ACTIVE, PAUSED, or a blank status. STOPPED is never refillable (D105). */
+export function isRefillableStatus(status: string | null | undefined): boolean {
+  return !isStoppedStatus(status);
 }
 
 export function ratePer2000(sends: number, positives: number): number {

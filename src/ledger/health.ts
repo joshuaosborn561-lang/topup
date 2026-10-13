@@ -133,12 +133,34 @@ export async function campaignNameBySmartleadId(db: Queryable, campaignId: numbe
   return rows[0]?.name ?? null;
 }
 
-/** Campaign ids for a Smartlead client, from the mirror. Used when a lane names no campaigns yet. */
-export async function campaignIdsForClient(db: Queryable, smartleadClientId: number, onlyActive = true): Promise<number[]> {
+/**
+ * Campaign ids for a Smartlead client, from the mirror.
+ * Default (`refillableOnly`): ACTIVE and PAUSED — STOPPED is never a target (D105).
+ * `refillableOnly=false` lists the rest too (STOPPED still does not count toward runway).
+ */
+export async function campaignIdsForClient(db: Queryable, smartleadClientId: number, refillableOnly = true): Promise<number[]> {
   const { rows } = await db.query<{ id: string }>(
     `select smartlead_campaign_id::text as id from public.campaigns
-     where smartlead_client_id = $1 and ($2::boolean is false or status = 'ACTIVE') order by 1`,
-    [smartleadClientId, onlyActive],
+     where smartlead_client_id = $1
+       and ($2::boolean is false or status is null or upper(status) in ('ACTIVE', 'PAUSED'))
+     order by 1`,
+    [smartleadClientId, refillableOnly],
   );
   return rows.map((r) => Number(r.id));
+}
+
+/** Live Smartlead statuses (and names) from the mirror. Counts and ids only. */
+export async function campaignStatuses(db: Queryable, campaignIds: readonly number[]): Promise<{ status: Map<number, string | null>; names: Map<number, string | null> }> {
+  const status = new Map<number, string | null>();
+  const names = new Map<number, string | null>();
+  if (campaignIds.length === 0) return { status, names };
+  const { rows } = await db.query<{ id: string; status: string | null; name: string | null }>(
+    `select smartlead_campaign_id::text as id, status, name from public.campaigns where smartlead_campaign_id = any($1::bigint[])`,
+    [campaignIds],
+  );
+  for (const r of rows) {
+    status.set(Number(r.id), r.status);
+    names.set(Number(r.id), r.name);
+  }
+  return { status, names };
 }

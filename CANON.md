@@ -1,17 +1,18 @@
 # Canon — how a campaign gets topped up
 
-Canon as of **D104** (2026-10-13). One page. `DECISIONS.md` is the append-only
+Canon as of **D105** (2026-10-13). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
 ## What this is
 
-A campaign runs low. Grokbot reads how that campaign's list was built,
-builds more of the same people the same way with its own connectors, and
-hands the pool to this service. The service removes everyone the client
-already has and every real unsubscribe, shows the approver the new-lead
-count and the cost, waits for a yes, runs the website ICP check and
-verification, and loads the campaign. Josh flips ACTIVE by hand.
+A lane runs low. Grokbot reads how that lane's list was built, builds more
+of the same people the same way with its own connectors, and hands the
+pool to this service. The service removes everyone the client already has
+and every real unsubscribe, shows the approver the new-lead count and the
+cost, waits for a yes, runs the website ICP check and verification, splits
+into the lane's refillable campaigns the way the recorded build already
+did, and loads. Josh flips ACTIVE by hand. STOPPED is never refilled.
 
 Grokbot does the building. The service is the referee and the loader. It
 never decides what to pull, never starts on its own, never spends without
@@ -66,12 +67,22 @@ ask Josh to connect it, then continue.
    2,000 sends** is not topped up (D11).
 10. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
     in here, write a guard (D46).
+11. **Top-ups size the lane, not one segment campaign.** `campaigns` rolls
+    low campaigns up by the existing lane field and shows the lane runway
+    (sum across refillable campaigns). `topup` accepts a lane, or a
+    campaign_id that points at its lane, and quotes one pull against
+    everything held (D98). After a named yes it splits into that lane's
+    refillable campaigns the way the playbook / list_build_records already
+    segmented them. **STOPPED is never refilled** and never counted in
+    runway; PAUSED may be. If the split cannot be determined, stop and
+    report; do not guess (D105).
 
 ## The loop
 
 1. `connectors(have)`, then `canon`. Fix what is missing.
-2. `campaigns()`: find the low one (untouched under about two weeks of
-   sends, passing the reply bar, not cold call, not never-top-up).
+2. `campaigns()`: find the low lane (untouched under about two weeks of
+   sends, passing the reply bar, not cold call, not never-top-up). The
+   answer rolls campaigns up by lane and shows the lane runway.
 3. `playbook(client_tag)`: every list build, disqualification and method
    change for this client, in order, with `list-build-transcripts` object
    names. Then `build_record(client_tag, campaign_id)`: the narrative, the
@@ -85,19 +96,21 @@ ask Josh to connect it, then continue.
    along and the service finds their emails after the yes (D103). You end
    with a pool as a signed file URL or a `schema.table`. No row enters
    this chat.
-5. `topup(client_tag, campaign_id, source)`. Poll `job(job_id)`. The quote
-   says how many new leads are left after everyone the client already holds
-   and the unsubscribes (with an email, and with none yet), and the most it
-   can cost (website ICP check, email finder, verification). Tell the approver those two numbers (the answer names
-   them). Under 1,000 net new the answer says so: that is the exhausted
-   line (D46); the approver decides.
+5. `topup(client_tag, lane, source)` (or `campaign_id`, which points at
+   its lane). Poll `job(job_id)`. The quote is for the whole lane: how
+   many new leads are left after everyone the client already holds and
+   the unsubscribes (with an email, and with none yet), and the most it
+   can cost (website ICP check, email finder, verification). Tell the
+   approver those two numbers (the answer names them). Under 1,000 net
+   new the answer says so: that is the exhausted line (D46); they decide.
 6. When the approver says yes: `topup(job_id, approved_by="their name")`.
    Poll `job(job_id)` to `done`. A restart does not lose a job: the
    service picks it back up on boot, and `topup(job_id)` with no name
    shows where it stands. Loads start paused (D102): the approved job
    stops at `staged` until an approver calls
    `loads_paused(paused=false, by="their name")`, then `load(job_id)`.
-   Then stop. Josh flips ACTIVE.
+   After the yes the service splits into the lane's refillable campaigns
+   the recorded build already named. Then stop. Josh flips ACTIVE.
 
 ## The tools
 
