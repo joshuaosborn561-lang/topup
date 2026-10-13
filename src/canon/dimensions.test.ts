@@ -16,6 +16,7 @@ describe("D106 — derived dimensions", () => {
     assert.equal(parseDimension({ name: "x", kind: "magic", column: "title" }), null);
     assert.deepEqual(parseDimensions({ dimensions: [{ name: "x", kind: "present", column: "title", present: "a", absent: "b" }, { name: "x", kind: "present", column: "title", present: "a", absent: "b" }] }), [], "a duplicate name is not usable");
     assert.equal(parseDimensions({ routing: [] }), null, "absent is absent");
+    assert.equal(parseDimensions({ dimensions: [] }), null, "an empty list is absent, not malformed");
   });
 
   it("computes each kind the way the recorded builds did", () => {

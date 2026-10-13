@@ -119,7 +119,7 @@ export function parseDimensions(value: unknown): Dimension[] | null {
   if (value == null) return null;
   const obj = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
   const raw = obj && "dimensions" in obj ? obj.dimensions : Array.isArray(value) ? value : null;
-  if (!Array.isArray(raw)) return null;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
   const out: Dimension[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
