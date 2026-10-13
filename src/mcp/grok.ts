@@ -37,7 +37,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     {
       description:
         "Run this once at the start of every session, before anything else. Pass the names of the connectors or tools you have attached (your own tool list). The answer says which required connectors are missing and how to attach each in Grokbot (custom MCPs carry their Railway HTTPS address), and which optional ones a transcript may call for. A missing required connector stops the top-up: tell Josh what to connect and wait. Also restates the hard rule: every row moves through LeadPipe, never through chat.",
-      inputSchema: { have: z.array(z.string()).describe("Connector or tool names as you see them, e.g. [\"Supabase\", \"Context_Saver\", \"getleads\", \"Smartlead\", \"Email_Verifier_Progression\", \"Top_Up\"].") },
+      inputSchema: { have: z.array(z.string()).describe("Connector or tool names as you see them, e.g. [\"Top_Up\", \"Supabase\", \"getleads\"].") },
     },
     async ({ have }) => text(connectorsCheck(have, d.connectorUrls)),
   );
@@ -72,7 +72,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "topup",
     {
       description:
-        "Top up one campaign with the pool you built by replaying its record. First call: client_tag, campaign_id and the pool (source.kind=file_url with the signed CSV URL(s) LeadPipe or the vendor gave you, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). The service ingests it through LeadPipe, removes everyone the client already has anywhere, removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost. Nothing paid runs. Show that count and cost to Josh or Cayden. When one of them says yes: topup(job_id, approved_by=\"Josh\" or \"Cayden\") runs the ICP website check, verification, normalization, QA, staging and the load into the campaign, then writes the record. Loads paused: it stops at staged; load(job_id) later. Refuses a campaign with no recorded build, a cold-call campaign, and a second open job on the campaign. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
+        "Top up one campaign with the pool you built by replaying its record. First call: client_tag, campaign_id and the pool (source.kind=file_url with the vendor's signed export URL(s), which the service ingests through LeadPipe itself, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). The service ingests it through LeadPipe, removes everyone the client already has anywhere, removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost. Nothing paid runs. Show that count and cost to Josh or Cayden. When one of them says yes: topup(job_id, approved_by=\"Josh\" or \"Cayden\") runs the ICP website check, verification, normalization, QA, staging and the load into the campaign, then writes the record. Loads paused: it stops at staged; load(job_id) later. Refuses a campaign with no recorded build, a cold-call campaign, and a second open job on the campaign. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
       inputSchema: {
         client_tag: snake.optional(),
         campaign_id: z.number().int().optional(),

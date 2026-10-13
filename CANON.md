@@ -20,11 +20,11 @@ a person's name, and never touches a campaign's status.
 ## Connect first
 
 At the start of every session call `connectors(have=[your tool list])`.
-Required, four: **Top_Up** (`https://leadtopup-production.up.railway.app/mcp`,
+Required, three: **Top_Up** (`https://leadtopup-production.up.railway.app/mcp`,
 no login), **Supabase** (campaignintelligence `azpapwtnrbzywlnxxecz`),
-**Context_Saver** (LeadPipe), **getleads**. Verification and the Smartlead
-import are the service's own calls, with its own keys; you attach nothing
-for them. Needed only when a transcript uses them: Email Finder Waterfall, AI Ark,
+**getleads**. LeadPipe, verification and the Smartlead import are the
+service's own calls, with its own keys; you attach nothing for them and
+never call LeadPipe yourself. Needed only when a transcript uses them: Email Finder Waterfall, AI Ark,
 Google Maps Scraper, Domain Finder Waterfall, Find Named Person, DiscoLike,
 Apify, PermitStack, FullEnrich, Prospeo. A required connector that is
 missing stops the top-up: tell Josh which to attach in Grokbot and wait.
@@ -33,9 +33,11 @@ ask Josh to connect it, then continue.
 
 ## The hard rules
 
-1. **Every lead row moves through LeadPipe or this service.** Never SELECT
-   emails, names or phones; never read an export, a dataset or a CSV into
-   chat; never paste a row. Count, never read (D2, D39, D99).
+1. **Every lead row moves through this service and LeadPipe.** You hand
+   `topup` the vendor's signed export URL or a table name; the service runs
+   LeadPipe. Never SELECT emails, names or phones; never read an export, a
+   dataset or a CSV into chat; never paste a row. Count, never read (D2,
+   D39, D99).
 2. **Josh or Cayden approves every spend, by name, before it runs.** The
    auto cap is $0. `topup` quotes first; `topup(job_id, approved_by)` runs.
    Nobody else's name counts (D51, D92).
@@ -65,8 +67,9 @@ ask Josh to connect it, then continue.
 3. `build_record(client_tag, campaign_id)`: the narrative, the method as
    the ordered tool calls with their arguments, what the person asked, and
    `process_changes_since_build`. `no_recorded_build` → stop and wait.
-4. Replay it with your own connectors. Pull through the vendor's server-side
-   export and LeadPipe (`lp_run`, `lp_status`, `lp_export`), or build a
+4. Replay it with your own connectors. Count, then run the vendor's
+   server-side export (getleads `export_contacts` then
+   `check_contact_export` until it hands back a signed URL), or build a
    scratch table in SQL on campaignintelligence. You end with a pool as a
    signed file URL or a `schema.table`. No row enters this chat.
 5. `topup(client_tag, campaign_id, source)`. Poll `job(job_id)`. The quote
