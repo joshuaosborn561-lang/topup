@@ -30,8 +30,8 @@ export function sourceLabel(run: RunRow, campaignId?: number): string {
   return campaignId ? `${base}_c${campaignId}` : base;
 }
 
-/** Vendor CSV headers that carry a phone, mapped onto the lane table's phone column (D56). getleads exports mobile_phone. */
-export const PHONE_HEADER_MAP: Readonly<Record<string, string>> = { mobile_phone: "phone", cellphone: "phone", phone: "phone", phone_number: "phone", mobile: "phone", direct_phone: "phone", wf_phone: "phone" };
+/** LeadPipe's canonical ingest columns. It refuses a header mapping onto anything else (a phone column included), so the service sends none. */
+export const LEADPIPE_CANONICAL_COLUMNS = ["first_name", "last_name", "email", "title", "company_name", "company_domain", "city", "state", "industry", "employee_range"] as const;
 
 /** Lane column → the names a hand-built table may use for it. First present wins. */
 export const TABLE_COLUMN_SYNONYMS: Readonly<Record<string, readonly string[]>> = {
@@ -55,6 +55,11 @@ export function safeWhere(where: string | null | undefined): string {
   const w = (where ?? "").trim() || "true";
   if (/;|--|\/\*/.test(w)) throw new Error("where must be one SQL expression: no semicolons or comments");
   return w;
+}
+
+/** `schema.table` names this client's own lane table (lp.<tag>_ingested_leads). */
+export function isLaneTable(qualified: string, clientTag: string): boolean {
+  return qualified.replace(/"/g, "").toLowerCase() === ingestedTable(clientTag).replace(/"/g, "").toLowerCase();
 }
 
 export class IngestStage {
@@ -99,7 +104,13 @@ export class IngestStage {
       const counts: Record<string, number> = { rows_exported: expected ?? claimed, rows_read: rowsRead ?? -1, rows_claimed: claimed, dedupe_dropped: deduped, ...landed };
       if (claimed === 0) {
         await this.d.repo.finishStep(run.run_id, "ingest", { useful_output: 0, counts });
-        return gateUnmet("ingest", `nothing landed in ${table} from the pool (${settings.source.kind === "file_url" ? "the file" : `table ${settings.source.table}`}). Check the pool has rows and an email or a name column.`, counts);
+        const why =
+          settings.source.kind === "file_url"
+            ? "the file: check it has rows and an email or a name column"
+            : isLaneTable(settings.source.table, run.client_tag)
+              ? `${settings.source.table} is the lane table itself: the where must pick rows with run_id null (for example source_label = 'your label'); rows another job already claimed do not count`
+              : `table ${settings.source.table}: every email it holds is already in ${table}, or no row matched the where`;
+        return gateUnmet("ingest", `nothing landed in ${table} from ${why}.`, counts);
       }
       const nulls = Object.entries(landed).filter(([k, n]) => k.startsWith("null_") && n > 0).map(([k, n]) => `${k.replace("null_", "")} ${n}`);
       const line =
@@ -116,7 +127,7 @@ export class IngestStage {
     const own = await this.d.repo.getStep(run.run_id, "ingest");
     let jobId = own?.vendor_job_id ?? null;
     if (!jobId) {
-      const started = await this.d.leadpipe.ingestCsv(run.client_tag, { urls, source_label: label, dedupe_key: "email", ...(cols.has("phone") ? { column_map: PHONE_HEADER_MAP } : {}) });
+      const started = await this.d.leadpipe.ingestCsv(run.client_tag, { urls, source_label: label, dedupe_key: "email" });
       jobId = started.job_id;
       await this.d.repo.setStepVendorJob(run.run_id, "ingest", jobId);
       await this.d.console.postInThread(run, `Ingest: LeadPipe ingest_csv started (job \`${jobId}\`, source_label \`${label}\`).`);
@@ -134,10 +145,24 @@ export class IngestStage {
     return status.rows_read;
   }
 
-  /** insert … select from the bot's table into the lane table: only the standard columns both sides have. Rows never leave Postgres. */
+  /**
+   * insert … select from the bot's table into the lane table: only the standard
+   * columns both sides have. Rows never leave Postgres. When the bot points at
+   * the lane table itself (it ingested through LeadPipe under its own label),
+   * the rows its where picks are relabelled for this job instead of copied.
+   */
   private async copyTable(run: RunRow, qualified: string, where: string, label: string, laneCols: Set<string>): Promise<number> {
     const [schema, name] = qualified.split(".");
     if (!schema || !name || !IDENT.test(schema) || !IDENT.test(name)) throw new Error(`table must be schema.table, not ${qualified}`);
+    if (isLaneTable(qualified, run.client_tag)) {
+      const w = safeWhere(where);
+      if (w === "true") throw new Error(`${qualified} is this job's own lane table. Pass a where that picks the rows you ingested (for example source_label = '…'), not the whole table.`);
+      const { rowCount } = await this.d.repo.withRun(run.run_id, (tx) =>
+        tx.query(`update ${ingestedTable(run.client_tag)} set source_label = $1 where (${w}) and run_id is null`, [label]),
+      );
+      await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "supabase", action: "table_copy", rows: rowCount ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: null, approvedBy: null });
+      return rowCount ?? 0;
+    }
     const src = await columnsOf(this.d.repo, `${schema}.${name}`);
     if (src.size === 0) throw new Error(`${qualified} does not exist on campaignintelligence, or the service cannot read it. Ask Josh to grant select.`);
     const pairs: Array<[string, string]> = [];
