@@ -20,11 +20,11 @@ a person's name, and never touches a campaign's status.
 ## Connect first
 
 At the start of every session call `connectors(have=[your tool list])`.
-Required: **Top_Up** (`https://leadtopup-production.up.railway.app/mcp`,
+Required, four: **Top_Up** (`https://leadtopup-production.up.railway.app/mcp`,
 no login), **Supabase** (campaignintelligence `azpapwtnrbzywlnxxecz`),
-**Context_Saver** (LeadPipe), **getleads**, **Smartlead** (custom MCP on
-Railway; the answer carries its HTTPS address), **Email_Verifier_Progression**.
-Needed only when a transcript uses them: Email Finder Waterfall, AI Ark,
+**Context_Saver** (LeadPipe), **getleads**. Verification and the Smartlead
+import are the service's own calls, with its own keys; you attach nothing
+for them. Needed only when a transcript uses them: Email Finder Waterfall, AI Ark,
 Google Maps Scraper, Domain Finder Waterfall, Find Named Person, DiscoLike,
 Apify, PermitStack, FullEnrich, Prospeo. A required connector that is
 missing stops the top-up: tell Josh which to attach in Grokbot and wait.

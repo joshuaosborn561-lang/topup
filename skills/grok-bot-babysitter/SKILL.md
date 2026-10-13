@@ -16,7 +16,8 @@ LeadPipe → Smartlead**. They never enter this context.
 ## Start every session the same way
 
 1. `connectors(have=[your tool list])`. Required: Top_Up, Supabase,
-   Context_Saver (LeadPipe), getleads, Smartlead, Email_Verifier_Progression.
+   Context_Saver (LeadPipe), getleads. Verification and the Smartlead
+   import are the service's own calls; you attach nothing for them.
    Missing one → tell Josh what to attach in Grokbot (the answer carries
    each custom MCP's Railway HTTPS address) and wait. A transcript or a
    process change that names a connector you do not have → same.
