@@ -28,7 +28,10 @@ LeadPipe → Smartlead**. They never enter this context.
 
 1. `campaigns()`: the low campaign (untouched under about two weeks of
    sends, passing one positive per 2,000, not cold call, not SG Nurture).
-2. `build_record(client_tag, campaign_id)`. Read `asked` (what Josh
+2. `playbook(client_tag)`. The living how-we-build for this client: every
+   list build, disqualification and method change in chronological order,
+   plus transcript object names in `list-build-transcripts`. Then
+   `build_record(client_tag, campaign_id)`. Read `asked` (what Josh
    wanted), `method.steps` (every tool call in order with its arguments),
    `process_changes_since_build` (what changed about how lists are built
    since; apply it on top, e.g. a newer TAM check or a new source).

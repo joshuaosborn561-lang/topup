@@ -6,9 +6,9 @@ import { MCP_TOOL_ROLE, RETIRED_MCP_TOOLS } from "../mcp/server.js";
 import { loadConfig } from "../config.js";
 
 /**
- * D99 — the lean top-up. Eleven tools, LeadPipe always, no legacy pull,
- * recipe or count code left to confuse the bot. Ask Josh or Cayden before
- * adding a tool, a client, a recipe or a vendor client here.
+ * D99 — the lean top-up. The canon tools, LeadPipe always, no legacy pull,
+ * recipe or count code left to confuse the bot. D100 adds the playbook read.
+ * Ask Josh or Cayden before adding a tool, a client, a recipe or a vendor client here.
  */
 const root = new URL("../../", import.meta.url);
 
@@ -17,7 +17,7 @@ async function exists(rel: string): Promise<boolean> {
 }
 
 describe("D99 — the lean top-up", () => {
-  it("the MCP surface is exactly the eleven tools", async () => {
+  it("the MCP surface is exactly the canon tools", async () => {
     assert.deepEqual([...Object.keys(MCP_TOOL_ROLE)].sort(), [...CANON_TOOLS].sort());
     const grok = await readFile(new URL("src/mcp/grok.ts", root), "utf8");
     const server = await readFile(new URL("src/mcp/server.ts", root), "utf8");

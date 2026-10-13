@@ -1,18 +1,19 @@
 # leadtopup
 
 The lead top-up service for Lead Top Up on Railway: a Streamable HTTP MCP at
-`https://leadtopup-production.up.railway.app/mcp` (no login) with eleven
+`https://leadtopup-production.up.railway.app/mcp` (no login) with twelve
 tools, on top of a flat pipeline that moves rows **MCP → Supabase → LeadPipe
 → Smartlead**. `CANON.md` is the one page that says what is true; read it
 first. `DECISIONS.md` is the ledger of why.
 
 ## What it does
 
-When a campaign runs low, Grokbot reads how that campaign's list was built
-(`build_record`: the saved transcript's tool calls in order, what the
-person asked, and the process changes since), replays it with its own
-connectors through LeadPipe, and hands the pool to this service as a
-signed file URL or a table on campaignintelligence. The service:
+When a campaign runs low, Grokbot reads the client's living playbook
+(`playbook`) and how that campaign's list was built (`build_record`: the
+saved transcript's tool calls in order, what the person asked, and the
+process changes since), replays it with its own connectors through
+LeadPipe, and hands the pool to this service as a signed file URL or a
+table on campaignintelligence. The service:
 
 1. ingests the pool into `lp.<tag>_ingested_leads` (`ingest`),
 2. removes everyone the client already has anywhere (`dedupe`, D98),
@@ -54,6 +55,7 @@ any Supabase project other than campaignintelligence (D6).
 | `canon` | The one page. Also the server instructions. |
 | `connectors(have)` | First call of every session: which required connectors are missing and how to attach them in Grokbot. |
 | `campaigns(client_tag?)` | Every ACTIVE campaign with sends, positives, rate per 2,000, leads left. |
+| `playbook(client_tag)` | The living how-we-build for this client: list builds, disqualifications and method changes in order, plus transcript object names. |
 | `build_record(client_tag, campaign_id, from?, limit?)` | The build record, the method off the transcript (paged), and the process changes since. |
 | `topup(client_tag, campaign_id, source)` | Open a job on the pool and quote it. `topup(job_id, approved_by)` runs the approved tail and loads. |
 | `load(job_id)` | Import a staged job once loads resume. |
@@ -72,8 +74,8 @@ Nothing is posted to Slack.
 
 ```
 CANON.md                  the one page; served as the MCP instructions
-DECISIONS.md              the append-only ledger (D1 … D99)
-src/mcp/                  the eleven tools (grok.ts) and the HTTP server
+DECISIONS.md              the append-only ledger (D1 … D100)
+src/mcp/                  the twelve tools (grok.ts) and the HTTP server
 src/jobs/runner.ts        the top-up: quote → approve → load
 src/jobs/settings.ts      a job's settings (pool source, campaign); no recipes
 src/canon/                build record + method extraction, connectors, campaigns, held keys

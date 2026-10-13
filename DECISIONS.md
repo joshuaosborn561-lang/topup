@@ -118,7 +118,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D96 | Live; build transcript / narrative is the source of truth for how a list was built; a backfilled receipt that disagrees or is thinner is corrected to match (a backfill fix, not widening); generic diff then --apply; skip registry lane unassigned and never retag onto or off it |
 | D97 | Live; held returns a held_id and runs the free GetLeads pool export in the background; every split export_id is polled; a miss names its class (timeout / export_failed / fair_use / count_timeout / paid_export); never a paid export |
 | D98 | Live; held is every lead this client already has (lead store, Smartlead history and mirror, sends, provenance, plus suppressions); match by email, else LinkedIn URL, else normalized name+company; generic exact join (D80); net new splits has_email vs needs_enrich |
-| D99 | Live; the lean top-up: Grokbot replays the recorded build with its own connectors and hands the pool over; the service dedupes against everything held, removes unsubscribes, quotes count and cost, waits for Josh or Cayden by name, runs the ICP website check and verification, and loads; eleven tools; LeadPipe always; no recorded build means wait; legacy pull, recipes, counts, sizes and per-client code removed |
+| D99 | Live; the lean top-up: Grokbot replays the recorded build with its own connectors and hands the pool over; the service dedupes against everything held, removes unsubscribes, quotes count and cost, waits for Josh or Cayden by name, runs the ICP website check and verification, and loads; eleven tools; LeadPipe always; no recorded build means wait; legacy pull, recipes, counts, sizes and per-client code removed; the twelfth tool is the playbook read by D100 |
+| D100 | Live; one living playbook per client: view `topup.client_playbook` over list builds and process changes, read as `playbook(client_tag)` |
 
 ---
 
@@ -3272,3 +3273,44 @@ not widen a search. It does not add a watch, a cron, a planner, a recipe
 or a policy gate.
 
 **Guard.** `src/guards/d99_lean_topup.test.ts`. Ask Josh or Cayden.
+
+## D100 — one living playbook per client
+
+**Decision.** Each client's list-build memory is one living playbook, not
+one silo per campaign. `topup.client_playbook` is a plain view on
+campaignintelligence (`azpapwtnrbzywlnxxecz`) over
+`topup.list_build_records` and `topup.process_changes`, grouped by
+`client_tag`. It gathers that client's list builds, the disqualifications
+written into those records, and the method changes, in chronological
+order, plus storage object names in the private `list-build-transcripts`
+bucket. A new row in either table shows up on the next SELECT. No batch
+job. No new skill.
+
+Bots read it through `playbook(client_tag)` before a top-up, then
+`build_record` for the campaign. A new read is simpler than folding this
+into `build_record`: that call is one campaign's method (it needs
+`campaign_id`, pages tool calls, and already has a contract). The
+playbook is the whole client. Mixing them would dump every other
+campaign's record into every campaign read.
+
+Read-only. No spend. No write to `dl_status`, `sg_exclude` or `skip_*`.
+No recipes, no per-client code, no client facts in canon. Paths are
+storage object names, never a signed URL (D75). Counts and ids in this
+entry, not names.
+
+The MCP reads the view when it is there; if the view has not been
+applied yet it runs the same gather on the two tables.
+
+**Why.** Each campaign's list-build record was siloed. How a client is
+built lives across those records.
+
+**What it does not do.** It does not classify a third kind of row. It
+does not invent a column. It does not apply the migration to prod in
+the PR that ships it. It does not start, spend, or load.
+
+**Tradeoff.** Global process changes (`client_tag` null or `all`) are
+repeated on every client's playbook so one SELECT is the whole story.
+
+**Guard.** `src/guards/d100_client_playbook.test.ts`; unit tests in
+`src/canon/playbook.test.ts`. Ask Josh.
+

@@ -9,7 +9,7 @@
 export const GROK_SAMPLE_MAX = 10;
 
 /** The reads. Counts, ids, labels and the written record, never a row. */
-export const CANON_READS = ["canon", "connectors", "campaigns", "build_record", "jobs", "job", "spend", "loads_paused"] as const;
+export const CANON_READS = ["canon", "connectors", "campaigns", "playbook", "build_record", "jobs", "job", "spend", "loads_paused"] as const;
 
 /** The verbs. */
 export const CANON_VERBS = ["topup", "load", "abort"] as const;
