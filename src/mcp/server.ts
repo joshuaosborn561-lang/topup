@@ -16,7 +16,7 @@ const log = logger("mcp");
 export const SAMPLE_ROWS_MAX = 10;
 
 /**
- * The surface (D99): eleven tools. Every answer is counts, ids, labels and
+ * The surface (D99, D100): twelve tools. Every answer is counts, ids, labels and
  * the written record. None returns a lead row or a file URL. Operator and
  * owner see the same list; a spend is approved by a named person through
  * `topup(job_id, approved_by)`.
@@ -25,6 +25,7 @@ export const MCP_TOOL_ROLE: Readonly<Record<string, Role>> = {
   canon: "operator",
   connectors: "operator",
   campaigns: "operator",
+  playbook: "operator",
   build_record: "operator",
   topup: "operator",
   load: "operator",

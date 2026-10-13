@@ -1,6 +1,6 @@
 # Canon — how a campaign gets topped up
 
-Canon as of **D99** (2026-10-13). One page. `DECISIONS.md` is the append-only
+Canon as of **D100** (2026-10-13). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -62,8 +62,10 @@ ask Josh to connect it, then continue.
 1. `connectors(have)`, then `canon`. Fix what is missing.
 2. `campaigns()`: find the low one (untouched under about two weeks of
    sends, passing the reply bar, not cold call, not never-top-up).
-3. `build_record(client_tag, campaign_id)`: the narrative, the method as
-   the ordered tool calls with their arguments, what the person asked, and
+3. `playbook(client_tag)`: every list build, disqualification and method
+   change for this client, in order, with `list-build-transcripts` object
+   names. Then `build_record(client_tag, campaign_id)`: the narrative, the
+   method as the ordered tool calls, what the person asked, and
    `process_changes_since_build`. `no_recorded_build` → stop and wait.
 4. Replay it with your own connectors. Pull through the vendor's server-side
    export and LeadPipe (`lp_run`, `lp_status`, `lp_export`), or build a
@@ -80,15 +82,17 @@ ask Josh to connect it, then continue.
 
 ## The tools
 
-`canon` `connectors` `campaigns` `build_record` `topup` `load` `job` `jobs`
-`spend` `abort` `loads_paused`. Nothing else is registered. None returns a
-lead row or a file URL.
+`canon` `connectors` `campaigns` `playbook` `build_record` `topup` `load`
+`job` `jobs` `spend` `abort` `loads_paused`. Nothing else is registered.
+None returns a lead row or a file URL.
 
 ## Where things are
 
 Build records and transcripts: `topup.list_build_records` and the private
-bucket `list-build-transcripts` (read only through `build_record`). Process
-changes: `topup.process_changes`. Jobs: `topup.runs`, `run_steps`, `cards`,
-`spend_ledger`, `lane_events`. The pool lands in `lp.<tag>_ingested_leads`
-and moves to `public.leads_staging`, then Smartlead through LeadPipe. The
-service writes its own top-up into `topup.list_build_records` when it loads.
+bucket `list-build-transcripts` (read through `playbook` and `build_record`).
+The living per-client playbook is the view `topup.client_playbook` (D100).
+Process changes: `topup.process_changes`. Jobs: `topup.runs`, `run_steps`,
+`cards`, `spend_ledger`, `lane_events`. The pool lands in
+`lp.<tag>_ingested_leads` and moves to `public.leads_staging`, then Smartlead
+through LeadPipe. The service writes its own top-up into
+`topup.list_build_records` when it loads.

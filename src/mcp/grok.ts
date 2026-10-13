@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { buildMethod } from "../canon/method.js";
 import { listCampaigns } from "../canon/campaigns.js";
+import { clientPlaybook } from "../canon/playbook.js";
 import { loadClientMap } from "../canon/clients.js";
 import { connectorsCheck, type ConnectorUrls } from "../canon/connectors.js";
 import { jobStatus, listJobs, spendRead } from "../canon/jobs.js";
@@ -14,10 +15,11 @@ import { poolSource, type JobSpec } from "../jobs/settings.js";
 import { APPROVER_RULE, type TopupRunner } from "../jobs/runner.js";
 
 /**
- * The tools Grokbot calls (D99). Reads return counts, ids, labels and the
- * written record. `topup` opens a job on the pool the bot handed over and
- * quotes it; with approved_by it runs the paid tail and loads. No tool
- * returns a lead row or a file URL.
+ * The tools Grokbot calls (D99, D100). Reads return counts, ids, labels and the
+ * written record. `playbook` is the living per-client how-we-build.
+ * `topup` opens a job on the pool the bot handed over and quotes it; with
+ * approved_by it runs the paid tail and loads. No tool returns a lead row or
+ * a file URL.
  */
 export interface GrokDeps {
   repo: Repo;
@@ -50,6 +52,16 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       inputSchema: { client_tag: snake.optional(), include_inactive: z.boolean().optional() },
     },
     async ({ client_tag, include_inactive }) => text(await listCampaigns(d.repo.raw(), d.repo, client_tag ?? null, { include_inactive })),
+  );
+
+  server.registerTool(
+    "playbook",
+    {
+      description:
+        "The living how-we-build for this client: every list build, disqualification and method change in chronological order, plus list-build-transcripts object names. Read it once before a top-up. Then call build_record for the campaign. Counts, ids and the written record only. No spend, no write.",
+      inputSchema: { client_tag: snake },
+    },
+    async ({ client_tag }) => text(await clientPlaybook(d.repo.raw(), client_tag)),
   );
 
   server.registerTool(
