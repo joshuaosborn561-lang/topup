@@ -5,7 +5,7 @@ import { ingestedTable } from "../../db/pool.js";
 import { funnelCounts, MAX_STEP_ATTEMPTS, type Role, type RunRow } from "../../domain/runs.js";
 import { parseCsv } from "../../lib/csv.js";
 import { logger } from "../../lib/log.js";
-import { recipeAuthorises, type Recipe } from "../../recipes/schema.js";
+import { type JobSettings } from "../../jobs/settings.js";
 import { parkedCard, spendApprovalCard, stallCard } from "../../console/cards.js";
 import type { Console } from "../../console/console.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
@@ -84,7 +84,7 @@ export class VerifyStage {
     this.fetchImpl = d.fetchImpl ?? fetch;
   }
 
-  async run(run: RunRow, recipe: Recipe): Promise<VerifyOutcome> {
+  async run(run: RunRow, settings: JobSettings): Promise<VerifyOutcome> {
     const { repo } = this.d;
     const table = ingestedTable(run.client_tag);
     // D64: a recorded approval must survive a retry. The 3-attempt park
@@ -121,12 +121,12 @@ export class VerifyStage {
         const active = batches.filter((b) => ACTIVE.includes(b.status));
         if (active.length === 0) break;
         for (const b of active) {
-          const r = b.status === "claimed" ? await this.submitBatch(run, recipe, table, b) : await this.pollBatch(run, table, b);
+          const r = b.status === "claimed" ? await this.submitBatch(run, settings, table, b) : await this.pollBatch(run, table, b);
           if (r && r.kind !== "done") return r;
         }
         await this.sleep(this.d.cfg.pollMs);
       }
-      return this.finish(run, recipe, table);
+      return this.finish(run, settings, table);
     } catch (err) {
       const message = (err as Error).message;
       const approved = (await repo.getStep(run.run_id, "verify"))?.approved_cents ?? prior?.approved_cents ?? 0;
@@ -172,7 +172,7 @@ export class VerifyStage {
     await this.d.repo.raw().query(`update topup.verify_batches set ${sets} where run_id = $1 and batch = $2`, [runId, batch, ...keys.map((k) => patch[k])]);
   }
 
-  private async submitBatch(run: RunRow, recipe: Recipe, table: string, b: BatchRow): Promise<VerifyOutcome | { kind: "done" }> {
+  private async submitBatch(run: RunRow, settings: JobSettings, table: string, b: BatchRow): Promise<VerifyOutcome | { kind: "done" }> {
     const { repo, rails, console: slack } = this.d;
     const worst = verifyWorstCaseCents(b.rows);
     // An approval survives a restart on run_steps.approved_cents; a batch that
@@ -186,7 +186,7 @@ export class VerifyStage {
       vendor: "millionverifier",
       action: b.parent_batch ? "verify_split" : "verify",
       rows: b.rows,
-      recipeAuthorised: recipeAuthorises(recipe, "verify", "millionverifier"),
+      recipeAuthorised: true,
       approvedCents: priorApproval,
       worstCaseCents: worst,
     });
@@ -208,7 +208,7 @@ export class VerifyStage {
       throw new Error(`export for batch ${b.batch} returned ${exported.row_count} rows, expected ${b.rows}; refusing to submit a truncated file`);
     }
     const balanceBefore = await rails.readBalance("millionverifier");
-    const segment = `${recipe.recipe_id}_${run.run_id.slice(0, 8)}_${b.batch}`;
+    const segment = `${settings.id}_${run.run_id.slice(0, 8)}_${b.batch}`;
     const started = await this.d.verifier.start(exported.signed_url, segment);
     await rails.record({
       runId: run.run_id,
@@ -596,9 +596,9 @@ export class VerifyStage {
     return { kind: "done" };
   }
 
-  private async finish(run: RunRow, recipe: Recipe, table: string): Promise<VerifyOutcome> {
+  private async finish(run: RunRow, settings: JobSettings, table: string): Promise<VerifyOutcome> {
     await this.fillMissingMailClass(table, run.run_id);
-    const droppedGateway = await this.dropGatewayCatchalls(table, run.run_id, recipe);
+    const droppedGateway = await this.dropGatewayCatchalls(table, run.run_id, settings);
     const { rows } = await this.d.repo.raw().query<{ lead_status: string; mail_class: string | null; n: string }>(
       `select lead_status, mail_class, count(*)::text as n from ${table} where run_id = $1 group by 1, 2`,
       [run.run_id],
@@ -638,13 +638,13 @@ export class VerifyStage {
         { ...counts, unclassified_mail_class: unclassified },
       );
     }
-    const gate = rejectRateGate({ sendable, rejected, stalled }, recipe.verify.reject_rate_norm);
+    const gate = rejectRateGate({ sendable, rejected, stalled }, settings.verify.reject_rate_norm);
     if (gate) return gate;
-    const norm = recipe.verify.reject_rate_norm;
+    const norm = settings.verify.reject_rate_norm;
     await this.d.console.postInThread(
       run,
       `:white_check_mark: Verify done: *${sendable}* sendable (SEG ${seg} / OTHER ${sendable - seg}), ${rejected} rejected, ${stalled} left unverified · reject rate ${pct(rate)}` +
-        (norm === null ? " (no norm on the recipe yet; ask Josh for this lane's)." : ` (lane norm ${pct(norm)}).`),
+        (norm === null ? " (no norm on the settings yet; ask Josh for this lane's)." : ` (lane norm ${pct(norm)}).`),
     );
     return { kind: "done", sendable, seg, other: sendable - seg, rejected, stalled };
   }
@@ -653,8 +653,8 @@ export class VerifyStage {
    * D36 item 58. After mail class is known, Insight drops SEG catch-alls
    * instead of routing them. Other lanes keep item 6 (segment, do not throw out).
    */
-  private async dropGatewayCatchalls(table: string, runId: string, recipe: Recipe): Promise<number> {
-    if (!recipe.verify.drop_gateway_catchalls) return 0;
+  private async dropGatewayCatchalls(table: string, runId: string, settings: JobSettings): Promise<number> {
+    if (!settings.verify.drop_gateway_catchalls) return 0;
     const { rowCount } = await this.d.repo.withRun(runId, async (tx) =>
       tx.query(
         `update ${table} set lead_status = 'rejected', ev_status = 'rejected', status_changed_at = now(),

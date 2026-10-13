@@ -1,4 +1,4 @@
-import { CAMPAIGN_SETTING_CHECKS } from "../../recipes/schema.js";
+import { CAMPAIGN_SETTING_CHECKS } from "../../jobs/settings.js";
 
 /**
  * Step 12 settings findings (skill smartlead-campaign-settings §5, §6, §4):

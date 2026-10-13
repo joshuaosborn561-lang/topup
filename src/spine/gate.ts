@@ -32,7 +32,7 @@ export function gateUnmet(stage: Step, why: string, counts: Record<string, numbe
  * unverified are not verdicts and stay out of the ratio. "Far above" is not a
  * number in the skill, so it is one here and named (D25): at least twice the
  * lane's norm AND at least ten points over it, on at least fifty verdicts.
- * With no norm on the recipe only the unarguable case fires: nothing sendable.
+ * With no norm on the settings only the unarguable case fires: nothing sendable.
  */
 export const REJECT_RATE_FAR_ABOVE_FACTOR = 2;
 export const REJECT_RATE_FAR_ABOVE_MIN_GAP = 0.1;
@@ -73,7 +73,7 @@ export function rejectRateGate(c: VerifyCounts, norm: number | null): GateUnmet 
 
 /**
  * Step 7 gate (skill: "every merge field the copy uses is populated or the
- * row is held."). The fields the copy uses are the recipe's `required_fields`.
+ * row is held."). The fields the copy uses are the settings's `required_fields`.
  * `local_sports_team` is never a hold on its own: the skill routes a row with
  * no team to the AirPods tier, whose copy does not use the team. A row with
  * any other required field empty is held (`qa_hold`) for step 8, and the run
@@ -81,7 +81,7 @@ export function rejectRateGate(c: VerifyCounts, norm: number | null): GateUnmet 
  */
 export const NEVER_HOLD_FIELDS: readonly string[] = ["local_sports_team"];
 
-/** Merge fields the hold may test. Anything else in required_fields is a recipe bug, not SQL. */
+/** Merge fields the hold may test. Anything else in required_fields is a settings bug, not SQL. */
 export const HOLDABLE_FIELDS: readonly string[] = ["first_name_n", "company_n", "location", "job_title", "company_size", "vertical", "first_name", "last_name", "email", "company_name"];
 
 /**

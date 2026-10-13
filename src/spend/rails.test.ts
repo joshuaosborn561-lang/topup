@@ -42,7 +42,7 @@ const req = (p: Partial<SpendRequest> = {}): SpendRequest => ({
 });
 
 describe("spend rails (D9)", () => {
-  it("rail 1 — a step the recipe does not authorise is refused before any math", () => {
+  it("rail 1 — a step the settings does not authorise is refused before any math", () => {
     const d = rails().rails.decide(req({ recipeAuthorised: false }), 0);
     assert.equal(d.kind, "blocked");
     assert.match(d.reason, /does not have ideas/);

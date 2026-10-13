@@ -80,7 +80,7 @@ export const PRICES: Readonly<Record<Vendor, VendorPrice>> = {
     kind: "paid",
     unitCents: 25,
     creditsPerRow: 1,
-    source: "conservative; OFF in every recipe until owner_approved_at is stamped",
+    source: "conservative; OFF in every settings until owner_approved_at is stamped",
   },
   apify: {
     kind: "paid",
@@ -164,9 +164,4 @@ export function actualCents(vendor: string, credits: number): number {
 
 export function usd(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
-}
-
-/** Worst case for Find Named Person: both paid people tiers can run (D58). */
-export function peopleWaterfallWorstCaseCents(rows: number): number {
-  return worstCaseCents("prospeo_search", "export", rows) + worstCaseCents("aiark_people", "export", rows);
 }

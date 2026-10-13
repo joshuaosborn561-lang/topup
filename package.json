@@ -11,12 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "migrate": "tsx scripts/migrate.ts",
-    "seed:cities": "tsx scripts/seed-cities.ts",
-    "pilot:emcor-owner": "tsx scripts/emcor-owner-pilot-20261010.ts",
-    "backfill:send-sender": "tsx scripts/backfill-send-sender.ts",
-    "audit:negative-class": "tsx scripts/audit-negative-class.ts",
-    "retag:lane-mismatch": "tsx scripts/retag-lane-mismatch.ts",
-    "correct:receipt-from-transcript": "tsx scripts/correct-receipt-from-transcript.ts"
+    "seed:cities": "tsx scripts/seed-cities.ts"
   },
   "engines": {
     "node": ">=20"

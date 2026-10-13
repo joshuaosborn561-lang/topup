@@ -2,51 +2,29 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { AiArkPreviewClient } from "./clients/aiArkPreview.js";
-import { ProspeoSearchClient } from "./canon/prospeoSearch.js";
-import { DomainWaterfallClient } from "./clients/domainWaterfall.js";
-import { EmailWaterfallClient } from "./clients/emailWaterfall.js";
-import { GetleadsClient } from "./clients/getleads.js";
 import { IcpGateClient } from "./clients/icpGate.js";
-import { JevClassifyClient, loadOpenRouterKey } from "./clients/jevClassify.js";
-import { SitePeopleClient } from "./clients/sitePeople.js";
-import { peopleLoopConfig } from "./stages/icp/loops.js";
 import { LeadPipeClient } from "./clients/leadpipe.js";
-import { MapsStatsClient } from "./clients/mapsStats.js";
-import { NameToEmailClient } from "./clients/nameToEmail.js";
-import { PeopleWaterfallClient } from "./clients/peopleWaterfall.js";
-import { PermitCountsClient } from "./clients/permits.js";
 import { SmartleadClient } from "./clients/smartlead.js";
 import { VerifierClient } from "./clients/verifier.js";
 import { assertSupabaseProject, loadConfig } from "./config.js";
 import { Console } from "./console/console.js";
 import { loadClientTags } from "./canon/clients.js";
 import { downloadListBuildTranscript } from "./canon/buildRecord.js";
-import { HeldRunner } from "./canon/held.js";
-import { SizeRunner } from "./canon/size.js";
 import { Db } from "./db/pool.js";
 import { Repo } from "./db/repo.js";
 import { buildHealth } from "./health.js";
-import { JobRunner, type Stages } from "./jobs/runner.js";
+import { TopupRunner, type Stages } from "./jobs/runner.js";
 import { isSelfStart } from "./jobs/selfStart.js";
 import { LaneLedger } from "./ledger/lane.js";
 import { logger } from "./lib/log.js";
 import { mcpRouter } from "./mcp/server.js";
-import { Orchestrator } from "./orchestrator.js";
-import { loadGeoFenceCities } from "./recipes/geoFence.js";
-import { readersFromEnv } from "./spend/balances.js";
 import { railsConfigFrom, SpendRails } from "./spend/rails.js";
-import { FindEmailsStage } from "./stages/find_emails/index.js";
+import { DedupeStage } from "./stages/dedupe/index.js";
 import { IcpStage } from "./stages/icp/index.js";
 import { ImportStage } from "./stages/import/index.js";
 import { IngestStage } from "./stages/ingest/index.js";
 import { NormalizeStage } from "./stages/normalize/index.js";
 import { PostImportStage } from "./stages/post_import/index.js";
-import { GetleadsPull } from "./stages/pull/getleads.js";
-import { PullStage } from "./stages/pull/index.js";
-import { MapsPull } from "./stages/pull/maps.js";
-import { PermitsPull } from "./stages/pull/permits.js";
-import { PuzzleStage } from "./stages/puzzle/index.js";
 import { QaStage } from "./stages/qa/index.js";
 import { RouteStage } from "./stages/route/index.js";
 import { StageStage } from "./stages/stage/index.js";
@@ -55,7 +33,7 @@ import { VerifyStage } from "./stages/verify/verify.js";
 
 const log = logger("boot");
 
-/** The canon, served to Grok as the MCP instructions and by the `canon` read (D53). */
+/** The canon, served to Grokbot as the MCP instructions and by the `canon` read. */
 function readCanon(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   for (const p of [path.resolve(here, "..", "CANON.md"), path.resolve(here, "..", "..", "CANON.md")]) {
@@ -104,11 +82,9 @@ async function main(): Promise<void> {
   const db = new Db(cfg.DATABASE_URL);
   repo = new Repo(db);
   rails = new SpendRails(repo, railsConfigFrom(cfg));
-  for (const r of readersFromEnv(process.env)) rails.registerBalanceReader(r);
 
   const locks = await repo.installLeadLocks();
   await repo.ensureCore08().catch((err) => log.error(`sized status ensure failed: ${(err as Error).message}`));
-  await repo.ensureIcpKind().catch((err) => log.error(`icp kind ensure failed: ${(err as Error).message}`));
   log.info("database ready", { lead_tables_locked: locks });
 
   const console_ = new Console(repo);
@@ -116,50 +92,16 @@ async function main(): Promise<void> {
   console_.attachLedger(ledger);
 
   const leadpipe = new LeadPipeClient(cfg.LEADPIPE_MCP_URL, cfg.LEADPIPE_TOKEN);
-  const getleads = new GetleadsClient(cfg.GETLEADS_MCP_URL, cfg.GETLEADS_TOKEN);
-  const aiArk = cfg.AI_ARK_TOKEN ? new AiArkPreviewClient(cfg.AI_ARK_TOKEN, cfg.AI_ARK_PREVIEW_URL) : null;
-  const prospeo = cfg.PROSPEO_API_KEY ? new ProspeoSearchClient(cfg.PROSPEO_API_KEY, cfg.PROSPEO_SEARCH_URL) : null;
-  const maps = cfg.MAPS_MCP_URL ? new MapsStatsClient(cfg.MAPS_MCP_URL) : null;
-  const permitCounts = cfg.PERMITSTACK_MCP_URL ? new PermitCountsClient(cfg.PERMITSTACK_MCP_URL) : null;
   const smartlead = new SmartleadClient(cfg.SMARTLEAD_MCP_URL, cfg.SMARTLEAD_TOKEN);
-  const domain = cfg.DOMAIN_WATERFALL_MCP_URL ? new DomainWaterfallClient(cfg.DOMAIN_WATERFALL_MCP_URL, cfg.DOMAIN_WATERFALL_TOKEN) : null;
-  const people = cfg.PEOPLE_WATERFALL_MCP_URL ? new PeopleWaterfallClient(cfg.PEOPLE_WATERFALL_MCP_URL, cfg.PEOPLE_WATERFALL_TOKEN) : null;
-  const emailWaterfall = cfg.EMAIL_WATERFALL_MCP_URL ? new EmailWaterfallClient(cfg.EMAIL_WATERFALL_MCP_URL, cfg.EMAIL_WATERFALL_TOKEN) : null;
-  const nameToEmail = cfg.NAME_TO_EMAIL_MCP_URL ? new NameToEmailClient(cfg.NAME_TO_EMAIL_MCP_URL, cfg.NAME_TO_EMAIL_TOKEN) : null;
   const jobs = { pollMs: cfg.JOB_POLL_SECONDS * 1000, deadMs: cfg.JOB_DEAD_MINUTES * 60_000 };
   const icpGate = cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY ? new IcpGateClient(cfg.SUPABASE_FUNCTIONS_URL, { fetch: cfg.ICP_SITE_FETCH_KEY, llm: cfg.ICP_LLM_KEY, disco: cfg.ICP_DISCO_KEY }) : null;
-  const leftoverJev = new JevClassifyClient({ loadKey: () => loadOpenRouterKey(db), model: cfg.ICP_JEV_MODEL });
-  const sitePeople = cfg.SITE_PEOPLE_KEY ? new SitePeopleClient(cfg.SUPABASE_FUNCTIONS_URL, cfg.SITE_PEOPLE_KEY, fetch, 130_000, cfg.SITE_PEOPLE_FETCH_PER_HOST) : null;
-  const peopleLoops = peopleLoopConfig({
-    SITE_PEOPLE_FETCH_PARALLEL: String(cfg.SITE_PEOPLE_FETCH_PARALLEL),
-    SITE_PEOPLE_FETCH_WORKERS: String(cfg.SITE_PEOPLE_FETCH_WORKERS),
-    SITE_PEOPLE_FETCH_PER_CALL: String(cfg.SITE_PEOPLE_FETCH_PER_CALL),
-    SITE_PEOPLE_FETCH_PER_HOST: String(cfg.SITE_PEOPLE_FETCH_PER_HOST),
-    SITE_PEOPLE_EXTRACT_PARALLEL: String(cfg.SITE_PEOPLE_EXTRACT_PARALLEL),
-    SITE_PEOPLE_EXTRACT_WORKERS: String(cfg.SITE_PEOPLE_EXTRACT_WORKERS),
-    SITE_PEOPLE_EXTRACT_PER_CALL: String(cfg.SITE_PEOPLE_EXTRACT_PER_CALL),
-    SITE_PEOPLE_ASK_PARALLEL: String(cfg.SITE_PEOPLE_ASK_PARALLEL),
-    SITE_PEOPLE_ASK_WORKERS: String(cfg.SITE_PEOPLE_ASK_WORKERS),
-    SITE_PEOPLE_ASK_PER_CALL: String(cfg.SITE_PEOPLE_ASK_PER_CALL),
-    SITE_PEOPLE_GEMINI_RPM: String(cfg.SITE_PEOPLE_GEMINI_RPM),
-  });
   const base = { repo, console: console_ };
 
-  const pull = new PullStage({
-    ...base,
-    rails,
-    adapters: [new GetleadsPull(getleads, (ref) => loadGeoFenceCities(db, ref)), new MapsPull(db), new PermitsPull(permitCounts)],
-    maps,
-    permits: permitCounts,
-    cfg: jobs,
-  });
   const stages: Stages = {
-    pull,
-    ingest: new IngestStage({ ...base, leadpipe, pull, rails, cfg: jobs }),
+    ingest: new IngestStage({ ...base, leadpipe, rails, cfg: jobs }),
+    dedupe: new DedupeStage(base),
     suppress: new SuppressStage({ ...base, ledger }),
     icp: new IcpStage({ ...base, rails, gate: icpGate, cfg: { jevModel: cfg.ICP_JEV_MODEL, pollMs: 20_000, deadMs: jobs.deadMs } }),
-    puzzle: new PuzzleStage({ ...base, ledger, rails, domain, people, cfg: jobs }),
-    findEmails: new FindEmailsStage({ ...base, rails, nameToEmail, emailWaterfall, cfg: jobs }),
     verify: new VerifyStage({
       repo,
       rails,
@@ -184,7 +126,6 @@ async function main(): Promise<void> {
     import: new ImportStage({ ...base, smartlead, rails, cfg: jobs }),
     postImport: new PostImportStage({ ...base, smartlead, rails }),
   };
-  const orchestrator = new Orchestrator({ repo, console: console_, ledger, stages });
 
   const clientTags = await loadClientTags(db).catch((err) => {
     log.warn("client_map tags unavailable at boot", { error: (err as Error).message });
@@ -197,9 +138,6 @@ async function main(): Promise<void> {
     "/mcp",
     mcpRouter({
       repo,
-      orchestrator,
-      console: console_,
-      ledger,
       ownerToken: cfg.MCP_OWNER_TOKEN,
       operatorToken: cfg.MCP_OPERATOR_TOKEN,
       clientTags,
@@ -207,27 +145,20 @@ async function main(): Promise<void> {
       grok: {
         repo,
         ledger,
-        orchestrator,
-        jobs: new JobRunner({ repo, stages, console: console_, ledger }),
-        count: { getleads, aiArk, prospeo, maps, permits: permitCounts, rails, db },
-        held: new HeldRunner({
-          db,
-          getleads,
-          rails,
-          fetchText: async (url: string) => {
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`export could not be read: HTTP ${res.status}`);
-            return res.text();
-          },
-          sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
-          now: () => Date.now(),
-        }),
-        size: new SizeRunner(db),
-        siteCheck: { db, repo, console: console_, rails, ledger, gate: icpGate, people: sitePeople, jevModel: cfg.ICP_JEV_MODEL, geminiModel: cfg.SITE_PEOPLE_GEMINI_MODEL, peopleLoops, pollMs: 20_000, deadMs: jobs.deadMs, by: "grok" },
-        leftoverAi: { db, rails, jev: leftoverJev },
+        jobs: new TopupRunner({ repo, stages, console: console_, ledger }),
+        connectorUrls: {
+          leadpipe: cfg.LEADPIPE_MCP_URL || undefined,
+          smartlead: cfg.SMARTLEAD_MCP_URL || undefined,
+          verifier: cfg.VERIFIER_BASE_URL || undefined,
+          maps: cfg.MAPS_MCP_URL || undefined,
+          permits: cfg.PERMITSTACK_MCP_URL || undefined,
+          domainWaterfall: cfg.DOMAIN_WATERFALL_MCP_URL || undefined,
+          peopleWaterfall: cfg.PEOPLE_WATERFALL_MCP_URL || undefined,
+          emailWaterfall: cfg.EMAIL_WATERFALL_MCP_URL || undefined,
+        },
         readTranscript:
           cfg.SUPABASE_URL && cfg.SUPABASE_SERVICE_ROLE_KEY
-            ? (path) => downloadListBuildTranscript({ supabaseUrl: cfg.SUPABASE_URL, serviceRoleKey: cfg.SUPABASE_SERVICE_ROLE_KEY, path })
+            ? (p) => downloadListBuildTranscript({ supabaseUrl: cfg.SUPABASE_URL, serviceRoleKey: cfg.SUPABASE_SERVICE_ROLE_KEY, path: p })
             : undefined,
       },
     }),
@@ -236,22 +167,10 @@ async function main(): Promise<void> {
   // Cards that nobody answered expire; the waiting stage sees that and parks.
   const expired = await repo.expireCards();
   if (expired.length) log.info("expired cards on boot", { count: expired.length });
-  const closedAborts = await repo.closeRunsResolvedAbort().catch((err) => {
-    log.warn("close resolved aborts failed", { error: (err as Error).message });
-    return [];
-  });
-  if (closedAborts.length) log.info("closed runs whose abort had already resolved", { runs: closedAborts.map((r) => `${r.client_tag}/${r.lane}`) });
-  const closedWatch = await repo.closeWatchRestartsAfterAbort().catch((err) => {
-    log.warn("close watch restarts failed", { error: (err as Error).message });
-    return [];
-  });
-  if (closedWatch.length) log.info("closed empty watch restarts after abort (D61)", { runs: closedWatch.map((r) => `${r.client_tag}/${r.lane}`) });
   const open = await repo.openRuns();
   const leftoverWatch = open.filter((r) => isSelfStart(r.opened_by, r.trigger));
-  if (leftoverWatch.length) {
-    log.warn("open runs were opened by the watch; nothing will drive them (D61)", { count: leftoverWatch.length });
-  }
-  log.info("open runs wait for their next verb; nothing is driven on boot (D51, D61)", { count: open.length });
+  if (leftoverWatch.length) log.warn("open runs were opened by the watch; nothing will drive them (D61)", { count: leftoverWatch.length });
+  log.info("open jobs wait for their next call; nothing is driven on boot (D51)", { count: open.length });
 
   const shutdown = async (signal: string) => {
     log.info("shutting down", { signal });

@@ -1,428 +1,134 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { buildRecord, campaignRecord, countSource, jobStatus, leftoversRead, listCampaigns, listJobs, SOURCE_LINES, spendRead, type CountDeps, type HeldRunner, type SizeRunner } from "../canon/index.js";
-import type { Repo } from "../db/repo.js";
-import type { LaneLedger } from "../ledger/lane.js";
-import type { Orchestrator } from "../orchestrator.js";
-import { JOB_SOURCES, type JobSpec } from "../jobs/recipe.js";
-import { VERB_ORDER, type JobRunner, type Verb } from "../jobs/runner.js";
+import { buildMethod } from "../canon/method.js";
+import { listCampaigns } from "../canon/campaigns.js";
 import { loadClientMap } from "../canon/clients.js";
-import { registryRows } from "../canon/registry.js";
-import { LEGACY_EMAIL_MAX_TIER_ALIASES, mapEmailMaxTier, mapPersonSource } from "../recipes/legacyLeadmagic.js";
-import { EMAIL_TIERS } from "../recipes/schema.js";
+import { connectorsCheck, type ConnectorUrls } from "../canon/connectors.js";
+import { jobStatus, listJobs, spendRead } from "../canon/jobs.js";
+import type { Repo } from "../db/repo.js";
+import { LEADPIPE_RULE } from "../grok/allowlist.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
-import { isUnassignedLane, UNASSIGNED_SKIP_NOTE } from "../canon/lanes.js";
-import { isColdCall, MAX_ROWS_PER_JOB } from "../policy/rules.js";
-import { confirmFiltersApprover } from "../recipes/receipt.js";
-import { siteCheck, SITE_CHECK_QUESTIONS, type SiteCheckDeps } from "../canon/siteCheck.js";
-import { attachSiteOwners, countSiteOwners, refuseSharedOwnerTable, SITE_OWNERS_SOURCE, siteOwnersNeedJobId } from "../canon/siteOwners.js";
-import { classifyLeftover, type LeftoverAiDeps } from "../replies/leftoverAi.js";
+import type { LaneLedger } from "../ledger/lane.js";
+import { poolSource, type JobSpec } from "../jobs/settings.js";
+import { APPROVER_RULE, type TopupRunner } from "../jobs/runner.js";
 
 /**
- * The reads and the verbs for Grok bot (D52). Reads return what Supabase
- * and the vendors hold, as counts, ids, labels and the written notes, with
- * the rule stated and no verdict. Verbs run one stage of the pipeline on a
- * job and return counts. No tool returns a lead row or a file URL.
+ * The tools Grokbot calls (D99). Reads return counts, ids, labels and the
+ * written record. `topup` opens a job on the pool the bot handed over and
+ * quotes it; with approved_by it runs the paid tail and loads. No tool
+ * returns a lead row or a file URL.
  */
 export interface GrokDeps {
   repo: Repo;
   ledger: LaneLedger;
-  orchestrator: Pick<Orchestrator, "abortRun">;
-  jobs: JobRunner;
-  count: CountDeps;
-  held: HeldRunner | null;
-  size: SizeRunner;
-  siteCheck: SiteCheckDeps;
-  leftoverAi: LeftoverAiDeps;
-  /** D75: GET a list-build-transcripts object. Path must already be on a matching row. */
+  jobs: TopupRunner;
+  connectorUrls: ConnectorUrls;
   readTranscript?: (path: string) => Promise<string>;
   by: string;
 }
 
-export const GROK_READS = ["campaigns", "campaign_record", "build_record", "sources", "count", "held", "size", "jobs", "job", "spend", "leftovers"] as const;
-export const GROK_VERBS = ["pull", "suppress", "icp", "site_check", "classify_leftover", "enrich", "verify", "normalize", "qa", "stage", "import", "write_receipt", "confirm_filters", "abort"] as const;
-
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
 const snake = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
-const filters = z.record(z.unknown()).describe("The vendor filters as the record stores them in company_filters.");
 
 export function registerGrokTools(server: McpServer, d: GrokDeps): void {
+  server.registerTool(
+    "connectors",
+    {
+      description:
+        "Run this once at the start of every session, before anything else. Pass the names of the connectors or tools you have attached (your own tool list). The answer says which required connectors are missing and how to attach each in Grokbot (custom MCPs carry their Railway HTTPS address), and which optional ones a transcript may call for. A missing required connector stops the top-up: tell Josh what to connect and wait. Also restates the hard rule: every row moves through LeadPipe, never through chat.",
+      inputSchema: { have: z.array(z.string()).describe("Connector or tool names as you see them, e.g. [\"Supabase\", \"Context_Saver\", \"getleads\", \"Smartlead\", \"Email_Verifier_Progression\", \"Top_Up\"].") },
+    },
+    async ({ have }) => text(connectorsCheck(have, d.connectorUrls)),
+  );
+
   server.registerTool(
     "campaigns",
     {
       description:
-        "Every ACTIVE campaign with lifetime sends, positive replies, the rate per 2,000, leads left (untouched), the registry lane, and passes_reply_bar. The rule is on the answer. No other judgement: you pick. client_tag narrows to one client; include_inactive lists the rest. Counts and ids only.",
+        "Every ACTIVE campaign with lifetime sends, positive replies, the rate per 2,000, leads left (untouched), and passes_reply_bar. A campaign is low when untouched is under about two weeks of sends. client_tag narrows to one client; include_inactive lists the rest. Counts and ids only.",
       inputSchema: { client_tag: snake.optional(), include_inactive: z.boolean().optional() },
     },
     async ({ client_tag, include_inactive }) => text(await listCampaigns(d.repo.raw(), d.repo, client_tag ?? null, { include_inactive })),
   );
 
   server.registerTool(
-    "campaign_record",
-    {
-      description:
-        "How this campaign was pulled, as Supabase holds it: every receipt (company, domain, person and email sources, company_filters as stored, build label, method note, yield by step, segment, dates), the build rows, the stamped leads counted by label and by source leg for this campaign only (not twins sharing a build), the registry row, lifetime sends and positives, the source vocabulary for the values seen, and the written notes. Read it, see where most of the leads came from, repeat that. No verdict, never a lead row.",
-      inputSchema: { client_tag: snake, campaign_id: z.number().int() },
-    },
-    async ({ client_tag, campaign_id }) => text(await campaignRecord(d.repo.raw(), d.repo, client_tag, campaign_id)),
-  );
-
-  server.registerTool(
     "build_record",
     {
       description:
-        "The operator write-up of how this list was built, from topup.list_build_records: narrative, receipt_ids, campaign ids, transcript path. Read the narrative first. Receipts (campaign_record) stay the at-a-glance source of record. Pass fetch_transcript=true (or offset/limit) to page the transcript text from the private list-build-transcripts bucket — transcripts can be large. The path is a storage object name, never a file URL. Read-only; no spend.",
+        "How this campaign's list was built, from the saved transcript: the build record (narrative, date, who), the method as the ordered tool calls with their arguments as typed (paged; from/limit), what the person asked for in their words, and the process changes written since that build. Replay those calls with your own connectors, the same filters, titles, geography and sources, with the process changes applied on top. no_recorded_build=true means stop and wait for Josh to record the build. " + LEADPIPE_RULE,
       inputSchema: {
         client_tag: snake,
         campaign_id: z.number().int(),
-        fetch_transcript: z.boolean().optional().describe("Page the transcript text. Default off; read the narrative first."),
-        transcript_path: z.string().optional().describe("Required when the matching rows name more than one path."),
-        offset: z.number().int().min(0).optional().describe("Character offset into the transcript."),
-        limit: z.number().int().min(1).max(24_000).optional().describe("Characters to return. Default 12,000; max 24,000."),
+        transcript_path: z.string().optional().describe("When the campaign has more than one transcript, which one."),
+        from: z.number().int().min(1).optional().describe("First step to return (1-based). Default 1."),
+        limit: z.number().int().min(1).max(120).optional().describe("Steps per page. Default 40."),
       },
     },
-    async ({ client_tag, campaign_id, fetch_transcript, transcript_path, offset, limit }) =>
-      text(await buildRecord({ db: d.repo.raw(), readTranscript: d.readTranscript }, { client_tag, campaign_id, fetch_transcript, transcript_path, offset, limit })),
+    async ({ client_tag, campaign_id, transcript_path, from, limit }) => text(await buildMethod({ db: d.repo.raw(), readTranscript: d.readTranscript }, { client_tag, campaign_id, transcript_path, from, limit })),
   );
 
   server.registerTool(
-    "sources",
-    { description: "The source vocabulary: every value a receipt can carry on its company, domain, person and email legs, what it means, how to repeat it, and what it costs.", inputSchema: {} },
-    async () => text({ lines: SOURCE_LINES, note: "A value on a record that is not here is unknown; ask Josh for the line, do not guess." }),
-  );
-
-  server.registerTool(
-    "count",
+    "topup",
     {
       description:
-        "A count on one source with the filters you supply, as the record stores them: getleads (free; exact titles by default via lower(current_title) IN, substring only when the receipt says title_match=substring; every stored key is mapped or the call fails; honors max_per_company, industries_by_campaign and over_1k_campaign (D84); filters_used is what the vendor received; filters_applied lists every filter that actually ran, including rewritten keys), ai_ark (about five cents; needs approved_by; exact-title STRICT unless the receipt asks for substring), prospeo (page 1 of search-person, 1 credit / about 1.5 cents; no-result and 30-day repeats are free; needs approved_by; industries mapped to Prospeo's official names with inexact flags; honors the same D84 receipt keys; search-person does not apply max_per_company so that count is uncapped), maps (the stored pool in client_<tag>.maps_raw, scoped by plan_id and categories; ICP view when named; on v_lane_e_* categories match main_category and preschool–high school are dropped; reports pool, already used, net new), permits (PermitStack monthly), site_owners (free dry-run of this job's site_check people: this job's ingest rows by place_id or normalized domain; cached owners on those businesses belong to the job; pass job_id; never reads the shared owner view). Returns the number, every call made, and the cost. The rule is on the answer; you subtract held and apply it.",
-      inputSchema: {
-        client_tag: snake.optional(),
-        source: z.enum(["getleads", "ai_ark", "prospeo", "maps", "permits", "site_owners"]),
-        filters,
-        campaign_id: z.number().int().optional().describe("Needed when industries_by_campaign names more than one campaign (D84)."),
-        job_id: z.string().optional().describe("Required for source=site_owners: the job whose places (place_id or normalized domain) are counted (D94)."),
-        approved_by: z.string().optional().describe("Name of the person who approved the paid call."),
-      },
-    },
-    async ({ client_tag, source, filters: f, campaign_id, job_id, approved_by }) => {
-      if (source === SITE_OWNERS_SOURCE) {
-        if (!job_id) return text({ error: siteOwnersNeedJobId() });
-        const looking = typeof f.looking_for === "string" ? f.looking_for : null;
-        return text(await countSiteOwners({ db: d.repo.raw(), repo: d.repo }, { job_id, client_tag: client_tag ?? null, looking_for: looking }));
-      }
-      if (!client_tag) return text({ error: "count needs client_tag." });
-      return text(await countSource(d.count, { client_tag, source, filters: f, campaign_id: campaign_id ?? null, approved_by: approved_by ?? null }));
-    },
-  );
-
-  server.registerTool(
-    "held",
-    {
-      description:
-        "How much of a getleads pool the client already holds: every lead this client already has (lead store, Smartlead history and mirror, sends, provenance, plus suppressions), as an exact full-list join (D80, D81, D95, D97, D98). Match by email, else LinkedIn URL or normalized name+company. Never a sample and never a lane-total fallback. Returns a held_id at once (status started); poll held(held_id). The pool is a free chunked GetLeads export of identifier columns; every split id is polled. A failed export names its class (timeout, export_failed, fair_use, count_timeout, paid_export). Never a paid export. filters_applied lists every filter that ran. net_new is the pool minus that held count, split as has_email vs needs_enrich. Under 1,000 net new, the TAM for this campaign is exhausted.",
+        "Top up one campaign with the pool you built by replaying its record. First call: client_tag, campaign_id and the pool (source.kind=file_url with the signed CSV URL(s) LeadPipe or the vendor gave you, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). The service ingests it through LeadPipe, removes everyone the client already has anywhere, removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost. Nothing paid runs. Show that count and cost to Josh or Cayden. When one of them says yes: topup(job_id, approved_by=\"Josh\" or \"Cayden\") runs the ICP website check, verification, normalization, QA, staging and the load into the campaign, then writes the record. Loads paused: it stops at staged; load(job_id) later. Refuses a campaign with no recorded build, a cold-call campaign, and a second open job on the campaign. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
       inputSchema: {
         client_tag: snake.optional(),
         campaign_id: z.number().int().optional(),
-        filters: filters.optional(),
-        tam: z.number().int().min(0).optional(),
-        days: z.number().int().min(1).max(365).optional(),
-        held_id: z.string().uuid().optional().describe("Poll a held join that already started."),
+        source: poolSource.optional(),
+        job_id: z.string().optional().describe("An open job: with approved_by, run the approved tail; without, re-read it with job(job_id) instead."),
+        approved_by: z.string().optional().describe("Josh or Cayden, by name, after they said yes to the quoted count and cost."),
       },
     },
-    async ({ client_tag, campaign_id, filters: f, tam, days, held_id }) => {
-      if (!d.held) return text({ error: "held is not available: the service has no getleads client configured." });
-      if (held_id) return text(await d.held.get(held_id));
-      if (!client_tag || campaign_id == null || !f || tam == null) {
-        return text({ error: "held needs client_tag, campaign_id, filters and tam, or a held_id to poll." });
+    async ({ client_tag, campaign_id, source, job_id, approved_by }) => {
+      if (job_id) {
+        if (!approved_by) return text({ error: `job ${job_id} is open. Pass approved_by with the name of the person who said yes to the quote, or read job(job_id). ${APPROVER_RULE}` });
+        return text(await d.jobs.begin(job_id, "approve", { by: d.by, approved_by }));
       }
+      if (!client_tag || campaign_id == null || !source) return text({ error: "topup needs client_tag, campaign_id and source (the pool), or job_id with approved_by." });
       const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
-      if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
-      return text(await d.held.start({ client_tag, smartlead_client_id: client.smartlead_client_id, campaign_ids: [campaign_id], filters: f, tam, days }));
+      if (!client) return text({ error: `${client_tag} is not in topup.client_map. Adding a client is a row in that table. Ask Josh.` });
+      const name = await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null);
+      const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_id, source };
+      const opened = await d.jobs.open(spec, d.by, name);
+      if (!opened.ok) return text({ error: opened.message });
+      return text(await d.jobs.begin(opened.job_id, "quote", { by: d.by }));
     },
   );
 
   server.registerTool(
-    "size",
+    "load",
     {
-      description:
-        "Free dry-run of the stored Maps pool: already held, suppression drops by reason, net new. ICP pool binds start at $11 so they do not collide with recycle $2. The suppress CTE types $1 as text. Returns a size_id at once (status started); poll size(size_id) until done. Opens no job, spends nothing, does not block the lane. Counts only.",
-      inputSchema: {
-        client_tag: snake.optional(),
-        campaign_id: z.number().int().optional(),
-        source: z.enum(["getleads", "ai_ark", "maps", "permits"]).optional(),
-        filters: filters.optional(),
-        size_id: z.string().uuid().optional().describe("Poll a size that already started."),
-      },
+      description: "Load a job that was approved and staged while loads were paused: import into the campaign through Smartlead, then the post-import check, then the record. Refuses while loads_paused is on. Never sets a campaign ACTIVE.",
+      inputSchema: { job_id: z.string() },
     },
-    async ({ client_tag, campaign_id, source, filters: f, size_id }) => {
-      if (size_id) return text(await d.size.get(size_id));
-      if (!client_tag || campaign_id == null || !source) {
-        return text({ error: "size needs client_tag, campaign_id, source and filters, or a size_id to poll." });
-      }
-      return text(await d.size.start({ client_tag, campaign_id, source, filters: f ?? {} }));
-    },
+    async ({ job_id }) => text(await d.jobs.begin(job_id, "load", { by: d.by })),
   );
 
   server.registerTool(
     "jobs",
-    { description: "Recent jobs and runs, newest first: status, step, who opened it, spend. Counts and ids.", inputSchema: { client_tag: snake.optional(), limit: z.number().int().min(1).max(50).optional() } },
+    { description: "Recent top-up jobs, newest first: status, step, who opened it, spend. Counts and ids.", inputSchema: { client_tag: snake.optional(), limit: z.number().int().min(1).max(50).optional() } },
     async ({ client_tag, limit }) => text(await listJobs(d.repo, client_tag ?? null, limit ?? 20)),
   );
 
   server.registerTool(
     "job",
-    { description: "One job or run: its steps with counts, the per-campaign report, every vendor call, the spend cards waiting for a name, and the last ten lane events. Never rows.", inputSchema: { job_id: z.string() } },
+    { description: "One job: its steps with counts, the quote or spend card waiting for a name, and the last ten events. Poll it after topup or load. Never rows.", inputSchema: { job_id: z.string() } },
     async ({ job_id }) => text(await jobStatus({ repo: d.repo, ledger: d.ledger }, job_id)),
   );
 
   server.registerTool(
     "spend",
-    { description: "Spend today, by vendor over thirty days, month to date, and every spend card waiting for a named approval.", inputSchema: {} },
+    { description: "Spend today, by vendor over thirty days, month to date, and every card waiting for a named approval.", inputSchema: {} },
     async () => text(await spendRead(d.repo)),
   );
 
   server.registerTool(
-    "leftovers",
-    {
-      description:
-        "Where past pulls left rows that may never have been sent, per client: the LeadPipe lane table by status and source label, the client schema (companies, contacts, leads) with how many carry an email or a domain, the waterfall tables, the people-waterfall statuses, and the scratch tables a pull left behind (estimates). Counts only; reading this moves nothing. Name the store before reusing it.",
-      inputSchema: { client_tag: snake.optional() },
-    },
-    async ({ client_tag }) => text(await leftoversRead(d.repo.raw(), client_tag ?? null)),
-  );
-
-  server.registerTool(
-    "pull",
-    {
-      description:
-        "Open a job for one campaign and start the pull in the background: the source and filters you read off campaign_record, up to max_rows. Returns the job_id at once (status started). Poll job(job_id) until pull/ingest finish. A spend estimate still waits for approved_by on a later pull(job_id). source=site_owners attaches site_check people to an existing job only (pass job_id; place_id or normalized domain of this job's ingest rows); cached owners on those businesses belong to the job; it never opens a job and never reads topup.site_people_found or a client owner table. Then suppress, icp, enrich, verify, normalize, qa, stage, import, write_receipt, each on the job_id.",
-      inputSchema: {
-        client_tag: snake.optional(),
-        campaign_id: z.number().int().optional(),
-        source: z.enum(JOB_SOURCES as unknown as [string, ...string[]]),
-        filters: filters.optional(),
-        max_rows: z.number().int().min(1).max(MAX_ROWS_PER_JOB).optional().describe(`1 to ${MAX_ROWS_PER_JOB} rows per job. Not used for source=site_owners.`),
-        lane: snake.optional().describe("Defaults to the campaign's registry lane."),
-        email_max_tier: z.enum([...EMAIL_TIERS, ...LEGACY_EMAIL_MAX_TIER_ALIASES]).optional().describe("Live ceiling, or a stored leadmagic / lm / lead_magic alias which maps to aiark (D58)."),
-        name_to_email: z.boolean().optional(),
-        icp_kind: z.enum(["linkedin_native", "physical"]).optional(),
-        approved_by: z.string().optional(),
-        job_id: z.string().optional(),
-      },
-    },
-    async ({ client_tag, campaign_id, source, filters: rawFilters, max_rows, lane, email_max_tier, name_to_email, icp_kind, approved_by, job_id }) => {
-      const f = rawFilters ?? {};
-      if (source === "table") {
-        const table = typeof f.table === "string" ? f.table : typeof f.schema === "string" && typeof f.name === "string" ? `${f.schema}.${f.name}` : null;
-        const shared = refuseSharedOwnerTable(table);
-        if (shared) return text({ error: shared });
-      }
-      if (source === SITE_OWNERS_SOURCE) {
-        if (!job_id) return text({ error: siteOwnersNeedJobId() });
-        const looking = typeof f.looking_for === "string" ? f.looking_for : null;
-        return text(await attachSiteOwners({ db: d.repo.raw(), repo: d.repo }, { job_id, looking_for: looking, apply: true }));
-      }
-      if (!client_tag || campaign_id == null || max_rows == null) {
-        return text({ error: "pull needs client_tag, campaign_id and max_rows, or job_id with source=site_owners." });
-      }
-      let id = job_id ?? null;
-      if (!id) {
-        const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === client_tag);
-        if (!client) return text({ error: `${client_tag} is not in topup.client_map.` });
-        const registry = registryRows(await d.repo.campaignRegistry(client_tag).catch(() => []));
-        const name = (await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null)) ?? registry.find((r) => r.campaign_id === campaign_id)?.campaign_name ?? null;
-        if (isColdCall(name)) return text({ error: `#${campaign_id} ${name} is marked as cold call; the service ignores it (D54). Ask Josh or Cayden.` });
-        const registryLane = registry.find((r) => r.campaign_id === campaign_id)?.lane ?? null;
-        if (isUnassignedLane(registryLane) || isUnassignedLane(lane)) {
-          return text({ error: `#${campaign_id} is registered lane unassigned. ${UNASSIGNED_SKIP_NOTE}` });
-        }
-        const laneName = lane ?? registryLane ?? "grok";
-        const mappedTier = mapEmailMaxTier(email_max_tier);
-        const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, lane: laneName, campaign_id, source: source as JobSpec["source"], filters: f, max_rows, ...(name ? { campaign_name: name } : {}), ...(mappedTier.tier ? { email_max_tier: mappedTier.tier } : {}), ...(name_to_email !== undefined ? { name_to_email } : {}), ...(icp_kind ? { icp_kind } : {}) };
-        const opened = await d.jobs.open(spec, d.by);
-        if (!opened.ok) return text({ error: opened.message });
-        id = opened.job_id;
-        if (mappedTier.warning) {
-          await d.ledger.event({ client_tag, lane: laneName, run_id: id, event: "legacy_tier", line: mappedTier.warning, actor: d.by }).catch(() => undefined);
-        }
-        const begun = await d.jobs.begin(id, "pull", { by: d.by, approved_by: approved_by ?? null });
-        return text(mappedTier.warning ? { ...begun, warning: mappedTier.warning } : begun);
-      }
-      return text(await d.jobs.begin(id, "pull", { by: d.by, approved_by: approved_by ?? null }));
-    },
-  );
-
-  for (const verb of VERB_ORDER.filter((v): v is Exclude<Verb, "pull"> => v !== "pull")) {
-    server.registerTool(
-      verb,
-      {
-        description: verbDescription(verb),
-        inputSchema: {
-          job_id: z.string(),
-          approved_by: z.string().optional().describe("Name of the person who approved the spend, when the previous call returned waiting_approval."),
-          force: z.boolean().optional().describe("Re-run this verb's steps even if they are already marked done (D66)."),
-        },
-      },
-      async ({ job_id, approved_by, force }) => text(await d.jobs.run(job_id, verb, { by: d.by, approved_by: approved_by ?? null, force: force === true })),
-    );
-  }
-
-  server.registerTool(
-    "site_check",
-    {
-      description:
-        "The website checker (skill icp-website-gate): our own site fetch (free), then a question over what the site says. question=icp: is each company in the client's ICP (the client's label set, Jev's category pick, about $0.11 per 1,000; verdict per domain, which icp(job_id) then stamps on a job's rows for free). question=people: crawl each company's homepage and people pages (team, leadership, staff, about, contact), have Gemini list every person the site presents, then ask Jev which of them is looking_for (default: the owner, or the person who runs the company; or say who you want: 'the service manager', 'the person who buys IT'). About $1.11 per 1,000 sites worst case. The people found stay in topup.site_answers / site_people; pull(job_id, source=\"site_owners\") attaches them to this job's businesses only (place_id or normalized domain). Never pull the shared view topup.site_people_found or a client owner table. Scope is a job (job_id) or a store leftovers named (client_tag plus table). The first call returns the estimate and the counts so far; approved_by runs it. A deploy does not resume the loop — call this verb again with the same scope and approved_by; already-extracted and already-answered domains are skipped and not paid again. Optional fetch_/extract_/ask_ parallel and workers override the Railway defaults (~50 fetch, ~28 Gemini, ~28 Jev). Nothing on the rows changes. Counts and labels only; never a name.",
-      inputSchema: {
-        question: z.enum(SITE_CHECK_QUESTIONS),
-        client_tag: snake.optional(),
-        job_id: z.string().optional().describe("A job from pull(): its rows in lp.<tag>_ingested_leads."),
-        table: z.string().optional().describe("schema.table as leftovers lists it (lp.<tag>_…, client_<tag>.…, public.<tag>…_wf_contacts). Needs client_tag."),
-        looking_for: z.string().max(200).optional().describe("people only: who to find on the site, in plain words. Default: the owner, or the person who runs the company."),
-        approved_by: z.string().optional().describe("Name of the person who approved the quoted worst case."),
-        fetch_parallel: z.number().int().min(1).max(32).optional().describe("How many site-people fetch invocations to run side by side. Default 2."),
-        fetch_workers: z.number().int().min(1).max(60).optional().describe("Workers inside each fetch invocation. Default 25 (2×25 ≈ 50, 2 per host)."),
-        extract_parallel: z.number().int().min(1).max(32).optional().describe("How many Gemini extract invocations to run side by side. Default 4."),
-        extract_workers: z.number().int().min(1).max(60).optional().describe("Gemini workers inside each extract invocation. Default 7 (4×7 = 28)."),
-        ask_parallel: z.number().int().min(1).max(32).optional().describe("How many Jev ask invocations to run side by side. Default 4."),
-        ask_workers: z.number().int().min(1).max(60).optional().describe("Jev workers inside each ask invocation. Default 7 (4×7 = 28)."),
-      },
-    },
-    async ({ question, client_tag, job_id, table, looking_for, approved_by, fetch_parallel, fetch_workers, extract_parallel, extract_workers, ask_parallel, ask_workers }) =>
-      text(await siteCheck(d.siteCheck, { question, client_tag: client_tag ?? null, job_id: job_id ?? null, table: table ?? null, looking_for: looking_for ?? null, approved_by: approved_by ?? null, fetch_parallel, fetch_workers, extract_parallel, extract_workers, ask_parallel, ask_workers })),
-  );
-
-  server.registerTool(
-    "classify_leftover",
-    {
-      description:
-        "D90 leftover-negative AI: Jev (same OpenRouter path as icp-llm) classifies each unclassified Smartlead negative's inbound body as unsubscribe vs not_interested. Text and category already ran. No body stays unclassified. First call is the estimate; approved_by runs it. Hard cap $0.05. Writes negative_class_source=ai. Idempotent. Counts only; never a body or a name.",
-      inputSchema: {
-        approved_by: z.string().optional().describe("Name of the person who approved the quoted worst case."),
-      },
-    },
-    async ({ approved_by }) => text(await classifyLeftover(d.leftoverAi, { approved_by: approved_by ?? null })),
-  );
-
-  server.registerTool(
-    "write_receipt",
-    {
-      description:
-        "Write the receipt for a job so the next top-up can read how this one was pulled: the four source legs, the filters, the counts and a plain-English note. Counts and campaign ids only.",
-      inputSchema: {
-        job_id: z.string(),
-        company_source: z.string(),
-        domain_source: z.string().default("already"),
-        person_source: z.string(),
-        email_source: z.string(),
-        email_max_tier: z.string().optional(),
-        company_filters: filters,
-        how_i_did_it: z.string().min(10),
-        notes: z.string().optional(),
-        build_label: z.string().optional(),
-        rows_found: z.number().int().optional(),
-        rows_imported: z.number().int().optional(),
-        tam_count: z.number().int().optional(),
-      },
-    },
-    async (input) => {
-      const run = await d.repo.getRun(input.job_id);
-      if (!run) return text({ error: "no such job" });
-      const client = (await loadClientMap(d.repo.raw()).catch(() => [])).find((c) => c.client_tag === run.client_tag);
-      const person = mapPersonSource(input.person_source);
-      const emailTier = mapEmailMaxTier(input.email_max_tier);
-      if (!person.source) return text({ error: "person_source is required." });
-      if (input.email_max_tier && !emailTier.tier && !emailTier.legacy) {
-        return text({ error: `unknown email_max_tier '${input.email_max_tier}'. Live: ${EMAIL_TIERS.join(", ")}. leadmagic maps to aiark (D58).` });
-      }
-      const warnings = [person.warning, emailTier.warning].filter((w): w is string => Boolean(w));
-      const receipt_id = await d.repo.insertPullReceipt({
-        written_by: d.by,
-        client_tag: run.client_tag,
-        smartlead_client_id: client?.smartlead_client_id ?? null,
-        lane: run.lane,
-        campaign_ids: run.campaign_id ? [run.campaign_id] : [],
-        icp_kind: input.company_source === "getleads" || input.company_source === "ai_ark" ? "linkedin_native" : "physical",
-        persona: run.lane,
-        company_source: input.company_source,
-        company_filters: input.company_filters,
-        domain_source: input.domain_source,
-        person_source: person.source,
-        email_source: input.email_source,
-        email_max_tier: emailTier.tier,
-        rows_found: input.rows_found ?? null,
-        rows_imported: input.rows_imported ?? null,
-        tam_count: input.tam_count ?? null,
-        how_i_did_it: input.how_i_did_it,
-        notes: input.notes ?? null,
-        segment: null,
-        yield_by_step: run.counts_by_status ?? null,
-        spend_cents: Object.values(run.spend_cents_by_vendor ?? {}).reduce((a, b) => a + (Number(b) || 0), 0),
-        suppression_scope: null,
-        build_label: input.build_label ?? `job_${run.run_id.slice(0, 8)}`,
-        granularity: "build",
-      });
-      await d.ledger.event({ client_tag: run.client_tag, lane: run.lane, run_id: run.run_id, event: "receipt", line: `Receipt ${receipt_id.slice(0, 8)} written by ${d.by}: ${input.how_i_did_it.slice(0, 160)}`, actor: d.by }).catch(() => undefined);
-      return text({ ok: true, receipt_id, job_id: run.run_id, person_source: person.source, email_max_tier: emailTier.tier, ...(warnings.length ? { warning: warnings.join(" ") } : {}) });
-    },
-  );
-
-  server.registerTool(
-    "confirm_filters",
-    {
-      description:
-        "Stamp owner_confirmed_at on a backfilled pull receipt so the next top-up may scale it. Josh or Cayden only (D92). Pass approved_by with their name. Does not rewrite filters. Counts and ids only.",
-      inputSchema: {
-        receipt_id: z.string().uuid(),
-        approved_by: z.string().describe("Josh or Cayden."),
-      },
-    },
-    async ({ receipt_id, approved_by }) => {
-      const who = confirmFiltersApprover(approved_by);
-      if (!who.ok) return text({ error: who.error });
-      const stamped = await d.repo.confirmPullReceipt(receipt_id, who.by);
-      if (!stamped) return text({ error: "no such receipt" });
-      await d.ledger
-        .event({
-          client_tag: "canon",
-          lane: "confirm",
-          run_id: null,
-          event: "approved",
-          line: `Receipt ${receipt_id.slice(0, 8)} filters confirmed by ${who.by}${stamped.already ? " (already stamped)" : ""}.`,
-          actor: d.by,
-        })
-        .catch(() => undefined);
-      return text({ ok: true, receipt_id: stamped.receipt_id, confirmed_by: who.by, already: stamped.already });
-    },
-  );
-
-  server.registerTool(
     "abort",
-    { description: "Abort any open job or run. Running steps stop, claimed rows go back, open cards close. Nothing is loaded by an aborted job.", inputSchema: { job_id: z.string() } },
+    { description: "Abort an open job. Running steps stop, claimed rows go back, open cards close. Nothing is loaded by an aborted job.", inputSchema: { job_id: z.string() } },
     async ({ job_id }) => {
-      const res = await d.orchestrator.abortRun(job_id, d.by);
+      const res = await d.jobs.abort(job_id, d.by);
       return text(res.ok ? { ok: true, job_id, released_rows: res.released } : { ok: false, message: res.message });
     },
   );
-}
-
-function verbDescription(verb: Exclude<Verb, "pull">): string {
-  switch (verb) {
-    case "suppress":
-      return "Run suppression on the job's rows (D81): this client's classified unsubscribes, hard bounces (pending Josh), and the existing DNC list. Not-interested is not suppressed. Smartlead Do Not Contact is not a class. Returns raw, dropped by reason, net new.";
-    case "icp":
-      return "The ICP website gate (skill icp-website-gate): fetch each distinct domain's site with our own edge function (free), let Jev pick a category (about $0.11 per 1,000 sites), ask DiscoLike about the sites we could not read (about $0.0038 each), and write the verdict onto the rows. Only icp_gate = yes moves on; flagged rows are suppressed with a reason and stay in the table. The first call returns the estimate; approved_by runs it. Rows with no domain are left: enrich(job_id) then icp(job_id) again. Needs a label set for the client in topup.icp_variants.";
-    case "enrich":
-      return "Fill the gaps on the job's rows: domains through the domain waterfall, people through the people waterfall, emails through the email waterfall up to the job's max tier. Paid tiers return an estimate first; approved_by runs them (once per step/approver/amount). People and email waterfalls read topup.<tag>_ingested_leads_ew so ew_read_source sees domain (D67; apply 0021 first). The service never CREATE VIEW. A step pre-D64 marked done with rows still queued is reopened and run. force=true re-runs a done step.";
-    case "verify":
-      return "Verify the job's emails (MillionVerifier, then No2Bounce on the catch-alls). Paid; the first call returns the estimate, approved_by runs it. Returns sendable and reject rate.";
-    case "normalize":
-      return "Normalize names, companies and locations and assign the local sports team on the job's rows. Free. Empty company is filled from client_<tag>.maps_raw.name joined on email (D67). The hold reads company_n, not the empty raw company_name (D68). City, ST in city is split before geocode. Role-inbox title fill stays as a fallback. Re-runs when the step's rules hash changed or force=true.";
-    case "qa":
-      return "The merge-field QA gate on the job's rows: every field the copy uses is populated or the row is held. Returns held counts by reason.";
-    case "stage":
-      return "Route the job's rows into the campaign and stage them for import. Returns counts per campaign.";
-    case "import":
-      return "Import the staged rows into the Smartlead campaign through LeadPipe, then the post-import check. Refuses while loads_paused is on. Never sets a campaign ACTIVE.";
-  }
 }

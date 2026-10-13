@@ -14,7 +14,7 @@ export const TRANSCRIPT_PAGE_DEFAULT = 12_000;
 export const TRANSCRIPT_PAGE_MAX = 24_000;
 
 export const BUILD_RECORD_HOW_TO_READ =
-  "Read the narrative first. Receipts (campaign_record) stay the at-a-glance source of record. Fetch the transcript only for an edge case: pass fetch_transcript=true (or offset/limit) and page with offset/limit. The path is a storage object name, never a file URL.";
+  "Read the narrative first. The transcript is the method (D96, D99); build_record returns it as ordered tool calls. The path is a storage object name, never a file URL.";
 
 const RECORD_SELECT = `id, client_tag, campaign_ids, receipt_ids, lanes, narrative,
        transcript_path, transcript_paths, transcript_format, spend_cents,

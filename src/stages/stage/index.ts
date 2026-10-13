@@ -1,7 +1,7 @@
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import { SENDABLE_LEAD_STATUSES } from "../../domain/leadStatus.js";
-import type { Recipe } from "../../recipes/schema.js";
+import type { JobSettings } from "../../jobs/settings.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { attempt, columnsOf, finish, type StageDeps, type StageOutcome } from "../common.js";
 
@@ -26,7 +26,7 @@ export function dedupeKeySql(campaignExpr: string, emailExpr: string): string {
 export class StageStage {
   constructor(private readonly d: StageDeps) {}
 
-  async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
+  async run(run: RunRow, settings: JobSettings): Promise<StageOutcome> {
     return attempt(this.d, run, "stage", "staging", async () => {
       const table = ingestedTable(run.client_tag);
       const db = this.d.repo.raw();
@@ -38,7 +38,7 @@ export class StageStage {
       }
       const lane = await columnsOf(this.d.repo, table);
       const sendable = SENDABLE_LEAD_STATUSES.map((s) => `'${s}'`).join(", ");
-      const vendor = recipe.source.kind === "getleads" ? "getleads" : "supabase";
+      const vendor = "supabase";
 
       // Column → source expression, only for columns staging actually has.
       const pairs: Array<[string, string]> = [

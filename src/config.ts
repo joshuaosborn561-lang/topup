@@ -30,55 +30,30 @@ const schema = z.object({
   MCP_OWNER_TOKEN: z.string().default(""),
   MCP_OPERATOR_TOKEN: z.string().default(""),
 
+  /** LeadPipe: every row moves through it (ingest, export to the verifier). */
   LEADPIPE_MCP_URL: z.string().default(""),
   LEADPIPE_TOKEN: z.string().default(""),
+  /** Email Verifier Progression (MillionVerifier then No2Bounce). */
   VERIFIER_BASE_URL: z.string().default(""),
-  WIZARD_HEALTH_URL: z.string().default(""),
-  /** getleads hosted MCP. The token is whatever getleads issues for a service; see docs/servers.md §11. */
-  GETLEADS_MCP_URL: z.string().default(""),
-  GETLEADS_TOKEN: z.string().default(""),
-  /** AI Ark People Preview. Empty means count(source="ai_ark") says so instead of counting. */
-  AI_ARK_TOKEN: z.string().default(""),
-  AI_ARK_PREVIEW_URL: z.string().default("https://api.ai-ark.com/api/developer-portal/v1/people/preview"),
-  /** Prospeo search-person count (D83). Empty means count(source="prospeo") says so instead of counting. */
-  PROSPEO_API_KEY: z.string().default(""),
-  PROSPEO_SEARCH_URL: z.string().default("https://api.prospeo.io/search-person"),
-  /** Smartlead server on Railway (import, post-import). It has no inbound auth today; the token slot is for when it does. */
+  /** Smartlead server on Railway (import, post-import). Only the D6 allow list is ever called. */
   SMARTLEAD_MCP_URL: z.string().default(""),
   SMARTLEAD_TOKEN: z.string().default(""),
-  /** Maps counter. `pipeline_stats` only. Unset uses the public MCP. An empty string leaves the counter off. */
-  MAPS_MCP_URL: z.string().default("https://google-maps-mcp-production-88a3.up.railway.app/mcp"),
-  /** Permit counter. `metrics_monthly` only. Unset uses the public MCP. An empty string leaves the counter off. */
-  PERMITSTACK_MCP_URL: z.string().default("https://permitstack-mcp-production.up.railway.app/mcp"),
-  /** Puzzle + email enrichment. Empty = park when a row needs that piece. */
+  /**
+   * Addresses of the other custom MCPs, only so `connectors` can tell Grokbot
+   * where to attach them. This service calls none of them (D99).
+   */
+  MAPS_MCP_URL: z.string().default(""),
+  PERMITSTACK_MCP_URL: z.string().default(""),
   DOMAIN_WATERFALL_MCP_URL: z.string().default(""),
-  DOMAIN_WATERFALL_TOKEN: z.string().default(""),
   PEOPLE_WATERFALL_MCP_URL: z.string().default(""),
-  PEOPLE_WATERFALL_TOKEN: z.string().default(""),
   EMAIL_WATERFALL_MCP_URL: z.string().default(""),
-  EMAIL_WATERFALL_TOKEN: z.string().default(""),
-  NAME_TO_EMAIL_MCP_URL: z.string().default(""),
-  NAME_TO_EMAIL_TOKEN: z.string().default(""),
 
-  /** The ICP gate's edge functions on campaignintelligence (D60). Keys are the functions' own access keys; empty leaves the icp verb parked. */
+  /** The ICP website gate's edge functions on campaignintelligence (D60). Keys are the functions' own access keys; empty parks the icp step. */
   SUPABASE_FUNCTIONS_URL: z.string().default("https://azpapwtnrbzywlnxxecz.supabase.co/functions/v1"),
   ICP_SITE_FETCH_KEY: z.string().default(""),
   ICP_LLM_KEY: z.string().default(""),
   ICP_DISCO_KEY: z.string().default(""),
   ICP_JEV_MODEL: z.string().default("typesafe/jev-1.13"),
-  SITE_PEOPLE_KEY: z.string().default(""),
-  SITE_PEOPLE_GEMINI_MODEL: z.string().default("gemini-3.1-flash-lite"),
-  SITE_PEOPLE_FETCH_PARALLEL: numberWithDefault(2),
-  SITE_PEOPLE_FETCH_WORKERS: numberWithDefault(25),
-  SITE_PEOPLE_FETCH_PER_CALL: numberWithDefault(50),
-  SITE_PEOPLE_FETCH_PER_HOST: numberWithDefault(2),
-  SITE_PEOPLE_EXTRACT_PARALLEL: numberWithDefault(4),
-  SITE_PEOPLE_EXTRACT_WORKERS: numberWithDefault(7),
-  SITE_PEOPLE_EXTRACT_PER_CALL: numberWithDefault(28),
-  SITE_PEOPLE_ASK_PARALLEL: numberWithDefault(4),
-  SITE_PEOPLE_ASK_WORKERS: numberWithDefault(7),
-  SITE_PEOPLE_ASK_PER_CALL: numberWithDefault(28),
-  SITE_PEOPLE_GEMINI_RPM: numberWithDefault(200),
 
   /** Poll cadence and patience for the vendor jobs. */
   JOB_POLL_SECONDS: numberWithDefault(30),
@@ -133,18 +108,8 @@ export function configReadiness(cfg: Config): Record<string, boolean> {
     owner_token: Boolean(cfg.MCP_OWNER_TOKEN),
     leadpipe: Boolean(cfg.LEADPIPE_MCP_URL),
     verifier: Boolean(cfg.VERIFIER_BASE_URL),
-    wizard: Boolean(cfg.WIZARD_HEALTH_URL),
-    getleads: Boolean(cfg.GETLEADS_MCP_URL),
-    ai_ark: Boolean(cfg.AI_ARK_TOKEN),
-    prospeo: Boolean(cfg.PROSPEO_API_KEY),
     smartlead: Boolean(cfg.SMARTLEAD_MCP_URL),
-    maps: Boolean(cfg.MAPS_MCP_URL),
-    permits: Boolean(cfg.PERMITSTACK_MCP_URL),
-    domain_waterfall: Boolean(cfg.DOMAIN_WATERFALL_MCP_URL),
-    people_waterfall: Boolean(cfg.PEOPLE_WATERFALL_MCP_URL),
-    email_waterfall: Boolean(cfg.EMAIL_WATERFALL_MCP_URL),
-    name_to_email: Boolean(cfg.NAME_TO_EMAIL_MCP_URL),
     icp_gate: Boolean(cfg.ICP_SITE_FETCH_KEY && cfg.ICP_LLM_KEY),
-    site_people: Boolean(cfg.SITE_PEOPLE_KEY),
+    transcripts: Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_SERVICE_ROLE_KEY),
   };
 }

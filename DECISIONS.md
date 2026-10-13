@@ -118,6 +118,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D96 | Live; build transcript / narrative is the source of truth for how a list was built; a backfilled receipt that disagrees or is thinner is corrected to match (a backfill fix, not widening); generic diff then --apply; skip registry lane unassigned and never retag onto or off it |
 | D97 | Live; held returns a held_id and runs the free GetLeads pool export in the background; every split export_id is polled; a miss names its class (timeout / export_failed / fair_use / count_timeout / paid_export); never a paid export |
 | D98 | Live; held is every lead this client already has (lead store, Smartlead history and mirror, sends, provenance, plus suppressions); match by email, else LinkedIn URL, else normalized name+company; generic exact join (D80); net new splits has_email vs needs_enrich |
+| D99 | Live; the lean top-up: Grokbot replays the recorded build with its own connectors and hands the pool over; the service dedupes against everything held, removes unsubscribes, quotes count and cost, waits for Josh or Cayden by name, runs the ICP website check and verification, and loads; eleven tools; LeadPipe always; no recorded build means wait; legacy pull, recipes, counts, sizes and per-client code removed |
 
 ---
 
@@ -3210,3 +3211,64 @@ only). It does not treat `maps_raw` as held. Josh still flips ACTIVE
 by hand (D5, D14). Pulls stay held until a person says yes.
 
 **Guard.** `src/guards/d98_held_all_client_leads.test.ts`. Ask Josh or Cayden.
+
+## D99 — The lean top-up: replay the record, quote, approve by name, load
+
+**Decision.** The service does one thing. When a campaign runs low,
+Grokbot reads that campaign's saved build (`build_record`: the narrative,
+the transcript's tool calls in order with their arguments, what the
+person asked, and the process changes written since), replays it with
+its own connectors through LeadPipe, and hands the pool to the service
+as a signed file URL or a table on campaignintelligence. The service
+ingests it, removes everyone the client already has anywhere (D98),
+removes real unsubscribes and the DNC list (D81), and posts one card:
+the new-lead count and the worst-case cost. Nothing paid runs. Josh or
+Cayden says yes by name (`topup(job_id, approved_by)`, D92); then the
+website ICP check (D60) and verification run, the rows are normalized,
+QA'd, staged and loaded, and the service writes its own top-up into
+`topup.list_build_records`. Loads paused: it stops at staged and
+`load(job_id)` finishes later. Josh flips ACTIVE by hand (D5).
+
+The MCP is eleven tools: `canon`, `connectors`, `campaigns`,
+`build_record`, `topup`, `load`, `job`, `jobs`, `spend`, `abort`,
+`loads_paused`. `connectors(have)` runs first in every session and
+names the required connectors (Top_Up, Supabase, Context_Saver /
+LeadPipe, getleads, Smartlead with its Railway HTTPS address, Email
+Verifier Progression) and the optional ones a transcript may use; a
+missing required connector stops the top-up and the bot asks Josh to
+attach it in Grokbot. A campaign with no recorded build refuses: there
+is no method to replay. The transcript wins over any saved filter
+(D96). New skills ride in as process changes on top of the transcript,
+never as code. Client-agnostic: no per-client code, recipe or branch.
+
+Hard rule, in every tool description that moves rows: every lead row
+moves through LeadPipe or this service; never SELECT emails or names,
+never read an export, never paste a row into chat.
+
+**Why.** Josh, 13 Oct 2026. Two BCP jobs stalled on the 46-rule canon,
+30 tools and per-step approvals; the bot reasoned about internals
+(random tables, recipes, counts) instead of replaying the build. "This
+theoretically should be a very lean MCP. If there's a bunch of crap in
+here, it doesn't need to be in here." "Anything that's legacy recipe or
+legacy deterministic, just get rid of it." "It needs to run things
+through LeadPipe 100% of the time. It should not pull anything into the
+context. That is how I nuke my usage."
+
+**What it removed.** The service no longer pulls (getleads, AI Ark,
+Prospeo, Maps, permits, site owners), counts, sizes, holds, enriches
+(domain, people, email waterfalls, name-to-email), checks sites,
+classifies leftovers, writes receipts, confirms filters, or reads
+leftovers and sources. Recipes, lane recipes as a concept, the legacy
+LeadMagic mapping, the per-client scripts, the pilot, the balance
+readers and the spine's pull/size steps are gone. Rules 12 to 45 of the
+old canon were about those parts and are retired with them; the
+decisions stay in this ledger as history.
+
+**What it does not do.** It does not read a lead row into chat. It does
+not spend before a name. It does not accept a name other than Josh or
+Cayden. It does not start on its own. It does not set a campaign
+ACTIVE. It does not top up a campaign with no recorded build. It does
+not widen a search. It does not add a watch, a cron, a planner, a recipe
+or a policy gate.
+
+**Guard.** `src/guards/d99_lean_topup.test.ts`. Ask Josh or Cayden.

@@ -1,4 +1,4 @@
-import type { Source } from "../recipes/schema.js";
+import type { PoolSource } from "../jobs/settings.js";
 
 /**
  * One row of the per-campaign report a run carries on its steps. Counts and
@@ -22,61 +22,18 @@ export interface CampaignReportEntry {
   [extra: string]: unknown;
 }
 
-export const COMPANY_FILTER_REASON = "recipe has no company filter";
-
-export function sourceWords(source: Source): string {
-  if (source.kind === "getleads") {
-    const params = source.params as { company_description?: string; industries?: string[] };
-    const bits = ["getleads people search"];
-    if (params.company_description) bits.push(params.company_description);
-    if (params.industries?.length) bits.push(params.industries.join(", "));
-    return bits.join(", ");
-  }
-  if (source.kind === "maps") return "Google Maps";
-  if (source.kind === "permits") return "permit counts";
-  if (source.kind === "mixed") return source.parts.length ? source.note : COMPANY_FILTER_REASON;
-  if (source.kind === "supabase_table") return `table ${source.table}`;
-  return source.kind;
+export function sourceWords(source: PoolSource): string {
+  if (source.kind === "file_url") return `${source.urls.length} file(s) handed over by Grokbot`;
+  return `table ${source.table}`;
 }
 
-export function titlesWords(source: Source, persona: string): string {
-  if (source.kind === "getleads" && source.params.job_titles?.length) return source.params.job_titles.join(", ");
-  if (source.kind === "getleads" && source.params.job_function) {
-    const seniority = source.params.seniority?.join(", ");
-    return seniority ? `${source.params.job_function} (${seniority})` : source.params.job_function;
-  }
-  if (source.kind === "ai_ark" && source.params.titles.length) return source.params.titles.join(", ");
-  return persona || "persona not set";
+export function titlesWords(_source: PoolSource, persona: string): string {
+  return persona || "as the transcript says";
 }
 
-export function filtersWords(source: Source): string {
-  if (source.kind !== "getleads" && source.kind !== "maps" && source.kind !== "permits" && source.kind !== "ai_ark") {
-    return source.kind === "mixed" && source.parts.length === 0 ? COMPANY_FILTER_REASON : source.kind;
-  }
-  const parts: string[] = [];
-  if (source.kind === "getleads") {
-    if (source.params.industries?.length) parts.push(`industries ${source.params.industries.join(", ")}`);
-    if (source.params.job_function) parts.push(`job function ${source.params.job_function}`);
-    if (source.params.seniority?.length) parts.push(`seniority ${source.params.seniority.join(", ")}`);
-    if (source.params.company_description) parts.push(`description ${source.params.company_description}`);
-    if (source.params.company_size?.length) parts.push(`company size ${source.params.company_size.join(", ")}`);
-    if (source.params.email_status?.length) parts.push(`email ${source.params.email_status.join(", ")}`);
-    if (source.params.geo_fence) parts.push(`geography ${source.params.geo_fence.schema}.${source.params.geo_fence.table}`);
-    else if (source.params.states?.length) parts.push(`geography ${source.params.states.join(", ")}`);
-    else if (source.params.cities?.length) parts.push(`geography ${source.params.cities.join(", ")}`);
-    else if (source.params.countries?.length) parts.push(`geography ${source.params.countries.join(", ")}`);
-  }
-  if (source.kind === "maps") {
-    if (source.params.states?.length) parts.push(`geography ${source.params.states.join(", ")}`);
-    else if (source.params.cities?.length) parts.push(`geography ${source.params.cities.join(", ")}`);
-    if (source.params.categories?.length) parts.push(`categories ${source.params.categories.join(", ")}`);
-  }
-  if (source.kind === "permits") {
-    if (source.params.states?.length) parts.push(`geography ${source.params.states.join(", ")}`);
-    if (source.params.permit_types?.length) parts.push(`permit types ${source.params.permit_types.join(", ")}`);
-  }
-  if (source.kind === "ai_ark" && source.params.locations?.length) parts.push(`geography ${source.params.locations.join(", ")}`);
-  return parts.join("; ") || "no company filter";
+export function filtersWords(source: PoolSource): string {
+  if (source.kind === "table") return source.where && source.where !== "true" ? `where ${source.where}` : "the whole table";
+  return "as the transcript says";
 }
 
 export function replyRateText(sends: number, interested: number, tooEarly = false): string {

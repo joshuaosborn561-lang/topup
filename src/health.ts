@@ -59,7 +59,7 @@ export async function buildHealth(d: { cfg: Config; repo: Repo | null; rails: Sp
     version: process.env.npm_package_version ?? SERVICE_VERSION,
     ...deployIdentity(),
     mcp: { transport: "streamable-http", path: "/mcp", url: MCP_HTTPS_URL, auth: "none" },
-    phase: "canon (D53): Grok reads, Grok runs the verbs, a person approves every spend; nothing starts on its own",
+    phase: "top-up (D99): Grokbot replays the recorded build; the service dedupes, quotes, and loads after Josh or Cayden says yes; nothing starts on its own",
     uptime_s: Math.round((Date.now() - startedAt) / 1000),
     replicas: 1,
     supabase_project: ALLOWED_SUPABASE_PROJECT_REF,

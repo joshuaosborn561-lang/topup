@@ -10,7 +10,7 @@ import { describe, it } from "node:test";
 
 const srcRoot = new URL("../", import.meta.url);
 
-// Host names only: vendor *names* appear legitimately in tests (recipe tiers, price rows).
+// Host names only: vendor *names* appear legitimately in tests (settings tiers, price rows).
 const VENDOR_HOSTS = /millionverifier\.com|no2bounce\.com|leadmagic\.io|prospeo\.io|fullenrich\.com|aiark\.(com|io|ai)|apify\.com|getleads\.(io|com)|smartlead\.ai|slack\.com\/api|supabase\.co\b|railway\.app/i;
 
 async function walk(dir: URL): Promise<URL[]> {

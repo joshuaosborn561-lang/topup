@@ -3,11 +3,10 @@ import { jevModel } from "../../clients/icpGate.js";
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import { spendApprovalCard } from "../../console/cards.js";
-import type { Recipe } from "../../recipes/schema.js";
+import type { JobSettings } from "../../jobs/settings.js";
 import { usd, worstCaseCents } from "../../spend/prices.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { attempt, columnsOf, finish, park, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
-import { domainSql } from "../puzzle/classify.js";
 import { DISCO_MODEL, fetchAll, gradeAll, LLM_RESULTS, SITE_TEXT } from "./loops.js";
 import { icpLabelSql } from "./parse.js";
 
@@ -22,6 +21,16 @@ import { icpLabelSql } from "./parse.js";
  * Counts only; the lane's domains never leave Postgres except to the edge
  * functions, and never reach chat.
  */
+/** The company domain of a lane row: company_domain, domain, website, else the email's domain. Lower case. */
+export function domainSql(cols: Set<string>, prefix = ""): string {
+  const parts: string[] = [];
+  if (cols.has("company_domain")) parts.push(`nullif(btrim(${prefix}company_domain), '')`);
+  if (cols.has("domain")) parts.push(`nullif(btrim(${prefix}domain), '')`);
+  if (cols.has("website")) parts.push(`nullif(btrim(${prefix}website), '')`);
+  if (cols.has("email")) parts.push(`nullif(split_part(${prefix}email, '@', 2), '')`);
+  return parts.length ? `lower(coalesce(${parts.join(", ")}))` : "null";
+}
+
 export interface IcpDeps extends StageDeps {
   rails: SpendRails;
   gate: IcpGate | null;
@@ -55,7 +64,7 @@ export class IcpStage {
     this.clock = d.clock ?? realClock;
   }
 
-  async run(run: RunRow, _recipe: Recipe): Promise<StageOutcome> {
+  async run(run: RunRow, _recipe: JobSettings): Promise<StageOutcome> {
     return attempt(this.d, run, "icp", "suppressing", async (attempts) => {
       const table = ingestedTable(run.client_tag);
       const db = this.d.repo.raw();

@@ -13,16 +13,16 @@ For humans and coding agents alike.
 4. **Counts and ids, never rows.** No lead data in logs, Slack, PR
    descriptions or test fixtures beyond the ten-sample rule. Use the logger;
    it redacts.
-5. **Grok bot does the reasoning (D39, D53).** The service is the dumb
-   half. Read `skills/grok-bot-babysitter` and `CANON.md`. Grok reads
-   `campaigns`, `campaign_record` and `build_record`, counts with `count` and `held`, and
-   runs the verbs one at a time with a person's name on every spend. Lead
-   rows move MCP → Supabase → LeadPipe → Smartlead. They do not enter Grok
-   bot context. No `export_contacts`, no `get-dataset-items`, no
-   `find_dms_by_title`, no SELECT of emails or names, no child-agent
-   GetLeads fire. Do not set a Grok routine that re-reads lists. Do not
-   add a watch, a cron, a planner, a recipe or a policy gate to this
-   service; that is Grok's job now.
+5. **Grokbot does the building; the service is the referee and the loader
+   (D39, D53, D99).** Read `CANON.md` and `skills/grok-bot-babysitter`.
+   Grokbot reads `build_record`, replays the campaign's recorded build
+   with its own connectors through LeadPipe, hands the pool to `topup`,
+   shows Josh or Cayden the count and the cost, and runs
+   `topup(job_id, approved_by)` after a yes. Lead rows move MCP → Supabase
+   → LeadPipe → Smartlead. They do not enter Grokbot's context: no
+   SELECT of emails or names, no export into chat, no dataset items.
+   Do not add a tool, a pull, a count, a recipe, a watch, a cron, a
+   planner or a policy gate to this service. Do not add per-client code.
 6. **No vendor calls in tests.** Fake the client and assert on the ledger.
 7. **No secrets in the repo.** Railway variables only; `.env.example` lists names.
 8. **Spend goes through `SpendRails.gate`, and a person approves it first.** The

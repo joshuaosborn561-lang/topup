@@ -68,8 +68,8 @@ export async function jobStatus(
     [jobId],
   );
   const cards = await d.repo.openCardsForRun(jobId);
-  const size = steps.find((s) => s.step === "size");
-  const pull = steps.find((s) => s.step === "pull");
+  const size = steps.find((s) => s.step === "dedupe");
+  const pull = steps.find((s) => s.step === "ingest");
   const report = (pull?.counts ?? size?.counts ?? {}) as Record<string, unknown>;
   const events = d.ledger ? await d.ledger.events(run.client_tag, run.lane, 10).catch(() => []) : [];
   return {

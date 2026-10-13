@@ -9,7 +9,7 @@ import { INTERESTED_CATEGORY_IDS } from "../domain/working.js";
  *   silent   — the campaign is ACTIVE, has leads it has never touched, and
  *              sent nothing in the last WINDOW_DAYS days
  *   low      — days of runway (untouched / average daily sends) is under the
- *              floor (recipe runway.floor_days, or DEFAULT_FLOOR_DAYS)
+ *              floor (settings runway.floor_days, or DEFAULT_FLOOR_DAYS)
  *   empty    — ACTIVE with nothing left to send
  *   bouncing — bounce share of sends in the window is over BOUNCE_LINE
  *

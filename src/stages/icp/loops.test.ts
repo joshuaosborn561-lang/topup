@@ -1,23 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { FETCH_PARALLEL, fetchAll, gradeAll, PEOPLE_EXTRACT_PARALLEL, PEOPLE_EXTRACT_WORKERS, PEOPLE_FETCH_WORKERS, peopleLoopConfig } from "./loops.js";
+import { FETCH_PARALLEL, fetchAll, gradeAll } from "./loops.js";
 
-describe("D73 — people loops fan out; ICP stays at three-wide fetch", () => {
-  it("ships ~50 fetch workers and ~28 Gemini / Jev, overridable by env and params", () => {
-    const d = peopleLoopConfig({});
-    assert.equal(d.fetch.parallel * d.fetch.workers, 50, "D73: 2 × 25 fetch workers");
-    assert.equal(d.extract.parallel * d.extract.workers, 28, "D73: 4 × 7 Gemini workers");
-    assert.equal(d.ask.parallel * d.ask.workers, 28);
-    assert.equal(d.perHost, 2);
-    assert.equal(d.geminiRpm, 200);
-    assert.equal(FETCH_PARALLEL, 3, "D73: the ICP fetch loop is unchanged");
-    const over = peopleLoopConfig({ SITE_PEOPLE_EXTRACT_PARALLEL: "3", SITE_PEOPLE_EXTRACT_WORKERS: "10" }, { fetch_parallel: 5 });
-    assert.equal(over.extract.parallel, 3);
-    assert.equal(over.extract.workers, 10);
-    assert.equal(over.fetch.parallel, 5);
-    assert.equal(PEOPLE_FETCH_WORKERS, 25);
-    assert.equal(PEOPLE_EXTRACT_PARALLEL, 4);
-    assert.equal(PEOPLE_EXTRACT_WORKERS, 7);
+describe("D60 — the ICP gate loops", () => {
+  it("the ICP fetch loop is three wide", () => {
+    assert.equal(FETCH_PARALLEL, 3);
   });
 
   it("fetchAll and gradeAll run `parallel` invocations side by side and stop when nothing is left", async () => {

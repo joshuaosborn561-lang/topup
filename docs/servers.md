@@ -14,6 +14,12 @@ except where the section says so.
 > Reviewed by: _pending — Josh reviews this document before the service
 > builds on any server in it._
 
+> **D99 (2026-10-13).** The service now calls only LeadPipe (§1), Email
+> Verifier Progression (§9), the Smartlead server (§10) and the ICP gate
+> edge functions. Every other server below is one Grokbot attaches as its
+> own connector when a campaign's build transcript uses it; the sections
+> stay as the reference for what those servers do and cost.
+
 ## How to read a section
 
 | Heading | Meaning |

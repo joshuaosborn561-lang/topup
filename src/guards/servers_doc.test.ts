@@ -15,18 +15,8 @@ const root = new URL("../../", import.meta.url);
 const CLIENT_SERVER: Readonly<Record<string, string>> = {
   "leadpipe.ts": "LeadPipe",
   "verifier.ts": "Email Verifier Progression",
-  "getleads.ts": "getleads",
-  "aiArkPreview.ts": "AI Ark",
   "smartlead.ts": "Smartlead server",
-  "domainWaterfall.ts": "Domain Waterfall",
-  "peopleWaterfall.ts": "Find Named Person",
-  "emailWaterfall.ts": "Email Finder Waterfall",
-  "nameToEmail.ts": "Name to Email",
-  "mapsStats.ts": "Google Maps Scraper",
-  "permits.ts": "PermitStack",
   "icpGate.ts": "ICP gate",
-  "jevClassify.ts": "ICP gate",
-  "sitePeople.ts": "Site people",
 };
 
 /** The ten servers the addendum names (section 4). */

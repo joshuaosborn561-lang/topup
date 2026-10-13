@@ -39,7 +39,7 @@ export const SPINE: readonly SpineStep[] = [
     also: { who: "cayden", when: "full approver, equal to Josh (D92)" },
     gate: "every cell has a campaign or Josh or Cayden knows one must be built. Josh or Cayden signs off on the segment before anything is pulled.",
     skill: "the client's lead pull skill (parlay-lead-pulls, culture-fits-lead-pulls, techevo-lead-pulls, goliath-lead-pulls, salesglider-lead-pulls) plus the latest client call in Fireflies",
-    // The recipe is the signed-off segment; `trigger` checks a recipe exists for the lane before a run opens.
+    // The settings is the signed-off segment; `trigger` checks a settings exists for the lane before a run opens.
     pipeline: ["trigger"],
     card: "the segment with counts and ten sample rows",
   },
@@ -50,7 +50,7 @@ export const SPINE: readonly SpineStep[] = [
     also: { who: "josh", when: "the pool is thin: widening options with counts, Josh decides" },
     gate: "projected net new is at least the useful floor of 1,000 per campaign (D46); under it the line says the TAM for this campaign is exhausted and that campaign parks. If thin, present widening options with counts; Josh decides. Never widen unasked.",
     skill: "tam-sizing",
-    pipeline: ["size"],
+    pipeline: [],
     card: "the segment with counts and ten sample rows",
   },
   {
@@ -61,7 +61,7 @@ export const SPINE: readonly SpineStep[] = [
     gate: "useful output counted, titles audited, spend within the approved ceiling.",
     skill:
       "the client pull skill, leadgen-mcp-routing; company-first: unmask-shell-llc, domain-waterfall, people-waterfall, serp-dm-discovery, hard-to-find-dm-discovery, unresolved-name-routing",
-    pipeline: ["pull"],
+    pipeline: [],
     card: "expected yield and cost per usable lead, and the pilot result for company-first lanes",
   },
   {
@@ -81,7 +81,7 @@ export const SPINE: readonly SpineStep[] = [
     also: null,
     gate: "report raw, removed by reason, net new. Net new is the number from here on.",
     skill: "global-suppression",
-    pipeline: ["suppress", "icp", "puzzle", "find_emails"],
+    pipeline: ["dedupe", "suppress", "icp"],
     card: null,
   },
   {
@@ -161,7 +161,7 @@ export const SPINE: readonly SpineStep[] = [
     also: null,
     gate: "Josh sets the campaign ACTIVE by hand. Nothing automated ever starts, pauses, or stops a campaign.",
     skill: null,
-    pipeline: ["flip"],
+    pipeline: [],
     card: null,
   },
 ];

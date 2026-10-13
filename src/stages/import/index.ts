@@ -2,12 +2,12 @@ import { IMPORT_DONE, IMPORT_FAILED, type ImportStatus, type Smartlead } from ".
 import { ingestedTable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import { campaignSnapshots, WINDOW_DAYS } from "../../ledger/health.js";
-import type { Recipe } from "../../recipes/schema.js";
+import type { JobSettings } from "../../jobs/settings.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
 import { STAGING_TABLE } from "../stage/index.js";
 import { attempt, finish, poll, realClock, type Clock, type PollVerdict, type StageDeps, type StageOutcome } from "../common.js";
-import { writeRunReceipt } from "./receipt.js";
+import { writeTopupRecord } from "./record.js";
 
 /**
  * Step 11 — Import (skill lead-list-build). Smartlead `start_lead_import`
@@ -53,7 +53,7 @@ export class ImportStage {
     this.clock = d.clock ?? realClock;
   }
 
-  async run(run: RunRow, recipe: Recipe): Promise<StageOutcome> {
+  async run(run: RunRow, settings: JobSettings): Promise<StageOutcome> {
     return attempt(this.d, run, "import", "importing", async () => {
       const table = ingestedTable(run.client_tag);
       const db = this.d.repo.raw();
@@ -127,13 +127,11 @@ export class ImportStage {
         (unmarked.length ? ` · staging rows not yet marked imported by the import job: ${unmarked.map((r) => `#${r.campaign_id} ${stagingMarked[r.campaign_id] ?? 0}/${r.submitted}`).join(", ")}` : "") +
         ".";
       try {
-        const id = await writeRunReceipt(this.d.repo, run, recipe, {
-          ...counts,
-          rows_exported: Number((await this.d.repo.getStep(run.run_id, "pull"))?.counts.rows_exported ?? 0),
-        });
-        if (id) counts.receipt_written = 1;
+        const approver = String((await this.d.repo.getStep(run.run_id, "icp"))?.counts?.approved_by ?? "a person");
+        const id = await writeTopupRecord(this.d.repo, run, settings, counts, approver);
+        counts.record_written = id ? 1 : 0;
       } catch {
-        counts.receipt_written = 0;
+        counts.record_written = 0;
       }
       return finish(this.d, run, "import", counts.imported, counts, line);
     });

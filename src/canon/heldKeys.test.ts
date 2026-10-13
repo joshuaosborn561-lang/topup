@@ -6,8 +6,6 @@ import {
   normalizeEmail,
   normalizeLinkedin,
   normalizeNameCompany,
-  poolRowsFromCsv,
-  rowHasEmail,
   rowIsHeld,
 } from "./heldKeys.js";
 
@@ -37,24 +35,5 @@ describe("D98 — held identifier keys", () => {
     assert.equal(rowIsHeld({ email: "new@example.com", linkedin: null, first: "New", last: "Person", company: "Co" }, keys), false);
   });
 
-  it("parses identifier CSV rows including those with no work_email", () => {
-    const rows = poolRowsFromCsv(
-      "work_email,linkedin_url,first_name,last_name,company_name\n" +
-        "a@example.com,https://linkedin.com/in/a,Ann,A,Acme\n" +
-        ",https://linkedin.com/in/b,Bob,B,Beta\n",
-    );
-    assert.equal(rows.length, 2);
-    assert.equal(rowHasEmail(rows[0]!), true);
-    assert.equal(rowHasEmail(rows[1]!), false);
-    assert.equal(rows[1]!.linkedin, "https://linkedin.com/in/b");
-  });
 
-  it("keeps a quoted newline inside a company field as one row", () => {
-    const rows = poolRowsFromCsv(
-      'work_email,linkedin_url,first_name,last_name,company_name\n' +
-        'a@example.com,https://linkedin.com/in/a,Ann,A,"Acme\nInc"\n',
-    );
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0]!.company, "Acme\nInc");
-  });
 });
