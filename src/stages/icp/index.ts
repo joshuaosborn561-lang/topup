@@ -92,6 +92,7 @@ export class IcpStage {
       const worst = icpWorstCaseCents(domains);
       const own = await this.d.repo.getStep(run.run_id, "icp");
       const approved = own?.approved_cents ?? 0;
+      const approvedBy = typeof own?.counts?.approved_by === "string" ? String(own.counts.approved_by) : null;
       const spentToday = await this.d.repo.spentTodayCents();
       const decision = this.d.rails.decide(
         { runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev", action: "grade", rows: domains, recipeAuthorised: true, approvedCents: approved, worstCaseCents: worst },
@@ -134,7 +135,7 @@ export class IcpStage {
       // 3. Jev picks a category. One call at a time per batch.
       const { graded, errors: gradeErrors, last_error: lastError } = await gradeAll((n, w) => this.d.gate!.grade(batch, model, n, w));
       const jevCost = await this.costCents(batch, model);
-      await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev", action: "grade", rows: graded, credits: graded, worstCaseCents: worst, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy: null });
+      await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev", action: "grade", rows: graded, credits: graded, worstCaseCents: worst, balanceBefore: null, balanceAfter: null, vendorJobId: batch, approvedBy });
       // 4. DiscoLike on what we could not read. One task at a time.
       let fallback = 0;
       let fallbackTally: Record<string, number> = {};
@@ -153,7 +154,7 @@ export class IcpStage {
             if (this.clock.now() - started > this.d.cfg.deadMs) throw new Error(`DiscoLike task ${sub.task_id} still running after ${Math.round(this.d.cfg.deadMs / 60000)} min`);
             await this.clock.sleep(this.d.cfg.pollMs);
           }
-          await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "discolike", action: "validate_icp", rows: fallback, credits: fallback, worstCaseCents: null, balanceBefore: null, balanceAfter: null, vendorJobId: sub.task_id, approvedBy: null });
+          await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "discolike", action: "validate_icp", rows: fallback, credits: fallback, worstCaseCents: null, balanceBefore: null, balanceAfter: null, vendorJobId: sub.task_id, approvedBy });
         }
       }
       // 5. The verdict onto the rows; Jev's answer wins over DiscoLike's. Flagged rows are suppressed with a reason, never deleted.

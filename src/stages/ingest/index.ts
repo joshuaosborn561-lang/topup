@@ -5,7 +5,7 @@ import type { RunRow } from "../../domain/runs.js";
 import type { JobSettings } from "../../jobs/settings.js";
 import type { SpendRails } from "../../spend/rails.js";
 import { gateUnmet } from "../../spine/gate.js";
-import { attempt, columnsOf, finish, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
+import { attempt, columnsOf, finish, park, poll, realClock, type Clock, type StageDeps, type StageOutcome } from "../common.js";
 
 /**
  * Ingest (D99): the pool Grokbot pulled the way the transcript did lands in
@@ -50,10 +50,42 @@ export const TABLE_COLUMN_SYNONYMS: Readonly<Record<string, readonly string[]>> 
 
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 
-/** A where clause the bot wrote for its own table: one expression, no statement separators, no comments. */
+/**
+ * A where clause the bot wrote for its own table: one expression made of
+ * column names, string and number literals, comparisons, AND/OR/NOT,
+ * IN (...), [NOT] [I]LIKE, IS [NOT] NULL, BETWEEN and parentheses. Nothing
+ * else (no functions, no subqueries, no casts, no comments) runs against
+ * the lane table.
+ */
+const WHERE_WORDS = new Set(["and", "or", "not", "in", "like", "ilike", "is", "null", "true", "false", "between"]);
+/** Never a column name: anything that would turn a where into a statement, a subquery or a call. */
+const WHERE_BANNED = new Set(["select", "from", "where", "union", "insert", "update", "delete", "drop", "alter", "create", "grant", "revoke", "truncate", "into", "exec", "execute", "call", "do", "copy", "with", "returning", "values", "lateral", "join", "case", "cast", "set", "limit", "offset", "order", "group", "having"]);
+const WHERE_TOKEN = /\s+|'(?:[^']|'')*'|"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_.]*|\d+(?:\.\d+)?|<=|>=|<>|!=|=|<|>|\(|\)|,/giy;
+
 export function safeWhere(where: string | null | undefined): string {
   const w = (where ?? "").trim() || "true";
-  if (/;|--|\/\*/.test(w)) throw new Error("where must be one SQL expression: no semicolons or comments");
+  if (/;|--|\/\*|\$/.test(w)) throw new Error("where must be one SQL expression: no semicolons, comments or parameters");
+  WHERE_TOKEN.lastIndex = 0;
+  let pos = 0;
+  let depth = 0;
+  for (;;) {
+    if (pos >= w.length) break;
+    WHERE_TOKEN.lastIndex = pos;
+    const m = WHERE_TOKEN.exec(w);
+    if (!m || m.index !== pos || m[0].length === 0) throw new Error(`where has something the service does not run: near "${w.slice(pos, pos + 20)}"`);
+    const t = m[0];
+    pos += t.length;
+    if (t === "(") depth += 1;
+    else if (t === ")") depth -= 1;
+    else if (/^[a-z_]/i.test(t)) {
+      const word = t.toLowerCase();
+      if (WHERE_BANNED.has(word) || word.startsWith("pg_")) throw new Error(`where has something the service does not run: "${t}"`);
+      if (!WHERE_WORDS.has(word) && !/^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?$/.test(word)) throw new Error(`where has something the service does not run: "${t}"`);
+      if (!WHERE_WORDS.has(word) && /^\s*\(/.test(w.slice(pos))) throw new Error(`where has something the service does not run: a call to "${t}"`);
+    }
+    if (depth < 0) throw new Error("where has unbalanced parentheses");
+  }
+  if (depth !== 0) throw new Error("where has unbalanced parentheses");
   return w;
 }
 
@@ -70,7 +102,7 @@ export class IngestStage {
   }
 
   async run(run: RunRow, settings: JobSettings): Promise<StageOutcome> {
-    return attempt(this.d, run, "ingest", "ingesting", async () => {
+    return attempt(this.d, run, "ingest", "ingesting", async (attempts) => {
       const table = ingestedTable(run.client_tag);
       const cols = await columnsOf(this.d.repo, table);
       if (!cols.has("source_label")) throw new Error(`${table} has no source_label column; the lane table is not a LeadPipe table. Ask Josh.`);
@@ -82,12 +114,25 @@ export class IngestStage {
       if (already === 0) {
         if (settings.source.kind === "file_url") {
           const status = await this.ingestFiles(run, settings.source.urls, label);
+          if (JOB_FAILED.includes(status.status)) return park(this.d, run, "ingest", `LeadPipe could not ingest the file(s): ${status.error ?? status.status}. Export again and open a new job.`, attempts);
           rowsRead = status.rows_read;
           expected = status.rows_inserted ?? status.rows_read;
           vendor = { filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped, rows_inserted: status.rows_inserted, note: status.note };
         } else {
-          rowsRead = await this.copyTable(run, settings.source.table, settings.source.where, label, cols);
-          expected = rowsRead;
+          const copied = await this.copyTable(run, settings.source.table, settings.source.where, label, cols);
+          rowsRead = copied.read;
+          expected = copied.inserted;
+          vendor = { filtered_out: null, dupes_dropped: copied.already_in_lane, rows_inserted: copied.inserted, note: null };
+        }
+      } else if (settings.source.kind === "file_url") {
+        // A resumed ingest: the rows are here; the counts come from LeadPipe's finished job.
+        const own = await this.d.repo.getStep(run.run_id, "ingest");
+        if (own?.vendor_job_id) {
+          const status = await this.d.leadpipe.jobStatus(own.vendor_job_id).catch(() => null);
+          if (status && JOB_DONE.includes(status.status)) {
+            rowsRead = status.rows_read;
+            vendor = { filtered_out: status.filtered_out, dupes_dropped: status.dupes_dropped, rows_inserted: status.rows_inserted, note: status.note };
+          }
         }
       }
       const deduped = await this.dedupeLanded(table, run.run_id, label, cols);
@@ -157,7 +202,7 @@ export class IngestStage {
     const status = await poll<JobStatus>(
       async () => {
         const s = await this.d.leadpipe.jobStatus(jobId!);
-        if (JOB_FAILED.includes(s.status)) return { state: "failed", error: s.error ?? s.status };
+        if (JOB_FAILED.includes(s.status)) return { state: "done", value: s };
         if (JOB_DONE.includes(s.status)) return { state: "done", value: s };
         return { state: "running" };
       },
@@ -173,17 +218,21 @@ export class IngestStage {
    * the lane table itself (it ingested through LeadPipe under its own label),
    * the rows its where picks are relabelled for this job instead of copied.
    */
-  private async copyTable(run: RunRow, qualified: string, where: string, label: string, laneCols: Set<string>): Promise<number> {
+  private async copyTable(run: RunRow, qualified: string, where: string, label: string, laneCols: Set<string>): Promise<{ read: number; inserted: number; already_in_lane: number }> {
     const [schema, name] = qualified.split(".");
     if (!schema || !name || !IDENT.test(schema) || !IDENT.test(name)) throw new Error(`table must be schema.table, not ${qualified}`);
     if (isLaneTable(qualified, run.client_tag)) {
       const w = safeWhere(where);
       if (w === "true") throw new Error(`${qualified} is this job's own lane table. Pass a where that picks the rows you ingested (for example source_label = '…'), not the whole table.`);
       const { rowCount } = await this.d.repo.withRun(run.run_id, (tx) =>
-        tx.query(`update ${ingestedTable(run.client_tag)} set source_label = $1 where (${w}) and run_id is null`, [label]),
+        tx.query(
+          `update ${ingestedTable(run.client_tag)} set qa_flags = coalesce(qa_flags, '{}'::jsonb) || jsonb_build_object('pool_label', source_label), source_label = $1
+            where (${w}) and run_id is null`,
+          [label],
+        ),
       );
       await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "supabase", action: "table_copy", rows: rowCount ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: null, approvedBy: null });
-      return rowCount ?? 0;
+      return { read: rowCount ?? 0, inserted: rowCount ?? 0, already_in_lane: 0 };
     }
     const src = await columnsOf(this.d.repo, `${schema}.${name}`);
     if (src.size === 0) throw new Error(`${qualified} does not exist on campaignintelligence, or the service cannot read it. Ask Josh to grant select.`);
@@ -198,6 +247,13 @@ export class IngestStage {
     }
     const w = safeWhere(where);
     const emailCol = pairs.find(([c]) => c === "email")?.[1];
+    const { rows: sized } = await this.d.repo.raw().query<{ n: string; in_lane: string }>(
+      `select count(*)::text as n,
+              count(*) filter (where ${emailCol ? `exists (select 1 from ${ingestedTable(run.client_tag)} t where lower(t.email) = lower(${emailCol}))` : "false"})::text as in_lane
+         from "${schema}"."${name}" s where (${w})`,
+    );
+    const read = Number(sized[0]?.n ?? 0);
+    const alreadyInLane = Number(sized[0]?.in_lane ?? 0);
     const { rowCount } = await this.d.repo.withRun(run.run_id, (tx) =>
       tx.query(
         `insert into ${ingestedTable(run.client_tag)} (${pairs.map(([c]) => c).join(", ")}, source_label)
@@ -208,7 +264,7 @@ export class IngestStage {
       ),
     );
     await this.d.rails.record({ runId: run.run_id, clientTag: run.client_tag, step: "ingest", vendor: "supabase", action: "table_copy", rows: rowCount ?? 0, credits: null, worstCaseCents: 0, balanceBefore: null, balanceAfter: null, vendorJobId: null, approvedBy: null });
-    return rowCount ?? 0;
+    return { read, inserted: rowCount ?? 0, already_in_lane: alreadyInLane };
   }
 
   private async rowsForLabel(table: string, label: string): Promise<number> {
