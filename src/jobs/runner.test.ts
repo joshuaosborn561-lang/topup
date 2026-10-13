@@ -48,6 +48,7 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; needsVerify
     raw: () => ({
       query: async (sql: string) => {
         if (sql.includes("list_build_records")) return { rows: [{ n: opts.recorded === false ? "0" : "1" }] };
+        if (sql.includes("icp_variants")) return { rows: [{ n: "1" }] };
         if (sql.includes("information_schema.columns")) return { rows: [{ column_name: "email" }, { column_name: "company_domain" }] };
         if (sql.includes("needs_verify")) return { rows: [{ n: String(opts.needsVerify ?? 1200), with_email: String(opts.needsVerify ?? 1200), domains: "300" }] };
         return { rows: [] };

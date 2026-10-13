@@ -23,6 +23,28 @@ export interface ImportStatus {
   error_message: string | null;
 }
 
+export function importStatusFromResponse(payload: Record<string, unknown>): ImportStatus {
+  const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+  const root = obj(payload) ?? {};
+  const run = obj(root.run) ?? obj(root.result) ?? root;
+  const counts = obj(run.counts) ?? obj(root.counts) ?? {};
+  const num = (...vs: unknown[]): number | null => {
+    for (const v of vs) if (v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v))) return Number(v);
+    return null;
+  };
+  const failedChunks = Array.isArray(counts.failed_chunks) ? counts.failed_chunks.length : Array.isArray(run.failed_chunks) ? run.failed_chunks.length : null;
+  const errors = Array.isArray(run.errors) ? run.errors : Array.isArray(root.errors) ? root.errors : [];
+  const firstError = errors.map((e) => (typeof e === "string" ? e : JSON.stringify(e))).find(Boolean) ?? null;
+  return {
+    status: String(run.status ?? root.status ?? "unknown").toLowerCase(),
+    total_leads: num(counts.total, counts.staged, run.total_leads, run.total),
+    imported_count: num(counts.imported, run.imported, run.imported_count),
+    duplicate_count: num(counts.duplicates, counts.duplicate_count, run.duplicate_count),
+    invalid_count: num(counts.invalid, counts.invalid_count, counts.failed, run.invalid_count, failedChunks),
+    error_message: typeof run.error_message === "string" ? run.error_message : typeof run.error === "string" ? run.error : firstError,
+  };
+}
+
 export interface SequenceStep {
   seq_number: number | null;
   subject: string;
@@ -66,18 +88,15 @@ export class SmartleadClient implements Smartlead {
     return { run_id: String(id) };
   }
 
+  /**
+   * `get_lead_import_status` answers `{status, counts, errors}` (docs/servers.md §10):
+   * a finished run has `counts.imported` and `counts.failed_chunks[]`. The
+   * older flat `imported_count` shape is still read. Several nestings are
+   * accepted (`run`, `result`) because the server has changed them before.
+   */
   async importStatus(runId: string): Promise<ImportStatus> {
     const res = await this.call("get_lead_import_status", { run_id: runId });
-    const run = (res.run && typeof res.run === "object" ? (res.run as Record<string, unknown>) : res) as Record<string, unknown>;
-    const num = (v: unknown) => (v === undefined || v === null || v === "" ? null : Number(v));
-    return {
-      status: String(run.status ?? "unknown").toLowerCase(),
-      total_leads: num(run.total_leads),
-      imported_count: num(run.imported_count),
-      duplicate_count: num(run.duplicate_count),
-      invalid_count: num(run.invalid_count),
-      error_message: typeof run.error_message === "string" ? run.error_message : null,
-    };
+    return importStatusFromResponse(res);
   }
 
   async sequences(campaignId: number): Promise<SequenceStep[]> {

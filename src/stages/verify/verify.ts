@@ -634,7 +634,7 @@ export class VerifyStage {
     const unclassified = rows
       .filter((r) => r.lead_status === "verified" && (r.mail_class == null || r.mail_class === "unknown" || r.mail_class === ""))
       .reduce((a, r) => a + Number(r.n), 0);
-    if (unclassified > 0 && seg === 0) {
+    if (unclassified > 0 && seg === 0 && Object.keys(settings.segments).includes("mail_class")) {
       return gateUnmet(
         "verify",
         `${unclassified} sendable rows have no mail class after MX fallback and none classified SEG. Gateway domains would route OTHER. Classify or stop.`,
