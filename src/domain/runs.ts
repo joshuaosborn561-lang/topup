@@ -74,6 +74,7 @@ export const STEPS = [
   "dedupe",
   "suppress",
   "icp",
+  "find_emails",
   "verify",
   "normalize",
   "qa",

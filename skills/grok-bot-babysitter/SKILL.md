@@ -41,15 +41,20 @@ LeadPipe → Smartlead**. They never enter this context.
    geography, sources. Counts first (`count_contacts`, SQL `count(*)`),
    then the vendor's server-side export (`export_contacts`, then
    `check_contact_export` until it hands back a signed URL) or a scratch
-   table you build in SQL on campaignintelligence. Never widen. Never `SELECT email`, never
+   table you build in SQL on campaignintelligence. Export without the
+   `email_status` VALID filter, even where the transcript used it: the
+   people with no email come along and the service looks them up after the
+   yes (D103). Still report gross and VALID counts. Never widen. Never `SELECT email`, never
    `export_contacts` into chat, never `get-dataset-items`, never
    `find_dms_by_title`, never read a CSV. You end with a signed file URL
    or a `schema.table` name.
 4. `topup(client_tag, campaign_id, source)` then `job(job_id)` until
-   `quoted`. Say to the approver the answer names: "`N` new leads for #campaign after
-   everything you hold and unsubscribes, up to `$X` (website ICP check
-   plus verification)." Under 1,000 new the answer says so: tell them it
-   is under the floor (D46); they decide (D102).
+   `quoted`. Say to the approver the answer names: "`N` new leads with an
+   email for #campaign after everything you hold and unsubscribes, plus `M`
+   more with no email that the finder will look up; up to `$X` (website ICP
+   check, email finder, verification)." Only the emails it finds are
+   verified and loaded (D103). Under 1,000 new the answer says so: tell
+   them it is under the floor (D46); they decide (D102).
 5. When the approver says yes: `topup(job_id, approved_by="their name")`.
    Only the names the service lists count. `job(job_id)` until `done`.
    If it answers `waiting_approval` with a higher number, say that number

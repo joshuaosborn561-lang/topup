@@ -1,6 +1,6 @@
 # Canon — how a campaign gets topped up
 
-Canon as of **D102** (2026-10-13). One page. `DECISIONS.md` is the append-only
+Canon as of **D103** (2026-10-13). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -35,9 +35,10 @@ ask Josh to connect it, then continue.
 
 1. **Every lead row moves through this service and LeadPipe.** You hand
    `topup` the vendor's signed export URL or a table name; the service runs
-   LeadPipe. Never SELECT emails, names or phones; never read an export, a
-   dataset or a CSV into chat; never paste a row. Count, never read (D2,
-   D39, D99).
+   LeadPipe, and keeps the people LeadPipe drops for having no email so the
+   email finder can look them up (D103). Never SELECT emails, names or
+   phones; never read an export, a dataset or a CSV into chat; never paste
+   a row. Count, never read (D2, D39, D99).
 2. **A named approver says yes to every spend before it runs.** Who may
    approve is a Railway setting (`TOPUP_APPROVERS`; Josh alone for now;
    Josh and Cayden by default, D92).
@@ -76,12 +77,15 @@ ask Josh to connect it, then continue.
 4. Replay it with your own connectors. Count, then run the vendor's
    server-side export (getleads `export_contacts` then
    `check_contact_export` until it hands back a signed URL), or build a
-   scratch table in SQL on campaignintelligence. You end with a pool as a
-   signed file URL or a `schema.table`. No row enters this chat.
+   scratch table in SQL on campaignintelligence. Export without the
+   `email_status` VALID filter: the people a vendor has no email for come
+   along and the service finds their emails after the yes (D103). You end
+   with a pool as a signed file URL or a `schema.table`. No row enters
+   this chat.
 5. `topup(client_tag, campaign_id, source)`. Poll `job(job_id)`. The quote
    says how many new leads are left after everyone the client already holds
-   and the unsubscribes, and the most it can cost (website ICP check plus
-   verification). Tell the approver those two numbers (the answer names
+   and the unsubscribes (with an email, and with none yet), and the most it
+   can cost (website ICP check, email finder, verification). Tell the approver those two numbers (the answer names
    them). Under 1,000 net new the answer says so: that is the exhausted
    line (D46); the approver decides.
 6. When the approver says yes: `topup(job_id, approved_by="their name")`.

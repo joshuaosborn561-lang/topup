@@ -1,4 +1,4 @@
-import { ingestedTable } from "../../db/pool.js";
+import { ingestedTable, type Queryable } from "../../db/pool.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import type { JobSettings } from "../../jobs/settings.js";
@@ -52,28 +52,7 @@ export class SuppressStage {
       const raw = Number(rawRows[0]?.n ?? 0);
 
       const removed = await this.d.repo.withRun(run.run_id, async (tx) => {
-        const reasonSql = this.reasonCase(settings, t, hasClass);
-        const { rows } = await tx.query<{ reason: string; n: string }>(
-          `with p as (
-             select $2::int[] as unused_positive, $3::int as unused_dnc, $4::int as unused_wrong, $5::int as bounce,
-                    $6::bigint as smartlead_client_id
-           ),
-           r as (
-             select id, lower(email) as e, split_part(lower(email), '@', 2) as d
-             from ${table} where run_id = $1 and lead_status = 'ingested' and coalesce(email, '') <> ''
-           ),
-           judged as (select r.id, (${reasonSql}) as reason from r, p),
-           hit as (
-             update ${table} t set lead_status = 'suppressed', status_changed_at = now(),
-               qa_flags = coalesce(t.qa_flags, '{}'::jsonb) || jsonb_build_object('suppressed_reason', j.reason)
-             from judged j where t.id = j.id and j.reason is not null
-             returning j.reason
-           )
-           select reason, count(*)::text as n from hit group by reason`,
-          [run.run_id, [] as number[], DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, settings.smartlead_client_id],
-        );
-        const byReason: Record<string, number> = Object.fromEntries(SUPPRESS_REASONS.map((r) => [r, 0]));
-        for (const r of rows) byReason[r.reason] = Number(r.n);
+        const byReason = await this.removeByReason(tx, run, settings, t, hasClass, "ingested");
 
         const dup = await tx.query(
           `with ranked as (
@@ -115,6 +94,44 @@ export class SuppressStage {
         (skipped.length ? ` · not applied: ${skipped.join("; ")}.` : "");
       return finish(this.d, run, "suppress", removed.net_new, counts, line);
     });
+  }
+
+  /**
+   * D81 reasons for this job's rows in one status: unsubscribed, the DNC
+   * list, hard bounces. The quote runs it on 'ingested'; the email finder
+   * runs it on the addresses it found (D103).
+   */
+  async removeFound(run: RunRow, settings: JobSettings, status: string): Promise<Record<string, number>> {
+    const t = await this.tables();
+    const hasClass = await hasNegativeClassColumn(this.d.repo.raw());
+    return this.d.repo.withRun(run.run_id, (tx) => this.removeByReason(tx, run, settings, t, hasClass, status));
+  }
+
+  private async removeByReason(tx: Queryable, run: RunRow, settings: JobSettings, t: Tables, hasClass: boolean, status: string): Promise<Record<string, number>> {
+    const table = ingestedTable(run.client_tag);
+    const reasonSql = this.reasonCase(settings, t, hasClass);
+    const { rows } = await tx.query<{ reason: string; n: string }>(
+      `with p as (
+         select $2::int[] as unused_positive, $3::int as unused_dnc, $4::int as unused_wrong, $5::int as bounce,
+                $6::bigint as smartlead_client_id
+       ),
+       r as (
+         select id, lower(email) as e, split_part(lower(email), '@', 2) as d
+         from ${table} where run_id = $1 and lead_status = $7 and coalesce(email, '') <> ''
+       ),
+       judged as (select r.id, (${reasonSql}) as reason from r, p),
+       hit as (
+         update ${table} t set lead_status = 'suppressed', status_changed_at = now(),
+           qa_flags = coalesce(t.qa_flags, '{}'::jsonb) || jsonb_build_object('suppressed_reason', j.reason)
+         from judged j where t.id = j.id and j.reason is not null
+         returning j.reason
+       )
+       select reason, count(*)::text as n from hit group by reason`,
+      [run.run_id, [] as number[], DNC_CATEGORY_ID, WRONG_PERSON_CATEGORY_ID, BOUNCE_CATEGORY_ID, settings.smartlead_client_id, status],
+    );
+    const byReason: Record<string, number> = Object.fromEntries(SUPPRESS_REASONS.map((r) => [r, 0]));
+    for (const r of rows) byReason[r.reason] = Number(r.n);
+    return byReason;
   }
 
   /** The CASE that names the first reason a row is removed. $5 bounce, $6 client. */

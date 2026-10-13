@@ -310,7 +310,7 @@ export class Repo {
     await this.db.query(`update topup.run_steps set status = 'running' where run_id = $1 and step = $2 and status = 'waiting_approval'`, [runId, step]);
   }
 
-  async setStepVendorJob(runId: string, step: Step, vendorJobId: string): Promise<void> {
+  async setStepVendorJob(runId: string, step: Step, vendorJobId: string | null): Promise<void> {
     await this.db.query(`update topup.run_steps set vendor_job_id = $3 where run_id = $1 and step = $2`, [
       runId,
       step,

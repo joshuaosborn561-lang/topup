@@ -122,6 +122,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D100 | Live; one living playbook per client: view `topup.client_playbook` over list builds and process changes, read as `playbook(client_tag)` |
 | D101 | Live; who approves is a Railway setting (`TOPUP_APPROVERS`, default Josh and Cayden per D92; Josh alone for the first EMCOR, BCP and Insight top-ups); a yes is to an amount: a paid step priced more than a tenth above the quote waits for a fresh named yes; a job a restart cut off resumes on boot; an aborted job's unloaded rows leave the lane table |
 | D102 | Live; under the 1,000 floor the quote still posts and the approver decides; loads start paused until an approver flips `loads_paused`; the ICP label set in `topup.icp_variants` is a precondition for a yes; audit fixes: a job cut off before its quote card is resumed on boot, lane-table writes carry the run, abort gives a table pool its label back, a database error is never reported as "no recorded build" |
+| D103 | Live; top-ups find emails: the service keeps the people an export names without an email (LeadPipe drops them), the quote counts and prices them, and after the named yes the Email Finder Waterfall looks them up between the ICP check and verification; found addresses pass the same held and unsubscribe checks; exports run without the VALID filter |
 
 ---
 
@@ -3387,3 +3388,49 @@ service unpause loads on its own. It does not run the ICP check without
 a label set. It does not touch D11's reply bar or the never-top-up list.
 
 **Guard.** `src/guards/d102_floor_pause_icp.test.ts`. Ask Josh.
+
+## D103 — Top-ups find emails for the people an export names without one
+
+**Decision.** A top-up looks up an email for every new person the vendor
+export names without one, instead of losing them.
+
+1. *Ingest.* LeadPipe drops a row with no email. After LeadPipe finishes,
+   the service reads the same export file server to server and adds each
+   person with no email who has a first name, a last name and a company
+   (domain, website or name) to the lane table under the job's label,
+   once each, flagged `email_source = none_in_file`. Counts only; no row
+   is logged or shown.
+2. *Quote.* The quote counts the new people with an email and, separately,
+   the new people with no email the finder can look up, and prices the
+   look-up from the service's own price table (the paid tier, AI Ark, on
+   every row; getleads and Smartlead are on flat plans). Verification is
+   priced on both, since every address found is verified. The ICP check
+   covers both, so no money goes on finding emails at companies that are
+   not a fit. The 1,000 floor (D46) counts both.
+3. *After the yes.* The approve phase runs icp → find_emails → verify. The
+   Email Finder Waterfall reads the job's `needs_email` rows by id from
+   the lane table (need email, no phones, deepest tier AI Ark per D58) and
+   is given the approved amount as its ceiling; it refuses above it. A
+   found address already on another lane row is held; two people given the
+   same address keep one; the rest pass the same held and unsubscribe
+   checks the quote ran and go to verification. Not found stays in the
+   table as `email_not_found`, never loaded, never deleted. A run the
+   finder prices above the yes waits for a fresh named yes to the new
+   number (D101).
+4. *Lock.* Migration 0029 lets one kind of UPDATE through the lane write
+   lock without the run: one that changes nothing but the finder's own
+   result columns (`wf_*`). Lead status and email still need the run.
+5. *Exports.* Grokbot exports without the `email_status` VALID filter, even
+   where the transcript used it, so the people with no email come along.
+   It still reports gross and VALID counts.
+
+**Why.** Josh, 13 Oct 2026: "yes top-ups should find emails too, fix it."
+The EMCOR A Property rebuild read 271 people; 206 had no email at all and
+LeadPipe dropped every one, leaving 14 new. The BCP Healthcare IT rebuild
+exported only the 3,162 VALID people of 10,649.
+
+**What it does not do.** It does not find phones. It does not go past AI
+Ark without Josh (D58). It does not load an address it did not verify. It
+does not send a row through chat. It does not change LeadPipe.
+
+**Guard.** `src/guards/d103_find_emails.test.ts`. Ask Josh.

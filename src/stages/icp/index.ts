@@ -43,8 +43,12 @@ export interface IcpVariant {
   disco_icp: string | null;
 }
 
-/** The rows the quote counted: after dedupe and unsubscribes, with an address, waiting for verification. Nothing else is graded or paid for. */
-export const ICP_STATUSES = ["needs_verify"] as const;
+/**
+ * The rows the quote counted: after dedupe and unsubscribes, waiting for
+ * verification, plus the people with no email the finder will look up
+ * (D103), so no money goes on finding emails at companies that are not a fit.
+ */
+export const ICP_STATUSES = ["needs_verify", "needs_email"] as const;
 /** Share of a list the fetch usually cannot read; DiscoLike worst case is priced on this. */
 const UNREADABLE_SHARE = 0.1;
 

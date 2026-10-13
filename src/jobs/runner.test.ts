@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { RunRow } from "../domain/runs.js";
 import { parseApprovers, PHASE_STEPS, QUOTE_CARD, TopupRunner } from "./runner.js";
+import { findWorstCaseCents } from "../stages/find_emails/index.js";
 
 /**
  * D99 — a top-up is one job per campaign: free quote first, then the paid
  * tail only after Josh or Cayden says yes by name, then the load. Nothing
  * runs without a recorded build. Ask Josh or Cayden.
  */
-function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedError?: boolean; needsVerify?: number } = {}) {
+function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedError?: boolean; needsVerify?: number; toFind?: number } = {}) {
   const runs = new Map<string, RunRow>();
   const steps = new Map<string, { status: string; attempts: number; approved_cents: number; counts?: Record<string, unknown> }>();
   const cards: Array<{ card_id: string; run_id: string; kind: string; payload: Record<string, unknown>; status: string; audience: string }> = [];
@@ -54,7 +55,8 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedErr
           return { rows: [{ n: opts.recorded === false ? "0" : "1" }] };
         }
         if (sql.includes("icp_variants")) return { rows: [{ n: "1" }] };
-        if (sql.includes("information_schema.columns")) return { rows: [{ column_name: "email" }, { column_name: "company_domain" }] };
+        if (sql.includes("information_schema.columns")) return { rows: ["email", "company_domain", "first_name", "last_name", "company_name"].map((column_name) => ({ column_name })) };
+        if (sql.includes("as to_find")) return { rows: [{ to_find: String(opts.toFind ?? 0), domains: "300" }] };
         if (sql.includes("needs_verify")) return { rows: [{ n: String(opts.needsVerify ?? 1200), with_email: String(opts.needsVerify ?? 1200), domains: "300" }] };
         return { rows: [] };
       },
@@ -89,12 +91,13 @@ function freeStage(repo: ReturnType<typeof fakeRepo>, step: string, counts: Reco
 }
 
 // The fake paid stages price themselves under what the quote approves (icp from 300 domains, verify from the fake row count).
-function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: number } = { icp: 1, verify: 1 }, approvers?: string[]) {
+function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: number; find?: number; finder?: boolean; dailyCapCents?: number } = { icp: 1, verify: 1 }, approvers?: string[]) {
   const stages = {
     ingest: freeStage(repo, "ingest", { rows_claimed: 1500 }),
     dedupe: freeStage(repo, "dedupe", { held: 200 }),
     suppress: freeStage(repo, "suppress", { net_new: 1200 }),
     icp: paidStage(repo, "icp", paid.icp, { passed: 1100 }),
+    findEmails: { ...paidStage(repo, "find_emails", paid.find ?? 0, { emails_found: 0 }), ready: () => paid.finder ?? false },
     verify: paidStage(repo, "verify", paid.verify, { verified: 1000 }),
     normalize: freeStage(repo, "normalize", { normalized: 1000 }),
     qa: freeStage(repo, "qa", { qa_passed: 1000 }),
@@ -119,7 +122,7 @@ function runner(repo: ReturnType<typeof fakeRepo>, paid: { icp: number; verify: 
       return card;
     },
   };
-  return new TopupRunner({ repo: repo as never, stages: stages as never, console: console_ as never, ledger: ledger as never, now: () => 1700000000000, ...(approvers ? { approvers } : {}) });
+  return new TopupRunner({ repo: repo as never, stages: stages as never, console: console_ as never, ledger: ledger as never, now: () => 1700000000000, ...(approvers ? { approvers } : {}), ...(paid.dailyCapCents != null ? { dailyCapCents: paid.dailyCapCents } : {}) });
 }
 
 const spec = { client_tag: "bcp", smartlead_client_id: 542838, campaign_id: 3921850, source: { kind: "file_url" as const, urls: ["https://example.invalid/pool.csv"] } };
@@ -337,6 +340,45 @@ describe("D99 — the top-up", () => {
     assert.match(quoted.next, /Loads are paused/);
     const standing = await j.standing(opened.job_id, "mcp:operator");
     assert.match((standing as { next: string }).next, /Loads are paused/);
+  });
+
+  it("people with no email are quoted separately and the look-up is priced and approved with the same yes (D103)", async () => {
+    const repo = fakeRepo({ toFind: 500 });
+    const j = runner(repo, { icp: 1, verify: 1, find: 1, finder: true });
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    const q = await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    assert.equal(q.status, "quoted");
+    assert.equal(q.counts.to_find, 500);
+    assert.equal(q.counts.find_cents, findWorstCaseCents(500));
+    assert.match(q.next, /500 more new people with no email/);
+    assert.doesNotMatch(q.next, /daily vendor cap/, "no cap given, no cap note");
+    const card = repo.cards.find((c) => c.kind === QUOTE_CARD)!;
+    assert.equal(card.payload.find_cents, findWorstCaseCents(500));
+    assert.equal(card.payload.worst_case_cents, Number(card.payload.icp_cents) + Number(card.payload.find_cents) + Number(card.payload.verify_cents));
+    const done = await j.run(opened.job_id, "approve", { by: "mcp:operator", approved_by: "Josh" });
+    assert.equal(done.status, "done");
+    assert.equal(repo.steps.get(`${opened.job_id}/find_emails`)?.approved_cents, findWorstCaseCents(500));
+    assert.equal(repo.steps.get(`${opened.job_id}/find_emails`)?.status, "done");
+  });
+
+  it("a quote above the daily vendor cap says so with the number (D103)", async () => {
+    const repo = fakeRepo({ toFind: 5000 });
+    const j = runner(repo, { icp: 1, verify: 1, find: 1, finder: true, dailyCapCents: 2500 });
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    const q = await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    assert.match(q.next, /above the \$25\.00 daily vendor cap/);
+  });
+
+  it("without the email finder connected the people with no email are named as left out, not priced (D103)", async () => {
+    const repo = fakeRepo({ toFind: 500 });
+    const j = runner(repo);
+    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    if (!opened.ok) assert.fail(opened.message);
+    const q = await j.run(opened.job_id, "quote", { by: "mcp:operator" });
+    assert.equal(q.counts.find_cents, 0);
+    assert.match(q.next, /email finder is not connected/);
   });
 
   it("a pool with nothing new closes the job instead of quoting zero", async () => {

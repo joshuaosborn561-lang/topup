@@ -23,6 +23,7 @@ import type { RouteStage } from "../stages/route/index.js";
 import type { StageStage } from "../stages/stage/index.js";
 import type { SuppressStage } from "../stages/suppress/index.js";
 import type { VerifyStage } from "../stages/verify/verify.js";
+import { findableSql, findWorstCaseCents, type FindEmailsStage } from "../stages/find_emails/index.js";
 
 const log = logger("topup");
 
@@ -48,6 +49,8 @@ export interface Stages {
   dedupe: DedupeStage;
   suppress: SuppressStage;
   icp: IcpStage;
+  /** D103: optional so a service without the email finder still quotes and loads the people who came with an email. */
+  findEmails?: FindEmailsStage;
   verify: VerifyStage;
   normalize: NormalizeStage;
   qa: QaStage;
@@ -61,7 +64,7 @@ export type Phase = "quote" | "approve" | "load";
 
 export const PHASE_STEPS: Readonly<Record<Phase, readonly Step[]>> = {
   quote: ["ingest", "dedupe", "suppress"],
-  approve: ["icp", "verify", "normalize", "qa", "route", "stage", "import", "post_import"],
+  approve: ["icp", "find_emails", "verify", "normalize", "qa", "route", "stage", "import", "post_import"],
   load: ["import", "post_import"],
 };
 
@@ -86,12 +89,17 @@ export interface TopupResult {
 }
 
 export interface Quote {
+  /** New people who came with an email, ready to verify. */
   net_new: number;
   with_email: number;
   domains: number;
   worst_case_cents: number;
   icp_cents: number;
   verify_cents: number;
+  /** D103: new people with no email that the finder will look up (name plus company). */
+  to_find: number;
+  find_cents: number;
+  finder_ready: boolean;
 }
 
 export interface TopupRunnerDeps {
@@ -103,6 +111,8 @@ export interface TopupRunnerDeps {
   backgroundTimeoutMs?: number;
   /** Who may approve a top-up, by first name (TOPUP_APPROVERS in Railway). Default: Josh and Cayden (D92). */
   approvers?: readonly string[];
+  /** The daily vendor cap (DAILY_VENDOR_CAP_USD, in cents). A quote above it says so up front. */
+  dailyCapCents?: number;
 }
 
 const cap = (n: string) => n[0]!.toUpperCase() + n.slice(1);
@@ -150,9 +160,10 @@ export class TopupRunner {
     const done = (step: Step) => stepRows.get(step)?.status === "done";
     if (!PHASE_STEPS.quote.every(done)) return { phase: "quote", approved_by: null, interrupted };
     const icp = stepRows.get("icp");
+    const find = stepRows.get("find_emails");
     const verify = stepRows.get("verify");
-    const recorded = [icp, verify].map((r) => (typeof r?.counts?.approved_by === "string" ? String(r.counts.approved_by) : null)).find(Boolean) ?? null;
-    const approved = (icp?.approved_cents ?? 0) > 0 || (verify?.approved_cents ?? 0) > 0 || !!recorded;
+    const recorded = [icp, find, verify].map((r) => (typeof r?.counts?.approved_by === "string" ? String(r.counts.approved_by) : null)).find(Boolean) ?? null;
+    const approved = (icp?.approved_cents ?? 0) > 0 || (find?.approved_cents ?? 0) > 0 || (verify?.approved_cents ?? 0) > 0 || !!recorded;
     if (!approved) {
       // The three free steps are done. With the quote card up the job is
       // standing, waiting for a name; without one the process died between
@@ -384,7 +395,7 @@ export class TopupRunner {
   /** The count and the cost, as one card to Josh or Cayden. Nothing paid has run. */
   private async postQuote(run: RunRow, settings: JobSettings, by: string): Promise<TopupResult> {
     const quote = await this.quote(run);
-    if (quote.net_new === 0) {
+    if (quote.net_new === 0 && (quote.to_find === 0 || !quote.finder_ready)) {
       const counts = await this.funnel(run);
       const why = `0 new leads for #${settings.campaign_id}: every row in the pool is already held by the client, unsubscribed, or without an address (ingested ${counts.rows_claimed ?? 0}, held ${counts.held ?? 0}, suppressed ${counts.suppressed ?? 0}).`;
       await this.d.repo.setRunStatus(run.run_id, "done", "suppress");
@@ -392,7 +403,8 @@ export class TopupRunner {
       return this.result(run.run_id, "quote", "suppress", "nothing", counts, 0, null, null, why, "nothing to approve; the job closed. Say the TAM for this campaign is exhausted unless the record shows a source you did not replay.");
     }
     const existing = await this.openQuote(run.run_id);
-    const belowFloor = quote.net_new < MIN_NET_NEW;
+    // The floor (D46) is on everyone new: those with an email plus those the finder will look up (D103).
+    const belowFloor = quote.net_new + (quote.finder_ready ? quote.to_find : 0) < MIN_NET_NEW;
     const icp = await this.icpReady(run.client_tag);
     const payload = { step: "quote", ...quote, campaign_id: settings.campaign_id, below_floor: belowFloor, floor: MIN_NET_NEW, icp_ready: icp.ready, icp_note: icp.note };
     let cardId = existing?.card_id ?? null;
@@ -404,16 +416,26 @@ export class TopupRunner {
         kind: QUOTE_CARD,
         audience: "owner",
         payload,
-        text: `Top-up #${settings.campaign_id}: ${quote.net_new} new leads for ${usd(quote.worst_case_cents)} worst case.`,
+        text: `Top-up #${settings.campaign_id}: ${quote.net_new} new leads with an email${quote.to_find ? ` plus ${quote.to_find} to look up` : ""} for ${usd(quote.worst_case_cents)} worst case.`,
         blocks: (id) => topupQuoteCard({ cardId: id, runId: run.run_id, clientTag: run.client_tag, campaignId: settings.campaign_id, quote }),
       });
       cardId = card.card_id;
     }
     await this.d.repo.setRunStatus(run.run_id, "awaiting_owner", "suppress");
-    await this.event(run, "card_opened", `Quote for #${settings.campaign_id}: ${quote.net_new} net new (${quote.with_email} with an address, ${quote.domains} domains), worst case ${usd(quote.worst_case_cents)}. Waiting for Josh or Cayden.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
-    const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents, below_floor: belowFloor ? 1 : 0 };
+    await this.event(run, "card_opened", `Quote for #${settings.campaign_id}: ${quote.net_new} net new with an address, ${quote.to_find} more to look up, ${quote.domains} domains, worst case ${usd(quote.worst_case_cents)}. Waiting for ${this.approvers.map(cap).join(" or ")}.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
+    const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents, to_find: quote.to_find, find_cents: quote.find_cents, below_floor: belowFloor ? 1 : 0 };
     const floorNote = (belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this campaign looks exhausted unless the record shows a source not replayed; they decide (D102).` : "") + (icp.ready ? "" : ` ${icp.note}`);
-    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)}.${floorNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
+    const findNote = quote.to_find
+      ? quote.finder_ready
+        ? ` Plus ${quote.to_find} more new people with no email that the email finder will look up after the yes (up to ${usd(quote.find_cents)} of the total; only the ones it finds are verified and loaded).`
+        : ` ${quote.to_find} more new people have no email and the email finder is not connected on the service, so they are left out. Ask Josh.`
+      : "";
+    const capCents = this.d.dailyCapCents;
+    const capNote =
+      capCents != null && quote.worst_case_cents > capCents
+        ? ` The worst case is above the ${usd(capCents)} daily vendor cap (DAILY_VENDOR_CAP_USD on Railway): a step that would pass it stops until the next day or until Josh raises the cap. Say so with the number.`
+        : "";
+    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads with an email for #${settings.campaign_id}, up to ${usd(quote.worst_case_cents)} in all (ICP check ${usd(quote.icp_cents)}, email finder ${usd(quote.find_cents)}, verification ${usd(quote.verify_cents)}).${findNote}${floorNote}${capNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
   }
 
   /** Loads start paused (D102); the quote answer says so, so the yes and the unpause are asked for together. */
@@ -436,10 +458,26 @@ export class TopupRunner {
       );
     const netNew = Number(rows[0]?.n ?? 0);
     const withEmail = Number(rows[0]?.with_email ?? 0);
-    const domains = Number(rows[0]?.domains ?? 0);
+    // D103: the people with no email the finder can look up, and the companies the ICP check grades across both.
+    const finderReady = this.d.stages.findEmails?.ready() ?? false;
+    const canFind = cols.has("first_name") && cols.has("last_name") && cols.has("company_domain") && cols.has("company_name");
+    const { rows: more } = canFind
+      ? await this.d.repo
+          .raw()
+          .query<{ to_find: string; domains: string }>(
+            `select count(*) filter (where lead_status = 'needs_email' and ${findableSql()})::text as to_find,
+                    count(distinct ${dsql})::text as domains
+               from ${table} where run_id = $1 and lead_status in ('needs_verify', 'needs_email')`,
+            [run.run_id],
+          )
+      : { rows: [] as Array<{ to_find: string; domains: string }> };
+    const toFind = Number(more[0]?.to_find ?? 0);
+    const domains = Math.max(Number(rows[0]?.domains ?? 0), Number(more[0]?.domains ?? 0));
     const icp = icpWorstCaseCents(domains);
-    const verify = verifyWorstCaseCents(withEmail);
-    return { net_new: netNew, with_email: withEmail, domains, worst_case_cents: icp + verify, icp_cents: icp, verify_cents: verify };
+    const find = finderReady ? findWorstCaseCents(toFind) : 0;
+    // Every address the finder might return is verified too, so verification is priced on both.
+    const verify = verifyWorstCaseCents(withEmail + (finderReady ? toFind : 0));
+    return { net_new: netNew, with_email: withEmail, domains, worst_case_cents: icp + find + verify, icp_cents: icp, verify_cents: verify, to_find: toFind, find_cents: find, finder_ready: finderReady };
   }
 
   /** What an open job is waiting for, for `topup(job_id)` with no name: the quote if one is posted, else the phase to resume. */
@@ -449,7 +487,7 @@ export class TopupRunner {
     const card = await this.openQuote(jobId);
     if (card) {
       const q = card.payload;
-      return { job_id: jobId, status: "quoted", quote: { net_new: q.net_new, with_email: q.with_email, domains: q.domains, worst_case_cents: q.worst_case_cents, icp_cents: q.icp_cents, verify_cents: q.verify_cents, card_id: card.card_id }, next: `tell ${this.approvers.map(cap).join(" or ")} the count and the cost; when they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}` };
+      return { job_id: jobId, status: "quoted", quote: { net_new: q.net_new, with_email: q.with_email, to_find: q.to_find ?? 0, domains: q.domains, worst_case_cents: q.worst_case_cents, icp_cents: q.icp_cents, find_cents: q.find_cents ?? 0, verify_cents: q.verify_cents, card_id: card.card_id }, next: `tell ${this.approvers.map(cap).join(" or ")} the count and the cost; when they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}` };
     }
     return this.resume(jobId, by);
   }
@@ -479,11 +517,13 @@ export class TopupRunner {
       return null;
     }
     const icp = Number(card.payload.icp_cents ?? 0);
+    const find = Number(card.payload.find_cents ?? 0);
     const verify = Number(card.payload.verify_cents ?? 0);
     if (icp > 0) await this.d.repo.approveStep(run.run_id, "icp", icp, approvedBy);
+    if (find > 0) await this.d.repo.approveStep(run.run_id, "find_emails", find, approvedBy);
     if (verify > 0) await this.d.repo.approveStep(run.run_id, "verify", verify, approvedBy);
     await this.d.repo.setRunStatus(run.run_id, "open", "icp");
-    await this.event(run, "approved", `Quote approved by ${approvedBy}: ${card.payload.net_new} net new, worst case ${usd(icp + verify)}.`, by, "ICP check, verify, normalize, qa, stage, load.");
+    await this.event(run, "approved", `Quote approved by ${approvedBy}: ${card.payload.net_new} net new with an email${find > 0 ? ` plus ${card.payload.to_find} to look up` : ""}, worst case ${usd(icp + find + verify)}.`, by, "ICP check, find emails, verify, normalize, qa, stage, load.");
     return approvedBy;
   }
 
@@ -597,6 +637,10 @@ export class TopupRunner {
         return s.suppress.run(run, settings);
       case "icp":
         return s.icp.run(run, settings);
+      case "find_emails":
+        if (s.findEmails) return s.findEmails.run(run, settings);
+        await this.d.repo.finishStep(run.run_id, "find_emails", { useful_output: 0, counts: { finder_not_wired: 1 } });
+        return { kind: "nothing" };
       case "verify":
         return s.verify.run(run, settings);
       case "normalize":
