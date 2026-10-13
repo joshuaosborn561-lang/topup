@@ -43,7 +43,7 @@ with events as (
     p.id,
     p.created_at,
     (p.created_at at time zone 'utc')::date,
-    '{}'::bigint[],
+    '{}'::integer[],
     null::text[],
     p.summary,
     p.written_by,
@@ -56,7 +56,7 @@ with events as (
     null::int,
     null::jsonb,
     null::text,
-    null::text[]
+    null::uuid[]
   from topup.process_changes p
 ),
 clients as (
@@ -103,7 +103,7 @@ select
       'source_id', a.source_id,
       'at', a.at,
       'session_date', a.session_date,
-      'campaign_ids', to_jsonb(coalesce(a.campaign_ids, '{}'::bigint[])),
+      'campaign_ids', to_jsonb(coalesce(a.campaign_ids, '{}'::integer[])),
       'lanes', to_jsonb(a.lanes),
       'body', a.body,
       'written_by', a.written_by,

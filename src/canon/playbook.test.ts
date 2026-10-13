@@ -158,7 +158,12 @@ describe("D100 — playbook", () => {
   });
 
   it("the migration view groups by client_tag and updates when a record is appended", async () => {
-    const sql = await readFile(new URL("../../supabase/migrations/0027_client_playbook.sql", import.meta.url), "utf8");
+    const sql27 = await readFile(new URL("../../supabase/migrations/0027_client_playbook.sql", import.meta.url), "utf8");
+    const sql28 = await readFile(new URL("../../supabase/migrations/0028_client_playbook_prod_types.sql", import.meta.url), "utf8");
+    assert.match(sql27, /null::uuid\[\]/, "D100: process_changes receipt_ids arm must be uuid[] (prod type)");
+    assert.match(sql27, /'\{\}'::integer\[\]/, "D100: process_changes campaign_ids arm must be integer[] (prod type)");
+    assert.match(sql28, /null::uuid\[\]/);
+    assert.match(sql28, /'\{\}'::integer\[\]/);
     const pg = new PGlite();
     await pg.exec(`
       create schema topup;
@@ -169,7 +174,7 @@ describe("D100 — playbook", () => {
       create table topup.list_build_records (
         id bigint primary key,
         client_tag text not null,
-        campaign_ids bigint[] not null,
+        campaign_ids integer[] not null,
         lanes text[],
         narrative text not null,
         transcript_path text,
@@ -179,7 +184,7 @@ describe("D100 — playbook", () => {
         session_date date not null default current_date,
         written_by text not null default 'claude',
         created_at timestamptz not null default now(),
-        receipt_ids text[],
+        receipt_ids uuid[],
         transcript_paths text[],
         source_refs jsonb,
         provenance_confidence text
@@ -194,10 +199,11 @@ describe("D100 — playbook", () => {
         created_at timestamptz not null default now()
       );
     `);
-    await pg.exec(sql);
+    await pg.exec(sql27);
+    await pg.exec(sql28);
     await pg.query(
-      `insert into topup.list_build_records (id, client_tag, campaign_ids, narrative, transcript_path, transcript_paths, session_date, created_at)
-       values (1, 'aa', array[1001]::bigint[], 'first build', 'aa/t1.md', array['aa/t1.md'], '2026-09-01', '2026-09-01T12:00:00Z')`,
+      `insert into topup.list_build_records (id, client_tag, campaign_ids, narrative, transcript_path, transcript_paths, receipt_ids, session_date, created_at)
+       values (1, 'aa', array[1001]::integer[], 'first build', 'aa/t1.md', array['aa/t1.md'], array['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']::uuid[], '2026-09-01', '2026-09-01T12:00:00Z')`,
     );
     await pg.query(
       `insert into topup.process_changes (id, client_tag, summary, transcript_path, created_at)
@@ -209,7 +215,7 @@ describe("D100 — playbook", () => {
     assert.equal(Number(before.rows[0]?.event_count), 2);
     await pg.query(
       `insert into topup.list_build_records (id, client_tag, campaign_ids, narrative, transcript_path, session_date, created_at)
-       values (3, 'aa', array[1001]::bigint[], 'second build', 'aa/t2.md', '2026-10-01', '2026-10-01T12:00:00Z')`,
+       values (3, 'aa', array[1001]::integer[], 'second build', 'aa/t2.md', '2026-10-01', '2026-10-01T12:00:00Z')`,
     );
     const after = await pg.query<{ list_build_count: number; process_change_count: number; event_count: number; timeline: unknown }>(
       `select list_build_count, process_change_count, event_count, timeline from topup.client_playbook where client_tag = 'aa'`,
