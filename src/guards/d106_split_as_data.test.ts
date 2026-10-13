@@ -45,6 +45,8 @@ describe("D106 — the split is data, confirmed by name", () => {
     const route = await readFile(new URL("src/stages/route/index.ts", root), "utf8");
     assert.match(route, /computeDimensions\(dimDefs, r\)/);
     assert.match(route, /cannot read\. Nothing is guessed/);
+    const plan = await readFile(new URL("src/jobs/lanePlan.ts", root), "utf8");
+    assert.match(plan, /campaign_ids::bigint\[\] && \$3::bigint\[\]/, "D106: list_build_records.campaign_ids is integer[] on production; the overlap must cast it (found live, 13 Oct 2026)");
     const ledger = await readFile(new URL("DECISIONS.md", root), "utf8");
     assert.match(ledger, /^## D106 — /m);
     assert.match(ledger, /^\| D106 \|/m);
