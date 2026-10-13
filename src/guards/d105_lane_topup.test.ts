@@ -14,7 +14,7 @@ const root = new URL("../../", import.meta.url);
 describe("D105 — lane-level top-up; never refill STOPPED", () => {
   it("the canon states the lane sizing rule and the never-refill-STOPPED rule", async () => {
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /Canon as of \*\*D105\*\*/);
+    assert.match(canon, /Canon as of \*\*D1\d\d\*\*/);
     assert.match(canon, /Top-ups size the lane, not one segment campaign/);
     assert.match(canon, /STOPPED is never refilled/);
     assert.match(canon, /PAUSED may be/);

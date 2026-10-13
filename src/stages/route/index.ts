@@ -1,4 +1,5 @@
 import { ingestedTable } from "../../db/pool.js";
+import { computeDimensions, DIMENSION_COLUMNS, parseDimensions, type Dimension } from "../../canon/dimensions.js";
 import type { RunRow } from "../../domain/runs.js";
 import type { LaneLedger } from "../../ledger/lane.js";
 import type { JobSettings } from "../../jobs/settings.js";
@@ -25,7 +26,13 @@ export interface RouteDeps extends StageDeps {
 }
 
 /** The settings's segment dimensions, as computed from a row's columns. */
-export type Cell = Record<"band" | "mail_class" | "gift", string | null> & Record<string, string | null>;
+export type Cell = Record<"band" | "mail_class" | "gift" | "team_source", string | null> & Record<string, string | null>;
+
+/** Where the row's gift team came from (normalize_flags.team), or none when the gift is AirPods. */
+export function teamSourceSegment(gift: string | null, source: string | null): string {
+  if (gift !== "team") return "none";
+  return source && source.trim() ? source.trim() : "unknown";
+}
 
 /** getleads band label "11 to 50" → settings segment "11_50"; "10001+" → "10001_plus". */
 export function bandSegment(companySize: string | null): string | null {
@@ -86,6 +93,17 @@ export class RouteStage {
       }
       const cols = await columnsOf(this.d.repo, table);
       const labelSql = cols.has("source_label") ? "source_label" : "null::text as source_label";
+      // D106: the derived dimensions the lane's record names, computed here from the row's own columns.
+      const dimDefs: Dimension[] = settings.dimensions.length ? (parseDimensions(settings.dimensions) ?? []) : [];
+      if (settings.dimensions.length && dimDefs.length !== settings.dimensions.length) {
+        return gateUnmet("route", `the job's recorded split names dimensions the service cannot read. Nothing is guessed; fix the lane's record. Ask Josh.`, { dimensions: settings.dimensions.length });
+      }
+      const extraCols = [...new Set(dimDefs.map((d) => d.column))].filter((c) => (DIMENSION_COLUMNS as readonly string[]).includes(c));
+      const missingCol = extraCols.find((c) => !cols.has(c));
+      if (missingCol) {
+        return gateUnmet("route", `the recorded split reads column ${missingCol}, which ${table} does not have. Ask Josh.`, { dimensions: dimDefs.length });
+      }
+      const extraSql = extraCols.map((c) => `, ${c}::text as "${c}"`).join("");
 
       // Rows from earlier closed runs of this lane that waited for a campaign get another look.
       const reclaimed = await this.d.repo.withRun(run.run_id, async (tx) => {
@@ -97,15 +115,15 @@ export class RouteStage {
         return r.rowCount ?? 0;
       });
 
-      const { rows } = await db.query<{ id: string; company_size: string | null; mail_class: string | null; gift: string | null; source_label: string | null }>(
-        `select id::text, company_size, mail_class, normalize_flags->'gift_tier'->>0 as gift, ${labelSql} from ${table}
+      const { rows } = await db.query<{ id: string; company_size: string | null; mail_class: string | null; gift: string | null; team_src: string | null; source_label: string | null } & Record<string, string | null>>(
+        `select id::text, company_size, mail_class, normalize_flags->'gift_tier'->>0 as gift, normalize_flags->'team'->>0 as team_src, ${labelSql}${extraSql} from ${table}
          where run_id = $1 and lead_status in ('qa_passed', 'pending_campaign')`,
         [run.run_id],
       );
       const byCampaign = new Map<number, string[]>();
       const pending = new Map<string, string[]>();
       for (const r of rows) {
-        const cell: Cell = { band: bandSegment(r.company_size), mail_class: mailClassSegment(r.mail_class), gift: r.gift };
+        const cell: Cell = { band: bandSegment(r.company_size), mail_class: mailClassSegment(r.mail_class), gift: r.gift, team_source: teamSourceSegment(r.gift, r.team_src), ...(dimDefs.length ? computeDimensions(dimDefs, r) : {}) };
         const stamped = campaignIdFromSourceLabel(r.source_label, targets);
         const rule = stamped ? null : matchRule(cell, routing);
         const campaign = stamped ?? rule?.campaign_id ?? null;

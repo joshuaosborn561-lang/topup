@@ -44,6 +44,11 @@ export const jobSettingsSchema = z
     reroute: z.record(z.number().int().positive()).default({}),
     segments: z.record(z.array(z.string())).default({}),
     routing: z.array(z.object({ when: z.record(z.string()), campaign_id: z.number().int().positive() })).default([]),
+    /** D106: derived routing dimensions off the lane's record (parsed strictly by canon/dimensions before they get here). */
+    dimensions: z.array(z.record(z.unknown())).default([]),
+    /** D106: the recorded split in plain English and who confirmed it, for the quote. */
+    split_rule: z.string().max(2000).nullable().default(null),
+    split_confirmed_by: z.string().max(80).nullable().default(null),
     required_fields: z.array(z.string()).default([]),
   })
   .strict();
@@ -73,6 +78,9 @@ export interface LaneJobSplit {
   campaign_ids: number[];
   routing: JobSettings["routing"];
   segments: JobSettings["segments"];
+  dimensions: JobSettings["dimensions"];
+  split_rule?: string | null;
+  split_confirmed_by?: string | null;
   pointed_from_campaign_id: number | null;
 }
 
@@ -97,6 +105,9 @@ export function jobSettings(spec: JobSpec, stamp = Date.now(), split?: LaneJobSp
       source: spec.source,
       routing: split.routing,
       segments: split.segments,
+      dimensions: split.dimensions,
+      split_rule: split.split_rule ?? null,
+      split_confirmed_by: split.split_confirmed_by ?? null,
     });
   }
   if (spec.campaign_id == null) throw new Error("topup needs a campaign_id or a lane.");

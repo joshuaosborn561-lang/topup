@@ -38,8 +38,9 @@ export async function planLaneJob(
     campaign_id?: number | null;
     registry: readonly Record<string, unknown>[];
     names?: ReadonlyMap<number, string | null>;
+    approvers?: readonly string[];
   },
-): Promise<{ ok: true; split: LaneJobSplit; stopped_ids: number[] } | { ok: false; message: string; no_lane?: boolean }> {
+): Promise<{ ok: true; split: LaneJobSplit; stopped_ids: number[]; split_rule: string | null; confirmed_by: string | null } | { ok: false; message: string; no_lane?: boolean }> {
   const rows = registryRows(input.registry);
   const fromCampaign = input.campaign_id != null ? rows.find((r) => r.campaign_id === input.campaign_id) : undefined;
   const lane = (input.lane ?? fromCampaign?.lane ?? "").trim();
@@ -77,7 +78,7 @@ export async function planLaneJob(
     return { ok: false, message: `Could not read topup.list_build_records (${plainError(err)}). That is a database error, not a missing build: try again, and ask Josh if it keeps failing.` };
   }
 
-  const split = resolveLaneSegmentation({ lane, members: namedMembers, statuses, records });
+  const split = resolveLaneSegmentation({ lane, members: namedMembers, statuses, records, approvers: input.approvers });
   if (!split.ok) return { ok: false, message: split.reason };
   return {
     ok: true,
@@ -86,8 +87,13 @@ export async function planLaneJob(
       campaign_ids: split.campaign_ids,
       routing: split.routing,
       segments: split.segments,
+      dimensions: split.dimensions as unknown as LaneJobSplit["dimensions"],
+      split_rule: split.split_rule,
+      split_confirmed_by: split.confirmed_by,
       pointed_from_campaign_id: input.campaign_id && split.campaign_ids.includes(input.campaign_id) ? input.campaign_id : input.campaign_id ?? null,
     },
     stopped_ids: split.stopped_ids,
+    split_rule: split.split_rule,
+    confirmed_by: split.confirmed_by,
   };
 }

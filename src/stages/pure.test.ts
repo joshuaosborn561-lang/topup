@@ -5,11 +5,21 @@ import { parseJobSettings } from "../jobs/settings.js";
 import { importMatched, parseJobs } from "./import/index.js";
 import { isLaneTable, jobSourceLabel, LEADPIPE_CANONICAL_COLUMNS, safeWhere, sourceLabel } from "./ingest/index.js";
 import { QA_FIELD_COLUMN, scopeSql } from "./qa/index.js";
-import { bandSegment, campaignIdFromSourceLabel, cellLabel, dropStoppedRouting, mailClassSegment, matchRule } from "./route/index.js";
+import { bandSegment, campaignIdFromSourceLabel, cellLabel, dropStoppedRouting, mailClassSegment, matchRule, teamSourceSegment } from "./route/index.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 /** The pure halves of the referee stages. Vendor calls are never made here; the stages that make them are exercised against fakes. */
 describe("D99 — the referee's pure halves", () => {
+  it("team_source names where a gift team came from, and none when the gift is AirPods (D106)", () => {
+    assert.equal(teamSourceSegment("team", "MLB"), "MLB");
+    assert.equal(teamSourceSegment("team", "College"), "College");
+    assert.equal(teamSourceSegment("airpods", "OUT_OF_RANGE"), "none");
+    assert.equal(teamSourceSegment("team", null), "unknown");
+    const cell = { band: "11_50", mail_class: "OTHER", gift: "team", team_source: "College" };
+    const routing = [{ when: { team_source: "MLB" }, campaign_id: 1 }, { when: { team_source: "NFL" }, campaign_id: 1 }, { when: { gift: "airpods" }, campaign_id: 2 }, { when: {}, campaign_id: 2 }];
+    assert.equal(matchRule(cell, routing)?.campaign_id, 2, "a college team is not a ticket gift in a build that ran MLB then NFL");
+  });
+
   it("a job's settings route every row to the one campaign and carry no settings", () => {
     const s = parseJobSettings({ id: "bcp.job_1.v1", client_tag: "bcp", lane: "job_1", smartlead_client_id: 1, campaign_id: 7, source: { kind: "table", table: "scratch.pool" }, routing: [{ when: {}, campaign_id: 7 }] });
     assert.equal(s.source.kind === "table" && s.source.where, "true");

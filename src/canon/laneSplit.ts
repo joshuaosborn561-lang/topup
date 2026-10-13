@@ -1,4 +1,5 @@
 import { isStoppedStatus } from "../policy/rules.js";
+import { BUILT_IN_DIMENSIONS, dimensionSegments, parseDimensions, type Dimension } from "./dimensions.js";
 import type { RegistryCampaign } from "./registry.js";
 
 /**
@@ -24,6 +25,11 @@ export type LaneSplitOk = {
   stopped_ids: number[];
   routing: RoutingRule[];
   segments: Record<string, string[]>;
+  /** D106: derived dimensions the record names; the route step computes them per row. */
+  dimensions: Dimension[];
+  /** The plain-English rule as recorded, for the quote. */
+  split_rule: string | null;
+  confirmed_by: string | null;
   source: "record_routing" | "registry_cells" | "single_campaign";
 };
 
@@ -39,6 +45,19 @@ export type LaneSplit = LaneSplitOk | LaneSplitFail;
 
 export const NO_SEGMENTATION =
   "segmentation for this lane cannot be determined from list_build_records / the playbook. The service will not guess. Ask Josh to record how the lane splits (routing on the build record, or unique stored cells on the named campaigns).";
+
+/** A recorded split is used only once a person has confirmed it by name (D106). */
+export function confirmedBy(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const v = (value as Record<string, unknown>).confirmed_by;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+export function splitRuleText(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const v = (value as Record<string, unknown>).split_rule;
+  return typeof v === "string" && v.trim() ? v.trim().slice(0, 2000) : null;
+}
 
 function fail(lane: string, reason: string, campaign_ids: number[], stopped_ids: number[]): LaneSplitFail {
   return { ok: false, lane, reason, campaign_ids, stopped_ids };
@@ -129,6 +148,8 @@ export function resolveLaneSegmentation(input: {
   members: readonly RegistryCampaign[];
   statuses: ReadonlyMap<number, string | null>;
   records: readonly LaneRecord[];
+  /** Who may confirm a recorded split (the approvers, lower-cased first names). Empty means any name counts. */
+  approvers?: readonly string[];
 }): LaneSplit {
   const lane = input.lane.trim();
   const onLane = input.members.filter((m) => (m.lane ?? "").trim() === lane);
@@ -161,6 +182,22 @@ export function resolveLaneSegmentation(input: {
     if (usable.length === 0) {
       return fail(lane, `the recorded routing only names STOPPED campaigns. STOPPED is never refilled (D105).`, [], stopped);
     }
+    const holder = routingFromRecord(rec.yield_by_step) ? rec.yield_by_step : rec.source_refs;
+    const dims = parseDimensions((holder as Record<string, unknown> | null)?.dimensions);
+    if (dims !== null && dims.length === 0) {
+      return fail(lane, `the recorded split names dimensions the service cannot read (a column outside the lane, a bad pattern, or a reserved name). Nothing is guessed; fix the record. Ask Josh.`, refillableIds, stopped);
+    }
+    const dimensions = dims ?? [];
+    const known = new Set([...BUILT_IN_DIMENSIONS, ...dimensions.map((d) => d.name)]);
+    const unknownDim = usable.flatMap((r) => Object.keys(r.when)).find((k) => !known.has(k));
+    if (unknownDim) {
+      return fail(lane, `the recorded routing uses a dimension "${unknownDim}" the record does not define and the service does not compute. Nothing is guessed; fix the record. Ask Josh.`, refillableIds, stopped);
+    }
+    const who = confirmedBy(holder);
+    const names = (input.approvers ?? []).map((n) => n.toLowerCase());
+    if (!who || (names.length > 0 && !names.includes(who.toLowerCase()))) {
+      return fail(lane, `the lane's split is recorded but not yet confirmed by ${input.approvers?.length ? input.approvers.map((n) => n[0]!.toUpperCase() + n.slice(1)).join(" or ") : "an approver"} (D106). Show them the split rule on the record; once they confirm, it quotes and loads on its own.`, refillableIds, stopped);
+    }
     const segs = segmentsFromRecord(rec.yield_by_step) ?? segmentsFromRecord(rec.source_refs) ?? {};
     return {
       ok: true,
@@ -168,7 +205,10 @@ export function resolveLaneSegmentation(input: {
       campaign_ids: [...new Set(usable.map((r) => r.campaign_id))].sort((a, b) => a - b),
       stopped_ids: stopped,
       routing: usable,
-      segments: segs,
+      segments: { ...dimensionSegments(dimensions), ...segs },
+      dimensions,
+      split_rule: splitRuleText(holder),
+      confirmed_by: who,
       source: "record_routing",
     };
   }
@@ -182,6 +222,9 @@ export function resolveLaneSegmentation(input: {
       stopped_ids: stopped,
       routing: [{ when: {}, campaign_id: id }],
       segments: {},
+      dimensions: [],
+      split_rule: null,
+      confirmed_by: null,
       source: "single_campaign",
     };
   }
@@ -207,6 +250,9 @@ export function resolveLaneSegmentation(input: {
     stopped_ids: stopped,
     routing: cells.map((c) => ({ when: c.cell, campaign_id: c.campaign_id })),
     segments: segmentsFromCells(cells),
+    dimensions: [],
+    split_rule: null,
+    confirmed_by: null,
     source: "registry_cells",
   };
 }
