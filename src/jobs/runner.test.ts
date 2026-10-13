@@ -468,6 +468,7 @@ describe("D99 — the top-up", () => {
           campaign_ids: [3921850, 3921851, 3921852],
           lanes: ["it_dm"],
           yield_by_step: {
+            confirmed_by: "Josh",
             routing: [
               { when: { mail_class: "SEG" }, campaign_id: 3921850 },
               { when: { mail_class: "OTHER" }, campaign_id: 3921851 },

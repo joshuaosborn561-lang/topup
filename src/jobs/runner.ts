@@ -236,6 +236,7 @@ export class TopupRunner {
       campaign_id: spec.campaign_id,
       registry,
       names: campaignName && spec.campaign_id != null ? new Map([[spec.campaign_id, campaignName]]) : undefined,
+      approvers: this.approvers,
     });
     if (planned.ok) {
       split = planned.split;
@@ -464,12 +465,16 @@ export class TopupRunner {
     await this.event(run, "card_opened", `Quote for ${quoteTarget(settings)}: ${quote.net_new} net new with an address, ${quote.to_find} more to look up, ${quote.domains} domains, worst case ${usd(quote.worst_case_cents)}. Waiting for ${this.approvers.map(cap).join(" or ")}.`, by, "Show the quote; topup(job_id, approved_by=name) when they say yes.");
     const counts = { ...(await this.funnel(run)), net_new: quote.net_new, with_email: quote.with_email, domains: quote.domains, icp_cents: quote.icp_cents, verify_cents: quote.verify_cents, to_find: quote.to_find, find_cents: quote.find_cents, below_floor: belowFloor ? 1 : 0 };
     const floorNote = (belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this ${settings.scope === "lane" ? "lane" : "campaign"} looks exhausted unless the record shows a source not replayed; they decide (D102).` : "") + (icp.ready ? "" : ` ${icp.note}`);
+    const splitNote =
+      settings.scope === "lane"
+        ? ` After the yes the new leads split into ${settings.campaign_ids.map((id) => `#${id}`).join(", ")}${settings.split_rule ? ` by the recorded rule${settings.split_confirmed_by ? ` (confirmed by ${settings.split_confirmed_by})` : ""}: ${settings.split_rule}` : " the way the record already segmented them"}. The count per campaign is decided after verification (the SEG split needs the verifier) and job(job_id) shows it at the route step.`
+        : "";
     const findNote = quote.to_find
       ? quote.finder_ready
         ? ` Plus ${quote.to_find} more new people with no email that the email finder will look up after the yes (up to ${usd(quote.find_cents)} of the total; only the ones it finds are verified and loaded).`
         : ` ${quote.to_find} more new people have no email and the email finder is not connected on the service, so they are left out. Ask Josh.`
       : "";
-    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads with an email for ${quoteTarget(settings)}, up to ${usd(quote.worst_case_cents)} in all (ICP check ${usd(quote.icp_cents)}, email finder ${usd(quote.find_cents)}, verification ${usd(quote.verify_cents)}).${findNote}${floorNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
+    return this.result(run.run_id, "quote", "suppress", "quoted", counts, quote.worst_case_cents, cardId, null, null, `tell ${this.approvers.map(cap).join(" or ")}: ${quote.net_new} new leads with an email for ${quoteTarget(settings)}, up to ${usd(quote.worst_case_cents)} in all (ICP check ${usd(quote.icp_cents)}, email finder ${usd(quote.find_cents)}, verification ${usd(quote.verify_cents)}).${findNote}${splitNote}${floorNote} When they say yes: topup(job_id, approved_by="their name").${await this.pauseNote()}`);
   }
 
   /** Loads start paused (D102); the quote answer says so, so the yes and the unpause are asked for together. */

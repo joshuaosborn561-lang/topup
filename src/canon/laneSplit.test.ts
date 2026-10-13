@@ -29,7 +29,7 @@ describe("D105 — lane split from the recorded build", () => {
         [12, "STOPPED"],
         [13, "ACTIVE"],
       ]),
-      records: [rec([10, 11, 12, 13], { yield_by_step: { routing, segments: { mail_class: ["SEG", "OTHER"] } } })],
+      records: [rec([10, 11, 12, 13], { yield_by_step: { routing, segments: { mail_class: ["SEG", "OTHER"] }, confirmed_by: "Josh" } })],
     });
     assert.equal(out.ok, true);
     if (!out.ok) return;
@@ -114,6 +114,30 @@ describe("D105 — lane split from the recorded build", () => {
     });
     assert.equal(none.ok, false);
     if (!none.ok) assert.match(none.reason, /no list_build_records/);
+  });
+
+  it("a recorded split waits for a named confirmation; an unknown or unreadable dimension is refused, never guessed (D106)", () => {
+    const routing = [{ when: { greeting: "team", mail_class: "SEG" }, campaign_id: 10 }, { when: {}, campaign_id: 11 }];
+    const base = { lane: "pe", members: [member(10), member(11)], statuses: new Map([[10, "ACTIVE"], [11, "ACTIVE"]]) as ReadonlyMap<number, string | null>, approvers: ["josh", "cayden"] };
+    const dims = [{ name: "greeting", kind: "present", column: "first_name_n", present: "named", absent: "team" }];
+    const unconfirmed = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, dimensions: dims } })] });
+    assert.equal(unconfirmed.ok, false);
+    if (!unconfirmed.ok) assert.match(unconfirmed.reason, /not yet confirmed by Josh or Cayden/);
+    const stranger = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, dimensions: dims, confirmed_by: "Grokbot" } })] });
+    assert.equal(stranger.ok, false, "D106: only an approver's name confirms a split");
+    const unknown = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, confirmed_by: "Josh" } })] });
+    assert.equal(unknown.ok, false);
+    if (!unknown.ok) assert.match(unknown.reason, /dimension "greeting"/);
+    const bad = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, dimensions: [{ name: "greeting", kind: "present", column: "email", present: "a", absent: "b" }], confirmed_by: "Josh" } })] });
+    assert.equal(bad.ok, false);
+    if (!bad.ok) assert.match(bad.reason, /cannot read/);
+    const ok = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, dimensions: dims, confirmed_by: "Josh", split_rule: "Team copy when no first name; SEG by mail class." } })] });
+    assert.equal(ok.ok, true);
+    if (!ok.ok) return;
+    assert.equal(ok.confirmed_by, "Josh");
+    assert.equal(ok.dimensions.length, 1);
+    assert.deepEqual(ok.segments.greeting, ["named", "team"]);
+    assert.match(ok.split_rule ?? "", /Team copy/);
   });
 
   it("routingFromRecord reads only a well-formed array; junk is not a split", () => {

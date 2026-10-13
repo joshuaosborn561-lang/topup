@@ -125,6 +125,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D103 | Live; top-ups find emails: the service keeps the people an export names without an email (LeadPipe drops them), the quote counts and prices them, and after the named yes the Email Finder Waterfall looks them up between the ICP check and verification; found addresses pass the same held and unsubscribe checks; exports run without the VALID filter |
 | D104 | Live; no daily vendor cap: what the approver says yes to is the only spend limit; supersedes the $25 daily backstop of D9. With it, the last six audit findings: a parked step is closed as parked and only a named call retries it, every wait loop stops when its job closes, a resumed ingest waits for LeadPipe to finish, the ICP check never throws out a site it read but did not grade and never pays DiscoLike twice, SQL row literals are cut from build records |
 | D105 | Live; top-ups size the lane, not one segment campaign; STOPPED is never refilled |
+| D106 | Live; a lane's split is data on its list_build_record: a plain-English rule, the routing, and derived dimensions from a four-kind general vocabulary (match, set, present, hash_parity) over lane columns; a split quotes only once an approver confirmed it by name; the service never guesses a dimension it cannot read |
 
 ---
 
@@ -3513,3 +3514,54 @@ or pull live in this change.
 `src/canon/laneSplit.test.ts`, `src/canon/campaigns.test.ts`,
 `src/jobs/runner.test.ts`. Ask Josh.
 
+## D106 — The lane split is data on the record, confirmed by name
+
+**Decision.** How a lane's one pull splits into its campaigns is written
+on the lane's `list_build_records` row, as data, never as code:
+
+1. *The rule.* `yield_by_step.split_rule`: one short plain-English
+   paragraph a person can confirm in one read.
+2. *The routing.* `yield_by_step.routing`: ordered `{when, campaign_id}`
+   rules; the first whose every `when` matches the row wins. A `when` may
+   name the built-in dimensions `band` (the getleads band, as `11_50`),
+   `mail_class` (`SEG` or `OTHER`, from the verifier) and `gift` (`team`
+   when the sports-team ladder found a local team, else `airpods`), or a
+   dimension the record defines.
+3. *The dimensions.* `yield_by_step.dimensions`: each reads one lane
+   column (title, industry, vertical, company_size, employee_range,
+   company_name, company_n, company_domain, first_name, first_name_n,
+   city, state, mail_class, source_label) through one of four general
+   kinds: `match` (first case-insensitive pattern that matches wins, else
+   a default), `set` (first case whose values hold the column wins, else
+   a default), `present` (one value when the column is filled, another
+   when not), `hash_parity` (even or odd by the md5 of the lower-cased
+   column, so a company stays on the side it was on). Reserved names and
+   columns outside the list are refused, not guessed.
+4. *The confirmation.* `yield_by_step.confirmed_by`: the first name of
+   the approver who confirmed the split. Until it names an approver the
+   lane does not quote; the answer says so. Josh confirms the first ones;
+   Cayden may confirm later ones.
+5. *The quote* names the campaigns and repeats the rule. The count per
+   campaign is decided at the route step, after verification, and the
+   job shows it.
+
+The route step reads the dimensions off the job's settings, selects only
+the columns they name, computes the values in process, and keeps only the
+campaign each row points at. No lead data leaves the database.
+
+**Why.** Josh, 13 Oct 2026: "make the split come from what I actually
+did, not from me filling in a form"; "No per-client code." Ten of eleven
+EMCOR and BCP lanes refused to quote under D105 because their records
+carried no routing and the registry cells were empty or not unique. The
+transcripts hold the splits: a title word list and an employee band for
+the AirPods offer, an industry word for senior living and K-12, a first
+name for the Team copy, a domain hash for the Scope/Backup test, the
+sports-team gift for With Team, the verifier's SEG tag.
+
+**What it does not do.** It does not add a tool, a client branch, or a
+rule engine beyond the four kinds. It does not route to a dimension it
+cannot compute. It does not confirm a split for anyone. It does not
+change D105: STOPPED is never a target.
+
+**Guard.** `src/guards/d106_split_as_data.test.ts`; unit tests in
+`src/canon/dimensions.test.ts`, `src/canon/laneSplit.test.ts`. Ask Josh.

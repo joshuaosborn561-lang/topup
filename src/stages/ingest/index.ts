@@ -34,6 +34,16 @@ export function sourceLabel(run: RunRow, campaignId?: number): string {
   return campaignId ? `${base}_c${campaignId}` : base;
 }
 
+/**
+ * The label this job's rows land under. A one-campaign job stamps its
+ * campaign on the label (route keeps that file on that campaign); a lane
+ * job must not, or every row would be pinned to the lane's first campaign
+ * and the recorded split would never run (D105).
+ */
+export function jobSourceLabel(run: RunRow, settings: Pick<JobSettings, "scope" | "campaign_id">): string {
+  return sourceLabel(run, settings.scope === "lane" ? undefined : settings.campaign_id);
+}
+
 /** LeadPipe's canonical ingest columns. A header mapping may name only these as keys (a phone column is refused), with the file's own header cell as the value. */
 export const LEADPIPE_CANONICAL_COLUMNS = ["first_name", "last_name", "email", "title", "company_name", "company_domain", "city", "state", "industry", "employee_range"] as const;
 
@@ -110,7 +120,7 @@ export class IngestStage {
       const table = ingestedTable(run.client_tag);
       const cols = await columnsOf(this.d.repo, table);
       if (!cols.has("source_label")) throw new Error(`${table} has no source_label column; the lane table is not a LeadPipe table. Ask Josh.`);
-      const label = sourceLabel(run, settings.campaign_id);
+      const label = jobSourceLabel(run, settings);
       const already = await this.rowsForLabel(table, label);
       let rowsRead: number | null = null;
       let expected: number | null = null;
