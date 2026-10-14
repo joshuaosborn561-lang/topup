@@ -60,4 +60,3 @@ The `{{location_conversational}}` merge tag, in lines like "if you own ground ar
 - The top label is a metro name, not a city name
 - Spot-check five known cities: Plano, Frisco, Arlington and Rockwall should all read DFW
 - Every row in a lane using the merge tag has a non-empty value
-- Mandatory QA (lead-list-build steps 7/8): after this step, a separate pass pulls 200 random rows, reports the error rate, and holds the batch if errors exceed 2 percent. Counts and up to 10 company names in chat only, never rows.

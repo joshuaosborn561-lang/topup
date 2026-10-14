@@ -15,7 +15,7 @@ MSP owners and C suite at small MSPs.
 - `job_titles`: ["Owner", "CEO", "President", "Founder", "Co-Founder", "CIO", "CTO", "VP of IT", "Director of IT"]
 - `company_size`: ["11 to 50"]  (exact band label, NEVER employees_min/max, band overlap bug pulled ~2,700 wrong band rows once)
 - `countries`: ["United States"]
-- no `email_status` filter. Size and export without it; every lead goes through Email Verifier Progression anyway.
+- `email_status`: ["VALID"]  (CATCH_ALL is no longer accepted by getleads, only VALID)
 - `max_per_company`: 3
 - Note: revenue caps barely filter MSP searches, the description match is the binding constraint. Skip revenue_max.
 

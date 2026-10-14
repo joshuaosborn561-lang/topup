@@ -1,11 +1,11 @@
 ---
 name: "record-list-build"
-description: "Record exactly how a SalesGlider client lead list was built, at the end of any session that built or topped one up, so the Grok Bot babysitter (skills/grok-bot-babysitter) can rebuild more of the same list the same way including unstated judgment. The leadtopup / Top_Up service is retired (D110); this record and its transcript are what the bot reads on every top up, and the bot writes one at the end of every top up. Narrative plus full verbatim transcript to azpapwtnrbzywlnxxecz. Also, at the end of any session that changed how lists get built (a new step, a new tool, a label set, a title cut for one client), write one process change row with the transcript so the next operator knows. Sits beside first-pull-receipt, never replaces it."
+description: "Record exactly how a SalesGlider client lead list was built, at the end of any session that built or topped one up, so a future operator (Grokbot via Top_Up MCP) can rebuild more of the same list the same way including unstated judgment. Narrative plus full verbatim transcript to azpapwtnrbzywlnxxecz. Also, at the end of any session that changed how lists get built (a new step, a new tool, a label set, a title cut for one client), write one process change row with the transcript so the next operator knows. Sits beside first-pull-receipt, never replaces it."
 ---
 
 # Record the list build
 
-You just built or topped up a lead list for a SalesGlider client campaign. The receipt (`first-pull-receipt`) is the short machine summary of *what filters ran*. This record is what tells the next operator *how the build actually went* ... the order you worked in, what you rejected, the rules you applied by eye, the dead ends, the surprises, and the full verbatim session. The Grok Bot babysitter (`grok-bot-babysitter`, step 2) reads this row and its transcript straight from Supabase before every top up; the leadtopup / Top_Up service and its MCP are retired (D110). On a top up the bot is the one writing this record (babysitter step 7). Assume the operator who reads it has nothing but what you save here.
+You just built or topped up a lead list for a SalesGlider client campaign. The receipt (`first-pull-receipt`) is the short machine recipe that tells the Top_Up service *what filters to rerun*. This record is the deep archive that tells a future operator *how the build actually went* ... the order you worked in, what you rejected, the rules you applied by eye, the dead ends, the surprises, and the full verbatim session. Grokbot reads this through the Top_Up MCP when a receipt alone is not enough to reproduce the work. Assume the operator who reads it has nothing but what you save here.
 
 This is additive. It does not replace the receipt or provenance. The receipt stays Josh's at-a-glance "where does my data come from" picture; this record points at the receipt by id and never duplicates its fields.
 
@@ -86,7 +86,7 @@ At the end of any session that changed how lists get built, whether or not a lis
 2. Insert one row in `topup.process_changes`: `client_tag` null for a global change, or the tag when the change was about that client (a title taken out of a lane, a label set tuned, a lane retargeted); `summary` of a few lines in plain words saying what is different now and where it lives (table, function, skill, variant name); `transcript_path`; `transcript_format`.
 3. No review wait. Josh does not need to sign off an addendum; the transcript is the record. Tell him the row id in one line and move on.
 
-The reading side lives in `grok-bot-babysitter`, `campaign-topup` and `lead-list-build`: before planning, they read the global rows plus the client's rows since that client's last build record, newest first. A row nobody reads is wasted, so when you add a new build skill, add the same read line there.
+The reading side lives in `campaign-topup` and `lead-list-build`: before planning, they read the global rows plus the client's rows since that client's last build record, newest first. A row nobody reads is wasted, so when you add a new build skill, add the same read line there.
 
 ## Finding the receipt ids to link
 
