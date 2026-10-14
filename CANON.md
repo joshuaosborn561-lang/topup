@@ -1,6 +1,6 @@
 # Canon — how a campaign gets topped up
 
-Canon as of **D106** (2026-10-13). One page. `DECISIONS.md` is the append-only
+Canon as of **D107** (2026-10-14). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -76,11 +76,12 @@ ask Josh to connect it, then continue.
     segmented them. **STOPPED is never refilled** and never counted in
     runway; PAUSED may be. If the split cannot be determined, stop and
     report; do not guess (D105). **The split is data on the lane's
-    record** (D106): a plain-English rule, the routing, and the
-    dimensions it reads, each a row column through one of four general
-    kinds (a word match, a value set, present or not, a hash of the
-    domain). A split quotes and loads only once an approver has confirmed
-    it by name on the record. Client facts live in the record, never here.
+    record** (D106): a plain-English rule, the routing, and the dimensions
+    it reads, each a row column through one of four general kinds (a word
+    match, a value set, present or not, a hash of the domain). **The split
+    is read from the lane's build transcript and is the truth the way the
+    build is** (D107): it quotes on its own, no confirmation step. What the
+    transcript does not say is a plain question to Josh. No client facts here.
 
 ## The loop
 

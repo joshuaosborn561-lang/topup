@@ -126,6 +126,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D104 | Live; no daily vendor cap: what the approver says yes to is the only spend limit; supersedes the $25 daily backstop of D9. With it, the last six audit findings: a parked step is closed as parked and only a named call retries it, every wait loop stops when its job closes, a resumed ingest waits for LeadPipe to finish, the ICP check never throws out a site it read but did not grade and never pays DiscoLike twice, SQL row literals are cut from build records |
 | D105 | Live; top-ups size the lane, not one segment campaign; STOPPED is never refilled |
 | D106 | Live; a lane's split is data on its list_build_record: a plain-English rule, the routing, and derived dimensions from a four-kind general vocabulary (match, set, present, hash_parity) over lane columns; a split quotes only once an approver confirmed it by name; the service never guesses a dimension it cannot read |
+| D107 | Live; the split read from the lane's build transcript is the truth the way the build is: it quotes and loads on its own, the D106 confirmation step is removed; what the transcript does not say waits at the route step or is one plain question to Josh |
 
 ---
 
@@ -3565,3 +3566,39 @@ change D105: STOPPED is never a target.
 
 **Guard.** `src/guards/d106_split_as_data.test.ts`; unit tests in
 `src/canon/dimensions.test.ts`, `src/canon/laneSplit.test.ts`. Ask Josh.
+
+## D107 — The split read from the transcript is the truth; no confirmation step
+
+**Decision.** How a lane's one pull splits into its campaigns is read
+from the lane's own list-build transcript, the same way the build is
+(D99: the transcript is the truth). The split sits on the lane's
+`list_build_records` row as D106 data (rule, routing, dimensions) with
+the build steps it was read from named in the rule. It quotes and loads
+on its own. The D106 confirmation step is removed: `confirmed_by` stays
+on the record as a note of who signed it, if anyone, and the service
+never waits on it.
+
+What the transcript does not say is never guessed. Rows the transcript
+points at a campaign that is COMPLETED or never launched wait at the
+route step (`pending_campaign`) and the quote says so. A lane with no
+recorded split, or a question the transcript does not answer, is one
+plain-English question to Josh from Grokbot, not a form and not a rule
+written by the bot.
+
+**Why.** Josh, 14 Oct 2026: "the splits thing is like a recipe too... by
+reading the scripts it should see how we pulled leads and segmented
+them. no need for a recipe"; "literally everything should come from the
+transcripts. if there are future questions, it should come from the
+transcript. or grok bot can ask me in plain english." Under D106 all
+nine recorded lanes sat refusing to quote for a day waiting on a
+confirmation of rules that were already transcribed from his own
+scripts.
+
+**What it does not do.** It does not change what a split may read (the
+four D106 kinds over lane columns), who approves spend (D101), or
+STOPPED never being refilled (D105). It does not let the service write
+a split; the record is written by whoever read the transcript, and
+names the steps.
+
+**Guard.** `src/guards/d107_transcript_split.test.ts`; unit test in
+`src/canon/laneSplit.test.ts`. Ask Josh.

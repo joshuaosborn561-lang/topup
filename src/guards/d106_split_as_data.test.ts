@@ -5,12 +5,13 @@ import { BUILT_IN_DIMENSIONS, DIMENSION_COLUMNS, parseDimension } from "../canon
 
 /**
  * D106 — a lane's split is data on its record: rule, routing, dimensions
- * from a four-kind vocabulary, confirmed by an approver's name. Ask Josh
- * before adding a kind, a column or a client branch.
+ * from a four-kind vocabulary, read from the lane's build transcript (the
+ * confirmation step was dropped by D107). Ask Josh before adding a kind,
+ * a column or a client branch.
  */
 const root = new URL("../../", import.meta.url);
 
-describe("D106 — the split is data, confirmed by name", () => {
+describe("D106 — the split is data on the record", () => {
   it("the vocabulary is four kinds over lane columns, and never a lead's address or name as a routing key", () => {
     for (const kind of ["match", "set", "present", "hash_parity"]) {
       const base = { name: "x", column: "title" as const };
@@ -34,13 +35,11 @@ describe("D106 — the split is data, confirmed by name", () => {
     }
     const canon = await readFile(new URL("CANON.md", root), "utf8");
     assert.match(canon, /The split is data on the lane's\s+record/);
-    assert.match(canon, /confirmed\s+it by name/);
     assert.doesNotMatch(canon, /emcor|bcp|insight/i, "D106: client facts stay out of the canon");
   });
 
-  it("an unconfirmed split does not quote; the route step computes dimensions from the record, not from code", async () => {
+  it("the route step computes dimensions from the record, not from code", async () => {
     const split = await readFile(new URL("src/canon/laneSplit.ts", root), "utf8");
-    assert.match(split, /not yet confirmed by/);
     assert.match(split, /parseDimensions\(/);
     const route = await readFile(new URL("src/stages/route/index.ts", root), "utf8");
     assert.match(route, /computeDimensions\(dimDefs, r\)/);

@@ -116,16 +116,14 @@ describe("D105 — lane split from the recorded build", () => {
     if (!none.ok) assert.match(none.reason, /no list_build_records/);
   });
 
-  it("a recorded split waits for a named confirmation; an unknown or unreadable dimension is refused, never guessed (D106)", () => {
+  it("a split read from the recorded build quotes on its own (D107); an unknown or unreadable dimension is refused, never guessed (D106)", () => {
     const routing = [{ when: { greeting: "team", mail_class: "SEG" }, campaign_id: 10 }, { when: {}, campaign_id: 11 }];
-    const base = { lane: "pe", members: [member(10), member(11)], statuses: new Map([[10, "ACTIVE"], [11, "ACTIVE"]]) as ReadonlyMap<number, string | null>, approvers: ["josh", "cayden"] };
+    const base = { lane: "pe", members: [member(10), member(11)], statuses: new Map([[10, "ACTIVE"], [11, "ACTIVE"]]) as ReadonlyMap<number, string | null> };
     const dims = [{ name: "greeting", kind: "present", column: "first_name_n", present: "named", absent: "team" }];
-    const unconfirmed = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, dimensions: dims } })] });
-    assert.equal(unconfirmed.ok, false);
-    if (!unconfirmed.ok) assert.match(unconfirmed.reason, /not yet confirmed by Josh or Cayden/);
-    const stranger = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, dimensions: dims, confirmed_by: "Grokbot" } })] });
-    assert.equal(stranger.ok, false, "D106: only an approver's name confirms a split");
-    const unknown = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, confirmed_by: "Josh" } })] });
+    const unsigned = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, dimensions: dims } })] });
+    assert.equal(unsigned.ok, true, "D107: the split read from the transcript is the truth, like the build; nobody has to confirm it");
+    if (unsigned.ok) assert.equal(unsigned.confirmed_by, null);
+    const unknown = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing } })] });
     assert.equal(unknown.ok, false);
     if (!unknown.ok) assert.match(unknown.reason, /dimension "greeting"/);
     const bad = resolveLaneSegmentation({ ...base, records: [rec([10, 11], { yield_by_step: { routing, dimensions: [{ name: "greeting", kind: "present", column: "email", present: "a", absent: "b" }], confirmed_by: "Josh" } })] });
