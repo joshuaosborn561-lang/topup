@@ -38,7 +38,6 @@ export async function planLaneJob(
     campaign_id?: number | null;
     registry: readonly Record<string, unknown>[];
     names?: ReadonlyMap<number, string | null>;
-    approvers?: readonly string[];
   },
 ): Promise<{ ok: true; split: LaneJobSplit; stopped_ids: number[]; split_rule: string | null; confirmed_by: string | null } | { ok: false; message: string; no_lane?: boolean }> {
   const rows = registryRows(input.registry);
@@ -78,7 +77,7 @@ export async function planLaneJob(
     return { ok: false, message: `Could not read topup.list_build_records (${plainError(err)}). That is a database error, not a missing build: try again, and ask Josh if it keeps failing.` };
   }
 
-  const split = resolveLaneSegmentation({ lane, members: namedMembers, statuses, records, approvers: input.approvers });
+  const split = resolveLaneSegmentation({ lane, members: namedMembers, statuses, records });
   if (!split.ok) return { ok: false, message: split.reason };
   return {
     ok: true,

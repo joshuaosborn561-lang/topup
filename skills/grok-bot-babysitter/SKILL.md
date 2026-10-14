@@ -29,10 +29,12 @@ LeadPipe → Smartlead**. They never enter this context.
 1. `campaigns()`: the low lane (untouched under about two weeks of
    sends, passing one positive per 2,000, not cold call, not SG Nurture).
    The answer rolls campaigns up by lane and shows the lane runway
-   (STOPPED is out of the sum). Size the lane, not one segment. A lane
-   whose split is recorded but not yet confirmed answers so: show the
-   approver the rule from the record; once they confirm by name it quotes
-   (D106). Never write a split yourself.
+   (STOPPED is out of the sum). Size the lane, not one segment. How the
+   lane splits into its campaigns is read from the lane's build transcript
+   and sits on its record (D106); it is the truth the way the build is and
+   quotes on its own, nobody confirms it (D107). A lane whose record has no
+   split, or a question the transcript does not answer: never guess, never
+   write a split yourself; ask Josh one plain-English question.
 2. `playbook(client_tag)`. The living how-we-build for this client: every
    list build, disqualification and method change in chronological order,
    plus transcript object names in `list-build-transcripts`. Then

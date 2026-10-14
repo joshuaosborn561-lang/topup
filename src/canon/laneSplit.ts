@@ -5,8 +5,11 @@ import type { RegistryCampaign } from "./registry.js";
 /**
  * Lane-level split (D105). A top-up sizes the lane, then after a named
  * yes the new leads go to that lane's refillable campaigns the way the
- * playbook / list_build_records already segmented them. STOPPED is never
- * a target. Nothing here invents a client, a recipe or a segment name.
+ * playbook / list_build_records already segmented them (D106). The split
+ * is read from the lane's build transcript and is the truth the way the
+ * build is; it quotes on its own, no confirmation step (D107). STOPPED is
+ * never a target. Nothing here invents a client, a recipe or a segment
+ * name; what the transcript does not say is a plain question to Josh.
  */
 
 export type RoutingRule = { when: Record<string, string>; campaign_id: number };
@@ -46,7 +49,7 @@ export type LaneSplit = LaneSplitOk | LaneSplitFail;
 export const NO_SEGMENTATION =
   "segmentation for this lane cannot be determined from list_build_records / the playbook. The service will not guess. Ask Josh to record how the lane splits (routing on the build record, or unique stored cells on the named campaigns).";
 
-/** A recorded split is used only once a person has confirmed it by name (D106). */
+/** The name on the record if a person signed the split. Informational since D107: the split read from the transcript quotes on its own. */
 export function confirmedBy(value: unknown): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = (value as Record<string, unknown>).confirmed_by;
@@ -148,8 +151,6 @@ export function resolveLaneSegmentation(input: {
   members: readonly RegistryCampaign[];
   statuses: ReadonlyMap<number, string | null>;
   records: readonly LaneRecord[];
-  /** Who may confirm a recorded split (the approvers, lower-cased first names). Empty means any name counts. */
-  approvers?: readonly string[];
 }): LaneSplit {
   const lane = input.lane.trim();
   const onLane = input.members.filter((m) => (m.lane ?? "").trim() === lane);
@@ -193,11 +194,8 @@ export function resolveLaneSegmentation(input: {
     if (unknownDim) {
       return fail(lane, `the recorded routing uses a dimension "${unknownDim}" the record does not define and the service does not compute. Nothing is guessed; fix the record. Ask Josh.`, refillableIds, stopped);
     }
+    // D107: the split read from the recorded build is the truth, like the build itself. No confirmation step.
     const who = confirmedBy(holder);
-    const names = (input.approvers ?? []).map((n) => n.toLowerCase());
-    if (!who || (names.length > 0 && !names.includes(who.toLowerCase()))) {
-      return fail(lane, `the lane's split is recorded but not yet confirmed by ${input.approvers?.length ? input.approvers.map((n) => n[0]!.toUpperCase() + n.slice(1)).join(" or ") : "an approver"} (D106). Show them the split rule on the record; once they confirm, it quotes and loads on its own.`, refillableIds, stopped);
-    }
     const segs = segmentsFromRecord(rec.yield_by_step) ?? segmentsFromRecord(rec.source_refs) ?? {};
     return {
       ok: true,
