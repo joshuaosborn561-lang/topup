@@ -139,7 +139,7 @@ export type Role = "owner" | "operator";
 
 export interface RunRow {
   run_id: string;
-  recipe_id: string;
+  settings_id: string;
   client_tag: string;
   lane: string;
   campaign_id: number | null;

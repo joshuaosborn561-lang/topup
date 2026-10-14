@@ -77,7 +77,7 @@ export class IcpStage {
       if (!this.d.gate) return park(this.d, run, "icp", "the ICP gate is not configured on this service (ICP_SITE_FETCH_KEY, ICP_LLM_KEY, ICP_DISCO_KEY). Ask Josh.", attempts);
       const variant = await this.variant(run.client_tag);
       if (!variant) {
-        return park(this.d, run, "icp", `no ICP variant for ${run.client_tag}: write the label set per skills/icp-website-gate (JEV_Q and PASS in icp-llm, then a row in topup.icp_variants). Ask Josh.`, attempts);
+        return park(this.d, run, "icp", `no ICP label set for ${run.client_tag} (a row in topup.icp_variants naming the icp-llm variant). That is tool wiring, not a rule: ask Josh.`, attempts);
       }
       const dsql = domainSql(cols);
       const statuses = ICP_STATUSES.map((s) => `'${s}'`).join(", ");
@@ -99,7 +99,7 @@ export class IcpStage {
       const approvedBy = typeof own?.counts?.approved_by === "string" ? String(own.counts.approved_by) : null;
       const spentToday = await this.d.repo.spentTodayCents();
       const decision = this.d.rails.decide(
-        { runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev", action: "grade", rows: domains, recipeAuthorised: true, approvedCents: approved, worstCaseCents: worst },
+        { runId: run.run_id, clientTag: run.client_tag, step: "icp", vendor: "jev", action: "grade", rows: domains, stepAuthorised: true, approvedCents: approved, worstCaseCents: worst },
         spentToday,
       );
       if (decision.kind === "blocked") throw new Error(`icp blocked: ${decision.reason}`);

@@ -88,7 +88,7 @@ export class ImportStage {
 
         let jobId = jobs[campaign] ?? null;
         if (!jobId) {
-          const decision = await this.d.rails.gate({ runId: run.run_id, clientTag: run.client_tag, step: "import", vendor: "smartlead", action: "start_lead_import", rows: submitted, recipeAuthorised: true });
+          const decision = await this.d.rails.gate({ runId: run.run_id, clientTag: run.client_tag, step: "import", vendor: "smartlead", action: "start_lead_import", rows: submitted, stepAuthorised: true });
           if (decision.kind === "blocked") throw new Error(`import blocked: ${decision.reason}`);
           if (decision.kind === "ask") throw new Error(`Smartlead import priced above the auto cap; the price table says included. Check src/spend/prices.ts.`);
           const started = await this.d.smartlead.startImport(campaign);

@@ -13,7 +13,7 @@ const root = new URL("../../", import.meta.url);
 describe("D104 — no daily cap; parked waits for a name", () => {
   it("an approved amount runs whatever was spent today; an unapproved one still asks", () => {
     const rails = new SpendRails({} as never, { autoCapCents: 0, driftTolerance: 0.1 });
-    const req = { runId: "r", clientTag: "c", step: "find_emails" as const, vendor: "aiark", action: "find_email", rows: 10_000, recipeAuthorised: true };
+    const req = { runId: "r", clientTag: "c", step: "find_emails" as const, vendor: "aiark", action: "find_email", rows: 10_000, stepAuthorised: true };
     assert.equal(rails.decide({ ...req, approvedCents: 50_000 }, 10_000_000).kind, "proceed", "D104: no daily cap blocks an approved amount");
     assert.equal(rails.decide(req, 0).kind, "ask", "D51: nothing unapproved runs");
     assert.ok(!("DAILY_VENDOR_CAP_USD" in loadConfig({})), "D104: the daily cap is not read");

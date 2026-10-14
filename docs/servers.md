@@ -868,7 +868,7 @@ never worked around.
 | Zero-dollar accounting | Not applicable — included plan; the service books $0 and counts rows. |
 | Status errors on completed jobs | Cannot confirm; vocabulary unpublished. |
 | Row-count truncation | **By design** — `cap_reason` reduces `rows_exported` silently unless the caller reads it. The service reads it and gates step 4 on `rows_exported`. |
-| Other | OAuth-for-a-person is the only documented auth. Numeric headcount bounds (`employee_count_min/max`) and comma industries shred results silently (brief section 9); the recipe schema refuses both before a call is made. |
+| Other | OAuth-for-a-person is the only documented auth. Numeric headcount bounds (`employee_count_min/max`) and comma industries shred results silently (brief section 9); the service refuses both before a call is made. |
 
 ### Prerequisite PRs (getleads)
 

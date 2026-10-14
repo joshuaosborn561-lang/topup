@@ -4,26 +4,25 @@ import { importStatusFromResponse, SMARTLEAD_ALLOWED } from "../clients/smartlea
 import { parseJobSettings } from "../jobs/settings.js";
 import { importMatched, parseJobs } from "./import/index.js";
 import { isLaneTable, jobSourceLabel, LEADPIPE_CANONICAL_COLUMNS, safeWhere, sourceLabel } from "./ingest/index.js";
-import { QA_FIELD_COLUMN, scopeSql } from "./qa/index.js";
 import { bandSegment, campaignIdFromSourceLabel, cellLabel, dropStoppedRouting, mailClassSegment, matchRule, teamSourceSegment } from "./route/index.js";
 import { dedupeKeySql } from "./stage/index.js";
 
 /** The pure halves of the referee stages. Vendor calls are never made here; the stages that make them are exercised against fakes. */
 describe("D99 — the referee's pure halves", () => {
-  it("team_source names where a gift team came from, and none when the gift is AirPods (D106)", () => {
-    assert.equal(teamSourceSegment("team", "MLB"), "MLB");
-    assert.equal(teamSourceSegment("team", "College"), "College");
-    assert.equal(teamSourceSegment("airpods", "OUT_OF_RANGE"), "none");
-    assert.equal(teamSourceSegment("team", null), "unknown");
-    const cell = { band: "11_50", mail_class: "OTHER", gift: "team", team_source: "College" };
-    const routing = [{ when: { team_source: "MLB" }, campaign_id: 1 }, { when: { team_source: "NFL" }, campaign_id: 1 }, { when: { gift: "airpods" }, campaign_id: 2 }, { when: {}, campaign_id: 2 }];
+  it("team_source names where a local team came from, and none when the ladder found no team (D106, D109)", () => {
+    assert.equal(teamSourceSegment("MLB"), "MLB");
+    assert.equal(teamSourceSegment("College"), "College");
+    assert.equal(teamSourceSegment("OUT_OF_RANGE"), "none");
+    assert.equal(teamSourceSegment(null), "none");
+    const cell = { band: "11_50", mail_class: "OTHER", team_source: "College" };
+    const routing = [{ when: { team_source: "MLB" }, campaign_id: 1 }, { when: { team_source: "NFL" }, campaign_id: 1 }, { when: { team_source: "none" }, campaign_id: 2 }, { when: {}, campaign_id: 2 }];
     assert.equal(matchRule(cell, routing)?.campaign_id, 2, "a college team is not a ticket gift in a build that ran MLB then NFL");
   });
 
   it("a job's settings route every row to the one campaign and carry no settings", () => {
     const s = parseJobSettings({ id: "bcp.job_1.v1", client_tag: "bcp", lane: "job_1", smartlead_client_id: 1, campaign_id: 7, source: { kind: "table", table: "scratch.pool" }, routing: [{ when: {}, campaign_id: 7 }] });
     assert.equal(s.source.kind === "table" && s.source.where, "true");
-    assert.equal(matchRule({ band: "11_50", mail_class: "SEG", gift: null }, s.routing)?.campaign_id, 7);
+    assert.equal(matchRule({ band: "11_50", mail_class: "SEG", team_source: "none" }, s.routing)?.campaign_id, 7);
     assert.throws(() => parseJobSettings({ id: "x", client_tag: "bcp", lane: "l", smartlead_client_id: 1, campaign_id: 7, source: { kind: "getleads", filters: {} } }));
   });
 
@@ -58,7 +57,7 @@ describe("D99 — the referee's pure halves", () => {
     assert.equal(campaignIdFromSourceLabel("topup_bcp_job_7_1_01234567", [7]), null);
     assert.equal(bandSegment("11 to 50"), "11_50");
     assert.equal(mailClassSegment("seg"), "SEG");
-    assert.equal(cellLabel({ band: "11_50", mail_class: "SEG", gift: null }, ["band"]), "band=11_50");
+    assert.equal(cellLabel({ band: "11_50", mail_class: "SEG", team_source: "none" }, ["band"]), "band=11_50");
     assert.match(dedupeKeySql("c", "e"), /md5/);
     assert.equal(importMatched(10, { status: "completed", imported_count: 10, duplicate_count: 0, invalid_count: 0, error_message: null } as never), true);
     assert.equal(importMatched(10, { status: "completed", imported_count: 8, duplicate_count: 2, invalid_count: 0, error_message: null } as never), true, "duplicates Smartlead already had count as accounted for");
@@ -69,9 +68,6 @@ describe("D99 — the referee's pure halves", () => {
     assert.equal(importStatusFromResponse({ run: { status: "failed", error: "boom" } }).error_message, "boom");
     assert.equal(importStatusFromResponse({ status: "running", counts: {} }).imported_count, null);
     assert.deepEqual(parseJobs('{"7":"job-a"}'), { 7: "job-a" });
-    assert.equal(QA_FIELD_COLUMN.job_title, "title");
-    assert.equal(scopeSql(null, "bcp")?.sql, "true");
-    assert.equal(scopeSql("other", "bcp"), null);
     for (const path of SMARTLEAD_ALLOWED) assert.ok(!/update_campaign_status|delete/i.test(String(path)), `D6: ${String(path)}`);
     const kept = dropStoppedRouting(
       [{ campaign_id: 1 }, { campaign_id: 2 }, { campaign_id: 3 }],

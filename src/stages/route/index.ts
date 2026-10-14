@@ -26,12 +26,13 @@ export interface RouteDeps extends StageDeps {
 }
 
 /** The settings's segment dimensions, as computed from a row's columns. */
-export type Cell = Record<"band" | "mail_class" | "gift" | "team_source", string | null> & Record<string, string | null>;
+export type Cell = Record<"band" | "mail_class" | "team_source", string | null> & Record<string, string | null>;
 
-/** Where the row's gift team came from (normalize_flags.team), or none when the gift is AirPods. */
-export function teamSourceSegment(gift: string | null, source: string | null): string {
-  if (gift !== "team") return "none";
-  return source && source.trim() ? source.trim() : "unknown";
+/** Where the row's local team came from (normalize_flags.team): MLB, NFL, College or CityOverride; none when the ladder found no team. */
+export const TEAM_SOURCES = ["MLB", "NFL", "College", "CityOverride"] as const;
+export function teamSourceSegment(source: string | null): string {
+  const s = (source ?? "").trim();
+  return (TEAM_SOURCES as readonly string[]).includes(s) ? s : "none";
 }
 
 /** getleads band label "11 to 50" → settings segment "11_50"; "10001+" → "10001_plus". */
@@ -115,15 +116,15 @@ export class RouteStage {
         return r.rowCount ?? 0;
       });
 
-      const { rows } = await db.query<{ id: string; company_size: string | null; mail_class: string | null; gift: string | null; team_src: string | null; source_label: string | null } & Record<string, string | null>>(
-        `select id::text, company_size, mail_class, normalize_flags->'gift_tier'->>0 as gift, normalize_flags->'team'->>0 as team_src, ${labelSql}${extraSql} from ${table}
+      const { rows } = await db.query<{ id: string; company_size: string | null; mail_class: string | null; team_src: string | null; source_label: string | null } & Record<string, string | null>>(
+        `select id::text, company_size, mail_class, normalize_flags->'team'->>0 as team_src, ${labelSql}${extraSql} from ${table}
          where run_id = $1 and lead_status in ('qa_passed', 'pending_campaign')`,
         [run.run_id],
       );
       const byCampaign = new Map<number, string[]>();
       const pending = new Map<string, string[]>();
       for (const r of rows) {
-        const cell: Cell = { band: bandSegment(r.company_size), mail_class: mailClassSegment(r.mail_class), gift: r.gift, team_source: teamSourceSegment(r.gift, r.team_src), ...(dimDefs.length ? computeDimensions(dimDefs, r) : {}) };
+        const cell: Cell = { band: bandSegment(r.company_size), mail_class: mailClassSegment(r.mail_class), team_source: teamSourceSegment(r.team_src), ...(dimDefs.length ? computeDimensions(dimDefs, r) : {}) };
         const stamped = campaignIdFromSourceLabel(r.source_label, targets);
         const rule = stamped ? null : matchRule(cell, routing);
         const campaign = stamped ?? rule?.campaign_id ?? null;

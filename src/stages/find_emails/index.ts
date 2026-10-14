@@ -85,7 +85,7 @@ export class FindEmailsStage {
       if (!jobId) {
         const spentToday = await this.d.repo.spentTodayCents();
         const decision = this.d.rails.decide(
-          { runId: run.run_id, clientTag: run.client_tag, step: "find_emails", vendor: FIND_VENDOR, action: FIND_ACTION, rows: findable, recipeAuthorised: true, approvedCents: approved, worstCaseCents: worst },
+          { runId: run.run_id, clientTag: run.client_tag, step: "find_emails", vendor: FIND_VENDOR, action: FIND_ACTION, rows: findable, stepAuthorised: true, approvedCents: approved, worstCaseCents: worst },
           spentToday,
         );
         if (decision.kind === "blocked") throw new Error(`find emails blocked: ${decision.reason}`);

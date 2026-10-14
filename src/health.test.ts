@@ -14,7 +14,7 @@ describe("health — D34 required tables", () => {
       "topup.spend_ledger",
       "topup.lane_events",
       "topup.lane_state",
-      "topup.lane_recipes",
+      "topup.job_settings",
       "topup.verify_batches",
       "topup.stall_events",
       "topup.client_map",
@@ -23,7 +23,6 @@ describe("health — D34 required tables", () => {
       "topup.process_changes",
       "topup.service_flags",
       "topup.icp_variants",
-      "topup.qa_rules",
       "topup.ref_cities",
       "topup.ref_acronyms",
       "topup.client_domain_blocklist",
@@ -41,12 +40,12 @@ describe("health — D34 required tables", () => {
       cfg,
       repo: {
         raw: () => ({ ping: async () => true }),
-        missingTopupTables: async () => ["topup.qa_rules", "topup.campaign_registry"],
+        missingTopupTables: async () => ["topup.ref_cities", "topup.campaign_registry"],
       } as never,
       rails: null,
     });
     assert.equal(body.ok, false);
-    assert.deepEqual(body.missing_tables, ["topup.qa_rules", "topup.campaign_registry"]);
+    assert.deepEqual(body.missing_tables, ["topup.ref_cities", "topup.campaign_registry"]);
     assert.equal(typeof body.commit === "string" || body.commit === null, true);
     assert.equal(typeof body.built_at === "string" || body.built_at === null, true);
     assert.equal(typeof body.started_at, "string");
