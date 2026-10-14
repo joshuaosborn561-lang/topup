@@ -53,7 +53,7 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedErr
       query: async (sql: string) => {
         if (sql.includes("list_build_records")) {
           if (opts.recordedError) throw new Error("permission denied for table list_build_records");
-          if (sql.includes("yield_by_step") || sql.includes("source_refs")) return { rows: opts.records ?? [] };
+          if (sql.includes("select campaign_ids, lanes")) return { rows: opts.records ?? [] };
           return { rows: [{ n: opts.recorded === false ? "0" : "1" }] };
         }
         if (sql.includes("from public.campaigns") && sql.includes("smartlead_campaign_id = any")) {
@@ -417,14 +417,15 @@ describe("D99 — the top-up", () => {
         { campaign_id: "3921850", client_tag: "bcp", lane: "it_dm", band: "11_50" },
         { campaign_id: "3921851", client_tag: "bcp", lane: "it_dm", band: "51_200" },
       ],
-      records: [{ campaign_ids: [3921850, 3921851], lanes: ["it_dm"], yield_by_step: null, source_refs: null }],
+      records: [{ campaign_ids: [3921850, 3921851], lanes: ["it_dm"] }],
       statuses: [
         { id: 3921850, status: "ACTIVE" },
         { id: 3921851, status: "PAUSED" },
       ],
     });
     const j = runner(repo);
-    const opened = await j.open(spec, "mcp:operator", "Healthcare IT");
+    const split = { rule: "11 to 50 to the small campaign, 51 to 200 to the mid one.", routing: [{ when: { band: "11_50" }, campaign_id: 3921850 }, { when: { band: "51_200" }, campaign_id: 3921851 }], from: ["build step 12"] };
+    const opened = await j.open({ ...spec, split }, "mcp:operator", "Healthcare IT");
     if (!opened.ok) assert.fail(opened.message);
     assert.equal(opened.scope, "lane");
     assert.equal(opened.lane, "it_dm");
@@ -434,18 +435,21 @@ describe("D99 — the top-up", () => {
     assert.equal(q.status, "quoted");
     assert.match(q.next, /lane it_dm/);
     assert.match(q.next, /#3921850/);
-    const body = repo.recipes.get(repo.runs.get(opened.job_id)!.recipe_id) as { routing: Array<{ campaign_id: number }>; scope: string };
+    assert.match(q.next, /as Grokbot read them \(from build step 12\)/);
+    const body = repo.recipes.get(repo.runs.get(opened.job_id)!.recipe_id) as { routing: Array<{ campaign_id: number }>; scope: string; split_rule: string; split_from: string[] };
     assert.equal(body.scope, "lane");
     assert.deepEqual(body.routing.map((r) => r.campaign_id).sort(), [3921850, 3921851]);
+    assert.match(body.split_rule, /small campaign/);
+    assert.deepEqual(body.split_from, ["build step 12"]);
   });
 
-  it("refuses a lane whose segmentation cannot be determined instead of guessing (D105)", async () => {
+  it("refuses a lane with more than one refillable campaign and no split passed instead of guessing (D105, D108)", async () => {
     const repo = fakeRepo({
       registry: [
         { campaign_id: "3921850", client_tag: "bcp", lane: "it_dm" },
         { campaign_id: "3921851", client_tag: "bcp", lane: "it_dm" },
       ],
-      records: [{ campaign_ids: [3921850, 3921851], lanes: ["it_dm"], yield_by_step: null, source_refs: null }],
+      records: [{ campaign_ids: [3921850, 3921851], lanes: ["it_dm"] }],
       statuses: [
         { id: 3921850, status: "ACTIVE" },
         { id: 3921851, status: "ACTIVE" },
@@ -453,7 +457,7 @@ describe("D99 — the top-up", () => {
     });
     const r = await runner(repo).open({ ...spec, lane: "it_dm" }, "mcp:operator", "Healthcare IT");
     assert.ok(!r.ok);
-    assert.match(r.message, /cannot be determined/);
+    assert.match(r.message, /no split was passed/);
   });
 
   it("never opens a STOPPED campaign as a lane target; PAUSED stays (D105)", async () => {
@@ -463,28 +467,22 @@ describe("D99 — the top-up", () => {
         { campaign_id: "3921851", client_tag: "bcp", lane: "it_dm" },
         { campaign_id: "3921852", client_tag: "bcp", lane: "it_dm" },
       ],
-      records: [
-        {
-          campaign_ids: [3921850, 3921851, 3921852],
-          lanes: ["it_dm"],
-          yield_by_step: {
-            confirmed_by: "Josh",
-            routing: [
-              { when: { mail_class: "SEG" }, campaign_id: 3921850 },
-              { when: { mail_class: "OTHER" }, campaign_id: 3921851 },
-              { when: { gift: "x" }, campaign_id: 3921852 },
-            ],
-          },
-          source_refs: null,
-        },
-      ],
+      records: [{ campaign_ids: [3921850, 3921851, 3921852], lanes: ["it_dm"] }],
       statuses: [
         { id: 3921850, status: "ACTIVE" },
         { id: 3921851, status: "PAUSED" },
         { id: 3921852, status: "STOPPED" },
       ],
     });
-    const opened = await runner(repo).open({ ...spec, lane: "it_dm", campaign_id: undefined }, "mcp:operator", null);
+    const split = {
+      rule: "SEG to the SEG twin, the rest to the main campaign, the gift test to its own.",
+      routing: [
+        { when: { mail_class: "SEG" }, campaign_id: 3921850 },
+        { when: { mail_class: "OTHER" }, campaign_id: 3921851 },
+        { when: { gift: "x" }, campaign_id: 3921852 },
+      ],
+    };
+    const opened = await runner(repo).open({ ...spec, lane: "it_dm", campaign_id: undefined, split }, "mcp:operator", null);
     if (!opened.ok) assert.fail(opened.message);
     assert.deepEqual(opened.campaign_ids, [3921850, 3921851]);
     assert.ok(!opened.campaign_ids.includes(3921852));

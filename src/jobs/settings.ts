@@ -1,12 +1,15 @@
 import { z } from "zod";
+import type { GrokSplit } from "../canon/laneSplit.js";
 
 /**
- * The settings of one top-up job (D99). Nothing here is a settings: the
+ * The settings of one top-up job (D99). Nothing here is a recipe: the
  * method lives in the campaign's build transcript and Grokbot replays it
- * with its own connectors. These are only what the referee stages need to
- * run on the pool it hands over: where the pool is, which client, which
- * campaign, and the fixed defaults of the shared tail (dedupe, unsubscribes,
- * the ICP website check, verification, merge fields, staging, import).
+ * with its own connectors; how a lane splits is read by Grokbot from the
+ * chats and passed with the pool (D108). These are only what the referee
+ * stages need to run on the pool it hands over: where the pool is, which
+ * client, which campaigns, the split as passed, and the fixed defaults of
+ * the shared tail (dedupe, unsubscribes, the ICP website check,
+ * verification, merge fields, staging, import).
  * Client-agnostic; no per-client branch anywhere.
  */
 const ident = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case");
@@ -17,6 +20,20 @@ export const poolSource = z.discriminatedUnion("kind", [
   /** A table or view on campaignintelligence the bot built in SQL. The service copies the standard columns into the lane table. */
   z.object({ kind: z.literal("table"), table: z.string().regex(/^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/, "schema.table"), where: z.string().min(1).default("true") }),
 ]);
+
+/** D108: the split Grokbot read from the lane's chats, passed on topup with the pool. Checked against the lane before a job opens. */
+export const laneSplitInput = z.object({
+  rule: z.string().min(1).max(2000).describe("One short plain-English paragraph: how the chats split this lane's leads across its campaigns."),
+  routing: z
+    .array(z.object({ when: z.record(z.string()), campaign_id: z.number().int().positive() }))
+    .min(1)
+    .describe("Ordered rules; the first whose every `when` matches the row wins. `when` names built-in dimensions (band, mail_class, gift, team_source) or ones defined in dimensions."),
+  dimensions: z
+    .array(z.record(z.unknown()))
+    .default([])
+    .describe("Derived dimensions the routing reads, each one lane column through one of four kinds: match, set, present, hash_parity (D106)."),
+  from: z.array(z.string().min(1).max(200)).max(40).default([]).describe("Where it was read: transcript step numbers, chat or playbook entries."),
+});
 
 export const jobSettingsSchema = z
   .object({
@@ -44,11 +61,11 @@ export const jobSettingsSchema = z
     reroute: z.record(z.number().int().positive()).default({}),
     segments: z.record(z.array(z.string())).default({}),
     routing: z.array(z.object({ when: z.record(z.string()), campaign_id: z.number().int().positive() })).default([]),
-    /** D106: derived routing dimensions off the lane's record (parsed strictly by canon/dimensions before they get here). */
+    /** D106: derived routing dimensions (parsed strictly by canon/dimensions before they get here). */
     dimensions: z.array(z.record(z.unknown())).default([]),
-    /** D106: the recorded split in plain English and who confirmed it, for the quote. */
+    /** D108: the split as Grokbot read it from the chats, in plain English, and where it read it. For the quote and the record. */
     split_rule: z.string().max(2000).nullable().default(null),
-    split_confirmed_by: z.string().max(80).nullable().default(null),
+    split_from: z.array(z.string()).default([]),
     required_fields: z.array(z.string()).default([]),
   })
   .strict();
@@ -71,6 +88,8 @@ export interface JobSpec {
   campaign_id?: number;
   lane?: string;
   source: PoolSource;
+  /** D108: how the chats split the lane, as Grokbot read it. */
+  split?: GrokSplit | null;
 }
 
 export interface LaneJobSplit {
@@ -80,7 +99,7 @@ export interface LaneJobSplit {
   segments: JobSettings["segments"];
   dimensions: JobSettings["dimensions"];
   split_rule?: string | null;
-  split_confirmed_by?: string | null;
+  split_from?: string[];
   pointed_from_campaign_id: number | null;
 }
 
@@ -89,7 +108,7 @@ export function jobLane(spec: Pick<JobSpec, "campaign_id">, stamp: number): stri
   return `job_${spec.campaign_id}_${stamp}`;
 }
 
-/** Every row routes to the one campaign unless a lane split was recorded (D105). */
+/** Every row routes to the one campaign unless the lane splits (D105, D108). */
 export function jobSettings(spec: JobSpec, stamp = Date.now(), split?: LaneJobSplit | null): JobSettings {
   if (split && split.campaign_ids.length > 0) {
     const campaign_id = spec.campaign_id && split.campaign_ids.includes(spec.campaign_id) ? spec.campaign_id : split.campaign_ids[0]!;
@@ -107,7 +126,7 @@ export function jobSettings(spec: JobSpec, stamp = Date.now(), split?: LaneJobSp
       segments: split.segments,
       dimensions: split.dimensions,
       split_rule: split.split_rule ?? null,
-      split_confirmed_by: split.split_confirmed_by ?? null,
+      split_from: split.split_from ?? [],
     });
   }
   if (spec.campaign_id == null) throw new Error("topup needs a campaign_id or a lane.");

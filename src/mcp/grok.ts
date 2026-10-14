@@ -11,7 +11,7 @@ import { LEADPIPE_RULE } from "../grok/allowlist.js";
 import { campaignNameBySmartleadId } from "../ledger/health.js";
 import type { LaneLedger } from "../ledger/lane.js";
 import { preflightPool } from "../jobs/preflight.js";
-import { poolSource, type JobSpec } from "../jobs/settings.js";
+import { laneSplitInput, poolSource, type JobSpec } from "../jobs/settings.js";
 import type { TopupRunner } from "../jobs/runner.js";
 
 /**
@@ -84,17 +84,18 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
     "topup",
     {
       description:
-        "Top up one lane (the usual call) or one campaign (which points at its lane). First call: client_tag plus lane or campaign_id, and the pool (source.kind=file_url with the vendor's signed export URL(s), which the service ingests through LeadPipe itself, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). Replay the lane's search once. The service ingests it through LeadPipe, removes everyone the client already has anywhere (D98), removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost for the whole lane. Nothing paid runs. Show that count and cost to Josh or Cayden. When they say yes: topup(job_id, approved_by=\"their name\") runs the ICP website check, verification, normalization, QA, then splits into the lane's refillable campaigns the way the playbook / list_build_records already segmented them (STOPPED is never refilled; PAUSED may be), then loads. If the split cannot be determined, the job refuses instead of guessing. Loads paused: it stops at staged; load(job_id) later. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
+        "Top up one lane (the usual call) or one campaign (which points at its lane). First call: client_tag plus lane or campaign_id, and the pool (source.kind=file_url with the vendor's signed export URL(s), which the service ingests through LeadPipe itself, or source.kind=table with a schema.table you built in SQL on campaignintelligence and an optional where). Replay the lane's search once. The service ingests it through LeadPipe, removes everyone the client already has anywhere (D98), removes unsubscribes and the DNC list, and answers with the new-lead count and the worst-case cost for the whole lane. Nothing paid runs. Show that count and cost to Josh or Cayden. When they say yes: topup(job_id, approved_by=\"their name\") runs the ICP website check, verification, normalization, QA, then splits into the lane's refillable campaigns the way you said the chats split them (STOPPED is never refilled; PAUSED may be), then loads. Nothing stored decides a split (D108): when the lane has more than one refillable campaign, read the lane's build transcript and the process chats, work out how the leads were split, and pass it as split (rule, routing, dimensions, from) on the first call; the service checks it against the lane and refuses rather than guesses. What the chats do not say is one plain question to Josh. Loads paused: it stops at staged; load(job_id) later. Never sets a campaign ACTIVE. " + LEADPIPE_RULE,
       inputSchema: {
         client_tag: snake.optional(),
         campaign_id: z.number().int().optional(),
         lane: snake.optional().describe("The registry lane to quote as one pull. Prefer this. A campaign_id without a lane is resolved to its lane."),
         source: poolSource.optional(),
+        split: laneSplitInput.optional().describe("D108: how the chats split this lane across its campaigns, as you read it. Required when the lane has more than one refillable campaign."),
         job_id: z.string().optional().describe("An open job: with approved_by, run the approved tail; without, show its quote or pick the job back up where a restart cut it off."),
         approved_by: z.string().optional().describe(`The approver, by first name, after they said yes to the quoted count and cost. ${d.jobs.rule}`),
       },
     },
-    async ({ client_tag, campaign_id, lane, source, job_id, approved_by }) => {
+    async ({ client_tag, campaign_id, lane, source, split, job_id, approved_by }) => {
       if (job_id) {
         if (approved_by) return text(await d.jobs.begin(job_id, "approve", { by: d.by, approved_by }));
         const standing = await d.jobs.standing(job_id, d.by);
@@ -107,7 +108,7 @@ export function registerGrokTools(server: McpServer, d: GrokDeps): void {
       const name = campaign_id != null ? await campaignNameBySmartleadId(d.repo.raw(), campaign_id).catch(() => null) : null;
       const pool = await preflightPool(d.repo.raw(), client_tag, source);
       if (!pool.ok) return text({ error: `The pool cannot land, so no job was opened: ${pool.message}` });
-      const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_id, lane, source };
+      const spec: JobSpec = { client_tag, smartlead_client_id: client.smartlead_client_id, campaign_id, lane, source, split: split ?? null };
       const opened = await d.jobs.open(spec, d.by, name);
       if (!opened.ok) return text({ error: opened.message });
       return text({ ...(await d.jobs.begin(opened.job_id, "quote", { by: d.by })), pool: pool.note, scope: opened.scope, lane: opened.lane, campaign_ids: opened.campaign_ids, pointed_from_campaign_id: opened.pointed_from_campaign_id });

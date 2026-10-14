@@ -236,6 +236,7 @@ export class TopupRunner {
       campaign_id: spec.campaign_id,
       registry,
       names: campaignName && spec.campaign_id != null ? new Map([[spec.campaign_id, campaignName]]) : undefined,
+      split: spec.split ?? null,
     });
     if (planned.ok) {
       split = planned.split;
@@ -466,7 +467,7 @@ export class TopupRunner {
     const floorNote = (belowFloor ? ` That is under the ${MIN_NET_NEW} floor (D46): say the TAM for this ${settings.scope === "lane" ? "lane" : "campaign"} looks exhausted unless the record shows a source not replayed; they decide (D102).` : "") + (icp.ready ? "" : ` ${icp.note}`);
     const splitNote =
       settings.scope === "lane"
-        ? ` After the yes the new leads split into ${settings.campaign_ids.map((id) => `#${id}`).join(", ")}${settings.split_rule ? ` the way the recorded build split them (read from the lane's transcript, D107): ${settings.split_rule}` : " the way the record already segmented them"}. The count per campaign is decided after verification (the SEG split needs the verifier) and job(job_id) shows it at the route step.`
+        ? ` After the yes the new leads split into ${settings.campaign_ids.map((id) => `#${id}`).join(", ")}${settings.split_rule ? ` the way the chats split them, as Grokbot read them${settings.split_from.length ? ` (from ${settings.split_from.join("; ")})` : ""}: ${settings.split_rule}` : " (one refillable campaign takes them all)"}. The count per campaign is decided after verification (the SEG split needs the verifier) and job(job_id) shows it at the route step.`
         : "";
     const findNote = quote.to_find
       ? quote.finder_ready

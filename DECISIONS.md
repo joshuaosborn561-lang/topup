@@ -127,6 +127,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D105 | Live; top-ups size the lane, not one segment campaign; STOPPED is never refilled |
 | D106 | Live; a lane's split is data on its list_build_record: a plain-English rule, the routing, and derived dimensions from a four-kind general vocabulary (match, set, present, hash_parity) over lane columns; a split quotes only once an approver confirmed it by name; the service never guesses a dimension it cannot read |
 | D107 | Live; the split read from the lane's build transcript is the truth the way the build is: it quotes and loads on its own, the D106 confirmation step is removed; what the transcript does not say waits at the route step or is one plain question to Josh |
+| D108 | Live; nothing stored decides a lane's split: Grokbot reads the lane's build transcript and the process chats, works out the split, and passes it on `topup` with the pool (rule, routing, dimensions, from); the service checks it against the lane and never reads a split from a record or the registry; the nine transcript-split records were deleted; Cayden is an approver |
 
 ---
 
@@ -3602,3 +3603,43 @@ names the steps.
 
 **Guard.** `src/guards/d107_transcript_split.test.ts`; unit test in
 `src/canon/laneSplit.test.ts`. Ask Josh.
+
+## D108 — Nothing stored decides the split; Grokbot derives it from the chats
+
+**Decision.** There is no recipe anywhere in this build. How a lane's one
+pull splits into its campaigns is worked out by Grokbot, each time, from
+the campaign's chats (the build transcript on `list_build_records`) and
+the global process chats (the playbook's process changes), and passed on
+`topup` with the pool as general data: `split.rule` (one plain-English
+paragraph), `split.routing` (ordered `{when, campaign_id}`),
+`split.dimensions` (the D106 four-kind vocabulary over lane columns) and
+`split.from` (the steps or chats it was read from). The service checks
+it against the lane in `campaign_registry` (every campaign on the lane,
+STOPPED dropped, every `when` a dimension it computes) and refuses rather
+than guesses. It never reads a split from a build record, from the
+registry's stored cells, or from anywhere else, and never writes one. A
+lane with one refillable campaign needs no split. The run's own record
+says in words how the leads were split, as a receipt of what was done,
+which the next read of the chats sees.
+
+The nine `transcript_split` rows Fable wrote on `list_build_records`
+(ids 199 to 207) are deleted: they were a stored reading of the chats,
+which is a recipe. `TOPUP_APPROVERS` on Railway now names Josh and
+Cayden.
+
+**Why.** Josh, 14 Oct 2026: "add caydne. i dont want there to be a single
+recipe anywhere in this build. all of it is dervied by grokbot from the
+chats of the campaigns and global chats for processes." D106 and D107
+had moved the split from code to data on the record, but a stored
+reading of the chats is still a recipe the service follows instead of
+Grokbot reading the chats.
+
+**What it does not do.** It does not let the service derive a split (it
+cannot read a chat); it does not widen what a split may read (D106); it
+does not change who approves spend (D101) or that STOPPED is never
+refilled (D105). The job's own settings table (`topup.lane_recipes`)
+keeps its old name; it holds one job's settings, not a recipe, and
+renaming it is a migration for another day.
+
+**Guard.** `src/guards/d108_grok_split.test.ts`; unit tests in
+`src/canon/laneSplit.test.ts`, `src/jobs/runner.test.ts`. Ask Josh.
