@@ -1,92 +1,105 @@
 ---
 name: grok-bot-babysitter
-description: Standing orders for the Lead Top Up Grokbot. Use on every Grokbot turn in this repo. Grokbot does the building — it reads how a campaign's list was built, replays that build with its own connectors, hands the pool (a signed file URL or a table) to the Top_Up service, which runs it through LeadPipe, shows the approver the count and the cost, and runs the approved load. It never pulls a lead row into context.
+description: Standing orders for the Lead Top Up Grokbot. Use on every turn. Grokbot reads how a campaign's list was built, replays that build with the same MCPs, removes everyone the client already has, asks Josh or Cayden by name before anything paid, verifies, and loads the campaign. Lead rows never enter its context.
 ---
 
-# Grokbot does the building; the service is the referee (D39, D53, D99)
+# How Grokbot tops up a campaign
 
-Josh, 2026-09-24: "I nuked our grok bot usage again trying to do lead top up."
 Josh, 2026-10-13: "It needs to run things through LeadPipe 100% of the
 time. It should not pull anything into the context."
+Josh, 2026-10-14: "It's literally a house of the transcripts, and the
+tools they use. That is it."
 
-So: you read the record, you replay it, you hand the pool over, you ask a
-person, you call the next tool. You stop. Rows move **MCP → Supabase →
-LeadPipe → Smartlead**. They never enter this context.
+So: the transcripts say how a list was built. You read them, you call the
+same tools, you ask a person before spending, you load, you write down
+what you did. Rows move server to server (vendor → Supabase → LeadPipe →
+Smartlead). They never enter this context.
 
-## Start every session the same way
+## Connect first
 
-1. `connectors(have=[your tool list])`. Required: Top_Up, Supabase,
-   getleads. LeadPipe, verification and the Smartlead import are the
-   service's own calls; you attach nothing for them and never call
-   LeadPipe yourself.
-   Missing one → tell Josh what to attach in Grokbot (the answer carries
-   each custom MCP's Railway HTTPS address) and wait. A transcript or a
-   process change that names a connector you do not have → same.
-2. `canon`. One page. Those are the rules.
+Supabase (project `azpapwtnrbzywlnxxecz`, the only one), getleads,
+LeadPipe (named Context_Saver), Email_Verifier_Progression, the Smartlead
+server. Any other server a transcript uses, attach it. Addresses are in
+`skills/MCP_SERVERS.md`. Missing one: tell Josh which, and wait.
 
 ## The loop
 
-1. `campaigns()`: the low lane (untouched under about two weeks of
-   sends, passing one positive per 2,000, not cold call, not SG Nurture).
-   The answer rolls campaigns up by lane and shows the lane runway
-   (STOPPED is out of the sum). Size the lane, not one segment. Nothing
-   stored decides how a lane splits across its campaigns (D108): before
-   you call `topup` on a lane with more than one refillable campaign, read
-   its build transcript and the process chats, work out how the leads were
-   split (title words, employee bands, an industry word, the SEG tag, the
-   team gift, a domain hash), and pass it as `split` with the pool: a
-   plain-English rule, the routing, the dimensions it reads (D106), and
-   the steps or chats you read it from. The service checks it and refuses
-   rather than guesses; nobody confirms it (D107). What the chats do not
-   say: never guess; ask Josh one plain-English question.
-2. `playbook(client_tag)`. The living how-we-build for this client: every
-   list build, disqualification and method change in chronological order,
-   plus transcript object names in `list-build-transcripts`. Then
-   `build_record(client_tag, campaign_id)`. Read `asked` (what Josh
-   wanted), `method.steps` (every tool call in order with its arguments),
-   `process_changes_since_build` (what changed about how lists are built
-   since; apply it on top, e.g. a newer TAM check or a new source).
-   `no_recorded_build: true` → stop; tell Josh the campaign has no
-   recorded build.
-3. Replay the lane's search once with your connectors. Same tools, same filters, titles,
-   geography, sources. Counts first (`count_contacts`, SQL `count(*)`),
-   then the vendor's server-side export (`export_contacts`, then
-   `check_contact_export` until it hands back a signed URL) or a scratch
-   table you build in SQL on campaignintelligence. Export without the
-   `email_status` VALID filter, even where the transcript used it: the
-   people with no email come along and the service looks them up after the
-   yes (D103). Still report gross and VALID counts. Never widen. Never `SELECT email`, never
-   `export_contacts` into chat, never `get-dataset-items`, never
-   `find_dms_by_title`, never read a CSV. You end with a signed file URL
-   or a `schema.table` name.
-4. `topup(client_tag, lane, source, split)` (or `campaign_id`, which
-   points at its lane; `split` is how the chats split the lane, step 1)
-   then `job(job_id)` until `quoted`. Say to the approver the answer names: "`N` new leads with an
-   email for lane X after everything you hold and unsubscribes, plus `M`
-   more with no email that the finder will look up; up to `$X` (website ICP
-   check, email finder, verification)." Only the emails it finds are
-   verified and loaded (D103). Under 1,000 new the answer says so: tell
-   them it is under the floor (D46); they decide (D102). If the service
-   refuses the split (a campaign not on the lane, a dimension it cannot
-   read, no split passed), fix what it names from the chats or ask Josh
-   one plain question; do not guess.
-5. When the approver says yes: `topup(job_id, approved_by="their name")`.
-   Only the names the service lists count. `job(job_id)` until `done`.
-   If it answers `waiting_approval` with a higher number, say that number
-   and call again with the name once they say yes to it.
-   Loads start paused (D102): `staged` → an approver's
-   `loads_paused(paused=false, by="their name")`, then `load(job_id)`.
-6. Stop. Josh flips ACTIVE by hand. Never touch a campaign's status.
+1. **Find the low lane.** Campaigns and their lifetime sends and positive
+   replies are in `public.campaigns` and `public.sends` (see
+   `docs/supabase.md`). A campaign is worth topping up when it has under
+   about two weeks of sends left and at least one positive reply per
+   2,000 sends. Skip cold-call campaigns (the name says call) and SG
+   Nurture. A STOPPED campaign is never refilled; PAUSED may be. Size the
+   whole lane (the campaigns `topup.campaign_registry` puts under one
+   lane), not one segment.
+
+2. **Read how it was built.** `topup.client_playbook` is the client's
+   whole history in order: every list build, disqualification and method
+   change. `topup.list_build_records` has the row for the campaign (what
+   was asked, counts, and `transcript_path` in the `list-build-transcripts`
+   bucket). `topup.process_changes` has what changed about how lists are
+   built since. Read the transcript itself: every tool call in order with
+   its arguments is the method. No record, no transcript: stop and tell
+   Josh. Never guess a filter, a source, a title list or a split.
+
+3. **Replay the search once.** Same tools, same filters, titles,
+   geography, sources, plus the process changes written since. Counts
+   first (`count_contacts`, `count(*)`), then the vendor's server-side
+   export (getleads `export_contacts` then `check_contact_export` until it
+   hands back a signed URL) or a scratch table you build in SQL. Export
+   without the VALID email filter, even where the transcript used it: the
+   people with no email come along and the finder looks them up later.
+   Never widen. You end with a signed file URL or a `schema.table`.
+
+4. **Land it and remove everyone the client already has.** LeadPipe
+   `ingest_csv` (or `lp_run`) puts the pool in `lp.<client_tag>_ingested_leads`.
+   Then, in SQL on campaignintelligence, drop every row whose email, or
+   LinkedIn URL, or normalized first name plus last name plus company,
+   already appears anywhere the client holds people: every `lp.<tag>_*`
+   table, the whole `client_<tag>` schema, any `public.<tag>…_companies`
+   or `_contacts` table, and `public.leads` for the client's Smartlead
+   client id. Then drop unsubscribes (`public.leads` with
+   `negative_class = 'unsubscribe'` or status unsubscribed for this
+   client), the DNC list (`public.suppression`), and hard bounces
+   (`public.sends.bounced`). Counts only. The leftover is the pool.
+
+5. **Quote, then wait for a name.** Say: "N new leads with an email for
+   lane X after everything you hold and unsubscribes, plus M more with no
+   email that the finder will look up; up to $X for the website ICP check,
+   the email finder and verification." Estimate every paid tool with its
+   own `estimate_only` first. Under 1,000 new: say the TAM for this lane
+   looks exhausted; they decide. Nothing paid runs until Josh or Cayden
+   says yes to that count and that cost, by name. Nobody else's yes counts.
+
+6. **After the yes, in this order.** The website ICP check
+   (`icp-website-gate`), the email finder for the rows with no email
+   (Email Finder Waterfall `enrich_waterfall` on the table, `writeback`
+   on, `approve_cost_usd` = the approved amount), verification (Email
+   Verifier Progression `start_verification` from a LeadPipe export URL;
+   only sendable rows go on), normalization (the name, company, location
+   and sports-team skills), then split the lane the way its transcript
+   split it (title words, employee bands, an industry word, the verifier's
+   SEG tag, the team found, a domain hash) and stage each part to its
+   campaign with the Smartlead server (`stage_leads_from_url`,
+   `start_lead_import`). Rows for a campaign that is COMPLETED or never
+   launched wait; ask Josh where they go.
+
+7. **Write it down.** Insert one row in `topup.list_build_records` for the
+   lane: the campaigns, counts at every step, spend, and in plain English
+   what you did and how you split it. The next top-up reads it as part of
+   the history.
+
+8. **Stop.** Josh flips ACTIVE by hand.
 
 ## Never
 
-* A lead row, an email, a name, a phone in this context. Counts and ids.
-* A spend before a named yes from the approver the service names (Josh alone for now).
+* A lead row, an email, a name, a phone in this context. Counts, ids and
+  up to ten sample company names or titles.
+* A spend before a named yes from Josh or Cayden to the quoted count and
+  cost. A tool that prices higher than the quote: say the number and wait
+  for a fresh yes.
+* Start, pause, stop, delete, create or edit a campaign in Smartlead.
 * A routine, a cron, a watch, a child agent, a re-read of a list.
-* A second open job on the same campaign; `abort(job_id)` first if it is dead.
-* An invented price, threshold, filter or source. Ask in plain English.
-
-## How to watch
-
-`jobs()`, `job(job_id)`: every step's counts, the card waiting for a name,
-the last ten events. `spend()`: what was spent and what waits.
+* An invented price, threshold, filter, source or split. Ask in plain
+  English.
+* Any Supabase project other than `azpapwtnrbzywlnxxecz`.

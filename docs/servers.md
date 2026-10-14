@@ -1,5 +1,9 @@
 # The servers, from their code
 
+> **D110 (2026-10-14).** The `leadtopup` service is retired. Grokbot calls
+> these servers itself, per `skills/grok-bot-babysitter/SKILL.md`. Mentions
+> of the service below are history.
+
 What each vendor server actually exposes, read from its repository (and, for
 the one server with no repository on GitHub, from its live tool schema and
 zero-cost probes). Written so `leadtopup` can call these servers without a
