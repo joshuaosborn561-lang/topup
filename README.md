@@ -3,7 +3,8 @@
 Three things, nothing else:
 
 1. **The instructions.** `skills/grok-bot-babysitter/SKILL.md` is how Grokbot
-   tops up a campaign. Read it first.
+   tops up a campaign. Read it first. Every other folder in `skills/` is a
+   copy of one of Josh's Claude skills, synced daily: the normal process.
 2. **The MCPs.** `skills/MCP_SERVERS.md` lists every server, its address and
    what it owns. `docs/servers.md` is the long reference for each one.
 3. **The data.** `docs/supabase.md` says where the leads, the campaigns and

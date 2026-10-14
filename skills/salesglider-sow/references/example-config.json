@@ -1,0 +1,113 @@
+{
+  "client": {
+    "legalName": "Nutter Group",
+    "displayName": "Nutter Group",
+    "primaryContact": "Roger Nutter",
+    "signerName": "Roger Nutter"
+  },
+  "effectiveDate": "",
+  "programOverview": "Service Provider will build and run a fully managed cold email and LinkedIn outreach program for Client’s executive search and retained search business, targeting independent (non-system) hospitals and related healthcare organizations. Service Provider will manage all replies and book qualified meetings directly to Client’s calendar.",
+  "includedServices": [
+    {
+      "label": "Email Infrastructure & Outreach",
+      "items": [
+        "Dedicated mailboxes and custom sending (burner) domains to protect Client’s primary domain",
+        "Email warmup and deliverability management (approximately two (2) weeks before full sending begins)",
+        "Deliverability monitoring and reputation management",
+        "Email verification and list hygiene",
+        "Cold email campaign execution"
+      ]
+    },
+    {
+      "label": "LinkedIn Automation & Outreach",
+      "items": [
+        "Set up and manage LinkedIn outreach via HeyReach automation tool, connected to Client’s existing LinkedIn account",
+        "Connection request automation and direct message sequences",
+        "LinkedIn outreach can begin immediately (no warmup period required)"
+      ]
+    },
+    {
+      "label": "Lead Sourcing & Enrichment",
+      "items": [
+        "Targeted sourcing of independent (non-system) hospitals matching Client’s ICP, using public data sources (e.g., IRS Form 990 filings for not-for-profit hospitals) combined with B2B databases",
+        "Custom AI-based filtering to identify hospitals that are independent and not part of larger multi-state health systems",
+        "Sourcing of named decision-makers and board members at target hospitals, where publicly available (e.g., CEO, CFO, Chief Nursing Officer, VP of HR, VP of Talent Acquisition/Recruiting, VP of Legal Services, Chief Information Officer, and board members)"
+      ]
+    },
+    {
+      "label": "Campaign Copywriting & Strategy",
+      "items": [
+        "Write and refine cold email and LinkedIn campaign copy using Client’s case studies, results, and proof points gathered during onboarding",
+        "Incentive-based, pattern-interrupt messaging to drive above-average reply rates, subject to the compliance considerations noted below",
+        "Campaign strategy, sequencing, and A/B testing"
+      ]
+    },
+    {
+      "label": "Reply Handling & Meeting Booking",
+      "items": [
+        "Service Provider will monitor, triage, and respond to all replies on Client’s behalf",
+        "Service Provider will book qualified meetings directly to a scheduling link provided by Client"
+      ]
+    },
+    {
+      "label": "Website Build",
+      "items": [
+        "Service Provider will design and build a website for Client at no additional cost, using AI tools and content gathered during onboarding (case studies, articles, presentations, and other materials Client provides)",
+        "Website content and positioning will be made congruent with Client’s LinkedIn company page",
+        "Client will review and provide revision feedback; Service Provider will make reasonable adjustments based on that feedback",
+        "This website build is a one-time deliverable included in the Term and is not an ongoing hosting or maintenance service"
+      ]
+    }
+  ],
+  "extraServiceSubsections": [
+    {
+      "title": "Marketing Qualified Candidates.",
+      "body": "If Client provides information on notable candidates (\u201CMarketing Qualified Candidates\u201D) \u2014 for example, individuals with high-profile prior roles or recognizable credentials \u2014 Service Provider may incorporate these into outbound messaging to relevant hospital contacts as an additional engagement angle, at Service Provider’s discretion."
+    },
+    {
+      "title": "Campaign Timing.",
+      "body": "Service Provider and Client will hold an onboarding call on August 26, 2026 from 4:00\u20135:00 PM Eastern to review Client’s case studies, proof points, objections, and messaging. LinkedIn outreach may begin immediately following onboarding. Cold email sending will begin on or around August 31, 2026, following the required domain warmup period."
+    },
+    {
+      "title": "Compliance Considerations for Incentive Messaging.",
+      "body": "Client has advised that certain healthcare organizations restrict recipients from accepting gifts from vendors (e.g., under the Stark Law or similar policies), and that Client is not currently an engaged vendor to prospects contacted under this campaign. Service Provider will use reasonable judgment in incentive-based messaging (e.g., offering a small token of appreciation for taking a meeting) but does not provide legal advice on whether any specific incentive complies with a given organization’s gift policy or applicable law. If Service Provider observes objections related to incentive messaging, Service Provider will adjust the approach in consultation with Client."
+    }
+  ],
+  "meetingGuarantee": "Service Provider guarantees a minimum of three (3) qualified meetings booked to Client’s calendar during the three (3) month Initial Term. A \u201Cqualified meeting\u201D means a scheduled call or meeting with a decision-maker (e.g., CEO, CFO, Chief Nursing Officer, VP of HR, VP of Talent Acquisition/Recruiting, or a board member) at an independent hospital or healthcare organization matching Client’s ICP who agrees to discuss Client’s executive search or advisory services. If fewer than three (3) qualified meetings have been delivered by the end of the Initial Term, Service Provider will continue running the campaign at no additional charge beyond the fees already paid until three (3) qualified meetings have been delivered. This is the sole performance remedy under this Agreement.",
+  "excludedServices": [
+    "Cold calling or telemarketing",
+    "Ongoing website hosting or maintenance beyond the initial build (hosting is Client’s responsibility)",
+    "SEO, AEO, or paid advertising management",
+    "CRM setup or management",
+    "Sales or search-closing strategy, candidate sourcing, or recruiting services (Client’s core business remains Client’s responsibility)",
+    "Legal review of gift, anti-kickback, or Stark Law compliance for any specific prospect organization"
+  ],
+  "icpBullets": [
+    "Independent hospitals not affiliated with larger multi-state health systems, generally in the range of $50 million and above in annual revenue (with smaller critical access hospitals and federally qualified health centers considered as a secondary tier)",
+    "Decision-makers: CEO, CFO, Chief Nursing Officer, VP of HR, VP of Talent Acquisition/Recruiting, VP of Legal Services, Chief Information Officer, and board members",
+    "Geography: nationwide (Client has prior experience across most U.S. states)"
+  ],
+  "icpNote": "ICP parameters will be refined during the onboarding call and may be adjusted by mutual written agreement at any time during the engagement.",
+  "term": {
+    "termText": "The term begins on the Effective Date and continues for three (3) months (the \u201CInitial Term\u201D), subject to extension under the Meeting Guarantee in Section 1 if the guaranteed meeting count has not yet been met.",
+    "cancellationText": "Either Party may cancel this Agreement by providing thirty (30) days\u2019 written notice. If a Party fails to provide a full thirty (30) days\u2019 written notice, the succeeding thirty (30) days will be billed in full as a cancellation fee. If a full thirty (30) days\u2019 notice is provided, no cancellation fee applies. If Client cancels prior to the Meeting Guarantee being satisfied, Service Provider’s obligation to deliver the guaranteed meetings ends upon termination."
+  },
+  "fees": {
+    "feeLabel": "Monthly Fee.",
+    "feeText": "Client will pay Service Provider a monthly fee of $3,500.00 USD, billed as three (3) monthly payments of $3,500.00 USD each. The fee covers all services described in Section 1, including infrastructure, sourcing, campaign copywriting, reply handling, meeting booking, and the website build. Total engagement value: $10,500.00 USD for the three (3) month Initial Term.",
+    "gracePeriodText": "If a payment fails, Client has a three (3) business day grace period to cure. If not cured within that period, Service Provider may pause all services until all past-due amounts are paid. Pausing does not change the Term or eliminate amounts owed, and pauses caused by Client’s non-payment suspend Service Provider’s Meeting Guarantee timeline for the duration of the pause."
+  },
+  "clientResponsibilities": [
+    { "title": "Onboarding Session.", "text": "Client will participate in the onboarding call on August 26, 2026 and provide case studies (\u201Cwar stories\u201D), articles, presentations, research, marketing literature, and any other information reasonably requested to inform campaign messaging and the website build." },
+    { "title": "Scheduling Link.", "text": "Client will provide a scheduling link (e.g., Google Meet or similar) for Service Provider to book meetings directly." },
+    { "title": "Meeting Attendance.", "text": "Client is responsible for attending all meetings booked by Service Provider and for all subsequent search or advisory engagement activity." },
+    { "title": "Website Feedback.", "text": "Client will review the website draft provided by Service Provider and provide timely revision feedback." },
+    { "title": "Feedback.", "text": "Client will provide timely feedback on lead and meeting quality to enable ongoing campaign optimization." }
+  ],
+  "websiteOwnershipClause": "The website designed and built by Service Provider for Client is owned by Client upon delivery, subject to all fees being current.",
+  "extraComplianceClause": {
+    "title": "No Legal Advice on Healthcare Compliance.",
+    "text": "Service Provider does not provide legal advice on Client’s specific compliance obligations, including healthcare-specific gift, anti-kickback, or Stark Law considerations. Client is responsible for ensuring its offers, claims, and any required disclosures are compliant."
+  },
+  "liabilityCap": 10500
+}

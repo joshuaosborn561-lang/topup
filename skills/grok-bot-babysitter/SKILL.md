@@ -10,6 +10,12 @@ time. It should not pull anything into the context."
 Josh, 2026-10-14: "It's literally a house of the transcripts, and the
 tools they use. That is it."
 
+Josh's own skills sit next to this file in `skills/` (start with
+`lead-list-build`, the thirteen-step spine, and the skill for each step it
+names). They are his normal process. The transcripts say what was done
+for a given campaign; where they are silent, the skills say how it is
+normally done; where both are silent, ask Josh.
+
 So: the transcripts say how a list was built. You read them, you call the
 same tools, you ask a person before spending, you load, you write down
 what you did. Rows move server to server (vendor → Supabase → LeadPipe →
