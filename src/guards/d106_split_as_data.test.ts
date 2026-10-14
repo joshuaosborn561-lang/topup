@@ -24,7 +24,7 @@ describe("D106 — the split is data in a four-kind vocabulary", () => {
     }
     assert.equal(parseDimension({ name: "x", kind: "present", column: "email", present: "a", absent: "b" }), null, "D106: email is never a routing column");
     assert.ok(!(DIMENSION_COLUMNS as readonly string[]).includes("email") && !(DIMENSION_COLUMNS as readonly string[]).includes("last_name"));
-    assert.deepEqual([...BUILT_IN_DIMENSIONS], ["band", "mail_class", "gift", "team_source"]);
+    assert.deepEqual([...BUILT_IN_DIMENSIONS], ["band", "mail_class", "team_source"]);
   });
 
   it("no client fact is in code: the stages and canon name no client's title words, industries or campaign ids", async () => {

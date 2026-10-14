@@ -60,7 +60,7 @@ export class Repo {
   // ----- runs -------------------------------------------------------------
 
   async openRun(input: {
-    recipe_id: string;
+    settings_id: string;
     client_tag: string;
     lane: string;
     campaign_id: number | null;
@@ -72,9 +72,9 @@ export class Repo {
     }
     try {
       const { rows } = await this.db.query<RunRow>(
-        `insert into topup.runs (recipe_id, client_tag, lane, campaign_id, trigger, opened_by)
+        `insert into topup.runs (settings_id, client_tag, lane, campaign_id, trigger, opened_by)
          values ($1,$2,$3,$4,$5,$6) returning *`,
-        [input.recipe_id, input.client_tag, input.lane, input.campaign_id, input.trigger, input.opened_by],
+        [input.settings_id, input.client_tag, input.lane, input.campaign_id, input.trigger, input.opened_by],
       );
       return { ok: true, run: rows[0] };
     } catch (err) {
@@ -508,10 +508,10 @@ export class Repo {
     return rows[0]?.n ?? 0;
   }
 
-  // ----- recipes / registry ----------------------------------------------
+  // ----- job settings / registry ----------------------------------------
 
-  async upsertRecipe(input: {
-    recipe_id: string;
+  async upsertJobSettings(input: {
+    settings_id: string;
     client_tag: string;
     lane: string;
     version: number;
@@ -519,17 +519,17 @@ export class Repo {
     owner_approved_at: string | null;
   }): Promise<void> {
     await this.db.query(
-      `insert into topup.lane_recipes (recipe_id, client_tag, lane, version, body, owner_approved_at)
+      `insert into topup.job_settings (settings_id, client_tag, lane, version, body, owner_approved_at)
        values ($1,$2,$3,$4,$5,$6)
-       on conflict (recipe_id) do update set body = excluded.body, owner_approved_at = excluded.owner_approved_at, loaded_at = now()`,
-      [input.recipe_id, input.client_tag, input.lane, input.version, JSON.stringify(input.body), input.owner_approved_at],
+       on conflict (settings_id) do update set body = excluded.body, owner_approved_at = excluded.owner_approved_at, loaded_at = now()`,
+      [input.settings_id, input.client_tag, input.lane, input.version, JSON.stringify(input.body), input.owner_approved_at],
     );
   }
 
-  async getRecipe(recipeId: string): Promise<{ recipe_id: string; body: unknown; owner_approved_at: string | null } | null> {
-    const { rows } = await this.db.query<{ recipe_id: string; body: unknown; owner_approved_at: string | null }>(
-      `select recipe_id, body, owner_approved_at from topup.lane_recipes where recipe_id = $1`,
-      [recipeId],
+  async getJobSettings(settingsId: string): Promise<{ settings_id: string; body: unknown; owner_approved_at: string | null } | null> {
+    const { rows } = await this.db.query<{ settings_id: string; body: unknown; owner_approved_at: string | null }>(
+      `select settings_id, body, owner_approved_at from topup.job_settings where settings_id = $1`,
+      [settingsId],
     );
     return rows[0] ?? null;
   }

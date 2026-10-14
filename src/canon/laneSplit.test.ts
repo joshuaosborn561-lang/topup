@@ -18,11 +18,11 @@ const active = (...ids: number[]) => new Map<number, string | null>(ids.map((id)
 describe("D108 — the lane split comes from Grokbot with the pool", () => {
   it("uses the passed split and drops STOPPED targets; PAUSED may still be refilled (D105)", () => {
     const split: GrokSplit = {
-      rule: "SEG to the SEG twin; AirPods gift to the gift campaign; the rest to the main one.",
+      rule: "SEG to the SEG twin; no-team rows to the third campaign; the rest to the main one.",
       routing: [
         { when: { mail_class: "SEG" }, campaign_id: 10 },
         { when: { mail_class: "OTHER" }, campaign_id: 11 },
-        { when: { mail_class: "OTHER", gift: "air" }, campaign_id: 12 },
+        { when: { mail_class: "OTHER", team_source: "none" }, campaign_id: 12 },
       ],
       from: ["build step 388", "build step 361"],
     };

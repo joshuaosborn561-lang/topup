@@ -35,7 +35,6 @@ export interface NormalizedFields {
   company_n: string | null;
   location: string;
   local_sports_team: string | null;
-  gift_tier: "team" | "airpods";
   flags: Record<string, string[]>;
 }
 
@@ -67,14 +66,12 @@ export function normalizeLead(lead: LeadInput, refs: NormalizeRefs, opts: JobSet
     : { location: lead.city ?? "", metro: null, city: lead.city, geo: null, source: "city" as const, flags: [] as string[] };
   if (loc.flags.length) flags.location = loc.flags;
   let team: string | null = null;
-  let gift: "team" | "airpods" = "airpods";
   if (opts.sports_team) {
     const t = assignTeam(loc.city, lead.state, loc.geo, opts.sports_team);
     team = t.team;
-    gift = t.gift;
     flags.team = [t.source];
   }
-  return { first_name_n: name.value, company_n: company.value, location: loc.location, local_sports_team: team, gift_tier: gift, flags };
+  return { first_name_n: name.value, company_n: company.value, location: loc.location, local_sports_team: team, flags };
 }
 
 export async function loadRefs(repo: Repo): Promise<NormalizeRefs> {
@@ -142,7 +139,7 @@ export class NormalizeStage {
               out.map((o) => o.f.company_n),
               out.map((o) => o.f.location),
               out.map((o) => o.f.local_sports_team),
-              out.map((o) => JSON.stringify({ ...o.f.flags, gift_tier: [o.f.gift_tier] })),
+              out.map((o) => JSON.stringify(o.f.flags)),
             ],
           ),
         );

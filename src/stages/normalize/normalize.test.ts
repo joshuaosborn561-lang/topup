@@ -224,7 +224,6 @@ describe("sports team — port of assign_team.py", () => {
     const lsu = assignTeamForLeague("Baton Rouge", "LA", geo("Baton Rouge", "LA"), "mlb", false);
     assert.equal(lsu.team, null);
     assert.equal(lsu.source, "AMBIGUOUS_NICKNAME");
-    assert.equal(lsu.gift, "airpods");
   });
   it("Notre Dame's 50 mile radius keeps South Bend but not Chicagoland", () => {
     assert.equal(assignTeamForLeague("South Bend", "IN", geo("South Bend", "IN"), "mlb", false).team, "Fighting Irish");
@@ -242,12 +241,12 @@ describe("sports team — port of assign_team.py", () => {
     assert.equal(assignTeamForLeague("Tallahassee", "FL", geo("Tallahassee", "FL"), "mlb", false).team, "Seminoles");
     assert.equal(assignTeamForLeague("Bozeman", "MT", geo("Bozeman", "MT"), "nfl", false).source, "OUT_OF_RANGE");
   });
-  it("the gift ladder: MLB first, NFL second, AirPods when both are blank", () => {
+  it("the team ladder: MLB first, NFL second, blank when both are blank", () => {
     assert.equal(assignTeam("Plano", "TX", geo("Plano", "TX"), { league: "both", pro_only: false }).team, "Rangers");
     assert.equal(assignTeam("Plano", "TX", geo("Plano", "TX"), { league: "nfl", pro_only: false }).team, "Cowboys");
     const none = assignTeam("Bozeman", "MT", geo("Bozeman", "MT"), { league: "both", pro_only: true });
     assert.equal(none.team, null);
-    assert.equal(none.gift, "airpods");
+    assert.equal(none.source, "OUT_OF_RANGE");
   });
   it("renames are exact-match: Guardians, never Indians; Spokane Indians would survive", () => {
     assert.equal(assignTeamForLeague("Cleveland", "OH", { lat: 41.4993, lon: -81.6944 }, "mlb", false).team, "Guardians");
@@ -262,16 +261,14 @@ describe("normalizeLead — step 7 for one row", () => {
     assert.equal(out.company_n, "Acme");
     assert.equal(out.location, "Chicagoland");
     assert.equal(out.local_sports_team, "White Sox");
-    assert.equal(out.gift_tier, "team");
     assert.deepEqual(out.flags.team, ["MLB"]);
     assert.equal(lead.first_name, "JOHN");
     assert.equal(lead.city, "Naperville");
   });
-  it("a city the table does not know: blank location (the step 7 hold catches it), no team, AirPods", () => {
+  it("a city the table does not know: blank location (the step 7 hold catches it), no team", () => {
     const out = normalizeLead({ id: "1", first_name: "Ann", company_name: "Acme", city: "Nowhere", state: "TX" }, refs, { names_cities: true, company: true, location: true, sports_team: { league: "both", pro_only: false } });
     assert.equal(out.location, "");
     assert.equal(out.local_sports_team, null);
-    assert.equal(out.gift_tier, "airpods");
     assert.deepEqual(out.flags.team, ["NO_GEOCODE"]);
   });
   it("a disabled step passes the raw value through", () => {
@@ -279,7 +276,7 @@ describe("normalizeLead — step 7 for one row", () => {
     assert.equal(out.first_name_n, "JOHN");
     assert.equal(out.company_n, "ACME INC");
     assert.equal(out.local_sports_team, null);
-    assert.equal(out.gift_tier, "airpods");
+    assert.equal(out.flags.team, undefined);
   });
   it("Lane E role-inbox: company from the Maps business name; greeting fallback is off by default (D65)", () => {
     assert.equal(isRoleInbox("info@example.com"), true);

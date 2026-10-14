@@ -264,9 +264,9 @@ export class TopupRunner {
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
-    const recipeLane = jobLane({ campaign_id: settings.campaign_id }, stamp);
-    await this.d.repo.upsertRecipe({ recipe_id: settings.id, client_tag: settings.client_tag, lane: recipeLane, version: 1, body: settings, owner_approved_at: null });
-    const opened = await this.d.repo.openRun({ recipe_id: settings.id, client_tag: spec.client_tag, lane: settings.lane, campaign_id: settings.campaign_id, trigger: "manual", opened_by: by });
+    const settingsLane = jobLane({ campaign_id: settings.campaign_id }, stamp);
+    await this.d.repo.upsertJobSettings({ settings_id: settings.id, client_tag: settings.client_tag, lane: settingsLane, version: 1, body: settings, owner_approved_at: null });
+    const opened = await this.d.repo.openRun({ settings_id: settings.id, client_tag: spec.client_tag, lane: settings.lane, campaign_id: settings.campaign_id, trigger: "manual", opened_by: by });
     if (!opened.ok) {
       if (opened.reason === "self_start") return { ok: false, message: "Nothing starts on its own (D51)." };
       const who = settings.scope === "lane" ? `lane ${settings.lane}` : `#${settings.campaign_id}`;
@@ -366,8 +366,8 @@ export class TopupRunner {
     const steps = PHASE_STEPS[phase];
     const first = steps[0]!;
     if (!run) return this.result(jobId, phase, first, "refused", {}, null, null, null, "no such job", "jobs()");
-    const rec = await this.d.repo.getRecipe(run.recipe_id);
-    if (!rec) return this.result(jobId, phase, first, "refused", {}, null, null, null, `job settings ${run.recipe_id} are missing`, "open a new job");
+    const rec = await this.d.repo.getJobSettings(run.settings_id);
+    if (!rec) return this.result(jobId, phase, first, "refused", {}, null, null, null, `job settings ${run.settings_id} are missing`, "open a new job");
     const settings = parseJobSettings(rec.body);
     let approver: string | null = null;
     // First yes: the quote card is open and its figures are the ceiling. A later named call (the person saw a higher number) or a resume carries no ceiling.
@@ -612,7 +612,7 @@ export class TopupRunner {
     if (!run) return { ok: false, message: "no such job" };
     if (!runIsOpen(presentRun(run).status)) return { ok: false, message: `job ${jobId.slice(0, 8)} is already ${presentRun(run).status}` };
     await this.d.repo.cancelRunningSteps(jobId, `aborted by ${by}`);
-    const rec = await this.d.repo.getRecipe(run.recipe_id).catch(() => null);
+    const rec = await this.d.repo.getJobSettings(run.settings_id).catch(() => null);
     let fromFile = false;
     try {
       fromFile = rec ? parseJobSettings(rec.body).source.kind === "file_url" : false;

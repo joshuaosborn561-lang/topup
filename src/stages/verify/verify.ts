@@ -189,7 +189,7 @@ export class VerifyStage {
       vendor: "millionverifier",
       action: b.parent_batch ? "verify_split" : "verify",
       rows: b.rows,
-      recipeAuthorised: true,
+      stepAuthorised: true,
       approvedCents: priorApproval,
       worstCaseCents: worst,
     });

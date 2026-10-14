@@ -102,7 +102,6 @@ export type TeamSource = "MLB" | "NFL" | "College" | "CityOverride" | "NO_CITY_S
 export interface TeamResult {
   team: string | null;
   source: TeamSource;
-  gift: "team" | "airpods";
 }
 
 function nearest(p: LatLon, table: readonly Team[], radius: number): { name: string; d: number } | null {
@@ -116,11 +115,11 @@ function nearest(p: LatLon, table: readonly Team[], radius: number): { name: str
 }
 
 function pro(name: string, league: League): TeamResult {
-  return { team: RENAMES.get(name) ?? name, source: league === "mlb" ? "MLB" : "NFL", gift: "team" };
+  return { team: RENAMES.get(name) ?? name, source: league === "mlb" ? "MLB" : "NFL" };
 }
 
 function blank(source: TeamSource): TeamResult {
-  return { team: null, source, gift: "airpods" };
+  return { team: null, source };
 }
 
 /** assign_team.py assign() for one league. `geo` is the row's coordinates from geo.ts, null when NO_GEOCODE. */
@@ -129,7 +128,7 @@ export function assignTeamForLeague(city: string | null, state: string | null, g
   const st = normalizeState(state);
   if (!c || !st) return blank("NO_CITY_STATE");
   const override = proOnly ? undefined : CITY_OVERRIDES.get(`${c.toLowerCase()}|${st}`);
-  if (override) return { team: override, source: "CityOverride", gift: "team" };
+  if (override) return { team: override, source: "CityOverride" };
   if (!geo) return blank("NO_GEOCODE");
   if (st === "FL" && geo.lon < -84.5) return blank("PANHANDLE_FL_BLANK");
 
@@ -139,7 +138,7 @@ export function assignTeamForLeague(city: string | null, state: string | null, g
   if (proOnly) return p ? pro(p.name, league) : blank("OUT_OF_RANGE");
 
   const col = nearest(geo, COLLEGES, COLLEGE_RADIUS_MI);
-  const college = (name: string): TeamResult => (AMBIGUOUS_COLLEGE_NICKNAMES.has(name) ? blank("AMBIGUOUS_NICKNAME") : { team: name, source: "College", gift: "team" });
+  const college = (name: string): TeamResult => (AMBIGUOUS_COLLEGE_NICKNAMES.has(name) ? blank("AMBIGUOUS_NICKNAME") : { team: name, source: "College" });
   if (col && p) return col.d < p.d ? college(col.name) : pro(p.name, league);
   if (col) return college(col.name);
   if (p) return pro(p.name, league);
@@ -147,7 +146,7 @@ export function assignTeamForLeague(city: string | null, state: string | null, g
 }
 
 /**
- * The gift ladder: MLB first, NFL second, AirPods when both are blank
+ * The team ladder: MLB first, NFL second, blank when both are blank
  * (`--league both`). A single league is just that league.
  */
 export function assignTeam(city: string | null, state: string | null, geo: LatLon | null, opts: { league: LeaguePref; pro_only: boolean }): TeamResult {

@@ -10,9 +10,6 @@ export const REPLY_BAR_PER_2000 = 1;
 /** Leads a campaign must still have available before a top-up is worth running. Under this "the TAM for this campaign is exhausted". */
 export const MIN_NET_NEW = 1000;
 
-/** A job pulls between one and this many rows. */
-export const MAX_ROWS_PER_JOB = 2000;
-
 /** Spend: nothing paid runs before a named approval (D51). No daily cap: the approved amount is the limit (D104). */
 export const OPERATOR_SPEND_CAP_USD = 0;
 
@@ -24,7 +21,6 @@ export const NEVER_TOPUP_NAME_PATTERNS: readonly RegExp[] = [/cayden calls/i, /g
 export const ACTIVE_CAMPAIGN_STATUS = "ACTIVE";
 export const PAUSED_CAMPAIGN_STATUS = "PAUSED";
 export const STOPPED_CAMPAIGN_STATUS = "STOPPED";
-export const NON_TARGET_CAMPAIGN_STATUSES: readonly string[] = ["COMPLETED", "DRAFTED", "DRAFT", "PAUSED", "ARCHIVED"];
 
 /** Campaigns marked as cold call are not email campaigns; the service ignores them everywhere (D54). The mark is in the name. */
 export const COLD_CALL_NAME_PATTERNS: readonly RegExp[] = [/cold[ _-]?call/i, /\bcalls?\b/i, /post[ _-]?call/i, /\bcalling\b/i, /\bdialer\b/i];

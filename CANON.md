@@ -1,6 +1,6 @@
 # Canon — how a campaign gets topped up
 
-Canon as of **D108** (2026-10-14). One page. `DECISIONS.md` is the append-only
+Canon as of **D109** (2026-10-14). One page. `DECISIONS.md` is the append-only
 ledger of why; this page is what is true now. When a decision lands, this
 page changes in the same PR; `src/guards/meta.test.ts` enforces both.
 
@@ -54,7 +54,9 @@ ask Josh to connect it, then continue.
 4. **The transcript is the truth.** Replay the recorded build: the same
    tools, filters, titles, geography and sources. Apply the process changes
    written since it on top (new sources, new checks). Never widen unasked.
-   No recorded build means wait for Josh (D96, D99).
+   No recorded build means wait for Josh (D96, D99). **No recipe anywhere**
+   (D109): the build is the transcripts and the tools they use. Nothing
+   stored decides; Grokbot reads the chats, or asks Josh one plain question.
 5. **Josh flips ACTIVE by hand.** The service never starts, pauses, stops,
    deletes, creates or edits a campaign in Smartlead (D5, D6, D14).
 6. **Counts and ids, never rows.** In chat, cards, logs and records (D2).
@@ -68,20 +70,18 @@ ask Josh to connect it, then continue.
 10. **A new rule is a new decision.** Append it to `DECISIONS.md`, fold it
     in here, write a guard (D46).
 11. **Top-ups size the lane, not one segment campaign.** `campaigns` rolls
-    low campaigns up by lane and shows the lane runway (sum across
-    refillable campaigns). `topup` takes a lane, or a campaign_id that
-    points at its lane, and quotes one pull against everything held (D98).
-    After a named yes it splits into the lane's refillable campaigns.
-    **STOPPED is never refilled** and never counted in runway; PAUSED may be.
-    If the split cannot be determined, stop and report; do not guess
-    (D105). **Nothing stored decides the split** (D108): Grokbot reads the
-    lane's build transcript and the process chats, works out how the leads
-    were split, and passes it with the pool as general data: a plain-English
-    rule, the routing, the dimensions it reads (one lane column through a
-    word match, a value set, present or not, a domain hash; D106) and where
-    it read them. The service checks it against the lane and never guesses
-    or writes a split; no confirmation step (D107). What the chats do not
-    say is one plain question to Josh. No client facts here.
+    low campaigns up by lane and shows the lane runway. `topup` takes a lane
+    (or a campaign_id, which points at its lane), quotes one pull against
+    everything held (D98) and, after a named yes, splits it into the lane's
+    refillable campaigns. **STOPPED is never refilled** and never counted in
+    runway; PAUSED may be. If the split cannot be determined, stop and
+    report; do not guess (D105). **Nothing stored decides the split**
+    (D108): Grokbot reads the lane's build transcript and the process chats,
+    works out how the leads were split, and passes it with the pool: a
+    plain-English rule, the routing, the dimensions it reads (one lane column
+    through a word match, a value set, present or not, a domain hash; D106)
+    and where it read them. The service checks it against the lane, never
+    guesses or writes a split; no confirmation step (D107).
 
 ## The loop
 

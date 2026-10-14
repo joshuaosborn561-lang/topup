@@ -27,7 +27,7 @@ export const laneSplitInput = z.object({
   routing: z
     .array(z.object({ when: z.record(z.string()), campaign_id: z.number().int().positive() }))
     .min(1)
-    .describe("Ordered rules; the first whose every `when` matches the row wins. `when` names built-in dimensions (band, mail_class, gift, team_source) or ones defined in dimensions."),
+    .describe("Ordered rules; the first whose every `when` matches the row wins. `when` names built-in dimensions (band, mail_class, team_source) or ones defined in dimensions."),
   dimensions: z
     .array(z.record(z.unknown()))
     .default([])
@@ -57,8 +57,6 @@ export const jobSettingsSchema = z
         first_name_fallback: z.string().min(1).max(40).nullable().optional(),
       })
       .default({}),
-    qa: z.array(z.string()).default([]),
-    reroute: z.record(z.number().int().positive()).default({}),
     segments: z.record(z.array(z.string())).default({}),
     routing: z.array(z.object({ when: z.record(z.string()), campaign_id: z.number().int().positive() })).default([]),
     /** D106: derived routing dimensions (parsed strictly by canon/dimensions before they get here). */
@@ -68,7 +66,8 @@ export const jobSettingsSchema = z
     split_from: z.array(z.string()).default([]),
     required_fields: z.array(z.string()).default([]),
   })
-  .strict();
+  // Unknown keys (a field an older version stored) are dropped, so a job a deploy cut off still resumes.
+  .strip();
 
 export type JobSettings = z.infer<typeof jobSettingsSchema>;
 export type PoolSource = JobSettings["source"];

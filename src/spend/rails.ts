@@ -32,7 +32,7 @@ export interface SpendRequest {
   action: string;
   rows: number;
   /** Proof the step is in the lane settings. `false` is refused before any math. */
-  recipeAuthorised: boolean;
+  stepAuthorised: boolean;
   /** Cents already approved for this step by an owner tap (from run_steps.approved_cents). */
   approvedCents?: number;
   /**
@@ -77,7 +77,7 @@ export class SpendRails {
     if (isBannedAction(req.action)) {
       return { kind: "blocked", worstCaseCents: 0, reason: `${req.action} is banned (bills on every call)` };
     }
-    if (!req.recipeAuthorised) {
+    if (!req.stepAuthorised) {
       return {
         kind: "blocked",
         worstCaseCents: 0,

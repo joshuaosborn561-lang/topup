@@ -13,15 +13,15 @@ function fakeRepo(opts: { loadsPaused?: boolean; recorded?: boolean; recordedErr
   const runs = new Map<string, RunRow>();
   const steps = new Map<string, { status: string; attempts: number; approved_cents: number; counts?: Record<string, unknown> }>();
   const cards: Array<{ card_id: string; run_id: string; kind: string; payload: Record<string, unknown>; status: string; audience: string }> = [];
-  const recipes = new Map<string, unknown>();
+  const settingsStore = new Map<string, unknown>();
   const events: string[] = [];
   const sql: string[] = [];
   let n = 0;
   const repo = {
-    runs, steps, cards, recipes, events, sql,
-    upsertRecipe: async (r: { recipe_id: string; body: unknown }) => { recipes.set(r.recipe_id, r.body); },
-    getRecipe: async (id: string) => (recipes.has(id) ? { recipe_id: id, body: recipes.get(id), owner_approved_at: null } : null),
-    openRun: async (input: { recipe_id: string; client_tag: string; lane: string; campaign_id: number | null; trigger: string; opened_by: string | null }) => {
+    runs, steps, cards, settingsStore, events, sql,
+    upsertJobSettings: async (r: { settings_id: string; body: unknown }) => { settingsStore.set(r.settings_id, r.body); },
+    getJobSettings: async (id: string) => (settingsStore.has(id) ? { settings_id: id, body: settingsStore.get(id), owner_approved_at: null } : null),
+    openRun: async (input: { settings_id: string; client_tag: string; lane: string; campaign_id: number | null; trigger: string; opened_by: string | null }) => {
       if ([...runs.values()].some((r) => !["done", "aborted", "failed"].includes(r.status) && (r.campaign_id === input.campaign_id || (input.lane && r.lane === input.lane && r.client_tag === input.client_tag)))) return { ok: false as const, reason: "already_open" as const };
       const run = { run_id: `run-${++n}`, status: "open", current_step: null, counts_by_status: {}, spend_cents_by_vendor: {}, opened_at: "2026-10-13", closed_at: null, last_error: null, slack_channel: null, slack_thread_ts: null, ...input } as unknown as RunRow;
       runs.set(run.run_id, run);
@@ -217,7 +217,7 @@ describe("D99 — the top-up", () => {
     assert.match(refused.why!, /loads are paused/);
     const resumed = fakeRepo({ loadsPaused: false });
     resumed.runs.set("run-x", paused.runs.get(opened.job_id)!);
-    resumed.recipes.set(paused.runs.get(opened.job_id)!.recipe_id, paused.recipes.get(paused.runs.get(opened.job_id)!.recipe_id));
+    resumed.settingsStore.set(paused.runs.get(opened.job_id)!.settings_id, paused.settingsStore.get(paused.runs.get(opened.job_id)!.settings_id));
     for (const [k, v] of paused.steps) resumed.steps.set(k.replace(opened.job_id, "run-x"), v);
     paused.runs.get(opened.job_id)!.run_id = "run-x";
     const loaded = await runner(resumed).run("run-x", "load", { by: "mcp:operator" });
@@ -436,7 +436,7 @@ describe("D99 — the top-up", () => {
     assert.match(q.next, /lane it_dm/);
     assert.match(q.next, /#3921850/);
     assert.match(q.next, /as Grokbot read them \(from build step 12\)/);
-    const body = repo.recipes.get(repo.runs.get(opened.job_id)!.recipe_id) as { routing: Array<{ campaign_id: number }>; scope: string; split_rule: string; split_from: string[] };
+    const body = repo.settingsStore.get(repo.runs.get(opened.job_id)!.settings_id) as { routing: Array<{ campaign_id: number }>; scope: string; split_rule: string; split_from: string[] };
     assert.equal(body.scope, "lane");
     assert.deepEqual(body.routing.map((r) => r.campaign_id).sort(), [3921850, 3921851]);
     assert.match(body.split_rule, /small campaign/);
@@ -475,11 +475,11 @@ describe("D99 — the top-up", () => {
       ],
     });
     const split = {
-      rule: "SEG to the SEG twin, the rest to the main campaign, the gift test to its own.",
+      rule: "SEG to the SEG twin, the rest to the main campaign, the no-team rows to the third.",
       routing: [
         { when: { mail_class: "SEG" }, campaign_id: 3921850 },
         { when: { mail_class: "OTHER" }, campaign_id: 3921851 },
-        { when: { gift: "x" }, campaign_id: 3921852 },
+        { when: { team_source: "none" }, campaign_id: 3921852 },
       ],
     };
     const opened = await runner(repo).open({ ...spec, lane: "it_dm", campaign_id: undefined, split }, "mcp:operator", null);

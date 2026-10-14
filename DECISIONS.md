@@ -128,6 +128,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D106 | Live; a lane's split is data on its list_build_record: a plain-English rule, the routing, and derived dimensions from a four-kind general vocabulary (match, set, present, hash_parity) over lane columns; a split quotes only once an approver confirmed it by name; the service never guesses a dimension it cannot read |
 | D107 | Live; the split read from the lane's build transcript is the truth the way the build is: it quotes and loads on its own, the D106 confirmation step is removed; what the transcript does not say waits at the route step or is one plain question to Josh |
 | D108 | Live; nothing stored decides a lane's split: Grokbot reads the lane's build transcript and the process chats, works out the split, and passes it on `topup` with the pool (rule, routing, dimensions, from); the service checks it against the lane and never reads a split from a record or the registry; the nine transcript-split records were deleted; Cayden is an approver |
+| D109 | Live; no recipe anywhere: the build is the transcripts and the tools they use. The skill copies, the QA rule table, the registry's stored cells, the gift word and two dead numbers are out of the repo; the job settings table is renamed (`topup.job_settings`, key `settings_id`); what the chats do not say is one plain question to Josh |
 
 ---
 
@@ -3643,3 +3644,55 @@ renaming it is a migration for another day.
 
 **Guard.** `src/guards/d108_grok_split.test.ts`; unit tests in
 `src/canon/laneSplit.test.ts`, `src/jobs/runner.test.ts`. Ask Josh.
+
+## D109 — No recipe anywhere: the build is the transcripts and the tools
+
+**Decision.** The service holds nothing that decides how a list is built,
+split, cleaned or routed. It is the transcripts (the campaign chats on
+`list_build_records`, the process chats on `process_changes`) and the
+tools they use; Grokbot works the rest out from the chats, and what the
+chats do not say is one plain question to Josh. In this change:
+
+1. The copies of Josh's skills under `skills/` are gone, bar the standing
+   orders (`grok-bot-babysitter`) and the connector list
+   (`MCP_SERVERS.md`). Per-client pull skills, the 78-item rulebook and
+   the rest live in Josh's own skill library, where Grokbot reads them
+   as process chats; a copy in the repo was a recipe.
+2. The QA rule table is no longer read: `topup.qa_rules`, the job's
+   `qa` list, the `reroute` map and the reroute tap are out. QA keeps
+   the one hold the normalizer raises (an empty required merge field),
+   one card per group, Accept or Purge. What a list may hold is in the
+   transcript and Grokbot applies it before the pool is handed over.
+3. The registry's stored cells (`band`, `mail_class`, `gift_key`) are no
+   longer read; D108 made them dead.
+4. The gift word is out of the code: the normalizer records where a
+   local team came from (MLB, NFL, College, CityOverride, or why there is
+   none); the built-in routing dimensions are `band`, `mail_class` and
+   `team_source`. An offer is a client fact and lives in the chats.
+5. Two dead numbers are out of `policy/rules.ts` (`MAX_ROWS_PER_JOB`,
+   `NON_TARGET_CAMPAIGN_STATUSES`).
+6. The table that holds one job's own settings is renamed
+   `topup.job_settings` with key `settings_id` (migration 0030; the
+   `runs` and `campaign_registry` keys follow), and the spend flag
+   `recipeAuthorised` is `stepAuthorised`. Stored settings bodies now
+   drop keys an older version wrote instead of refusing to resume.
+
+**What stays, and why it is not a recipe.** `topup.icp_variants` names
+which icp-llm label set a client's website check uses: tool wiring, like
+`client_map`. `topup.pull_receipts` is what Claude wrote down after each
+first pull: history, read only to tag registry lanes. The normalizer's
+reference tables (cities, acronyms) are tool data. The fixed tail
+defaults (verification, the sports-team league, no first-name fallback)
+are tool defaults; whether Grokbot should pass them per lane is an open
+question for Josh, not a rule.
+
+**Why.** Josh, 14 Oct 2026: "look for any recipe in the entire project.
+no recipes. nothing else that can break. its literally a house of the
+transcripts, and the tools they use. that is it, grokbot will figure
+out the rest."
+
+**What it does not do.** It does not drop any table; the old tables stay
+in the database, unread. It does not change a canon number, who
+approves, or what the referee stages do to a pool.
+
+**Guard.** `src/guards/d109_no_recipe.test.ts`. Ask Josh.

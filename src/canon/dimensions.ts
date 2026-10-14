@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
  * may name dimensions the route step computes from a row's own columns,
  * using a small general vocabulary. The client facts (which title words
  * are junior, which industries are senior living, which bands get the
- * gift) live in the record, never in code.
+ * team) are passed by Grokbot from the chats, never in code (D108).
  *
  *   match        first case whose pattern (case-insensitive regex) matches
  *                the column wins; else the default
@@ -41,10 +41,9 @@ export type DimensionColumn = (typeof DIMENSION_COLUMNS)[number];
  * Computed by the route step itself; a record may not redefine them.
  *   band         the getleads band as a segment ("11_50", "10001_plus")
  *   mail_class   SEG or OTHER, from the verifier
- *   gift         team when the sports-team ladder found a local team, else airpods
- *   team_source  where that team came from: MLB, NFL, College, CityOverride; none when there is no team
+ *   team_source  where the row's local team came from: MLB, NFL, College, CityOverride; none when the ladder found no team
  */
-export const BUILT_IN_DIMENSIONS = ["band", "mail_class", "gift", "team_source"] as const;
+export const BUILT_IN_DIMENSIONS = ["band", "mail_class", "team_source"] as const;
 
 const NAME = /^[a-z][a-z0-9_]{0,39}$/;
 const VALUE = /^[A-Za-z0-9][A-Za-z0-9 _+.|-]{0,59}$/;
