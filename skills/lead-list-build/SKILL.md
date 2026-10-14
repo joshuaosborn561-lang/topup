@@ -68,8 +68,8 @@ Gate: sendable count and reject rate reported. A reject rate far above the lane'
 
 ## Step 7. Normalize (code)
 
-What: four scripts, in this order, each writing a new column, never overwriting the raw one: `name-city-normalization` (first names and cities), `company-name-normalization` (conversational company names), `conversational-location` (Naperville to Chicagoland; NO_GEOCODE rows get a blank location, never a broken sentence), `sports-team-assignment` (MLB or NFL by distance, college fallback, pro only mode for education; ambiguous nicknames go null and route to the AirPods tier).
-Mandatory QA after each normalization or assignment step (first names, cities, company names, conversational location, sports teams, ICP gate labels from step 5.5, campaign routing from step 9): pull 200 random rows per step, check them by a separate pass, and report the error rate per step. Hold the batch if any step exceeds 2 percent errors until it is fixed. Never post rows in chat; counts and up to 10 company names only.
+What: four scripts, in this order, each writing a new column, never overwriting the raw one: `name-city-normalization` (first names and cities), `company-name-normalization` (conversational company names), `conversational-location` (Naperville to Chicagoland; a city that cannot be mapped to a metro (NO_GEOCODE) falls back to the raw normalized city, never blank), `sports-team-assignment` (MLB or NFL by distance, college fallback, pro only mode for education; ambiguous nicknames go null and route to the AirPods tier).
+Mandatory QA after each normalization or assignment step (first names, cities, company names, conversational location, sports teams, ICP gate labels from step 5.5, campaign routing from step 9): pull 200 random rows per step, check them by a separate pass, and report the error rate per step. Hold the batch if any step exceeds 2 percent errors until it is fixed. Never post rows in chat; counts and up to 10 company names only. The checks per field are in `merge-field-qa`.
 Gate: every merge field the copy uses is populated or the row is held.
 
 ## Step 8. QA (code purges silently, Cayden clears holds)
