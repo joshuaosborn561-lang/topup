@@ -1,6 +1,6 @@
 ---
-name: goliath-lead-pulls
-description: Pull net-new leads for Goliath (Goliath360 / Goliath Solutions Group, Dave Ackley, cybersecurity MSSP) using getleads plus the LeadPipe pipeline. Use this skill whenever Josh asks for Goliath leads, Goliath lanes, or includes Goliath in a multi-client pull. Encodes the Aug 2026 correction that every Goliath lane targets the IT decision maker, not the C suite, and the pending Mfg/Defense lookalike rule.
+name: "goliath-lead-pulls"
+description: "Pull net-new leads for Goliath (Goliath360 / Goliath Solutions Group, Dave Ackley, cybersecurity MSSP) using getleads plus the LeadPipe pipeline. Use this skill whenever Josh asks for Goliath leads, Goliath lanes, or includes Goliath in a multi-client pull. Encodes the Aug 2026 correction that every Goliath lane targets the IT decision maker, not the C suite, and the pending Mfg/Defense lookalike rule."
 ---
 
 # Goliath lead pulls
@@ -17,7 +17,7 @@ Education lane also adds: "Assistant Director of Technology", "Director of Techn
 
 ## Four lanes
 
-All: `countries` ["United States"], `email_status` ["VALID"], `max_per_company` 3, `company_size` ["51 to 200", "201 to 500", "501 to 1000"] except Education which runs unsized. Josh rejected widening bands past 1000.
+All: `countries` ["United States"], `max_per_company` 3, no `email_status` filter. Size and export without it; every lead goes through Email Verifier Progression anyway; `company_size` ["51 to 200", "201 to 500", "501 to 1000"] except Education which runs unsized. Josh rejected widening bands past 1000.
 
 - L1 FinServ: `industries` ["Banking", "Financial Services", "Insurance", "Investment Management"]
 - L2 Healthcare: `industries` ["Hospitals and Health Care", "Medical Practices", "Physicians", "Outpatient Care Centers"]

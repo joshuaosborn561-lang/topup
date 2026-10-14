@@ -1,6 +1,6 @@
 ---
-name: techevo-lead-pulls
-description: Pull net-new New England leads for TechEvo using getleads plus the LeadPipe ingest and master dedupe pipeline. Use this skill whenever Josh asks for TechEvo leads, New England IT leads, or includes TechEvo in a multi-client pull, even casually. Encodes the hard New England geography rule, the IT decision maker bias, and the small company COO fallback.
+name: "techevo-lead-pulls"
+description: "Pull net-new New England leads for TechEvo using getleads plus the LeadPipe ingest and master dedupe pipeline. Use this skill whenever Josh asks for TechEvo leads, New England IT leads, or includes TechEvo in a multi-client pull, even casually. Encodes the hard New England geography rule, the IT decision maker bias, and the small company COO fallback."
 ---
 
 # TechEvo lead pulls
@@ -17,7 +17,7 @@ Primary: named IT decision makers.
 - `job_titles`: ["IT Director", "Director of IT", "Director of Information Technology", "Director of Technology", "VP of IT", "CIO", "Chief Information Officer", "IT Manager", "Head of IT", "Head of Information Technology"]
 - `company_size`: ["11 to 50", "51 to 200", "201 to 500"]
 - `states`: ["Massachusetts", "Connecticut", "Rhode Island", "New Hampshire", "Vermont", "Maine"]
-- `countries`: ["United States"], `email_status`: ["VALID"], `max_per_company`: 3
+- `countries`: ["United States"], `max_per_company`: 3; no `email_status` filter. Size and export without it; every lead goes through Email Verifier Progression anyway.
 
 Fallback (Josh's rule: "a COO at a very small company" is acceptable where no named IT DM exists):
 - Second export: `job_titles` ["COO", "Chief Operating Officer"], `company_size` ["11 to 50"] only, `max_per_company` 1, same states.

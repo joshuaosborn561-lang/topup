@@ -1,6 +1,6 @@
 ---
-name: getleads-tam-counting
-description: How to count a TAM or size a lane on getleads correctly, so the number reflects the real universe instead of a filter accident. Use this whenever getleads count_contacts, search_contacts, or export_contacts is about to be called for any client or lane, whenever Josh asks how many are out there, how big is the TAM, why a getleads number is so low, or whether a pool is exhausted, and before any getleads export feeds a campaign build. Also use it to sanity check any getleads number already in a plan. Supersedes the ad hoc job_titles lists in older client skills (parlay-lead-pulls, culture-fits-lead-pulls, techevo-lead-pulls, goliath-lead-pulls, salesglider-lead-pulls) for the sizing step. Measured Sept 29 2026 on the Parlay refresh, where seven exact title strings returned 1,334 and the correct query returned 5,751 on the same ICP.
+name: "getleads-tam-counting"
+description: "How to count a TAM or size a lane on getleads correctly, so the number reflects the real universe instead of a filter accident. Use this whenever getleads count_contacts, search_contacts, or export_contacts is about to be called for any client or lane, whenever Josh asks how many are out there, how big is the TAM, why a getleads number is so low, or whether a pool is exhausted, and before any getleads export feeds a campaign build. Also use it to sanity check any getleads number already in a plan. Supersedes the ad hoc job_titles lists in older client skills (parlay-lead-pulls, culture-fits-lead-pulls, techevo-lead-pulls, goliath-lead-pulls, salesglider-lead-pulls) for the sizing step. Measured Sept 29 2026 on the Parlay refresh, where seven exact title strings returned 1,334 and the correct query returned 5,751 on the same ICP."
 ---
 
 # getleads TAM counting
@@ -42,6 +42,8 @@ Measured on Parlay IT × Financial Services, US, 11 to 500, VALID email:
 | job_functions IT + seniority C/VP/Dir/Mgr | 5,751 |
 | same, no VALID filter | 10,171 |
 
+The last row is the figure to size and export on; see section 7.
+
 **Then clean with `exclude_job_titles`**, which is the correct use of the title matcher (removing
 a known noise pattern, not defining the target). The IT function tag catches software engineering
 managers and principal engineers. A 10-row audit mid-pool was 6 real IT DMs and 4 engineers.
@@ -76,7 +78,7 @@ function filter as the primary because it under-counts.
 | `seniority` | enum | C-Team, VP, Director, Manager, Staff, Other |
 | `job_functions` | enum | 22 values, see `get_available_values` |
 | `industries` | enum | 441 flat LinkedIn values. Parent names do not expand. Enumerate every sibling you mean. |
-| `email_status` | enum | Only `["VALID"]`. CATCH_ALL and INVALID are rejected. |
+| `email_status` | enum | Do not pass it when sizing or exporting (Josh, Oct 2026): every lead gets verified anyway. If it is ever passed for a diagnostic, only `["VALID"]` is accepted; CATCH_ALL and INVALID are rejected. |
 | `countries` | enum, aliases ok | Full English names. "USA" expands. |
 | `personas`, `entity_types`, `revenue`, `regions`, `continents` | enum | get_available_values |
 
@@ -171,15 +173,16 @@ returns because the ICP was loosened is a different ICP.
 
 ---
 
-## 7. Gross first, VALID second, report both
+## 7. Size and export on the gross figure, no VALID filter
 
-`email_status: ["VALID"]` kept 56.5% on the one lane measured both ways (5,751 of 10,171). It is
-the deliverability standard and every export runs with it, but the TAM is the gross figure and
-the buildable list is the VALID figure. A vendor comparison (AI Ark, Prospeo) has no VALID
-equivalent, so compare on gross or the numbers will never agree.
+Do not filter on `email_status`, not for the count and not for the export. Every lead goes
+through Email Verifier Progression before Smartlead, and the people with no getleads email go to
+the email finder, so a VALID filter only throws away buildable people. The TAM is the gross
+figure and the export is the gross pool. It is also the only figure that compares with AI Ark or
+Prospeo, which have no VALID equivalent.
 
-Report every lane as: gross, VALID, and the VALID ratio. If the ratio drifts far from 55 to 60%,
-say so, it usually means a data-thin vertical.
+For reference, VALID kept 56.5% on the one lane measured both ways (5,751 of 10,171). Older
+receipts and transcripts that exported VALID only were understating the pool by about that much.
 
 ---
 
@@ -190,7 +193,7 @@ five bands outside your range as the inverse. Measured today on Architecture IT:
 500, 61 outside, 329 with no size filter. Binds exactly.
 
 Run this on `company_size`, `industries`, and any `where_sql` branch the first time each is used
-in a session. Skip it for `countries` and `email_status`, they have been proven repeatedly.
+in a session. Skip it for `countries`, it has been proven repeatedly.
 
 ---
 
@@ -216,10 +219,10 @@ Title" is wrong, "Current Job Title" is right. A bad label 400s with the valid l
 3. Partition check on any filter new to this session.
 4. Add `where_sql` NAICS or title-pattern branches if the vertical is thin on LinkedIn tags or
    the target title is domain-specific. Re-count.
-5. Count again with `email_status: ["VALID"]`. Report gross, VALID, ratio.
-6. Audit 10 rows mid-pool. Add `exclude_job_titles` for the noise you see. Re-count VALID.
-7. Report the final number with the exact filter set that produced it, per lane.
-8. Hand off to `tam-sizing` for the second-vendor agreement check and to `lead-list-build` for the
+5. Audit 10 rows mid-pool. Add `exclude_job_titles` for the noise you see. Re-count.
+6. Report the final gross number with the exact filter set that produced it, per lane. No
+   `email_status` in that filter set, and none on the export.
+7. Hand off to `tam-sizing` for the second-vendor agreement check and to `lead-list-build` for the
    export, ingest, and master dedupe. Net-new is computed after ingest, never from counts.
 
 ---
@@ -232,7 +235,7 @@ Title" is wrong, "Current Job Title" is right. A bad label 400s with the valid l
 - `countries` + `office_countries` together: 28M rows vanish silently.
 - No `industries` filter at all: count times out, always, on the current cluster.
 - `job_location_*`: sparse, drops most of the market.
-- `CATCH_ALL` in `email_status`: rejected, not deprecated quietly. Only VALID.
+- Any `email_status` filter on a sizing count or export: shrinks the pool by roughly 40% for no gain, since everything is verified anyway. (`CATCH_ALL` is rejected outright.)
 - Sampling at offset 0: over-states quality. Sample mid-pool.
 - Wrong column label in `columns`: 400. Use the display label exactly.
 - `where_sql` `=` against an industry value containing `;`: rejected. Use ILIKE on a fragment.

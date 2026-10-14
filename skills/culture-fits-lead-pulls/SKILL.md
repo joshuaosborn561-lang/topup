@@ -1,6 +1,6 @@
 ---
-name: culture-fits-lead-pulls
-description: Pull net-new leads for TJ at Culture Fits (MSP owner and C suite ICP) using getleads plus the LeadPipe ingest and master dedupe pipeline. Use this skill whenever Josh asks for Culture Fits leads, TJ leads, MSP leads for TJ, or includes Culture Fits in a multi-client pull. Replaces the retired getleads-msp-pipeline skill. Encodes the pool exhaustion reality and the corrected getleads parameters.
+name: "culture-fits-lead-pulls"
+description: "Pull net-new leads for TJ at Culture Fits (MSP owner and C suite ICP) using getleads plus the LeadPipe ingest and master dedupe pipeline. Use this skill whenever Josh asks for Culture Fits leads, TJ leads, MSP leads for TJ, or includes Culture Fits in a multi-client pull. Replaces the retired getleads-msp-pipeline skill. Encodes the pool exhaustion reality and the corrected getleads parameters."
 ---
 
 # Culture Fits (TJ) lead pulls
@@ -15,7 +15,7 @@ MSP owners and C suite at small MSPs.
 - `job_titles`: ["Owner", "CEO", "President", "Founder", "Co-Founder", "CIO", "CTO", "VP of IT", "Director of IT"]
 - `company_size`: ["11 to 50"]  (exact band label, NEVER employees_min/max, band overlap bug pulled ~2,700 wrong band rows once)
 - `countries`: ["United States"]
-- `email_status`: ["VALID"]  (CATCH_ALL is no longer accepted by getleads, only VALID)
+- no `email_status` filter. Size and export without it; every lead goes through Email Verifier Progression anyway.
 - `max_per_company`: 3
 - Note: revenue caps barely filter MSP searches, the description match is the binding constraint. Skip revenue_max.
 

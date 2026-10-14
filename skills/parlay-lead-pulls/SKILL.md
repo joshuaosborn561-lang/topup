@@ -1,6 +1,6 @@
 ---
-name: parlay-lead-pulls
-description: Pull net-new leads for Randy at Parlay Tech using getleads plus the LeadPipe ingest and master dedupe pipeline. Use this skill whenever Josh asks for more Parlay leads, Parlay contacts, leads for Randy, or a Parlay list refresh, even if he only says "top off Parlay" or includes Parlay in a multi-client pull. Encodes the corrected Aug 2026 ICP (IT decision makers only, no COO, no CTO) and the true remaining pool size.
+name: "parlay-lead-pulls"
+description: "Pull net-new leads for Randy at Parlay Tech using getleads plus the LeadPipe ingest and master dedupe pipeline. Use this skill whenever Josh asks for more Parlay leads, Parlay contacts, leads for Randy, or a Parlay list refresh, even if he only says \"top off Parlay\" or includes Parlay in a multi-client pull. Encodes the corrected Aug 2026 ICP (IT decision makers only, no COO, no CTO) and the true remaining pool size."
 ---
 
 # Parlay Tech lead pulls
@@ -14,7 +14,7 @@ Named IT decision makers ONLY. Josh explicitly removed COO and CTO from this lan
 - `job_titles`: ["IT Director", "Director of IT", "Director of Information Technology", "Director of Technology", "VP of IT", "VP of Information Technology", "Vice President of Information Technology", "CIO", "Chief Information Officer", "IT Manager", "Head of IT", "Head of Information Technology"]
 - `company_size`: ["51 to 200"]  (exact band label, NEVER employees_min/max, band overlap bug)
 - `countries`: ["United States"]
-- `email_status`: ["VALID"]  (CATCH_ALL is no longer a valid getleads value)
+- no `email_status` filter. Size and export without it; every lead goes through Email Verifier Progression anyway.
 - `max_per_company`: 3
 
 ## Pool reality check
