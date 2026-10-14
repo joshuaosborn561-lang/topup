@@ -26,29 +26,31 @@ resolve_people(
   source_table  = 'client_peterson.gc_adjudication',
   where         = "wf_domain_status='resolved'",
   client_tag    = 'peterson_roof',
+  skip_tiers    = 'discolike',
   estimate_only = true
 )
 ```
 
 Estimate, state the dollar figure, get approval, run with `approve_cost_usd`. Poll `get_job_status`. One job, not a fan-out.
 
-## Default tier order, revised 2026-10-08
+## Order, revised 2026-10-14
 
-`cache` → `discolike` → `aiark`. LeadMagic was removed from the vendor stack on Oct 8 2026 and its two tiers (`leadmagic_employee`, `leadmagic_role`) are dead. AI Ark credits were doubled the same day and AI Ark takes the third slot. SERP, getleads, Smartlead and Prospeo stay in the code behind `skip_tiers` / `min_tier` / `max_tier` and a profile can opt one back in, but no client runs them unless its `people_tier_order` names them.
+1. **`site-people-dm` first.** The company's own people pages, read server side. Free apart from the model call, and it finds the buyers who are not in any B2B database (churches, local owners, owner operated shops).
+2. **`serp-dm-discovery` second.** Google indexed LinkedIn profiles via Serper, on the companies step 1 left empty.
+3. **`resolve_people` on what is still empty**, with DiscoLike skipped by default: pass `skip_tiers=discolike`. That leaves `cache` → `aiark`. Run DiscoLike only when Josh asks for that tier on this pull; it is optional, not part of the default.
 
-**Until the service code is changed, the shipped default still names `leadmagic_employee`.** Any profile with a null `people_tier_order` inherits it, and a selected paid tier that makes zero calls fails the job. Before running, check `get_profile(client_tag)`. If `people_tier_order` is null or names a leadmagic tier, either pass `skip_tiers=leadmagic_employee,leadmagic_role` on the call or set the profile's order explicitly. Never let a job reach a LeadMagic tier.
+SERP, getleads, Smartlead and Prospeo stay in the code behind `skip_tiers` / `min_tier` / `max_tier` and a profile can opt one back in, but no client runs them unless its `people_tier_order` names them. Check `get_profile(client_tag)` before running so the order you expect is the order that runs.
 
-Why, measured on the same EMCOR ICP (CA churches, schools, funeral homes, practices, office and facilities managers), companies with a title matched person:
+Measured on the same EMCOR ICP (CA churches, schools, funeral homes, practices, office and facilities managers), companies with a title matched person:
 
 | Tier | Hit rate | Cost per company |
 |---|---|---|
 | serp (site:linkedin.com/in only), 4,600 companies | 14 percent | $0.008 |
-| leadmagic_employee, 510 company pilot (vendor removed Oct 8 2026, kept for reference) | about 40 percent | $0.015 |
 | discolike generate contacts, 50 SERP misses, native, 5 queries a domain | about 60 percent | $0.0085 ($0.25 Serper plus $0.175 DiscoLike per 50) |
 
-DiscoLike wins because it reads the company's own site and directories, not just LinkedIn. The SERP tier is redundant behind it. AI Ark now sits behind DiscoLike to catch LinkedIn native people DiscoLike missed. It has not been measured on the EMCOR style office and facilities ICP where the LeadMagic roster hit about 40 percent, so run `receipt_test` per client before trusting it there. On trades it is measured: about a 94 percent owner title rate at roughly half a cent, against LeadMagic's 4 owners in 277 people.
+DiscoLike hit well on that pilot because it reads the company's own site and directories, which is what `site-people-dm` now does first. That is why DiscoLike is optional rather than default. AI Ark sits behind to catch LinkedIn native people the site and SERP passes missed. On trades it is measured at about a 94 percent owner title rate at roughly half a cent; on the EMCOR style office and facilities ICP it has not been measured, so run `receipt_test` per client before trusting it there.
 
-`discolike` tier rules: needs a domain (no domain rows skip it, reason `no_domain`); one task per job, never chunked into concurrent tasks; `integration_id=native`, `search_context_size=low`, `max_contacts_per_domain=5`, `find_emails=false`; icp_text built from the profile's `target_titles`. Every gate below applies to its output, because the pilot returned surname collisions, a same name business, and one name hallucinated from the domain. Rows never pass through chat: the pilot did that once by calling the MCP tool directly, which is why the tier lives inside this service. `email_pattern` and `email_pattern_confidence` are written to the company row for the Email Finder Waterfall to seed from.
+`discolike` tier rules, when it is asked for: needs a domain (no domain rows skip it, reason `no_domain`); one task per job, never chunked into concurrent tasks; `integration_id=native`, `search_context_size=low`, `max_contacts_per_domain=5`, `find_emails=false`; icp_text built from the profile's `target_titles`. Every gate below applies to its output, because the pilot returned surname collisions, a same name business, and one name hallucinated from the domain. Rows never pass through chat: the pilot did that once by calling the MCP tool directly, which is why the tier lives inside this service. `email_pattern` and `email_pattern_confidence` are written to the company row for the Email Finder Waterfall to seed from.
 
 ## The title list is the whole game
 

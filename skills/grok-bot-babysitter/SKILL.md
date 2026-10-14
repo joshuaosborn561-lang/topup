@@ -7,6 +7,8 @@ description: Standing orders for the Lead Top Up Grokbot. Use on every turn. Gro
 
 Applies to every bot running top-ups, including Cayden's; lead-list-build is the authoritative order, later Josh rules win on conflict.
 
+Top-ups cover HeyReach campaigns as well as Smartlead (use `heyreach-campaign-setup`, `heyreach-workspace-routing` and `heyreach-activity-gate`), and `sports-team-assignment` plus `sports-offer-season` are required steps on every top-up.
+
 Josh, 2026-10-13: "It needs to run things through LeadPipe 100% of the
 time. It should not pull anything into the context."
 Josh, 2026-10-14: "It's literally a house of the transcripts, and the

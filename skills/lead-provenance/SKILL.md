@@ -1,6 +1,6 @@
 ---
 name: "lead-provenance"
-description: Make every lead traceable to where its company, domain, person, and email came from, so the leadtopup service and the Grokbot can repeat any pull. Use whenever a list is built, topped up, staged, or imported into Smartlead for any client, whenever a new build or staging table is created, whenever Josh asks where leads came from, how a campaign was pulled, why the bot says there are no tags, or what source filled a lead, and before setting any campaign ACTIVE. Also use when onboarding a new Smartlead client. Runs on campaignintelligence (azpapwtnrbzywlnxxecz) only, is free, and never moves lead rows through chat.
+description: Make every lead traceable to where its company, domain, person, and email came from, so the Grok Bot babysitter can repeat any pull. The leadtopup / Top_Up service is retired (D110); the bot runs these steps itself on every top up. Use whenever a list is built, topped up, staged, or imported into Smartlead for any client, whenever a new build or staging table is created, whenever Josh asks where leads came from, how a campaign was pulled, why the bot says there are no tags, or what source filled a lead, and before setting any campaign ACTIVE. Also use when onboarding a new Smartlead client. Runs on campaignintelligence (azpapwtnrbzywlnxxecz) only, is free, and never moves lead rows through chat.
 ---
 
 # Lead provenance
@@ -13,7 +13,7 @@ Project: `azpapwtnrbzywlnxxecz` (campaignintelligence) only. Confirm the project
 
 | Object | What it is |
 |---|---|
-| `topup.campaign_recipe` | View. One row per Smartlead campaign: source mix at each step, confidence mix, builds that fed it, interested replies per build, receipt ids. **This is what the bot reads before a top up.** |
+| `topup.campaign_recipe` | View. One row per Smartlead campaign: source mix at each step, confidence mix, builds that fed it, interested replies per build, receipt ids. A check on the source mix after a build. The Grok Bot does not plan a top up from it; it reads `topup.list_build_records` and the build transcript (`grok-bot-babysitter`, `record-list-build`). |
 | `topup.lead_provenance` | One row per `client_tag` plus lowercased email. Sources, email tier, build_label, receipt_id, evidence table, confidence. |
 | `topup.provenance_sources` | Registry of build tables. Each row is a SELECT the stamper runs. Registering a table is what makes its leads traceable. |
 | `topup.stamp_provenance(client_tag)` | Stamps every lead in `public.leads` that has no row. pg_cron runs it at 20 past every hour. Weak stamps are retried each run. |
@@ -35,7 +35,7 @@ There is no `other`. If a new method appears, add it to `topup.source_vocab` and
 
 ## The rule for every build
 
-A build is not done until its leads are traceable. Do these in order, inside the lead-list-build flow.
+A build is not done until its leads are traceable. Do these in order, inside the lead-list-build flow. On a top up the Grok Bot babysitter writes them, after the build record in `topup.list_build_records`.
 
 1. **Stage with source columns.** The staging table for the build (any schema on campaignintelligence) must carry, per row: `email`, and enough to say the four sources. Best is explicit columns (`company_source`, `domain_source`, `person_source`, `email_source`, `email_tier`). Acceptable is a vendor or lane column that maps cleanly (`wf_vendor`, `source_tool`, `lane`, `src`). A `source_label` alone is acceptable only if the build receipt with that exact `build_label` is written in step 3.
 2. **Register the table** in `topup.provenance_sources`, once per table, before import. The SELECT must return exactly these columns: `email, build_label, lane, company_source, company_detail, domain_source, person_source, email_source, email_tier`. A null inherits from the build receipt whose `build_label` matches. Set `explicit = true` when the columns come from per lead evidence, `false` when guessed. Lower `priority` wins when a lead is in two tables; use 10 to 40 for per lead vendor tables, 50 for ingest labels, 90 and up for guesses.
@@ -74,7 +74,7 @@ Physical builds often start on `kemvxzhcxvynmoutwdrh` (parcels, operators, shell
 1. `select * from topup.provenance_gaps where verdict like 'fix%';`
 2. Find where the untraced emails live, counts only: loop the tables that have an `email` column and count matches against `topup.lead_provenance where confidence = 'unknown'` for that client. The table with the most matches is the build.
 3. Register it (explicit if it has vendor columns, otherwise `explicit = false`), run the stamper for that client, re-check.
-4. If no table holds them, the build predates labeling. Write a lane receipt covering those campaign ids with notes starting `RECONSTRUCTED`, which tells the service to treat the next pull as a first pull. Never invent a per lead source.
+4. If no table holds them, the build predates labeling. Write a lane receipt covering those campaign ids with notes starting `RECONSTRUCTED`, which tells the Grok Bot to treat the next pull as a first pull. Never invent a per lead source.
 
 ## Do not
 
