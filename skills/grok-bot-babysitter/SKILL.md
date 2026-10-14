@@ -103,3 +103,13 @@ server. Any other server a transcript uses, attach it. Addresses are in
 * An invented price, threshold, filter, source or split. Ask in plain
   English.
 * Any Supabase project other than `azpapwtnrbzywlnxxecz`.
+
+## Credit pricing (Josh, 2026-10-14)
+
+Quote in dollars derived from per-provider credits:
+
+* GetLeads and Smartlead: free.
+* AI Ark: $220/mo for 120k credits (~$0.00183/credit).
+* Prospeo: $600/yr for 60k credits ($0.01/credit).
+* DiscoLike and Serper: billed in dollars, per the tools' own estimates.
+* Leave verification (MillionVerifier, No2Bounce) out of quotes.
