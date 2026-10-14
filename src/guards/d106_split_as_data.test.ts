@@ -5,13 +5,13 @@ import { BUILT_IN_DIMENSIONS, DIMENSION_COLUMNS, parseDimension } from "../canon
 
 /**
  * D106 — a lane's split is data on its record: rule, routing, dimensions
- * from a four-kind vocabulary, read from the lane's build transcript (the
- * confirmation step was dropped by D107). Ask Josh before adding a kind,
- * a column or a client branch.
+ * from a four-kind vocabulary. Since D108 that data is passed by Grokbot
+ * with the pool, never stored. Ask Josh before adding a kind, a column or
+ * a client branch.
  */
 const root = new URL("../../", import.meta.url);
 
-describe("D106 — the split is data on the record", () => {
+describe("D106 — the split is data in a four-kind vocabulary", () => {
   it("the vocabulary is four kinds over lane columns, and never a lead's address or name as a routing key", () => {
     for (const kind of ["match", "set", "present", "hash_parity"]) {
       const base = { name: "x", column: "title" as const };
@@ -34,7 +34,7 @@ describe("D106 — the split is data on the record", () => {
       assert.doesNotMatch(src, /\b(3763|3897|3921|4036|4037)\d{3}\b/, `D106: ${rel} names a campaign id`);
     }
     const canon = await readFile(new URL("CANON.md", root), "utf8");
-    assert.match(canon, /The split is data on the lane's\s+record/);
+    assert.match(canon.replace(/\s+/g, " "), /a plain-English rule, the routing, the dimensions it reads/);
     assert.doesNotMatch(canon, /emcor|bcp|insight/i, "D106: client facts stay out of the canon");
   });
 

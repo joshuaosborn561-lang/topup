@@ -1,21 +1,22 @@
 import type { Queryable } from "../db/pool.js";
 import { campaignStatuses } from "../ledger/health.js";
 import { isUnassignedLane } from "../canon/lanes.js";
-import { resolveLaneSegmentation, type LaneRecord } from "../canon/laneSplit.js";
+import { resolveLaneSegmentation, type GrokSplit, type LaneRecord } from "../canon/laneSplit.js";
 import { registryRows, type RegistryCampaign } from "../canon/registry.js";
 import { isColdCall, isNeverTopUp } from "../policy/rules.js";
 import type { LaneJobSplit } from "./settings.js";
 import { plainError } from "./preflight.js";
 
 /**
- * Load the lane's recorded split (D105). The playbook / list_build_records
- * name the campaigns; STOPPED is dropped; if the records do not determine
- * a split the answer is a reason, not a guess.
+ * Plan a lane job (D105, D108). The registry and list_build_records name
+ * the campaigns (a lane with no recorded build has nothing to replay);
+ * STOPPED is dropped; the split comes from Grokbot with the pool and is
+ * checked against the lane. Nothing stored decides a split.
  */
 
 export async function loadLaneRecords(db: Queryable, clientTag: string, lane: string, memberIds: readonly number[]): Promise<LaneRecord[]> {
-  const { rows } = await db.query<{ campaign_ids: unknown; lanes: unknown; yield_by_step: unknown; source_refs: unknown }>(
-    `select campaign_ids, lanes, yield_by_step, source_refs
+  const { rows } = await db.query<{ campaign_ids: unknown; lanes: unknown }>(
+    `select campaign_ids, lanes
        from topup.list_build_records
       where client_tag = $1
         and ($2 = any(lanes) or campaign_ids::bigint[] && $3::bigint[])
@@ -25,8 +26,6 @@ export async function loadLaneRecords(db: Queryable, clientTag: string, lane: st
   return rows.map((r) => ({
     campaign_ids: Array.isArray(r.campaign_ids) ? r.campaign_ids.map((x) => Number(x)).filter((n) => Number.isInteger(n)) : [],
     lanes: Array.isArray(r.lanes) ? r.lanes.map(String) : null,
-    yield_by_step: r.yield_by_step,
-    source_refs: r.source_refs,
   }));
 }
 
@@ -38,8 +37,10 @@ export async function planLaneJob(
     campaign_id?: number | null;
     registry: readonly Record<string, unknown>[];
     names?: ReadonlyMap<number, string | null>;
+    /** D108: the split Grokbot read from the chats, passed with the pool. */
+    split?: GrokSplit | null;
   },
-): Promise<{ ok: true; split: LaneJobSplit; stopped_ids: number[]; split_rule: string | null; confirmed_by: string | null } | { ok: false; message: string; no_lane?: boolean }> {
+): Promise<{ ok: true; split: LaneJobSplit; stopped_ids: number[]; split_rule: string | null } | { ok: false; message: string; no_lane?: boolean }> {
   const rows = registryRows(input.registry);
   const fromCampaign = input.campaign_id != null ? rows.find((r) => r.campaign_id === input.campaign_id) : undefined;
   const lane = (input.lane ?? fromCampaign?.lane ?? "").trim();
@@ -77,7 +78,7 @@ export async function planLaneJob(
     return { ok: false, message: `Could not read topup.list_build_records (${plainError(err)}). That is a database error, not a missing build: try again, and ask Josh if it keeps failing.` };
   }
 
-  const split = resolveLaneSegmentation({ lane, members: namedMembers, statuses, records });
+  const split = resolveLaneSegmentation({ lane, members: namedMembers, statuses, records, split: input.split ?? null });
   if (!split.ok) return { ok: false, message: split.reason };
   return {
     ok: true,
@@ -88,11 +89,10 @@ export async function planLaneJob(
       segments: split.segments,
       dimensions: split.dimensions as unknown as LaneJobSplit["dimensions"],
       split_rule: split.split_rule,
-      split_confirmed_by: split.confirmed_by,
+      split_from: split.split_from,
       pointed_from_campaign_id: input.campaign_id && split.campaign_ids.includes(input.campaign_id) ? input.campaign_id : input.campaign_id ?? null,
     },
     stopped_ids: split.stopped_ids,
     split_rule: split.split_rule,
-    confirmed_by: split.confirmed_by,
   };
 }

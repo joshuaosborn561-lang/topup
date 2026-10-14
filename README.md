@@ -60,7 +60,7 @@ any Supabase project other than campaignintelligence (D6).
 | `campaigns(client_tag?)` | Campaigns plus a lane rollup: runway is the sum across refillable campaigns (STOPPED excluded). |
 | `playbook(client_tag)` | The living how-we-build for this client: list builds, disqualifications and method changes in order, plus transcript object names. |
 | `build_record(client_tag, campaign_id, from?, limit?)` | The build record, the method off the transcript (paged), and the process changes since. |
-| `topup(client_tag, lane\|campaign_id, source)` | Quote the whole lane as one pull (`campaign_id` points at its lane). `topup(job_id, approved_by)` runs the approved tail, splits, and loads. |
+| `topup(client_tag, lane\|campaign_id, source[, split])` | Quote the whole lane as one pull (`campaign_id` points at its lane); `split` is how the chats split the lane, as Grokbot read it (D108). `topup(job_id, approved_by)` runs the approved tail, splits, and loads. |
 | `load(job_id)` | Import a staged job once loads resume. |
 | `job(job_id)` / `jobs()` | Steps with counts, cards waiting, the last events. |
 | `spend()` | Spend today, by vendor, month to date, cards waiting for a name. |

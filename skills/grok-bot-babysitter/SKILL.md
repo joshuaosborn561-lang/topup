@@ -29,12 +29,16 @@ LeadPipe → Smartlead**. They never enter this context.
 1. `campaigns()`: the low lane (untouched under about two weeks of
    sends, passing one positive per 2,000, not cold call, not SG Nurture).
    The answer rolls campaigns up by lane and shows the lane runway
-   (STOPPED is out of the sum). Size the lane, not one segment. How the
-   lane splits into its campaigns is read from the lane's build transcript
-   and sits on its record (D106); it is the truth the way the build is and
-   quotes on its own, nobody confirms it (D107). A lane whose record has no
-   split, or a question the transcript does not answer: never guess, never
-   write a split yourself; ask Josh one plain-English question.
+   (STOPPED is out of the sum). Size the lane, not one segment. Nothing
+   stored decides how a lane splits across its campaigns (D108): before
+   you call `topup` on a lane with more than one refillable campaign, read
+   its build transcript and the process chats, work out how the leads were
+   split (title words, employee bands, an industry word, the SEG tag, the
+   team gift, a domain hash), and pass it as `split` with the pool: a
+   plain-English rule, the routing, the dimensions it reads (D106), and
+   the steps or chats you read it from. The service checks it and refuses
+   rather than guesses; nobody confirms it (D107). What the chats do not
+   say: never guess; ask Josh one plain-English question.
 2. `playbook(client_tag)`. The living how-we-build for this client: every
    list build, disqualification and method change in chronological order,
    plus transcript object names in `list-build-transcripts`. Then
@@ -55,15 +59,17 @@ LeadPipe → Smartlead**. They never enter this context.
    `export_contacts` into chat, never `get-dataset-items`, never
    `find_dms_by_title`, never read a CSV. You end with a signed file URL
    or a `schema.table` name.
-4. `topup(client_tag, lane, source)` (or `campaign_id`, which points at
-   its lane) then `job(job_id)` until
-   `quoted`. Say to the approver the answer names: "`N` new leads with an
+4. `topup(client_tag, lane, source, split)` (or `campaign_id`, which
+   points at its lane; `split` is how the chats split the lane, step 1)
+   then `job(job_id)` until `quoted`. Say to the approver the answer names: "`N` new leads with an
    email for lane X after everything you hold and unsubscribes, plus `M`
    more with no email that the finder will look up; up to `$X` (website ICP
    check, email finder, verification)." Only the emails it finds are
    verified and loaded (D103). Under 1,000 new the answer says so: tell
    them it is under the floor (D46); they decide (D102). If the service
-   says the split cannot be determined, stop and tell Josh; do not guess.
+   refuses the split (a campaign not on the lane, a dimension it cannot
+   read, no split passed), fix what it names from the chats or ask Josh
+   one plain question; do not guess.
 5. When the approver says yes: `topup(job_id, approved_by="their name")`.
    Only the names the service lists count. `job(job_id)` until `done`.
    If it answers `waiting_approval` with a higher number, say that number

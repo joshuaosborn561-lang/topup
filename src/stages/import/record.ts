@@ -23,7 +23,10 @@ export async function writeTopupRecord(
     `Pool handed over by Grokbot as ${settings.source.kind === "file_url" ? `${settings.source.urls.length} file(s)` : `table ${settings.source.table}`}, replaying this campaign's recorded build. ` +
     `Ingested ${Number(c.rows_claimed ?? 0)}; already held by the client ${Number(c.held ?? 0)}; unsubscribed or on the DNC list ${Number(c.suppressed ?? 0)}; duplicates ${Number(c.deduped ?? 0)}; ` +
     `ICP website check passed ${Number(c.icp_passed ?? 0)}, flagged ${Number(c.icp_flagged ?? 0)}; verified sendable ${Number(c.verified ?? 0)}; staged ${Number(c.staged ?? 0)}; imported ${Number(counts.imported ?? 0)}. ` +
-    `Spend ${(spend / 100).toFixed(2)} USD. Same method as the record above; nothing widened.`;
+    `Spend ${(spend / 100).toFixed(2)} USD. Same method as the record above; nothing widened.` +
+    (settings.scope === "lane" && settings.split_rule
+      ? ` Split across ${settings.campaign_ids.map((id) => `#${id}`).join(", ")} the way the chats split them, as Grokbot read them${settings.split_from.length ? ` (from ${settings.split_from.join("; ")})` : ""}: ${settings.split_rule}`
+      : "");
   const { rows } = await repo.raw().query<{ id: number }>(
     `insert into topup.list_build_records (client_tag, campaign_ids, lanes, narrative, transcript_path, transcript_format, spend_cents, yield_by_step, session_date, written_by, provenance_confidence)
      values ($1, $2::bigint[], $3::text[], $4, null, 'md', $5, $6::jsonb, current_date, 'leadtopup', 'service_topup')
