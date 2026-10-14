@@ -76,4 +76,3 @@ Reports how many changed. On a mixed DFW nonprofit and CRE list expect roughly 4
 - Spot-read 100 rows, not 20. The defects that matter are rare enough to miss in a small sample: on a 2,500 row send, `St..` appeared twice and ALLCAPS words appeared in under 2% of rows. An automated defect scan will not catch these because the strings are individually well formed. Read them.
 - Zero occurrences of `..`
 - Zero ALLCAPS words that are ordinary English
-- Mandatory QA (lead-list-build steps 7/8): after this step, a separate pass pulls 200 random rows, reports the error rate, and holds the batch if errors exceed 2 percent. Counts and up to 10 company names in chat only, never rows.

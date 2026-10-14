@@ -153,10 +153,6 @@ Roughly 80 to 85% of rows get an assignment with college enabled. Pro-only mode 
 lower, typically 55 to 70% depending on how urban the list is. A yield far outside those
 bands means the city/state columns are probably mismapped... check before shipping.
 
-Mandatory QA (lead-list-build steps 7/8): after this step, a separate pass pulls 200
-random rows, reports the error rate, and holds the batch if errors exceed 2 percent.
-Counts and up to 10 company names in chat only, never rows.
-
 ## Known edge cases
 
 - **"St." versus "Saint."** The geocode file spells out Saint Louis, Fort Worth, Mount

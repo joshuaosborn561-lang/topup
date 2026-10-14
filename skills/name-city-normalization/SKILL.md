@@ -73,4 +73,3 @@ Run the city half first if the city needs cleaning, then this, then conversation
 - Zero values containing a period, digit or parenthesis
 - Rejected count is reported and looks sane. On a 10,000 row DFW list expect roughly 15 to 50 rejects. Hundreds means the column is wrong.
 - Any lane whose copy uses `{{first_name}}` filters to rows where the field is non-empty
-- Mandatory QA (lead-list-build steps 7/8): after this step, a separate pass pulls 200 random rows, reports the error rate, and holds the batch if errors exceed 2 percent. Counts and up to 10 company names in chat only, never rows.

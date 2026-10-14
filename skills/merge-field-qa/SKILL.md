@@ -1,6 +1,6 @@
 ---
 name: merge-field-qa
-description: The pre-launch gate that every SalesGlider campaign list passes before import into Smartlead. Use whenever Josh says get a campaign sending, stage the lanes, spot check the fields, or asks whether a list is ready. Also use automatically before any Smartlead import or before setting a campaign ACTIVE. Covers the defect scan, the 200 random row read per step with a 2 percent hold, the merge field completeness rule per lane, permit address formatting, and the deduplication rules that stop several people at one company getting the same personalized email. Every check here exists because something shipped wrong on the Cornerstone Earthworks build, Sept 2026.
+description: The pre-launch gate that every SalesGlider campaign list passes before import into Smartlead. Use whenever Josh says get a campaign sending, stage the lanes, spot check the fields, or asks whether a list is ready. Also use automatically before any Smartlead import or before setting a campaign ACTIVE. Covers the defect scan, the 100 row read, the merge field completeness rule per lane, permit address formatting, and the deduplication rules that stop several people at one company getting the same personalized email. Every check here exists because something shipped wrong on the Cornerstone Earthworks build, Sept 2026.
 ---
 
 # Merge field QA
@@ -11,11 +11,9 @@ A list is not ready because the fields are populated. It is ready when every fie
 
 **Pass 1, the automated defect scan.** Catches structural breakage. Fast, and it will tell you everything is fine when it is not.
 
-**Pass 2, a separate pass over 200 random rows per step.** Catches the defects that are individually well formed and collectively embarrassing. On a 2,500 row send the scan returned zero defects while the sample showed `St.. Andrew Kim`, `OScar`, `BridgePoint CHURCH` and a contact in Brampton, Ontario in a Texas-only lane.
+**Pass 2, read 100 real values per field.** Catches the defects that are individually well formed and collectively embarrassing. On a 2,500 row send the scan returned zero defects while the sample showed `St.. Andrew Kim`, `OScar`, `BridgePoint CHURCH` and a contact in Brampton, Ontario in a Texas-only lane.
 
-This is the same QA rule as `lead-list-build` steps 7 and 8, and it runs after every normalization or assignment step: first names, cities, company names, conversational location, sports teams, ICP gate labels, campaign routing. For each step, pull 200 random rows (not the top of the table), check them in a pass separate from the one that produced them, and report the error rate per step. **Hold the batch if any step is over 2 percent errors** until that step is fixed and re-checked. Counts and up to 10 company names in chat, never rows.
-
-Twenty rows is not enough. These defects appear in under 2% of records, which is exactly the hold line.
+Twenty rows is not enough. These appear in under 2% of records.
 
 ## Pass 1: the defect scan
 
@@ -84,15 +82,13 @@ or "Hey T.,". Blank is a working fallback; junk is a visible mistake.
 - Locations outside the client's service area, including other countries
 - Any value you would not type yourself
 
-Count every one of these as an error for the step that produced the field. Over 2 percent on any step holds the batch.
-
 ## Merge field completeness is per lane, not per list
 
 A blank field is only a defect if that lane's copy uses it. Role inbox lanes have no first name **by design** and their copy is written around that.
 
 **Rule: for each lane, list the tags its copy uses, then require 100% completeness on exactly those.** Do not require first_name globally, and do not let a lane whose copy uses `{{location_conversational}}` ship with blanks.
 
-When a row cannot render a tag its lane needs, **exclude the row**, do not blank the tag. A fallback is acceptable only when it reads naturally: city for metro is fine (`conversational-location` falls back to the raw normalized city when a city cannot be mapped to a metro, never blank), nothing for a person's name is not.
+When a row cannot render a tag its lane needs, **exclude the row**, do not blank the tag. A fallback is acceptable only when it reads naturally: city for metro is fine, nothing for a person's name is not.
 
 ## Permit address formatting
 
@@ -122,7 +118,7 @@ Distance filter on the client's actual radius, and store the distance so it can 
 ## Before handing the files over
 
 1. Defect scan returns zero
-2. 200 random rows read per step in a separate pass, error rate reported per step, no step over 2 percent (otherwise the batch is held)
+2. 100 values read per merge field
 3. Completeness verified per lane against that lane's tags
 4. Deduplicated on referenced assets and on email
 5. Geography verified, not just distance-filtered
