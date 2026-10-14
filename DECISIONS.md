@@ -129,6 +129,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D107 | Live; the split read from the lane's build transcript is the truth the way the build is: it quotes and loads on its own, the D106 confirmation step is removed; what the transcript does not say waits at the route step or is one plain question to Josh |
 | D108 | Live; nothing stored decides a lane's split: Grokbot reads the lane's build transcript and the process chats, works out the split, and passes it on `topup` with the pool (rule, routing, dimensions, from); the service checks it against the lane and never reads a split from a record or the registry; the nine transcript-split records were deleted; Cayden is an approver |
 | D109 | Live; no recipe anywhere: the build is the transcripts and the tools they use. The skill copies, the QA rule table, the registry's stored cells, the gift word and two dead numbers are out of the repo; the job settings table is renamed (`topup.job_settings`, key `settings_id`); what the chats do not say is one plain question to Josh |
+| D110 | Live; the service is retired: the repo is the Grokbot instructions, the list of MCPs and the map of the data on Supabase. No code, no stored rule, no recipe. Grokbot reads the transcripts and calls the same MCPs; the service's tables stay in place, unread |
 
 ---
 
@@ -3696,3 +3697,35 @@ in the database, unread. It does not change a canon number, who
 approves, or what the referee stages do to a pool.
 
 **Guard.** `src/guards/d109_no_recipe.test.ts`. Ask Josh.
+
+## D110 — Strip it: instructions, MCPs and the data, nothing else
+
+**Decision.** The `leadtopup` service is retired. This repo is three
+things: the Grokbot standing orders (`skills/grok-bot-babysitter`), the
+list of MCPs with their addresses (`skills/MCP_SERVERS.md`,
+`docs/servers.md`), and the map of where leads, campaigns and transcripts
+live on Supabase (`docs/supabase.md`). Grokbot reads how a campaign's
+list was built, calls the same servers the transcript used, removes
+everyone the client already holds in SQL, waits for a named yes before
+anything paid, verifies, splits the lane the way the transcript did,
+loads with the Smartlead server, and writes one row to
+`list_build_records`. The hard rules (no rows in chat, a named yes
+before spend, never touch a campaign's status, only
+campaignintelligence) live in the standing orders.
+
+The source, the migrations, the guards and the canon page leave the
+tree; git history keeps them. The service's tables stay in the database,
+unread, until Josh says to drop them. The Railway service is for Josh to
+delete (its variables hold the API keys).
+
+**Why.** Josh, 14 Oct 2026: "all this should be is the instructions for
+how GrokBot should use it, and then a list of all the MCPs and the
+Supabase file that lists all the leads and transcripts. I don't want any
+more bloat in there." Then: "strip it." Every rule removed since D106
+left a service that still had to be told what the chats said, and that
+telling was the bloat.
+
+**What it does not do.** It does not change any vendor server, any lead
+table, or any transcript. It does not give Grokbot a new tool.
+
+**Guard.** None: there is no build. Ask Josh before adding one.
