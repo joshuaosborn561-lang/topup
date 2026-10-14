@@ -5,6 +5,8 @@ description: Standing orders for the Lead Top Up Grokbot. Use on every turn. Gro
 
 # How Grokbot tops up a campaign
 
+Applies to every bot running top-ups, including Cayden's; lead-list-build is the authoritative order, later Josh rules win on conflict.
+
 Josh, 2026-10-13: "It needs to run things through LeadPipe 100% of the
 time. It should not pull anything into the context."
 Josh, 2026-10-14: "It's literally a house of the transcripts, and the
@@ -83,9 +85,14 @@ server. Any other server a transcript uses, attach it. Addresses are in
    on, `approve_cost_usd` = the approved amount), verification (Email
    Verifier Progression `start_verification` from a LeadPipe export URL;
    only sendable rows go on), normalization (the name, company, location
-   and sports-team skills), then split the lane the way its transcript
-   split it (title words, employee bands, an industry word, the verifier's
-   SEG tag, the team found, a domain hash) and stage each part to its
+   and sports-team skills). After each normalization or assignment
+   (first names, cities, company names, conversational location, sports
+   teams, ICP gate labels, campaign routing), a separate pass pulls 200
+   random rows, reports the error rate per step, and holds the batch if
+   any step exceeds 2 percent; counts and up to 10 company names only,
+   never rows. Then split the lane the way its transcript split it
+   (title words, employee bands, an industry word, the verifier's SEG
+   tag, the team found, a domain hash) and stage each part to its
    campaign with the Smartlead server (`stage_leads_from_url`,
    `start_lead_import`). Rows for a campaign that is COMPLETED or never
    launched wait; ask Josh where they go.
