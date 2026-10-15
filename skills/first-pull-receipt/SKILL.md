@@ -30,10 +30,10 @@ insert into topup.pull_receipts (
 ) values (
   'claude', 'parlay', 418274, 'it_dm_tickets', '{3847839,3847846}',
   'linkedin_native', 'it_dm', 'getleads',
-  '{"job_titles":["IT Director","CIO"],"company_size":["11 to 50","51 to 200"],"countries":["United States"],"email_status":["VALID"],"max_per_company":3}'::jsonb,
+  '{"job_titles":["IT Director","CIO"],"company_size":["11 to 50","51 to 200"],"countries":["United States"],"max_per_company":3}'::jsonb,
   'already', 'getleads', 'getleads', null,
   400, 380, 16000,
-  'getleads count then export on IT DM titles, those two bands, VALID only. Person and email came on the export. Loaded the two team campaigns.',
+  'getleads count then export on IT DM titles, those two bands. Person and email came on the export. Loaded the two team campaigns.',
   null,
   '{"band":["11_50","51_200"],"mail_class":["OTHER"],"gift":"tickets","offer_key":["eos"]}'::jsonb,
   '{"companies":null,"with_domain":400,"with_person":400,"with_email":400,"verified_sendable":385,"imported":380}'::jsonb,
