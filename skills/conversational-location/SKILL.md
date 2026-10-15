@@ -60,3 +60,4 @@ The `{{location_conversational}}` merge tag, in lines like "if you own ground ar
 - The top label is a metro name, not a city name
 - Spot-check five known cities: Plano, Frisco, Arlington and Rockwall should all read DFW
 - Every row in a lane using the merge tag has a non-empty value
+- Spot-read 200 random rows in a separate pass while the next pipeline step runs (`merge-field-qa`). Josh's 2 percent hold applies before Smartlead import only, never mid-pipeline.

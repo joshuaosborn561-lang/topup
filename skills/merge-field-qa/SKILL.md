@@ -1,6 +1,6 @@
 ---
 name: "merge-field-qa"
-description: "The pre-launch gate that every SalesGlider campaign list passes before import into Smartlead. Use whenever Josh says get a campaign sending, stage the lanes, spot check the fields, or asks whether a list is ready. Also use automatically before any Smartlead import or before setting a campaign ACTIVE. Covers the defect scan, the 200 random row read per step with a 2 percent hold, the merge field completeness rule per lane, permit address formatting, and the deduplication rules that stop several people at one company getting the same personalized email. Every check here exists because something shipped wrong on the Cornerstone Earthworks build, Sept 2026."
+description: "The pre-launch gate that every SalesGlider campaign list passes before import into Smartlead. Use whenever Josh says get a campaign sending, stage the lanes, spot check the fields, or asks whether a list is ready. Also use automatically before any Smartlead import or before setting a campaign ACTIVE. Covers the defect scan, the 200 random row read per step scored in parallel with the next step (a 2 percent hold blocks import only, never mid-pipeline; ICP counts false passes only), the merge field completeness rule per lane, permit address formatting, and the deduplication rules that stop several people at one company getting the same personalized email. Every check here exists because something shipped wrong on the Cornerstone Earthworks build, Sept 2026."
 ---
 
 # Merge field QA
@@ -13,7 +13,9 @@ A list is not ready because the fields are populated. It is ready when every fie
 
 **Pass 2, a separate pass over 200 random rows per step.** Catches the defects that are individually well formed and collectively embarrassing. On a 2,500 row send the scan returned zero defects while the sample showed `St.. Andrew Kim`, `OScar`, `BridgePoint CHURCH` and a contact in Brampton, Ontario in a Texas-only lane.
 
-This is the same QA rule as `lead-list-build` steps 7 and 8, and it runs after every normalization or assignment step: first names, cities, company names, conversational location, sports teams, ICP gate labels, campaign routing. For each step, pull 200 random rows (not the top of the table), check them in a pass separate from the one that produced them, and report the error rate per step. **Hold the batch if any step is over 2 percent errors** until that step is fixed and re-checked. Counts and up to 10 company names in chat, never rows.
+This is the same QA rule as `lead-list-build` steps 7, 8 and 11, and it runs after every normalization or assignment step: first names, cities, company names, conversational location, sports teams, ICP gate labels, campaign routing. For each step, pull 200 random rows (not the top of the table) and check them in a pass separate from the one that produced them **while the next pipeline step runs**. Report the error rate per step when the sample finishes. **Josh's rule: hold if any step is over 2 percent errors** until that step is fixed and re-checked. The hold is only before Smartlead import / upload. Do not pause fetch, grade, people, email, verify, normalize, purge, route, or stage for a sample. Counts and up to 10 company names in chat, never rows.
+
+**ICP gate sample uses its own bar.** Count only false passes (a company that is not the buyer, marked `icp_gate = yes`) against the 2 percent line. Track false cuts (a real buyer marked `no`) separately and report both; do not add them into the hold rate. Every other step still counts every wrong value.
 
 Twenty rows is not enough. These defects appear in under 2% of records, which is exactly the hold line.
 
@@ -84,7 +86,7 @@ or "Hey T.,". Blank is a working fallback; junk is a visible mistake.
 - Locations outside the client's service area, including other countries
 - Any value you would not type yourself
 
-Count every one of these as an error for the step that produced the field. Over 2 percent on any step holds the batch.
+Count every one of these as an error for the step that produced the field. Over 2 percent on any non-ICP step holds import, not the rest of the pipeline. The ICP sample counts false passes only (see above).
 
 ## Merge field completeness is per lane, not per list
 
@@ -122,7 +124,7 @@ Distance filter on the client's actual radius, and store the distance so it can 
 ## Before handing the files over
 
 1. Defect scan returns zero
-2. 200 random rows read per step in a separate pass, error rate reported per step, no step over 2 percent (otherwise the batch is held)
+2. 200 random rows read per step in a separate pass, scored in parallel with the next step, error rate reported per step, no non-ICP step over 2 percent and ICP false-pass rate not over 2 percent (otherwise import is held; the rest of the pipeline already ran)
 3. Completeness verified per lane against that lane's tags
 4. Deduplicated on referenced assets and on email
 5. Geography verified, not just distance-filtered

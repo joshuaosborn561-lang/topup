@@ -73,3 +73,4 @@ Run the city half first if the city needs cleaning, then this, then conversation
 - Zero values containing a period, digit or parenthesis
 - Rejected count is reported and looks sane. On a 10,000 row DFW list expect roughly 15 to 50 rejects. Hundreds means the column is wrong.
 - Any lane whose copy uses `{{first_name}}` filters to rows where the field is non-empty
+- Spot-read 200 random rows in a separate pass **while the next pipeline step runs** (`merge-field-qa`). Report the error rate. Josh's 2 percent hold applies before Smartlead import only, never mid-pipeline.
