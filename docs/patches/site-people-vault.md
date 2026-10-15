@@ -1,7 +1,10 @@
 # Patch: move site-people HTTP key into the vault (D111)
 
 Live function: `site-people` v5 on project `azpapwtnrbzywlnxxecz` only.
-Not in any GitHub repo. Do not deploy from this PR.
+Patched source is `supabase/functions/site-people/index.ts`. Do not
+deploy from this PR. Create vault secret `site_people_key` first
+(the live `k=` value, not in git), then deploy that file after Josh
+says to.
 
 The function currently has a hardcoded `const KEY = '…'` compared to
 the incoming `k=` query param. Gemini and OpenRouter keys already
