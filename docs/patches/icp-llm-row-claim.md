@@ -1,10 +1,11 @@
 # Patch: icp-llm row claiming (D111)
 
 Live function: `icp-llm` v12 on project `azpapwtnrbzywlnxxecz` only.
-Not in any GitHub repo. Do not deploy from this PR. Apply by hand
-with the Supabase dashboard or `deploy_edge_function` after Josh
-says to, then bump the skill text that still says "until the
-claiming patch is live".
+Patched source is `supabase/functions/icp-llm/index.ts`. Do not
+deploy from this PR. After Josh says to, deploy that file and bump
+the skill text that still says "until the claiming patch is live".
+Hard cap is 5 copies (`MAX_COPIES` plus an advisory lock). HTTP `k=`
+is function secret `ICP_LLM_HTTP_KEY` (the live gate; not in git).
 
 ## Why
 

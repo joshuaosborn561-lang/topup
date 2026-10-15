@@ -997,10 +997,11 @@ Three edge functions on campaignintelligence, written for the
   writes `client_salesglider.icp_llm_results` keyed `(domain, model)`
   with `fit`, `prob`, the label in `reason` and the raw answer. Returns
   `{processed, errors, last_error, remaining}`. Live v12 still does not
-  claim rows (one call at a time per batch). Patch
-  `docs/patches/icp-llm-row-claim.md` adds `FOR UPDATE SKIP LOCKED` plus
-  an `in_progress` lease so 3 to 5 copies can run; a restart skips
-  finished results and live leases. About $0.11 per 1,000 sites.
+  claim rows (one call at a time per batch). Deploy
+  `supabase/functions/icp-llm/index.ts` after Josh says to: `FOR UPDATE
+  SKIP LOCKED` plus an `in_progress` lease so 3 to 5 copies can run
+  (hard cap 5). A restart skips finished results and live leases.
+  About $0.11 per 1,000 sites.
   Variants are label sets in the function; a new client needs one
   written there and a row in `topup.icp_variants` before the first run.
   TechEvo has no set of its own: park, do not invent.
@@ -1032,7 +1033,7 @@ One edge function on campaignintelligence, written for `site_check`'s
 `people` question (D72). Live v5 already claims fetch / extract / ask
 with expiring leases. The HTTP `k=` value is moving from a hardcoded
 string in the function source into vault secret `site_people_key`
-(`docs/patches/site-people-vault.md`). Never commit the value. Three
+(`supabase/functions/site-people/index.ts`). Never commit the value. Three
 modes, all over `topup.site_people_text`, all returning counts:
 
 * `site-people?k=&mode=fetch&batch=&n=&w=` reads the homepage plus up to

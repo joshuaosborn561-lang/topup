@@ -2,7 +2,7 @@
 
 Goal: a SalesGlider client top-up (`lead-list-build`, 13 steps) in
 about 30 minutes. This repo holds the skill text and the edge-function
-patches. The email finder code lives in
+source to deploy after Josh says. The email finder code lives in
 `joshuaosborn561-lang/email-waterfall`.
 
 Do not merge until Josh says to. Do not deploy edge functions from
@@ -21,8 +21,12 @@ this PR.
 - ICP variants must exist before the gate. TechEvo parks; do not invent
   a label set.
 - `DECISIONS.md` D111.
-- Patches (not deployed): `docs/patches/icp-llm-row-claim.md`,
-  `docs/patches/site-people-vault.md`, `docs/patches/site-dm-pick-filters.md`.
+- Deployable source (not deployed from this PR):
+  `supabase/functions/icp-llm/index.ts` (claiming + hard cap 5),
+  `supabase/functions/site-people/index.ts` (HTTP `k=` from vault
+  `site_people_key`), and
+  `supabase/migrations/20261015220000_site_dm_pick_standard_filters.sql`.
+  Patch notes stay in `docs/patches/`.
 
 Copy the skill text into Claude. A daily Routine copies Claude skills
 back into `skills/` and will overwrite these files if Claude still has
@@ -61,15 +65,18 @@ that repo at `main` @ `65a181d` and open the PR there.
    merge. Confirm `COMPANY_CONCURRENCY` is 20–50 (default 40). GetLeads
    stays at about 4 concurrent; Smartlead at 3. Pass `approve_cost_usd`
    on every paid `enrich_waterfall`.
-3. **Vault `site_people_key`.** Follow `docs/patches/site-people-vault.md`
-   in the dashboard. Do not put the value in git. Then deploy the
-   `site-people` source from that patch.
-4. **`icp-llm` claiming.** Follow `docs/patches/icp-llm-row-claim.md`,
-   then deploy. After that, 3 to 5 `icp-llm` calls per batch are
-   allowed; until then, one at a time.
-5. **`topup.site_dm_pick` filters.** Follow
-   `docs/patches/site-dm-pick-filters.md`, or keep applying them in
-   SQL after the view as the skill says.
+3. **Vault `site_people_key`.** Create it in the dashboard (paste the
+   live `k=` once; not in git). Confirm `present` and length only.
+   Then deploy `supabase/functions/site-people/index.ts`.
+4. **`icp-llm` claiming.** Set function secret `ICP_LLM_HTTP_KEY` to
+   the live `k=` (not in git). Deploy `supabase/functions/icp-llm/index.ts`.
+   After that, 3 to 5 `icp-llm` calls per batch are allowed, never more
+   than 5; until then, one at a time.
+5. **`topup.site_dm_pick` filters.** Apply
+   `supabase/migrations/20261015220000_site_dm_pick_standard_filters.sql`
+   on `azpapwtnrbzywlnxxecz` only. History / old-year and plain-agent
+   filters move into the view. Franchise HQ and "name in site text"
+   stay in the post-view SQL the skill already runs.
 6. **TechEvo ICP.** Still parks. Josh writes JEV_Q / PASS and a
    `topup.icp_variants` row when he wants that gate to run. Do not
    invent it.
@@ -80,7 +87,6 @@ that repo at `main` @ `65a181d` and open the PR there.
 - Apply production SQL except as files in PRs.
 - Merge any PR.
 - Invent a TechEvo label set.
-- Edit `topup.site_dm_pick` in git (the view is only on Supabase).
 - Guarantee the Claude daily sync keeps the skill text; copy it there.
 - Push to `joshuaosborn561-lang/email-waterfall` (403). Patch files are
   in `docs/patches/` for someone with write access to apply.

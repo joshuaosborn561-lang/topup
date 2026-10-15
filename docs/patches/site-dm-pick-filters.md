@@ -1,9 +1,12 @@
 # Patch: standard site-people name-pick filters (D111)
 
-`topup.site_dm_pick` is a view on project `azpapwtnrbzywlnxxecz`. It
-is not in this repo. Until the view is updated, the Grok Bot babysitter
+`topup.site_dm_pick` is a view on project `azpapwtnrbzywlnxxecz`.
+The rewrite is `supabase/migrations/20261015220000_site_dm_pick_standard_filters.sql`.
+Do not apply it until Josh says to. Until then, the Grok Bot babysitter
 applies the same filters in SQL after reading the view, every run,
-as `skills/site-people-dm` says.
+as `skills/site-people-dm` says. After the migration, history / old-year
+and plain-agent filters live in the view; franchise HQ and "name in
+site text" stay post-view.
 
 ## Drop these picks
 
