@@ -57,7 +57,7 @@ If the upload fails, the record is not done. Report the failure plainly and stop
 Free prose, not a fixed form. Write whatever a smart newcomer who has only this record would need to rebuild more of the same list the way you did. There is no template to fill; cover what actually mattered this session. Things that usually matter:
 
 - **Source(s)** and why them: getleads, Maps, PermitStack, parcels, a signal, a handed table.
-- **The exact filters as actually sent** to each tool, not a tidied version: band labels like `["51 to 200"]`, `email_status ["VALID"]`, geography, industries (validated against the catalog), `max_per_company`, the `where` clauses, the query shapes. If a filter was wrong at first and corrected, say both.
+- **The exact filters as actually sent** to each tool, not a tidied version: band labels like `["51 to 200"]`, geography, industries (validated against the catalog), `max_per_company`, the `where` clauses, the query shapes. No `email_status` filter is used. If a filter was wrong at first and corrected, say both.
 - **The order of steps** and which gates you waited on.
 - **What you rejected and why**: widenings you chose not to do, titles you purged, industries you held or rerouted, a vendor tier you skipped.
 - **Rules applied by eye**: the judgment calls that are not written in any filter ... "dropped anything that looked like a franchise HQ", "kept only rooftops with a real site", "treated two-person shops as out".
@@ -198,7 +198,7 @@ insert into topup.list_build_records (
   spend_cents, yield_by_step, session_date
 ) values (
   'parlay', '{3847839,3847846}', '{512,513}', '{it_dm_tickets}',
-  'Source was getleads only, LinkedIn-native lane. Sized first with job_functions + seniority (not short title lists, which undercount ~4x here), got ~5,700 in the real TAM. Pulled on IT DM titles, bands ["11 to 50","51 to 200"], countries ["United States"], email_status ["VALID"], max_per_company 3. VALID is a quality filter only; everything still went through Email Verifier Progression, so do not read the VALID count as the pool size. Rejected a widening to COO/CTO (ICP was corrected to IT DMs only in Aug). Held two banks/credit-union companies off the gift lane. Dead end: tried AI Ark people discovery on ~40 getleads company misses, titles came back wrong (first-person-at-domain problem), dropped them. Spend was the verifier only. Unsure: the ~5,700 TAM is soft, counted once.',
+  'Source was getleads only, LinkedIn-native lane. Sized first with job_functions + seniority (not short title lists, which undercount ~4x here), got ~5,700 in the real TAM. Pulled on IT DM titles, bands ["11 to 50","51 to 200"], countries ["United States"], max_per_company 3. No email_status filter is used. Rejected a widening to COO/CTO (ICP was corrected to IT DMs only in Aug). Held two banks/credit-union companies off the gift lane. Dead end: tried AI Ark people discovery on ~40 getleads company misses, titles came back wrong (first-person-at-domain problem), dropped them. Spend was the verifier only. Unsure: the ~5,700 TAM is soft, counted once.',
   'parlay/20261010_it_dm_tickets.jsonl', 'jsonl',
   650,
   '{"companies":null,"with_domain":400,"with_person":400,"with_email":400,"verified_sendable":385,"imported":380}'::jsonb,
