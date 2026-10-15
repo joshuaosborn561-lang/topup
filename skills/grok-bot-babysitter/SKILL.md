@@ -81,23 +81,34 @@ server. Any other server a transcript uses, attach it. Addresses are in
    looks exhausted; they decide. Nothing paid runs until Josh or Cayden
    says yes to that count and that cost, by name. Nobody else's yes counts.
 
-6. **After the yes, in this order.** The website ICP check
-   (`icp-website-gate`), the email finder for the rows with no email
-   (Email Finder Waterfall `enrich_waterfall` on the table, `writeback`
-   on, `approve_cost_usd` = the approved amount), verification (Email
-   Verifier Progression `start_verification` from a LeadPipe export URL;
-   only sendable rows go on), normalization (the name, company, location
-   and sports-team skills). After each normalization or assignment
-   (first names, cities, company names, conversational location, sports
-   teams, ICP gate labels, campaign routing), a separate pass pulls 200
-   random rows, reports the error rate per step, and holds the batch if
-   any step exceeds 2 percent; counts and up to 10 company names only,
-   never rows. Then split the lane the way its transcript split it
-   (title words, employee bands, an industry word, the verifier's SEG
-   tag, the team found, a domain hash) and stage each part to its
-   campaign with the Smartlead server (`stage_leads_from_url`,
-   `start_lead_import`). Rows for a campaign that is COMPLETED or never
-   launched wait; ask Josh where they go.
+6. **After the yes, in this order.** Confirm the client's ICP label
+   set exists in `topup.icp_variants` for this lane before touching the
+   website check; if it does not (TechEvo has none yet), park and tell
+   Josh — do not invent labels. Then: the website ICP check
+   (`icp-website-gate`; start the 200-row ICP sample in parallel, false
+   passes only against 2 percent), people from the company's site
+   (`site-people-dm`, with the standard name-pick filters every run),
+   the email finder for the rows with no email (Email Finder Waterfall
+   `enrich_waterfall` on the table, `writeback` on, `approve_cost_usd` =
+   the approved amount; 20 to 50 company workers, free providers first,
+   paid only on misses, claim rows so a restart does not re-spend),
+   verification (Email Verifier Progression `start_verification` from a
+   LeadPipe export URL; only sendable rows go on), normalization (the
+   name, company, location and sports-team skills). After each
+   normalization or assignment (first names, cities, company names,
+   conversational location, sports teams, ICP gate labels, campaign
+   routing), a separate pass pulls 200 random rows and scores them
+   **while the next step runs**. Report the error rate per step. Josh's
+   rule: hold if any non-ICP step exceeds 2 percent, but the hold is
+   only before Smartlead import, never mid-pipeline. ICP false cuts are
+   tracked separately and do not count against that 2 percent. Counts
+   and up to 10 company names only, never rows. Then split the lane the
+   way its transcript split it (title words, employee bands, an industry
+   word, the verifier's SEG tag, the team found, a domain hash) and
+   stage each part to its campaign with the Smartlead server
+   (`stage_leads_from_url`, `start_lead_import`). Do not import while a
+   sample is still open or while a hold stands. Rows for a campaign that
+   is COMPLETED or never launched wait; ask Josh where they go.
 
 7. **Write it down.** Insert one row in `topup.list_build_records` for the
    lane: the campaigns, counts at every step, spend, and in plain English

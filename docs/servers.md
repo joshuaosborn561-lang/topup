@@ -534,18 +534,27 @@ attached to this workspace.
 
 ### Jobs
 
-- Statuses `queued | running | completed | failed`; JSON under `data/jobs/` +
-  memory; daemon threads; no resume after restart; **no cancel**.
+- Statuses `queued | running | completed | failed | stopped_at_ceiling`; JSON under `data/jobs/` +
+  memory; daemon threads. After the claiming PR, a restart resumes unfinished
+  source rows (`wf_status` null, or `processing` with an expired
+  `wf_lease_until`); it does not re-scan `found` / `title_miss` / `not_found`.
+  **no cancel** still. Unprocessed claims are released on a ceiling stop, not
+  written `not_found`.
 - Finished = `completed` with per-tier `attempts / hits / credits`,
-  `suppressed_by_need` counts; `failed` with `error`.
+  `suppressed_by_need` counts; `failed` with `error`; `stopped_at_ceiling`
+  when `approve_cost_usd` would be exceeded.
 
 ### Rows
 
-- Table source paged **500** via `ew_read_source` (`email_waterfall/source.py:16,420-450`),
-  columns via `ew_source_columns`, writeback via `ew_patch_source`
-  (`source.py:606`), `ew_ensure_wf_writeback` adds the `wf_*` columns.
-- Writeback: `wf_status, wf_email, wf_email_status, wf_vendor, wf_updated_at`
-  plus `dl_status, candidate_email, dl_provider` on Peterson-style queues.
+- Table source paged **500** via `ew_read_source` for estimates
+  (`email_waterfall/source.py`). Paid runs with `writeback` claim through
+  `ew_claim_source` (`FOR UPDATE SKIP LOCKED`, `wf_status=processing`,
+  `wf_lease_until`, `wf_lease_owner`). 20–50 workers
+  (`COMPANY_CONCURRENCY`, default 40, cap 50). Fallback to the old
+  fetch-all path if the RPC is missing.
+- Writeback: `wf_status, wf_email, wf_email_status, wf_vendor, wf_updated_at`,
+  `wf_phone, wf_phone_type`, and clears `wf_lease_until` / `wf_lease_owner`.
+  Never `dl_status`, `candidate_email`, `dl_provider`.
 - FullEnrich bulk path truncates to `rows[:100]`
   (`email_waterfall/vendors/fullenrich.py:76`) — rows past 100 in a batch are
   silently never sent to FullEnrich.
@@ -569,7 +578,7 @@ at the default `max_tier`, which matches the non-negotiable. No PDL anywhere.
 | Zero-dollar accounting | **Confirmed** (`waterfall.py:875`). Credits are counted; dollars are not. |
 | Status errors on completed jobs | Refuted for known ids; unknown id raises rather than returning a status. |
 | Row-count truncation | FullEnrich `rows[:100]` silent truncation. Source paging is correct. |
-| Other | Orphaned jobs on restart. |
+| Other | Orphaned in-memory jobs on restart (source-row leases cover the spend). |
 
 ### Prerequisite PRs (Email Finder Waterfall)
 
@@ -577,6 +586,8 @@ at the default `max_tier`, which matches the non-negotiable. No PDL anywhere.
 2. Page the FullEnrich bulk call instead of slicing at 100 (or refuse > 100
    with a clear error).
 3. Add cancel; mark orphaned jobs on boot.
+4. **D111 (this change):** `ew_claim_source` + 20–50 workers + expiring
+   lease so a restart does not double-spend. Deploy from GitHub after merge.
 
 ---
 
@@ -985,10 +996,14 @@ Three edge functions on campaignintelligence, written for the
   has Jev (OpenRouter Decisions) pick one category per fetched site and
   writes `client_salesglider.icp_llm_results` keyed `(domain, model)`
   with `fit`, `prob`, the label in `reason` and the raw answer. Returns
-  `{processed, errors, last_error, remaining}`. It does not claim rows:
-  one call at a time per batch. About $0.11 per 1,000 sites. Variants
-  are label sets in the function (`choice`, `emcor2`, `deeproots`); a new
-  client needs one written there and a row in `topup.icp_variants`.
+  `{processed, errors, last_error, remaining}`. Live v12 still does not
+  claim rows (one call at a time per batch). Patch
+  `docs/patches/icp-llm-row-claim.md` adds `FOR UPDATE SKIP LOCKED` plus
+  an `in_progress` lease so 3 to 5 copies can run; a restart skips
+  finished results and live leases. About $0.11 per 1,000 sites.
+  Variants are label sets in the function; a new client needs one
+  written there and a row in `topup.icp_variants` before the first run.
+  TechEvo has no set of its own: park, do not invent.
 * `icp-disco-fallback?k=&mode=submit&batch=&icp=` sends the sites the
   fetch could not read to DiscoLike `validate/icp` and returns a
   `task_id`; `mode=collect&task=&batch=` polls it and writes the verdicts
@@ -996,9 +1011,10 @@ Three edge functions on campaignintelligence, written for the
   time.
 
 The database has a hard cap of 60 connections shared with the live Allo
-hooks; the service never runs more than three fetch calls or one Jev
-call at once. No cancel on any of the three; a batch that is abandoned
-simply stops being polled.
+hooks; never more than three fetch calls, and never more than five Jev
+calls once claiming is live (one until then). No cancel on any of the
+three; a batch that is abandoned simply stops being polled, and expired
+leases become claimable again.
 
 Leftover-negative AI (`classify_leftover`, D90 / D91) uses the same Jev
 OpenRouter Decisions path (`https://openrouter.ai/api/alpha/decisions`)
@@ -1013,9 +1029,11 @@ new vendor and no new Railway key.
 ## Site people (site-people)
 
 One edge function on campaignintelligence, written for `site_check`'s
-`people` question (D72). `src/clients/sitePeople.ts`. Key
-`SITE_PEOPLE_KEY` in Railway, passed as `k`. Three modes, all over
-`topup.site_people_text`, all returning counts:
+`people` question (D72). Live v5 already claims fetch / extract / ask
+with expiring leases. The HTTP `k=` value is moving from a hardcoded
+string in the function source into vault secret `site_people_key`
+(`docs/patches/site-people-vault.md`). Never commit the value. Three
+modes, all over `topup.site_people_text`, all returning counts:
 
 * `site-people?k=&mode=fetch&batch=&n=&w=` reads the homepage plus up to
   six people pages (team, leadership, staff, management, people, meet,

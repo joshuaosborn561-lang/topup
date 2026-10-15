@@ -5,7 +5,7 @@ description: "The SalesGlider Growth soup to nuts procedure for building or topp
 
 # Lead list build, soup to nuts
 
-Thirteen steps plus the gate at 5.5 and the receipt at 11.5. Steps 3 through 12 are mechanical and belong to the Grok Bot babysitter (`grok-bot-babysitter`; or to Claude when the bot is not running that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a step until its gate passes. Report every count as net useful output, never rows processed.
+Thirteen steps plus the gate at 5.5 and the receipt at 11.5. Steps 3 through 12 are mechanical and belong to the Grok Bot babysitter (`grok-bot-babysitter`; or to Claude when the bot is not running that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a paid or destructive step until its gate passes. The 200-row spot check is not a mid-pipeline gate: score it in a separate pass while the next step runs, and a fail holds only before Smartlead upload/import (step 11), never between fetch, grade, people, email, verify, or normalize. Report every count as net useful output, never rows processed.
 
 Rules that apply to every step: no lead rows in chat; counts and up to ten company names only; data moves server to server; estimate and get approval before any paid call (credit prices live in `grok-bot-babysitter` under Credit pricing; quote from there, do not invent rates); pass `client_tag` on every job; confirm the Supabase project before writing (`azpapwtnrbzywlnxxecz` campaign and lead data, `kemvxzhcxvynmoutwdrh` parcels, `klomihumrgwoixbzxypr` CRM); one session at a time on a client's tables. LeadMagic is out of the stack as of Oct 8 2026: never call it, and never let a waterfall job reach a LeadMagic tier.
 
@@ -56,9 +56,11 @@ Gate: report raw, removed by reason, net new. Net new is the number from here on
 
 ## Step 5.5. ICP website gate (code, near free, before anything paid)
 
-What: every distinct domain in the pull goes through our own site fetch plus Jev's category pick against the client's label set (skill `icp-website-gate`). Jev about $0.11 per 1,000 domains; DiscoLike fallback about $0.0038 per unreadable domain, plan for about 10% unreadable. That site-unreadable fallback is a different call from DiscoLike in the people finder. The client's variant is in `topup.icp_variants`; a client with several ICPs needs one variant per lane. A client with no label set parks until one is written, and every new label set gets a 50 site blind check by a separate agent on its first run. Write `icp_gate`, `icp_gate_label`, `icp_gate_at` on the rows; never delete.
-People after the gate: `site-people-dm` and `serp-dm-discovery` run first. DiscoLike in the people finder (`people-waterfall`) is optional; pass `skip_tiers=discolike` unless Josh asks for that tier.
-Gate: only `icp_gate = yes` moves on to verification, enrichment, routing and import. Show Josh the label counts; if one label swallows a big share, fix the label set before going further.
+What: every distinct domain in the pull goes through our own site fetch plus Jev's category pick against the client's label set (skill `icp-website-gate`). Jev about $0.11 per 1,000 domains; DiscoLike fallback about $0.0038 per unreadable domain, plan for about 10% unreadable. That site-unreadable fallback is a different call from DiscoLike in the people finder.
+**Label set is a hard precondition.** Before any `icp-site-fetch` or `icp-llm` call, read `topup.icp_variants` for this `client_tag` and lane. The row must name a JEV_Q / PASS variant written for that client's ICP, already in the live `icp-llm` function. A client with several ICPs needs one variant per lane. A client with no label set of its own parks until Josh writes one; do not invent labels, and do not reuse another client's variant as a stand-in. TechEvo has none yet: park the gate, do not invent a TechEvo set, do not run `itbuyer2` as if it were TechEvo's. Every new label set gets a 50 site blind check by a separate agent on its first run. Write `icp_gate`, `icp_gate_label`, `icp_gate_at` on the rows; never delete.
+Score the ICP gate sample in parallel with the next step (see Non-blocking 200-row QA below). The ICP bar counts only false passes (a bad company let through) against 2 percent; track false cuts (a good company cut) separately and tell Josh, but a high false-cut rate does not hold the batch on its own.
+People after the gate: `site-people-dm` and `serp-dm-discovery` run first. The EMCOR/site-people name-pick filters in `site-people-dm` are standard on every run, not EMCOR-only. DiscoLike in the people finder (`people-waterfall`) is optional; pass `skip_tiers=discolike` unless Josh asks for that tier.
+Gate: only `icp_gate = yes` moves on to verification, enrichment, routing and import. Show Josh the label counts; if one label swallows a big share, fix the label set before going further. Do not wait for the 200-row ICP sample to finish before people, email, or verify start.
 
 ## Step 6. Verify (code, paid, estimate first)
 
@@ -69,13 +71,13 @@ Gate: sendable count and reject rate reported. A reject rate far above the lane'
 ## Step 7. Normalize (code)
 
 What: four scripts, in this order, each writing a new column, never overwriting the raw one: `name-city-normalization` (first names and cities), `company-name-normalization` (conversational company names), `conversational-location` (Naperville to Chicagoland; a city that cannot be mapped to a metro (NO_GEOCODE) falls back to the raw normalized city, never blank), `sports-team-assignment` (MLB or NFL by distance, college fallback, pro only mode for education; ambiguous nicknames go null and route to the AirPods tier).
-Mandatory QA after each normalization or assignment step (first names, cities, company names, conversational location, sports teams, ICP gate labels from step 5.5, campaign routing from step 9): pull 200 random rows per step, check them by a separate pass, and report the error rate per step. Hold the batch if any step exceeds 2 percent errors until it is fixed. Never post rows in chat; counts and up to 10 company names only. The checks per field are in `merge-field-qa`.
-Gate: every merge field the copy uses is populated or the row is held.
+Start the 200-row sample for each normalization or assignment step as soon as that column is written (first names, cities, company names, conversational location, sports teams, ICP gate labels from step 5.5, campaign routing from step 9). Score it in a separate pass while the next step runs. Do not pause the pipeline for the sample. Never post rows in chat; counts and up to 10 company names only. The checks per field are in `merge-field-qa`.
+Gate: every merge field the copy uses is populated or the row is held. A sample over 2 percent wrong does not stop normalize, route, or stage; it holds import (step 11) until that step is fixed and re-checked.
 
 ## Step 8. QA (code purges silently, Cayden clears holds)
 
-What: purge junk titles, students, associates on PE lanes, retail, school districts, and verticals outside the ICP. Hold regulated industries on gift campaigns (banks, credit unions), acronym or broken company names, unresolved teams. Reroute nonprofits and churches to the EOS style offer, never to ticket analytics. The 200-row separate-pass QA from step 7 is the look before moving on; do not post rows.
-Gate: holds cleared or excluded; counts of purged and held reported. Error rate per QA'd step reported; hold the batch if any step is over 2 percent.
+What: purge junk titles, students, associates on PE lanes, retail, school districts, and verticals outside the ICP. Hold regulated industries on gift campaigns (banks, credit unions), acronym or broken company names, unresolved teams. Reroute nonprofits and churches to the EOS style offer, never to ticket analytics. The 200-row separate-pass samples from step 7 may still be scoring while this purge runs; do not wait on them, and do not post rows.
+Gate: holds cleared or excluded; counts of purged and held reported. Error rate per QA'd step reported when the sample finishes. Josh's rule stays: hold import if any non-ICP step is over 2 percent wrong. ICP uses its own bar (false passes only).
 
 ## Step 9. Route to campaign (code; Josh when copy is needed)
 
@@ -90,7 +92,8 @@ Gate: staged count equals routed count.
 ## Step 11. Import (code)
 
 What: Smartlead `start_lead_import` from staging (or `stage_leads_from_url`), in chunks. The only success test is `upload_count` equals submitted. A mismatch stops that campaign's import and is reported.
-Gate: counts match on every campaign.
+This is the first point a 200-row sample fail may block. If any non-ICP sample is over 2 percent wrong, or the ICP sample's false-pass rate is over 2 percent, do not import until that step is fixed and re-checked. Open samples must be finished and reported before the first `start_lead_import`.
+Gate: every sample is in, no hold stands, counts match on every campaign.
 
 ## Step 11.5. Write the pull receipt (code, or Claude when the Grok Bot babysitter is not running the lane)
 
@@ -113,6 +116,17 @@ Gate: receipt posted: campaign, imported, runway before and after, spend by vend
 ## Step 13. Flip active and watch day one (Josh)
 
 What: Josh sets the campaign ACTIVE by hand. Nothing automated ever starts, pauses, or stops a campaign. Watch bounces and interested replies (categories Interested and Meeting Request only, never raw reply rate) on the first sending day. Bounce over 5 percent on day one means stop and find the source.
+
+## Non-blocking 200-row QA
+
+Josh's hold rule is unchanged: more than 2 percent wrong holds the batch. What changed is *when* it holds.
+
+- After each step that writes a merge field or a gate label, pull 200 random rows (not the top of the table) and score them in a pass separate from the one that produced them.
+- Start the next pipeline step in the same session. Do not sit on a 200-row read while fetch, Jev, people, email, verify, or normalize could be running.
+- Report the error rate per step when the sample finishes. Counts and up to 10 company names only.
+- A fail blocks only before upload/import (step 11). It never blocks mid-pipeline.
+- ICP gate sample: count only false passes (junk let through as `icp_gate = yes`) against the 2 percent line. Track false cuts (`icp_gate = no` on a real buyer) as a separate rate and tell Josh; do not fold them into the hold line.
+- Every other sample (names, cities, company names, location, sports, routing) still counts every wrong value against 2 percent.
 
 ## Where a build stands
 

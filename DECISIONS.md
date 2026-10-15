@@ -130,6 +130,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D108 | Live; nothing stored decides a lane's split: Grokbot reads the lane's build transcript and the process chats, works out the split, and passes it on `topup` with the pool (rule, routing, dimensions, from); the service checks it against the lane and never reads a split from a record or the registry; the nine transcript-split records were deleted; Cayden is an approver |
 | D109 | Live; no recipe anywhere: the build is the transcripts and the tools they use. The skill copies, the QA rule table, the registry's stored cells, the gift word and two dead numbers are out of the repo; the job settings table is renamed (`topup.job_settings`, key `settings_id`); what the chats do not say is one plain question to Josh |
 | D110 | Live; the service is retired: the repo is the Grokbot instructions, the list of MCPs and the map of the data on Supabase. No code, no stored rule, no recipe. Grokbot reads the transcripts and calls the same MCPs; the service's tables stay in place, unread |
+| D111 | Live; a client top-up must finish in about 30 minutes: 200-row QA scores in parallel and holds only before import; ICP 2% counts false passes only; site-people name-pick filters are standard; ICP variants must exist before the gate (TechEvo parks, no invented labels); email finder claims rows with 20–50 workers; pipeline jobs use expiring leases so a restart does not re-scan |
 
 ---
 
@@ -3729,3 +3730,69 @@ telling was the bloat.
 table, or any transcript. It does not give Grokbot a new tool.
 
 **Guard.** None: there is no build. Ask Josh before adding one.
+
+## D111 — A client top-up finishes in about 30 minutes
+
+**Decision.** Three process changes so a SalesGlider client top-up
+(`lead-list-build`, thirteen steps) can run end to end in about half an
+hour. The Oct 15 2026 audit found the machines already fast (ICP fetch
+about 22k sites in 16 minutes, Jev about 18k rows in 3 minutes). Time
+went to blocking 200-row QA holds, a serial email finder, and restarts
+that re-scanned finished rows.
+
+1. **Non-blocking QA.** The 200-row spot check still runs, still in a
+   separate pass, still holds when more than 2 percent is wrong (Josh).
+   Scoring runs in parallel with the next step. A fail blocks only
+   before Smartlead upload/import, never mid-pipeline. The ICP gate has
+   its own bar: count only false passes (a bad company let through)
+   against 2 percent; track false cuts separately and tell Josh, do not
+   fold them into the hold line. EMCOR/site-people name-pick filters are
+   standard on every run: drop founder or any-role picks tied to an old
+   year or history page (including ranges like 1970-73, and `former`,
+   `originally`, `first pastor`); drop franchise HQ / national-company
+   domains (3 or more Maps listings, or no in-territory address); drop
+   plain real estate agents without broker/owner; drop names that are
+   not in the site text; then a cheap-model "is this the current local
+   decision maker" check. Client ICP label variants must be written in
+   `icp-llm` and `topup.icp_variants` before any ICP gate run. TechEvo
+   has no set of its own yet: park the gate, do not invent labels, do
+   not reuse another client's variant.
+
+2. **Parallel email finder.** Email Finder Waterfall
+   (`joshuaosborn561-lang/email-waterfall`, connector `email-waterfall`,
+   `enrich_waterfall`) processes names with 20 to 50 concurrent workers
+   (`COMPANY_CONCURRENCY`, default 40). Workers claim unfinished rows
+   (`FOR UPDATE SKIP LOCKED` plus an expiring `processing` lease). Free
+   providers run first (GetLeads, Smartlead); paid providers (AI Ark,
+   Prospeo, FullEnrich) run only on misses and short-circuit once
+   found. Per-provider rate limits, 429/error health, and failover stay
+   as they are. `approve_cost_usd` still stops the job cleanly
+   (`stopped_at_ceiling`) and releases unprocessed claims rather than
+   writing `not_found`. Target about 4,300 names in 10 to 15 minutes.
+
+3. **Checkpointing.** Every connector or edge-function job in this
+   pipeline (email finder, `icp-llm`, `icp-site-fetch`, `site-people`
+   fetch/extract/ask) claims rows with a processing lease that expires.
+   A restarted job resumes only unfinished rows: no re-scan of finished
+   work, no double spend. `icp-llm` today grades from an in-memory
+   queue with no claiming ("one at a time per batch"); after the patch
+   in `docs/patches/icp-llm-row-claim.md` it claims like `site-people`
+   extract, so 3 to 5 copies can run side by side. `icp-site-fetch` and
+   `site-people` already claim. The hardcoded HTTP key in `site-people`
+   moves into vault secret `site_people_key` on project
+   `azpapwtnrbzywlnxxecz` only (`docs/patches/site-people-vault.md`).
+   Never commit the secret value.
+
+**Why.** Josh, 15 Oct 2026: make a client top-up run end to end in
+<=30 min. The holds, the serial finder, and restart re-scans were the
+time, not the CPUs.
+
+**What it does not do.** It does not merge. It does not deploy
+`icp-llm` or `site-people` from this repo (those functions are not in
+GitHub; patches only). It does not invent a TechEvo ICP. It does not
+weaken Josh's 2 percent rule. It does not raise the 60-connection cap.
+It does not write lead rows to chat or put API keys in git.
+
+**Guard.** None in this repo (no build). Email-waterfall tests cover
+claim, lease expiry, ceiling-release, and free-then-paid short-circuit.
+Ask Josh before deploying the edge-function patches.
