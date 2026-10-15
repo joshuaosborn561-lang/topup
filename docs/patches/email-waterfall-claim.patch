@@ -1,0 +1,1123 @@
+diff --git a/README.md b/README.md
+index 91efe8b..6e7a428 100644
+--- a/README.md
++++ b/README.md
+@@ -112,7 +112,7 @@ Richer `source` object still works:
+ }
+ ```
+ 
+-`source` is read server-side with the service role, paged 500 rows at a time. Results still write `public.{client_tag}_wf_contacts`. Writeback patches `wf_*` only (`wf_status` / `wf_email` / `wf_vendor` / `wf_phone` / `wf_phone_type`). `wf_status` values: `found` (at least one contact written), `title_miss` (getleads returned contacts, none passed the title match), `not_found` (zero contacts). Never read or write `dl_status`, `sg_exclude`, or `skip_*`. Resume with `where: "wf_status is null"`.
++`source` is read server-side with the service role. Estimates page 500 rows. Paid `writeback` runs claim unfinished rows (`ew_claim_source`, `FOR UPDATE SKIP LOCKED`, 15 minute lease) with 20–50 workers (`COMPANY_CONCURRENCY`, default 40, cap 50). Free providers (GetLeads, Smartlead) run first; paid (AI Ark, Prospeo, FullEnrich) run only on misses and stop once an email is found. Results still write `public.{client_tag}_wf_contacts`. Writeback patches `wf_*` only (`wf_status` / `wf_email` / `wf_vendor` / `wf_phone` / `wf_phone_type`) and clears the lease. `wf_status` values: `found` (at least one contact written), `title_miss` (getleads returned contacts, none passed the title match), `processing` (live lease), `not_found` (zero contacts). A dollar ceiling (`approve_cost_usd`) stops the job and releases unprocessed claims — it does not stamp `not_found` on them. Never read or write `dl_status`, `sg_exclude`, or `skip_*`. Resume with `where: "wf_status is null"`; expired `processing` leases are claimed too. Apply migration `007_ew_claim_source.sql` on `azpapwtnrbzywlnxxecz` before deploying this code. If the RPC is missing, the job falls back to the old fetch-all path.
+ 
+ Smartlead 429 / rate-limit backs off and retries. It does not set `credits_exhausted` while used is still below total. Finder calls share one process-wide semaphore (default `SMARTLEAD_CONCURRENCY=3`), including across background jobs.
+ 
+diff --git a/email_waterfall/_wf/exec.py b/email_waterfall/_wf/exec.py
+index d9e9822..70760f7 100644
+--- a/email_waterfall/_wf/exec.py
++++ b/email_waterfall/_wf/exec.py
+@@ -1,6 +1,8 @@
+ from __future__ import annotations
+ 
++import os
+ import threading
++import uuid
+ from concurrent.futures import ThreadPoolExecutor, as_completed
+ from typing import Any
+ 
+@@ -276,6 +278,132 @@ def _enrich_waterfall_parallel(
+     )
+ 
+ 
++def _enrich_waterfall_claimed(
++    *,
++    client: ClientConfig,
++    need_norm: str,
++    max_tier_n: str,
++    titles: list[str],
++    require_title_match: bool,
++    write_supabase: bool,
++    wf: Waterfall,
++    progress_callback: ProgressCallback | None = None,
++    table_src: table_source.TableSource,
++    companies_total: int,
++    parallel: bool = True,
++) -> dict[str, Any]:
++    """Claim unfinished rows as workers go. Restart resumes expired leases only."""
++    from email_waterfall._wf.const import _norm_row
++
++    owner = f"ew:{os.getpid()}:{uuid.uuid4().hex[:12]}"
++    progress_lock = threading.Lock()
++    counters = {
++        "companies_done": 0,
++        "companies_upserted": 0,
++        "contacts_written": 0,
++        "emails_found": 0,
++        "dms_found": 0,
++        "phones_found": 0,
++    }
++
++    def _report() -> None:
++        if not progress_callback:
++            return
++        with progress_lock:
++            progress_callback(
++                _result_payload(
++                    parsed_count=companies_total,
++                    client=client,
++                    need_norm=need_norm,
++                    max_tier_n=max_tier_n,
++                    titles=titles,
++                    require_title_match=require_title_match,
++                    wf=wf,
++                    companies_upserted=counters["companies_upserted"],
++                    contacts_written=counters["contacts_written"],
++                    emails_found=counters["emails_found"],
++                    dms_found=counters["dms_found"],
++                    phones_found=counters["phones_found"],
++                    companies_done=counters["companies_done"],
++                    companies_total=companies_total,
++                )
++            )
++
++    def _process_claimed(raw: dict[str, Any]) -> None:
++        row = _norm_row(raw)
++        item = _enrich_one_row(
++            wf,
++            row,
++            need_norm=need_norm,
++            include_fullenrich=True,
++        )
++        upserted, written = _write_company_contact(
++            client, item, write_supabase=write_supabase
++        )
++        _maybe_writeback(table_src, item)
++        with progress_lock:
++            counters["companies_done"] += 1
++            counters["companies_upserted"] += upserted
++            counters["contacts_written"] += written
++            if item["email"]:
++                counters["emails_found"] += 1
++            if item["dm_tier"]:
++                counters["dms_found"] += 1
++            if item.get("phone"):
++                counters["phones_found"] += 1
++        _report()
++
++    def worker(initial: list[dict[str, Any]] | None = None) -> None:
++        pending = list(initial or [])
++        while not wf.stopped_at_ceiling:
++            if not pending:
++                pending = table_source.claim_source_rows(table_src, owner=owner, n=1)
++                if not pending:
++                    return
++            raw = pending.pop(0)
++            if wf.stopped_at_ceiling:
++                table_source.release_claims(
++                    table_src,
++                    owner=owner,
++                    keys=[raw.get("_source_key")],
++                )
++                return
++            _process_claimed(raw)
++
++    workers = company_concurrency() if parallel else 1
++    workers = max(1, workers)
++    seed = table_source.claim_source_rows(table_src, owner=owner, n=1)
++    try:
++        with ThreadPoolExecutor(max_workers=workers) as pool:
++            futures = [
++                pool.submit(worker, seed if i == 0 else None) for i in range(workers)
++            ]
++            for fut in as_completed(futures):
++                fut.result()
++    finally:
++        try:
++            table_source.release_claims(table_src, owner=owner)
++        except (table_source.ClaimUnavailable, RuntimeError):
++            pass
++
++    return _result_payload(
++        parsed_count=companies_total,
++        client=client,
++        need_norm=need_norm,
++        max_tier_n=max_tier_n,
++        titles=titles,
++        require_title_match=require_title_match,
++        wf=wf,
++        companies_upserted=counters["companies_upserted"],
++        contacts_written=counters["contacts_written"],
++        emails_found=counters["emails_found"],
++        dms_found=counters["dms_found"],
++        phones_found=counters["phones_found"],
++        companies_done=counters["companies_done"],
++        companies_total=companies_total,
++    )
++
++
+ def enrich_waterfall(
+     rows: Any = None,
+     *,
+@@ -443,6 +571,24 @@ def enrich_waterfall(
+     wf.deprecated_tiers = deprecated_skip
+     wf.estimated_cost_usd = estimated_usd
+ 
++    if table_src and table_src.writeback:
++        try:
++            return _enrich_waterfall_claimed(
++                client=client,
++                need_norm=need_norm,
++                max_tier_n=max_tier_n,
++                titles=titles,
++                require_title_match=bool(require_title_match),
++                write_supabase=write_supabase,
++                wf=wf,
++                progress_callback=progress_callback,
++                table_src=table_src,
++                companies_total=len(parsed),
++                parallel=parallel,
++            )
++        except table_source.ClaimUnavailable:
++            pass
++
+     runner = _enrich_waterfall_parallel if parallel else _enrich_waterfall_serial
+     return runner(
+         parsed,
+diff --git a/email_waterfall/concurrency.py b/email_waterfall/concurrency.py
+index e7363d0..ac51c34 100644
+--- a/email_waterfall/concurrency.py
++++ b/email_waterfall/concurrency.py
+@@ -39,6 +39,7 @@ DEFAULT_VENDOR_LIMITS: dict[str, int] = {
+ CROSS_PROCESS_TIERS = frozenset({"smartlead"})
+ 
+ DEFAULT_COMPANY_CONCURRENCY = 40
++MAX_COMPANY_CONCURRENCY = 50
+ 
+ 
+ def _env_int(name: str, default: int) -> int:
+@@ -52,7 +53,11 @@ def _env_int(name: str, default: int) -> int:
+ 
+ 
+ def company_concurrency() -> int:
+-    return _env_int("COMPANY_CONCURRENCY", DEFAULT_COMPANY_CONCURRENCY)
++    """20–50 workers in production (default 40). Tests may set 1+; never clamp below 1."""
++    return min(
++        _env_int("COMPANY_CONCURRENCY", DEFAULT_COMPANY_CONCURRENCY),
++        MAX_COMPANY_CONCURRENCY,
++    )
+ 
+ 
+ def vendor_concurrency(tier: str) -> int:
+diff --git a/email_waterfall/source.py b/email_waterfall/source.py
+index bdd6ade..a6c721c 100644
+--- a/email_waterfall/source.py
++++ b/email_waterfall/source.py
+@@ -14,6 +14,7 @@ from . import supabase_sync
+ from .config import DEFAULT_SUPABASE_PROJECT, load_settings
+ 
+ PAGE_SIZE = 500
++LEASE_SECONDS_DEFAULT = 900
+ WRITEBACK_COLUMNS = (
+     "wf_status",
+     "wf_email",
+@@ -22,8 +23,15 @@ WRITEBACK_COLUMNS = (
+     "wf_updated_at",
+     "wf_phone",
+     "wf_phone_type",
++    "wf_lease_until",
++    "wf_lease_owner",
+ )
+ ALL_WRITEBACK_COLUMNS = WRITEBACK_COLUMNS
++LEASE_COLUMNS = ("wf_lease_until", "wf_lease_owner")
++
++
++class ClaimUnavailable(RuntimeError):
++    """ew_claim_source RPC is missing; caller should fall back to fetch-all."""
+ FORBIDDEN_COLUMNS = frozenset(
+     {
+         "dl_status",
+@@ -561,7 +569,7 @@ def _add_wf_columns(src: TableSource, needed: list[str]) -> list[str]:
+     url, key = resolve_credentials(src.project_id)
+     stmts = []
+     for col in needed:
+-        typ = "timestamptz" if col.endswith("_at") else "text"
++        typ = "timestamptz" if col.endswith("_at") or col.endswith("_until") else "text"
+         stmts.append(
+             f'alter table "{src.schema}"."{src.table}" add column if not exists "{col}" {typ}'
+         )
+@@ -626,6 +634,8 @@ def writeback_result(
+         "wf_email_status": email_status or None,
+         "wf_vendor": vendor_n,
+         "wf_updated_at": datetime.now(timezone.utc).isoformat(),
++        "wf_lease_until": None,
++        "wf_lease_owner": None,
+     }
+     if phone_n or phone_type_n:
+         body["wf_phone"] = phone_n
+@@ -661,3 +671,99 @@ def writeback_result(
+         prefer="return=minimal",
+         extra_headers=_profile_headers(src.schema),
+     )
++
++
++def _is_missing_rpc(exc: BaseException) -> bool:
++    text = str(exc).lower()
++    return any(
++        token in text
++        for token in (
++            "ew_claim_source",
++            "ew_release_claims",
++            "pgrst202",
++            "does not exist",
++            "404",
++            "not find the function",
++        )
++    )
++
++
++def claim_source_rows(
++    src: TableSource,
++    *,
++    owner: str,
++    n: int = 1,
++    lease_seconds: int = LEASE_SECONDS_DEFAULT,
++) -> list[dict[str, Any]]:
++    """Claim up to n unfinished rows (SKIP LOCKED). Never returns payloads to chat."""
++    discover_column_map(src)
++    url, key = resolve_credentials(src.project_id)
++    filters = where_to_filters(src.where)
++    limit = max(1, min(int(n or 1), 50))
++    try:
++        data = _rpc_json(
++            "rpc/ew_claim_source",
++            {
++                "p_schema": src.schema,
++                "p_table": src.table,
++                "p_filters": _filters_json(filters),
++                "p_columns": _select_list(src).split(","),
++                "p_key_column": src.key_column,
++                "p_limit": limit,
++                "p_owner": owner,
++                "p_lease_seconds": int(lease_seconds or LEASE_SECONDS_DEFAULT),
++            },
++            url=url,
++            key=key,
++        )
++    except RuntimeError as exc:
++        if _is_missing_rpc(exc):
++            raise ClaimUnavailable(str(exc)) from exc
++        raise
++    if isinstance(data, dict):
++        data = data.get("ew_claim_source") or data.get("data") or data
++    if not isinstance(data, list):
++        return []
++    mapped, _ = _map_raw_rows(src, data)
++    return mapped
++
++
++def release_claims(
++    src: TableSource,
++    *,
++    owner: str,
++    keys: list[Any] | None = None,
++) -> int:
++    """Clear processing leases for this owner (and optional keys). Does not write not_found."""
++    if not owner and not keys:
++        return 0
++    url, key = resolve_credentials(src.project_id)
++    payload: dict[str, Any] = {
++        "p_schema": src.schema,
++        "p_table": src.table,
++        "p_key_column": src.key_column,
++        "p_owner": owner or "",
++    }
++    if keys:
++        payload["p_keys"] = [str(k) for k in keys if k not in (None, "")]
++    try:
++        data = _rpc_json(
++            "rpc/ew_release_claims",
++            payload,
++            url=url,
++            key=key,
++        )
++    except RuntimeError as exc:
++        if _is_missing_rpc(exc):
++            return 0
++        raise
++    if isinstance(data, int):
++        return data
++    if isinstance(data, dict):
++        for val in data.values():
++            if isinstance(val, int):
++                return val
++    try:
++        return int(data or 0)
++    except (TypeError, ValueError):
++        return 0
+diff --git a/mcp_server/playbook.py b/mcp_server/playbook.py
+index de05f02..30530fd 100644
+--- a/mcp_server/playbook.py
++++ b/mcp_server/playbook.py
+@@ -48,14 +48,20 @@ source_table: "client_peterson.email_resolution"
+ where: "wf_status is null"
+ ```
+ 
+-`source_table` accepts `schema.table`. The server pages 500 rows via a
++`source_table` accepts `schema.table`. Estimates page 500 rows via a
+ security-definer RPC when the schema is not `public` (PostgREST only exposes
+-public). Never returns payloads. Writeback (default on) patches `wf_status` /
+-`wf_email` / `wf_email_status` / `wf_vendor` / `wf_updated_at` (and
+-`wf_phone` / `wf_phone_type` for phone hits). `wf_status` is `found` when
+-a contact was written, `title_miss` when getleads returned contacts that
+-failed the title match, and `not_found` only on zero contacts. Never read
+-or write `dl_status`, `sg_exclude`, or `skip_*`. Resume with `wf_status is null`.
++public). Paid runs claim unfinished rows (`ew_claim_source`,
++`FOR UPDATE SKIP LOCKED`, 15 minute `wf_lease_until`) with 20–50 workers
++(`COMPANY_CONCURRENCY`, default 40). Never returns payloads. Writeback
++(default on) patches `wf_status` / `wf_email` / `wf_email_status` /
++`wf_vendor` / `wf_updated_at` (and `wf_phone` / `wf_phone_type` for phone
++hits) and clears the lease. `wf_status` is `found` when a contact was
++written, `title_miss` when getleads returned contacts that failed the
++title match, `processing` while a live lease is held, and `not_found`
++only on zero contacts. A ceiling stop releases unprocessed claims; it
++does not write `not_found` on them. Never read or write `dl_status`,
++`sg_exclude`, or `skip_*`. Resume with `wf_status is null` — the claim
++RPC also takes expired `processing` leases.
+ Existing contact rows upsert on `(client_tag, domain, first_name_key,
+ last_name_key)` so a re-run does not duplicate a null-email person.
+ Omitted `map` auto-picks `owner_title` → title, `candidate_email` → email,
+diff --git a/mcp_server/server.py b/mcp_server/server.py
+index a5be6d5..82eb6e5 100644
+--- a/mcp_server/server.py
++++ b/mcp_server/server.py
+@@ -513,9 +513,12 @@ def enrich_waterfall(
+     key_column?, map?, limit?, cursor?}. Mutually exclusive with rows.
+ 
+     Writeback (default true) patches wf_status / wf_email / wf_email_status /
+-    wf_vendor / wf_updated_at / wf_phone / wf_phone_type on the source table.
+-    wf_status is found (contact written), title_miss (getleads contacts, no
+-    title match), or not_found (zero contacts).
++    wf_vendor / wf_updated_at / wf_phone / wf_phone_type on the source table
++    and clears wf_lease_until / wf_lease_owner. Paid table runs claim
++    unfinished rows (processing + expiring lease, 20–50 workers) so a
++    restart does not re-scan or double-spend. wf_status is found (contact
++    written), title_miss (getleads contacts, no title match), processing
++    (live lease), or not_found (zero contacts).
+ 
+     `verify_only` = true checks existing phone numbers with Veriphone and
+     writes the number + line type. No finder HTTP. Use this to classify
+@@ -550,8 +553,10 @@ def enrich_waterfall(
+     are accepted as a no-op warning and map to the old AI Ark ceiling.
+     approve_cost_usd (default 5.0) estimates first and refuses if the quote
+     exceeds the ceiling; a run that would go over stops with
+-    status=stopped_at_ceiling. Never read or write dl_status, sg_exclude,
+-    or skip_* columns — resume with wf_status is null.
++    status=stopped_at_ceiling and unprocessed claims are released, not
++    written not_found. Never read or write dl_status, sg_exclude,
++    or skip_* columns — resume with wf_status is null (expired
++    processing leases are claimed too).
+     """
+     _ensure_repo_cwd()
+     _reload_settings()
+diff --git a/supabase/migrations/007_ew_claim_source.sql b/supabase/migrations/007_ew_claim_source.sql
+new file mode 100644
+index 0000000..50dec50
+--- /dev/null
++++ b/supabase/migrations/007_ew_claim_source.sql
+@@ -0,0 +1,240 @@
++-- Claim unfinished source rows with an expiring processing lease so
++-- parallel workers and restarted jobs do not re-scan or double-spend.
++-- Identifier-safe only. Project azpapwtnrbzywlnxxecz.
++
++CREATE OR REPLACE FUNCTION public.ew_ensure_wf_writeback(
++  schema_name text,
++  table_name text,
++  columns text[] DEFAULT NULL
++) RETURNS text[]
++LANGUAGE plpgsql
++SECURITY DEFINER
++SET search_path TO 'public'
++AS $function$
++DECLARE
++  sch text;
++  tbl text;
++  col text;
++  typ text;
++  added text[] := ARRAY[]::text[];
++  wanted text[] := coalesce(
++    columns,
++    ARRAY[
++      'wf_status', 'wf_email', 'wf_email_status', 'wf_vendor', 'wf_updated_at',
++      'wf_phone', 'wf_phone_type', 'wf_lease_until', 'wf_lease_owner'
++    ]
++  );
++BEGIN
++  sch := lower(regexp_replace(coalesce(schema_name, 'public'), '[^a-z0-9_]', '', 'g'));
++  tbl := lower(regexp_replace(coalesce(table_name, ''), '[^a-z0-9_]', '', 'g'));
++  IF sch = '' OR tbl = '' OR to_regclass(format('%I.%I', sch, tbl)) IS NULL THEN
++    RAISE EXCEPTION 'unknown source table %.%', sch, tbl;
++  END IF;
++  FOREACH col IN ARRAY wanted
++  LOOP
++    col := lower(regexp_replace(col, '[^a-z0-9_]', '', 'g'));
++    IF col = '' THEN
++      CONTINUE;
++    END IF;
++    IF EXISTS (
++      SELECT 1 FROM information_schema.columns c
++      WHERE c.table_schema = sch AND c.table_name = tbl AND c.column_name = col
++    ) THEN
++      CONTINUE;
++    END IF;
++    typ := CASE
++      WHEN col LIKE '%\_at' ESCAPE '\' OR col LIKE '%\_until' ESCAPE '\' THEN 'timestamptz'
++      ELSE 'text'
++    END;
++    EXECUTE format('ALTER TABLE %I.%I ADD COLUMN IF NOT EXISTS %I %s', sch, tbl, col, typ);
++    added := added || col;
++  END LOOP;
++  PERFORM pg_notify('pgrst', 'reload schema');
++  RETURN added;
++END;
++$function$;
++
++CREATE OR REPLACE FUNCTION public.ew_claim_source(
++  p_schema text,
++  p_table text,
++  p_filters jsonb DEFAULT '[]'::jsonb,
++  p_columns text[] DEFAULT NULL,
++  p_key_column text DEFAULT 'id',
++  p_limit integer DEFAULT 1,
++  p_owner text DEFAULT NULL,
++  p_lease_seconds integer DEFAULT 900
++) RETURNS jsonb
++LANGUAGE plpgsql
++SECURITY DEFINER
++SET search_path TO 'public'
++AS $function$
++DECLARE
++  sch text;
++  tbl text;
++  keycol text;
++  cols text[];
++  filt jsonb;
++  clause text := ' WHERE true';
++  col text;
++  op text;
++  val text;
++  sql text;
++  result jsonb;
++  lim int;
++  owner text;
++  lease int;
++  has_status boolean;
++  has_lease boolean;
++BEGIN
++  sch := lower(regexp_replace(coalesce(p_schema, 'public'), '[^a-z0-9_]', '', 'g'));
++  tbl := lower(regexp_replace(coalesce(p_table, ''), '[^a-z0-9_]', '', 'g'));
++  keycol := lower(regexp_replace(coalesce(p_key_column, 'id'), '[^a-z0-9_]', '', 'g'));
++  lim := least(greatest(coalesce(p_limit, 1), 1), 50);
++  owner := left(coalesce(p_owner, 'ew'), 80);
++  lease := least(greatest(coalesce(p_lease_seconds, 900), 60), 3600);
++  IF sch = '' OR tbl = '' OR to_regclass(format('%I.%I', sch, tbl)) IS NULL THEN
++    RAISE EXCEPTION 'unknown source table %.%', sch, tbl;
++  END IF;
++
++  SELECT EXISTS (
++    SELECT 1 FROM information_schema.columns c
++    WHERE c.table_schema = sch AND c.table_name = tbl AND c.column_name = 'wf_status'
++  ) INTO has_status;
++  SELECT EXISTS (
++    SELECT 1 FROM information_schema.columns c
++    WHERE c.table_schema = sch AND c.table_name = tbl AND c.column_name = 'wf_lease_until'
++  ) INTO has_lease;
++  IF NOT has_status OR NOT has_lease THEN
++    RAISE EXCEPTION 'source %.% missing wf_status / wf_lease_until (run ew_ensure_wf_writeback)', sch, tbl;
++  END IF;
++
++  IF p_columns IS NULL OR coalesce(array_length(p_columns, 1), 0) = 0 THEN
++    cols := ARRAY[keycol];
++  ELSE
++    SELECT array_agg(lower(regexp_replace(c, '[^a-z0-9_]', '', 'g')))
++      INTO cols
++      FROM unnest(p_columns) AS c
++     WHERE c IS NOT NULL AND btrim(c) <> '';
++    IF cols IS NULL THEN
++      cols := ARRAY[keycol];
++    ELSIF NOT keycol = ANY (cols) THEN
++      cols := cols || keycol;
++    END IF;
++  END IF;
++
++  FOR filt IN SELECT * FROM jsonb_array_elements(coalesce(p_filters, '[]'::jsonb))
++  LOOP
++    col := lower(regexp_replace(coalesce(filt->>'col', ''), '[^a-z0-9_]', '', 'g'));
++    op := lower(coalesce(filt->>'op', ''));
++    val := filt->>'value';
++    IF col = '' OR col IN ('wf_status', 'wf_lease_until', 'wf_lease_owner') THEN
++      CONTINUE;
++    END IF;
++    IF op IN ('is.null', 'is null') THEN
++      clause := clause || format(' AND %I IS NULL', col);
++    ELSIF op IN ('not.is.null', 'is not null') THEN
++      clause := clause || format(' AND %I IS NOT NULL', col);
++    ELSIF op IN ('eq', '=') THEN
++      clause := clause || format(' AND %I = %L', col, val);
++    ELSIF op IN ('neq', '!=', '<>') THEN
++      clause := clause || format(' AND %I <> %L', col, val);
++    ELSE
++      RAISE EXCEPTION 'unsupported filter op: %', op;
++    END IF;
++  END LOOP;
++
++  -- Unfinished: never claimed, or a processing lease that expired.
++  -- Found / title_miss / not_found are never reclaimed.
++  clause := clause || $unfin$
++    AND (
++      wf_status IS NULL
++      OR (
++        wf_status = 'processing'
++        AND (wf_lease_until IS NULL OR wf_lease_until < now())
++      )
++    )
++  $unfin$;
++
++  sql := format(
++    'WITH claimed AS (
++       UPDATE %I.%I AS s
++          SET wf_status = %L,
++              wf_lease_until = now() + make_interval(secs => %s),
++              wf_lease_owner = %L
++        WHERE s.%I IN (
++          SELECT %I FROM %I.%I%s
++          ORDER BY %I ASC
++          LIMIT %s
++          FOR UPDATE SKIP LOCKED
++        )
++       RETURNING %s
++     )
++     SELECT coalesce(jsonb_agg(to_jsonb(t)), ''[]''::jsonb) FROM claimed t',
++    sch, tbl,
++    'processing',
++    lease,
++    owner,
++    keycol,
++    keycol, sch, tbl, clause,
++    keycol,
++    lim,
++    (SELECT string_agg(format('s.%I', c), ', ') FROM unnest(cols) AS c)
++  );
++  EXECUTE sql INTO result;
++  RETURN coalesce(result, '[]'::jsonb);
++END;
++$function$;
++
++CREATE OR REPLACE FUNCTION public.ew_release_claims(
++  p_schema text,
++  p_table text,
++  p_key_column text DEFAULT 'id',
++  p_owner text DEFAULT NULL,
++  p_keys text[] DEFAULT NULL
++) RETURNS integer
++LANGUAGE plpgsql
++SECURITY DEFINER
++SET search_path TO 'public'
++AS $function$
++DECLARE
++  sch text;
++  tbl text;
++  keycol text;
++  owner text;
++  n int := 0;
++BEGIN
++  sch := lower(regexp_replace(coalesce(p_schema, 'public'), '[^a-z0-9_]', '', 'g'));
++  tbl := lower(regexp_replace(coalesce(p_table, ''), '[^a-z0-9_]', '', 'g'));
++  keycol := lower(regexp_replace(coalesce(p_key_column, 'id'), '[^a-z0-9_]', '', 'g'));
++  owner := left(coalesce(p_owner, ''), 80);
++  IF sch = '' OR tbl = '' OR to_regclass(format('%I.%I', sch, tbl)) IS NULL THEN
++    RAISE EXCEPTION 'unknown source table %.%', sch, tbl;
++  END IF;
++  IF owner = '' AND (p_keys IS NULL OR coalesce(array_length(p_keys, 1), 0) = 0) THEN
++    RETURN 0;
++  END IF;
++  IF p_keys IS NOT NULL AND coalesce(array_length(p_keys, 1), 0) > 0 THEN
++    EXECUTE format(
++      'UPDATE %I.%I SET wf_status = NULL, wf_lease_until = NULL, wf_lease_owner = NULL
++        WHERE wf_status = %L
++          AND %I::text = ANY (%L)
++          AND (%L = '''' OR wf_lease_owner = %L)',
++      sch, tbl, 'processing', keycol, p_keys, owner, owner
++    );
++  ELSE
++    EXECUTE format(
++      'UPDATE %I.%I SET wf_status = NULL, wf_lease_until = NULL, wf_lease_owner = NULL
++        WHERE wf_status = %L AND wf_lease_owner = %L',
++      sch, tbl, 'processing', owner
++    );
++  END IF;
++  GET DIAGNOSTICS n = ROW_COUNT;
++  RETURN n;
++END;
++$function$;
++
++GRANT EXECUTE ON FUNCTION public.ew_ensure_wf_writeback(text, text, text[]) TO service_role;
++GRANT EXECUTE ON FUNCTION public.ew_claim_source(text, text, jsonb, text[], text, integer, text, integer) TO service_role;
++GRANT EXECUTE ON FUNCTION public.ew_release_claims(text, text, text, text, text[]) TO service_role;
++
++NOTIFY pgrst, 'reload schema';
+diff --git a/tests/test_claim_source.py b/tests/test_claim_source.py
+new file mode 100644
+index 0000000..3a34485
+--- /dev/null
++++ b/tests/test_claim_source.py
+@@ -0,0 +1,320 @@
++"""Row claiming: SKIP LOCKED leases, restart resume, ceiling release."""
++
++from __future__ import annotations
++
++import threading
++
++import pytest
++
++from email_waterfall import source as table_source
++from email_waterfall import waterfall
++from email_waterfall.concurrency import MAX_COMPANY_CONCURRENCY, company_concurrency
++from email_waterfall.vendors.base import EmailHit
++
++
++def _src() -> table_source.TableSource:
++    src = table_source.parse_source(
++        {"table": "client_peterson.email_resolution", "where": "wf_status is null"}
++    )
++    src.writeback = True
++    return src
++
++
++def test_company_concurrency_caps_at_fifty(monkeypatch) -> None:
++    monkeypatch.setenv("COMPANY_CONCURRENCY", "80")
++    assert company_concurrency() == MAX_COMPANY_CONCURRENCY
++    monkeypatch.setenv("COMPANY_CONCURRENCY", "20")
++    assert company_concurrency() == 20
++    monkeypatch.setenv("COMPANY_CONCURRENCY", "0")
++    assert company_concurrency() == 1
++
++
++def test_claim_source_rows_calls_rpc(monkeypatch) -> None:
++    src = _src()
++    calls: list[tuple[str, dict]] = []
++
++    def fake_rpc(path, body, **kwargs):
++        calls.append((path, body))
++        return [
++            {
++                "id": 9,
++                "first_name": "Jane",
++                "last_name": "Owner",
++                "company_name": "Org",
++                "domain": "org.example",
++            }
++        ]
++
++    monkeypatch.setattr(table_source, "discover_column_map", lambda s: None)
++    monkeypatch.setattr(table_source, "resolve_credentials", lambda pid: ("https://x", "k"))
++    monkeypatch.setattr(table_source, "_rpc_json", fake_rpc)
++    rows = table_source.claim_source_rows(src, owner="ew:1:abc", n=1)
++    assert calls[0][0] == "rpc/ew_claim_source"
++    assert calls[0][1]["p_owner"] == "ew:1:abc"
++    assert calls[0][1]["p_limit"] == 1
++    assert rows[0]["_source_key"] == 9
++    assert rows[0]["first_name"] == "Jane"
++
++
++def test_claim_source_missing_rpc_raises(monkeypatch) -> None:
++    src = _src()
++
++    def fake_rpc(path, body, **kwargs):
++        raise RuntimeError("Could not find the function public.ew_claim_source in the schema cache")
++
++    monkeypatch.setattr(table_source, "discover_column_map", lambda s: None)
++    monkeypatch.setattr(table_source, "resolve_credentials", lambda pid: ("https://x", "k"))
++    monkeypatch.setattr(table_source, "_rpc_json", fake_rpc)
++    with pytest.raises(table_source.ClaimUnavailable):
++        table_source.claim_source_rows(src, owner="ew:1:abc")
++
++
++def test_release_claims_sends_owner_and_keys(monkeypatch) -> None:
++    src = _src()
++    calls: list[tuple[str, dict]] = []
++
++    def fake_rpc(path, body, **kwargs):
++        calls.append((path, body))
++        return 2
++
++    monkeypatch.setattr(table_source, "resolve_credentials", lambda pid: ("https://x", "k"))
++    monkeypatch.setattr(table_source, "_rpc_json", fake_rpc)
++    n = table_source.release_claims(src, owner="ew:1:abc", keys=[1, 2])
++    assert n == 2
++    assert calls[0][0] == "rpc/ew_release_claims"
++    assert calls[0][1]["p_owner"] == "ew:1:abc"
++    assert calls[0][1]["p_keys"] == ["1", "2"]
++
++
++def _disabled():
++    from unittest.mock import MagicMock
++
++    m = MagicMock()
++    m.enabled = False
++    m.calls = 0
++    m.hits = 0
++    m.find_mobile.return_value = None
++    return m
++
++
++def _gl_hit():
++    from unittest.mock import MagicMock
++
++    m = MagicMock()
++    m.enabled = True
++    m.calls = 0
++    m.hits = 0
++    m.find_people.return_value = []
++
++    def _find_email(first, last, domain, company_name="", **kwargs):
++        m.calls += 1
++        m.hits += 1
++        return EmailHit(
++            email=f"{first.lower()}.{last.lower()}@{domain}",
++            source_tier="getleads",
++            status="valid",
++        )
++
++    m.find_email = _find_email
++    m.find_email_bulk.return_value = []
++    return m
++
++
++def test_claimed_run_does_not_reclaim_same_key(monkeypatch) -> None:
++    queue = [
++        {
++            "id": i,
++            "first_name": "Jane",
++            "last_name": f"User{i}",
++            "company_name": "Org",
++            "domain": f"co{i}.example.com",
++        }
++        for i in range(8)
++    ]
++    lock = threading.Lock()
++    seen: list[int] = []
++
++    def fake_claim(src, *, owner, n=1, lease_seconds=900):
++        with lock:
++            if not queue:
++                return []
++            raw = queue.pop(0)
++            seen.append(raw["id"])
++            return [
++                {
++                    "_source_key": raw["id"],
++                    "first_name": raw["first_name"],
++                    "last_name": raw["last_name"],
++                    "company_name": raw["company_name"],
++                    "domain": raw["domain"],
++                }
++            ]
++
++    released: list[str] = []
++
++    def fake_release(src, *, owner, keys=None):
++        released.append(owner)
++        return 0
++
++    monkeypatch.setattr(waterfall, "GetLeadsClient", lambda: _gl_hit())
++    monkeypatch.setattr(waterfall, "SmartleadClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "AiArkClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "ProspeoClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "FullEnrichClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "VeriphoneClient", lambda: _disabled())
++    monkeypatch.setattr(table_source, "fetch_source_rows", lambda src: [
++        {
++            "_source_key": r["id"],
++            "first_name": r["first_name"],
++            "last_name": r["last_name"],
++            "company_name": r["company_name"],
++            "domain": r["domain"],
++        }
++        for r in [
++            {
++                "id": i,
++                "first_name": "Jane",
++                "last_name": f"User{i}",
++                "company_name": "Org",
++                "domain": f"co{i}.example.com",
++            }
++            for i in range(8)
++        ]
++    ])
++    monkeypatch.setattr(table_source, "ensure_writeback_columns", lambda src: [])
++    monkeypatch.setattr(table_source, "claim_source_rows", fake_claim)
++    monkeypatch.setattr(table_source, "release_claims", fake_release)
++    monkeypatch.setattr(table_source, "writeback_result", lambda *a, **k: None)
++    monkeypatch.setenv("COMPANY_CONCURRENCY", "4")
++
++    out = waterfall.enrich_waterfall(
++        client_tag="peterson",
++        need="email",
++        source_table="client_peterson.email_resolution",
++        where="wf_status is null",
++        write_supabase=False,
++        writeback=True,
++        approve_cost_usd=50,
++        estimate_only=False,
++    )
++    assert out["emails_found"] == 8
++    assert out["companies_done"] == 8
++    assert sorted(seen) == list(range(8))
++    assert len(seen) == len(set(seen))
++    assert released  # leftover lease cleared for this owner
++
++
++def test_ceiling_releases_unprocessed_claims(monkeypatch) -> None:
++    """A ceiling stop must not stamp not_found on rows that were never tried."""
++    from email_waterfall._wf import engine as eng
++
++    inventory = [
++        {
++            "_source_key": 1,
++            "first_name": "Jane",
++            "last_name": "One",
++            "company_name": "Org",
++            "domain": "one.example.com",
++        },
++        {
++            "_source_key": 2,
++            "first_name": "Jane",
++            "last_name": "Two",
++            "company_name": "Org",
++            "domain": "two.example.com",
++        },
++    ]
++    lock = threading.Lock()
++    claimed_q = list(inventory)
++
++    def fake_claim(src, *, owner, n=1, lease_seconds=900):
++        with lock:
++            if not claimed_q:
++                return []
++            return [claimed_q.pop(0)]
++
++    release_calls: list[dict] = []
++
++    def fake_release(src, *, owner, keys=None):
++        release_calls.append({"owner": owner, "keys": list(keys or [])})
++        return 0
++
++    statuses: list[str] = []
++
++    def fake_writeback(src, **kwargs):
++        statuses.append(kwargs.get("status") or "")
++
++    monkeypatch.setattr(waterfall, "GetLeadsClient", lambda: _gl_hit())
++    monkeypatch.setattr(waterfall, "SmartleadClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "AiArkClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "ProspeoClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "FullEnrichClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "VeriphoneClient", lambda: _disabled())
++    monkeypatch.setattr(table_source, "fetch_source_rows", lambda src: list(inventory))
++    monkeypatch.setattr(table_source, "ensure_writeback_columns", lambda src: [])
++    monkeypatch.setattr(table_source, "claim_source_rows", fake_claim)
++    monkeypatch.setattr(table_source, "release_claims", fake_release)
++    monkeypatch.setattr(table_source, "writeback_result", fake_writeback)
++    monkeypatch.setenv("COMPANY_CONCURRENCY", "1")
++
++    original_bump = eng.Waterfall._bump_attempt
++
++    def bump(self, tier, row, *, worst_credits=None):
++        ok = original_bump(self, tier, row, worst_credits=worst_credits)
++        self.stopped_at_ceiling = True
++        return ok
++
++    monkeypatch.setattr(eng.Waterfall, "_bump_attempt", bump)
++
++    out = waterfall.enrich_waterfall(
++        client_tag="peterson",
++        need="email",
++        source_table="client_peterson.email_resolution",
++        where="wf_status is null",
++        write_supabase=False,
++        writeback=True,
++        approve_cost_usd=50,
++    )
++    assert out["status"] == "stopped_at_ceiling"
++    assert out["companies_done"] == 1
++    assert statuses.count("not_found") == 0
++    assert any(c["owner"].startswith("ew:") for c in release_calls)
++
++
++def test_missing_claim_rpc_falls_back_to_fetch_all(monkeypatch) -> None:
++    rows = [
++        {
++            "_source_key": 1,
++            "first_name": "Jane",
++            "last_name": "User",
++            "company_name": "Org",
++            "domain": "org.example.com",
++        }
++    ]
++
++    def boom(*a, **k):
++        raise table_source.ClaimUnavailable("ew_claim_source missing")
++
++    monkeypatch.setattr(waterfall, "GetLeadsClient", lambda: _gl_hit())
++    monkeypatch.setattr(waterfall, "SmartleadClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "AiArkClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "ProspeoClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "FullEnrichClient", lambda: _disabled())
++    monkeypatch.setattr(waterfall, "VeriphoneClient", lambda: _disabled())
++    monkeypatch.setattr(table_source, "fetch_source_rows", lambda src: rows)
++    monkeypatch.setattr(table_source, "ensure_writeback_columns", lambda src: [])
++    monkeypatch.setattr(table_source, "claim_source_rows", boom)
++    monkeypatch.setattr(table_source, "release_claims", lambda *a, **k: 0)
++    monkeypatch.setattr(table_source, "writeback_result", lambda *a, **k: None)
++
++    out = waterfall.enrich_waterfall(
++        client_tag="peterson",
++        need="email",
++        source_table="client_peterson.email_resolution",
++        where="wf_status is null",
++        write_supabase=False,
++        writeback=True,
++        approve_cost_usd=50,
++    )
++    assert out["emails_found"] == 1
++    assert out["companies_done"] == 1
+diff --git a/tests/test_getleads.py b/tests/test_getleads.py
+index 5bf9d31..1fe544b 100644
+--- a/tests/test_getleads.py
++++ b/tests/test_getleads.py
+@@ -839,13 +839,20 @@ def test_title_miss_writeback_is_title_miss(monkeypatch) -> None:
+         fe=_vendor(enabled=False),
+     )
+     _patch_writes(monkeypatch, {})
++    miss_rows = [{"_source_key": 11, "domain": "acme.test", "company_name": "Acme"}]
+     monkeypatch.setattr(
+         waterfall.table_source,
+         "fetch_source_rows",
+-        lambda src: [{"_source_key": 11, "domain": "acme.test", "company_name": "Acme"}],
++        lambda src: list(miss_rows),
+     )
+     monkeypatch.setattr(waterfall.table_source, "ensure_writeback_columns", lambda src: [])
+     monkeypatch.setattr(waterfall.table_source, "writeback_result", fake_writeback)
++    monkeypatch.setattr(
++        waterfall.table_source,
++        "claim_source_rows",
++        lambda src, *, owner, n=1, lease_seconds=900: [miss_rows.pop(0)] if miss_rows else [],
++    )
++    monkeypatch.setattr(waterfall.table_source, "release_claims", lambda *a, **k: 0)
+ 
+     out = waterfall.enrich_waterfall(
+         client_tag="goliath",
+@@ -888,13 +895,20 @@ def test_zero_contacts_writeback_is_not_found(monkeypatch) -> None:
+         fe=_vendor(enabled=False),
+     )
+     _patch_writes(monkeypatch, {})
++    empty_rows = [{"_source_key": 12, "domain": "empty.test", "company_name": "Empty"}]
+     monkeypatch.setattr(
+         waterfall.table_source,
+         "fetch_source_rows",
+-        lambda src: [{"_source_key": 12, "domain": "empty.test", "company_name": "Empty"}],
++        lambda src: list(empty_rows),
+     )
+     monkeypatch.setattr(waterfall.table_source, "ensure_writeback_columns", lambda src: [])
+     monkeypatch.setattr(waterfall.table_source, "writeback_result", fake_writeback)
++    monkeypatch.setattr(
++        waterfall.table_source,
++        "claim_source_rows",
++        lambda src, *, owner, n=1, lease_seconds=900: [empty_rows.pop(0)] if empty_rows else [],
++    )
++    monkeypatch.setattr(waterfall.table_source, "release_claims", lambda *a, **k: 0)
+ 
+     waterfall.enrich_waterfall(
+         client_tag="goliath",
+diff --git a/tests/test_source.py b/tests/test_source.py
+index 8b4094f..3639c5f 100644
+--- a/tests/test_source.py
++++ b/tests/test_source.py
+@@ -354,6 +354,8 @@ def test_writeback_patches_wf_columns(monkeypatch) -> None:
+     assert body["wf_email"] == "jane@org.org"
+     assert body["wf_status"] == "found"
+     assert body["wf_vendor"] == "prospeo"
++    assert body["wf_lease_until"] is None
++    assert body["wf_lease_owner"] is None
+     assert "dl_status" not in body
+     assert "candidate_email" not in body
+     assert "dl_provider" not in body
+@@ -456,6 +458,20 @@ def test_source_enrich_writes_back(monkeypatch) -> None:
+     )
+     monkeypatch.setattr(waterfall.table_source, "ensure_writeback_columns", lambda src: [])
+     monkeypatch.setattr(waterfall.table_source, "writeback_result", fake_writeback)
++    claimed = [
++        {
++            "_source_key": 9,
++            "first_name": "Jane",
++            "last_name": "Doe",
++            "company_name": "Helping Hands",
++        }
++    ]
++
++    def fake_claim(src, *, owner, n=1, lease_seconds=900):
++        return [claimed.pop(0)] if claimed else []
++
++    monkeypatch.setattr(waterfall.table_source, "claim_source_rows", fake_claim)
++    monkeypatch.setattr(waterfall.table_source, "release_claims", lambda *a, **k: 0)
+ 
+     out = waterfall.enrich_waterfall(
+         client_tag="peterson",
+diff --git a/tests/test_veriphone.py b/tests/test_veriphone.py
+index da184e9..3066907 100644
+--- a/tests/test_veriphone.py
++++ b/tests/test_veriphone.py
+@@ -370,6 +370,21 @@ def test_need_phone_writes_source_phone_and_line_type(monkeypatch) -> None:
+         "writeback_result",
+         lambda src, **kwargs: writebacks.append(kwargs),
+     )
++    phone_rows = [
++        {
++            "_source_key": 4,
++            "first_name": "Jane",
++            "last_name": "Smith",
++            "company_name": "Roof Co",
++            "domain": "roofco.com",
++        }
++    ]
++    monkeypatch.setattr(
++        waterfall.table_source,
++        "claim_source_rows",
++        lambda src, *, owner, n=1, lease_seconds=900: [phone_rows.pop(0)] if phone_rows else [],
++    )
++    monkeypatch.setattr(waterfall.table_source, "release_claims", lambda *a, **k: 0)
+ 
+     out = waterfall.enrich_waterfall(
+         client_tag="peterson",
+@@ -420,6 +435,22 @@ def test_verify_only_skips_finders_and_writes_verdict(monkeypatch) -> None:
+         "writeback_result",
+         lambda src, **kwargs: writebacks.append(kwargs),
+     )
++    verify_rows = [
++        {
++            "_source_key": 8,
++            "first_name": "Jane",
++            "last_name": "Smith",
++            "company_name": "Roof Co",
++            "domain": "roofco.com",
++            "phone": "415-555-2671",
++        }
++    ]
++    monkeypatch.setattr(
++        waterfall.table_source,
++        "claim_source_rows",
++        lambda src, *, owner, n=1, lease_seconds=900: [verify_rows.pop(0)] if verify_rows else [],
++    )
++    monkeypatch.setattr(waterfall.table_source, "release_claims", lambda *a, **k: 0)
+ 
+     out = waterfall.enrich_waterfall(
+         client_tag="peterson",

@@ -39,9 +39,11 @@ rows (`ew_claim_source`, `FOR UPDATE SKIP LOCKED`, 15 minute
 A restart resumes `wf_status` null or expired `processing` leases;
 it does not re-scan `found` / `title_miss` / `not_found`.
 
-If that PR could not be opened from this run, the same spec is in
-the email-waterfall files: migration `007_ew_claim_source.sql`,
-`email_waterfall/source.py`, `email_waterfall/_wf/exec.py`.
+This run could not push to `email-waterfall` (GitHub 403; token is
+scoped to `topup`). The exact patch is in `docs/patches/email-waterfall-README.md`,
+`docs/patches/email-waterfall-claim.patch`, and
+`docs/patches/email-waterfall-007_ew_claim_source.sql`. Apply those on
+that repo at `main` @ `65a181d` and open the PR there.
 
 ## Already claiming (no code change)
 
@@ -80,3 +82,5 @@ the email-waterfall files: migration `007_ew_claim_source.sql`,
 - Invent a TechEvo label set.
 - Edit `topup.site_dm_pick` in git (the view is only on Supabase).
 - Guarantee the Claude daily sync keeps the skill text; copy it there.
+- Push to `joshuaosborn561-lang/email-waterfall` (403). Patch files are
+  in `docs/patches/` for someone with write access to apply.
