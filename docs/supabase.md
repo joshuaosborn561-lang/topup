@@ -30,6 +30,7 @@ Client tags: `peterson`, `peterson_earthworks`, `basco`, `culture_fits`,
 | Storage bucket `list-build-transcripts` | The full chat transcript of each build at `transcript_path`: every tool call with its arguments, in order. This is the method. |
 | `topup.process_changes` | What changed about how lists are built, dated, across clients. |
 | `topup.client_playbook` | A view: the client's builds and process changes in one chronological list. Read this first. |
+| `topup.bot_rules` | Shared standing orders. Read `status = 'active'` before any top-up or list build. They win over skill text. Insert a new row to supersede; never delete. |
 
 ## Retired, left in place, unread
 

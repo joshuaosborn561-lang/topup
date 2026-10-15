@@ -129,7 +129,8 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D107 | Live; the split read from the lane's build transcript is the truth the way the build is: it quotes and loads on its own, the D106 confirmation step is removed; what the transcript does not say waits at the route step or is one plain question to Josh |
 | D108 | Live; nothing stored decides a lane's split: Grokbot reads the lane's build transcript and the process chats, works out the split, and passes it on `topup` with the pool (rule, routing, dimensions, from); the service checks it against the lane and never reads a split from a record or the registry; the nine transcript-split records were deleted; Cayden is an approver |
 | D109 | Live; no recipe anywhere: the build is the transcripts and the tools they use. The skill copies, the QA rule table, the registry's stored cells, the gift word and two dead numbers are out of the repo; the job settings table is renamed (`topup.job_settings`, key `settings_id`); what the chats do not say is one plain question to Josh |
-| D110 | Live; the service is retired: the repo is the Grokbot instructions, the list of MCPs and the map of the data on Supabase. No code, no stored rule, no recipe. Grokbot reads the transcripts and calls the same MCPs; the service's tables stay in place, unread |
+| D110 | Live; the service is retired: the repo is the Grokbot instructions, the list of MCPs and the map of the data on Supabase. No code, no recipe. Grokbot reads the transcripts and calls the same MCPs; the service's tables stay in place, unread. "No stored rule" superseded by D111 |
+| D111 | Live; durable bot rules live in `topup.bot_rules` on `azpapwtnrbzywlnxxecz`. Read active rows before any top-up or list build; they win over skill text; insert to supersede, never delete |
 
 ---
 
@@ -3729,3 +3730,26 @@ telling was the bloat.
 table, or any transcript. It does not give Grokbot a new tool.
 
 **Guard.** None: there is no build. Ask Josh before adding one.
+
+## D111 — Shared bot rules live in `topup.bot_rules`
+
+**Decision.** Durable standing orders for every bot live in
+`topup.bot_rules` on Supabase project `azpapwtnrbzywlnxxecz`, not in this
+repo. Before any top-up or list build, read:
+
+```sql
+select category, client, rule from topup.bot_rules where status = 'active' order by category;
+```
+
+Those rows win over skill text where they conflict. A new durable rule is
+inserted there (set the old row aside via `supersedes` / `status`; never
+delete). This supersedes D110's "no stored rule" for this table only. The
+repo still holds no code, no service and no recipe.
+
+**Why.** Josh, 15 Oct 2026: every bot should read the active shared rules
+before a top-up or list build, and new durable rules go in that table.
+
+**What it does not do.** It does not put lead rows, secrets or client
+facts in the table. It does not bring the retired service back.
+
+**Guard.** None. Ask Josh before changing the table contract.

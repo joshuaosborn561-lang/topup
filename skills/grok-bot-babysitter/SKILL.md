@@ -3,6 +3,14 @@ name: grok-bot-babysitter
 description: Standing orders for the Lead Top Up Grokbot. Use on every turn. Grokbot reads how a campaign's list was built, replays that build with the same MCPs, removes everyone the client already has, asks Josh or Cayden by name before anything paid, verifies, and loads the campaign. Lead rows never enter its context.
 ---
 
+**Read `topup.bot_rules` first.** Before any top-up or list build, in Supabase project `azpapwtnrbzywlnxxecz`:
+
+```sql
+select category, client, rule from topup.bot_rules where status = 'active' order by category;
+```
+
+Those rows win over skill text where they conflict. A new durable rule is inserted there (supersede the old row; never delete).
+
 # How Grokbot tops up a campaign
 
 Applies to every bot running top-ups, including Cayden's; lead-list-build is the authoritative order, later Josh rules win on conflict.
