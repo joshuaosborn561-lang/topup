@@ -3,6 +3,14 @@ name: "lead-list-build"
 description: "The SalesGlider Growth soup to nuts procedure for building or topping up a lead list for any client and any source, in thirteen steps from ICP to a live campaign. Use whenever Josh asks to build a list, top up a campaign, refill a lane, pull leads for a client, or asks where a list build stands, regardless of whether the leads come from getleads, Google Maps, PermitStack, parcels, public records, or a hand filled queue table. This is the spine that every other lead skill hangs off of; it names which skill governs each step, which tool runs it, what gate must pass before the next step, and who owns the decision (code, Cayden, or Josh). Always follow this order. Skipping or reordering steps is how bad lists have shipped."
 ---
 
+**Read `topup.bot_rules` first.** Before any top-up or list build, in Supabase project `azpapwtnrbzywlnxxecz`:
+
+```sql
+select category, client, rule from topup.bot_rules where status = 'active' order by category;
+```
+
+Those rows win over skill text where they conflict. A new durable rule is inserted there (supersede the old row; never delete).
+
 # Lead list build, soup to nuts
 
 Thirteen steps plus the gate at 5.5 and the receipt at 11.5. Steps 3 through 12 are mechanical and belong to the Grok Bot babysitter (`grok-bot-babysitter`; or to Claude when the bot is not running that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a paid or destructive step until its gate passes. The 200-row spot check is not a mid-pipeline gate: score it in a separate pass while the next step runs, and a fail holds only before Smartlead upload/import (step 11), never between fetch, grade, people, email, verify, or normalize. Report every count as net useful output, never rows processed.

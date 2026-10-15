@@ -1,7 +1,7 @@
-# Edge function deploy artifacts (D111)
+# Edge function deploy artifacts (D112)
 
 Project `azpapwtnrbzywlnxxecz` only. These files are the live
-`icp-llm` v12 and `site-people` v5 sources with the D111 patches
+`icp-llm` v12 and `site-people` v5 sources with the D112 patches
 applied. Do not deploy until Josh says. Do not apply them to any
 other project.
 
@@ -9,8 +9,8 @@ other project.
 
 | Function | File | After deploy |
 |---|---|---|
-| `icp-llm` | `icp-llm/index.ts` | 3–5 copies per batch, never more than 5. Set function secret `ICP_LLM_HTTP_KEY` to the live `k=` (not in git). Pool stays `max: 2`, `idle_timeout: 10`. |
-| `site-people` | `site-people/index.ts` | HTTP `k=` is vault secret `site_people_key`. Create that secret first. Fetch / extract / ask claiming is unchanged. |
+| `icp-llm` | `icp-llm/index.ts` | 3–5 copies per batch, never more than 5. HTTP `k=` is vault secret `icp_llm_key` (create it first). Env `ICP_LLM_HTTP_KEY` is optional fallback. Pool stays `max: 2`, `idle_timeout: 10`. |
+| `site-people` | `site-people/index.ts` | HTTP `k=` is vault secret `site_people_key`. Fetch / extract / ask claiming is unchanged. |
 
 ## Migration (separate)
 

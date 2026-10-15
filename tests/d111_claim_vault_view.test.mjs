@@ -38,9 +38,12 @@ test('icp-llm hard-caps copies at 5', () => {
   assert.match(icp, /max: 2, prepare: false, idle_timeout: 10/);
 });
 
-test('icp-llm HTTP gate is not a hardcoded secret', () => {
+test('icp-llm HTTP gate reads vault icp_llm_key with env fallback', () => {
+  assert.match(icp, /vault\('icp_llm_key'\)/);
   assert.match(icp, /Deno\.env\.get\('ICP_LLM_HTTP_KEY'\)/);
+  assert.match(icp, /icp_llm_key missing from vault/);
   assert.doesNotMatch(icp, /const KEY = ['"][^'"]+['"]/);
+  assert.doesNotMatch(icp, /const KEY = Deno\.env\.get\('ICP_LLM_HTTP_KEY'\)/);
 });
 
 test('site-people reads the HTTP gate from vault site_people_key', () => {

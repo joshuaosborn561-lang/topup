@@ -1,5 +1,5 @@
 import postgres from 'npm:postgres@3.4.4';
-// site-people v5 (D72, D73; leadtopup site_check question=people). D111: HTTP k= from vault site_people_key.
+// site-people v5 (D72, D73; leadtopup site_check question=people). D112: HTTP k= from vault site_people_key.
 // Project azpapwtnrbzywlnxxecz only. Do not deploy until Josh says. Never put the key in git.
 // v5: capture EVERY named person. Bigger people-page budget, second hop crawl
 // from about/people pages, no 12 person cap, org_name + org_type per site.

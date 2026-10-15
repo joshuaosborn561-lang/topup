@@ -1,5 +1,13 @@
 # The MCP servers: where they are and how to call them
 
+**Read `topup.bot_rules` first.** Before any top-up or list build, in Supabase project `azpapwtnrbzywlnxxecz`:
+
+```sql
+select category, client, rule from topup.bot_rules where status = 'active' order by category;
+```
+
+Those rows win over skill text where they conflict. A new durable rule is inserted there (supersede the old row; never delete).
+
 Every server below speaks MCP over streamable HTTP at the URL given. Josh's own servers run on Railway; their auth is a bearer token held as a Railway service variable on each server (the variable name is in each repo's README). Never commit a token. Third party servers use the vendor's own API key or OAuth.
 
 Two ways to reach them and the service should use the first:

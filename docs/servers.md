@@ -586,7 +586,7 @@ at the default `max_tier`, which matches the non-negotiable. No PDL anywhere.
 2. Page the FullEnrich bulk call instead of slicing at 100 (or refuse > 100
    with a clear error).
 3. Add cancel; mark orphaned jobs on boot.
-4. **D111 (this change):** `ew_claim_source` + 20–50 workers + expiring
+4. **D112 (this change):** `ew_claim_source` + 20–50 workers + expiring
    lease so a restart does not double-spend. Deploy from GitHub after merge.
 
 ---
@@ -1000,8 +1000,9 @@ Three edge functions on campaignintelligence, written for the
   claim rows (one call at a time per batch). Deploy
   `supabase/functions/icp-llm/index.ts` after Josh says to: `FOR UPDATE
   SKIP LOCKED` plus an `in_progress` lease so 3 to 5 copies can run
-  (hard cap 5). A restart skips finished results and live leases.
-  About $0.11 per 1,000 sites.
+  (hard cap 5). HTTP `k=` is vault `icp_llm_key` (optional env
+  `ICP_LLM_HTTP_KEY` fallback). A restart skips finished results and
+  live leases. About $0.11 per 1,000 sites.
   Variants are label sets in the function; a new client needs one
   written there and a row in `topup.icp_variants` before the first run.
   TechEvo has no set of its own: park, do not invent.

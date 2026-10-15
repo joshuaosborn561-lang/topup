@@ -11,7 +11,7 @@ A daily Routine copies every skill back into this folder and commits any
 change. Anthropic's generic skills (documents, browsers, research) are not
 copied.
 
-D111 (pipeline speed, 15 Oct 2026) edits the copies here on purpose so the
+D112 (pipeline speed, 15 Oct 2026) edits the copies here on purpose so the
 Grok Bot babysitter can run a top-up in half an hour: non-blocking 200-row
 QA, ICP false-pass bar, standard site-people name-pick filters, ICP variants
 required before the gate. Copy the same text into Claude or the daily

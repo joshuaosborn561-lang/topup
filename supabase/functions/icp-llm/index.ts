@@ -1,5 +1,5 @@
-// icp-llm (D111 claiming). Project azpapwtnrbzywlnxxecz only. Do not deploy until Josh says.
-// HTTP k= is the live function's existing gate. Set function secret ICP_LLM_HTTP_KEY on deploy.
+// icp-llm (D112 claiming). Project azpapwtnrbzywlnxxecz only. Do not deploy until Josh says.
+// HTTP k= is vault secret icp_llm_key, with optional env ICP_LLM_HTTP_KEY fallback.
 // Never put that value in git. Pool stays max: 2, idle_timeout: 10. Hard cap 5 copies.
 import postgres from 'npm:postgres@3.4.4';
 // ICP check on our own fetched site text (client_salesglider.icp_site_text) with Gemini direct or Jev via OpenRouter.
@@ -9,7 +9,6 @@ import postgres from 'npm:postgres@3.4.4';
 // itbuyer/itbuyer2 (Parlay, TechEvo), insight/insight2, insight_oem, powergryd, powergryd_vciso, peterson, earthworks, sg_staffing, sg_fa. Category variants pass only the label in PASS.
 // Run claims rows (in_progress lease, SKIP LOCKED) so 3-5 copies can share a batch. idle_timeout keeps warm copies from hoarding DB connections. Hard cap 5 copies (advisory lock).
 const sql = postgres(Deno.env.get('SUPABASE_DB_URL')!, { max: 2, prepare: false, idle_timeout: 10 });
-const KEY = Deno.env.get('ICP_LLM_HTTP_KEY') ?? '';
 const ok = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json' } });
 export const YES = `The company itself performs building trade work with its own crews (roofing, HVAC, mechanical, plumbing, electrical, fire protection, concrete, paving, glazing, painting, flooring, drywall, framing, insulation, masonry, steel erection, excavation, site work, low voltage, security, signage, commercial doors, solar), AND its website has a dedicated commercial, industrial, institutional or multifamily services page, or names specific commercial projects or commercial clients.`;
 export const NO = `Any of these: the company mainly sells, supplies, distributes, manufactures, fabricates for others, rents equipment, consults, inspects, engineers, designs, represents manufacturers, or manages facilities; it is a general contractor or construction manager that subs out the trades; it is residential only or homeowner focused with at most a passing mention of commercial (including basement waterproofing, decks, landscaping, pools, residential remodeling); or it is not a contractor.`;
@@ -173,6 +172,9 @@ const JEV_Q: Record<string, any> = {
     other_or_too_thin: 'Anything else, or a site too thin to tell.' } } },
 };
 async function vault(name: string) { const [r] = await sql`select decrypted_secret s from vault.decrypted_secrets where name = ${name}`; return r?.s as string; }
+async function httpGate() {
+  return (await vault('icp_llm_key')) || Deno.env.get('ICP_LLM_HTTP_KEY') || '';
+}
 async function gemini(key: string, model: string, dom: string, txt: string) {
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: PROMPT(txt, dom) }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: { type: 'OBJECT', properties: { fit: { type: 'STRING', enum: ['yes', 'no'] }, confidence: { type: 'NUMBER' }, reason: { type: 'STRING' } }, required: ['fit', 'confidence', 'reason'] } } }) });
   const j: any = await r.json();
@@ -200,7 +202,8 @@ async function jev(key: string, model: string, variant: string, dom: string, txt
 }
 Deno.serve(async (req) => {
   const u = new URL(req.url);
-  if (!KEY) return ok({ error: 'ICP_LLM_HTTP_KEY missing' }, 500);
+  const KEY = await httpGate();
+  if (!KEY) return ok({ error: 'icp_llm_key missing from vault' }, 500);
   if (u.searchParams.get('k') !== KEY) return new Response('forbidden', { status: 403 });
   const mode = u.searchParams.get('mode');
   try {

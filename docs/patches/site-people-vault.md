@@ -1,4 +1,4 @@
-# Patch: move site-people HTTP key into the vault (D111)
+# Patch: move site-people HTTP key into the vault (D112)
 
 Live function: `site-people` v5 on project `azpapwtnrbzywlnxxecz` only.
 Patched source is `supabase/functions/site-people/index.ts`. Do not

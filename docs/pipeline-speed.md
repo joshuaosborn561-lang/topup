@@ -1,4 +1,4 @@
-# Pipeline speed (D111) — what landed, what to deploy
+# Pipeline speed (D112) — what landed, what to deploy
 
 Goal: a SalesGlider client top-up (`lead-list-build`, 13 steps) in
 about 30 minutes. This repo holds the skill text and the edge-function
@@ -20,7 +20,7 @@ this PR.
 - Site-people name-pick filters are standard every run.
 - ICP variants must exist before the gate. TechEvo parks; do not invent
   a label set.
-- `DECISIONS.md` D111.
+- `DECISIONS.md` D112 (main's D111 is the shared `topup.bot_rules` table).
 - Deployable source (not deployed from this PR):
   `supabase/functions/icp-llm/index.ts` (claiming + hard cap 5),
   `supabase/functions/site-people/index.ts` (HTTP `k=` from vault
@@ -65,13 +65,15 @@ that repo at `main` @ `65a181d` and open the PR there.
    merge. Confirm `COMPANY_CONCURRENCY` is 20–50 (default 40). GetLeads
    stays at about 4 concurrent; Smartlead at 3. Pass `approve_cost_usd`
    on every paid `enrich_waterfall`.
-3. **Vault `site_people_key`.** Create it in the dashboard (paste the
-   live `k=` once; not in git). Confirm `present` and length only.
-   Then deploy `supabase/functions/site-people/index.ts`.
-4. **`icp-llm` claiming.** Set function secret `ICP_LLM_HTTP_KEY` to
-   the live `k=` (not in git). Deploy `supabase/functions/icp-llm/index.ts`.
-   After that, 3 to 5 `icp-llm` calls per batch are allowed, never more
-   than 5; until then, one at a time.
+3. **Vault `site_people_key`.** Already present. Confirm `present` and
+   length only (do not print the value). Then deploy
+   `supabase/functions/site-people/index.ts`.
+4. **Vault `icp_llm_key`.** Create it in the dashboard (paste the live
+   `icp-llm` `k=` once; not in git). Confirm `present` and length only.
+   Env `ICP_LLM_HTTP_KEY` is an optional fallback only. Then deploy
+   `supabase/functions/icp-llm/index.ts`. After that, 3 to 5 `icp-llm`
+   calls per batch are allowed, never more than 5; until then, one at
+   a time.
 5. **`topup.site_dm_pick` filters.** Apply
    `supabase/migrations/20261015220000_site_dm_pick_standard_filters.sql`
    on `azpapwtnrbzywlnxxecz` only. History / old-year and plain-agent
