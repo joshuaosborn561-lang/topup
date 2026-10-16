@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /**
  * The booklet's reads and its one write (D113). Every fact comes live from
- * the database (topup.bot_rules, client_map, campaign_registry,
+ * the database, through the Supabase function booklet-data (topup.bot_rules, client_map, campaign_registry,
  * list_build_records, process_changes, the Smartlead mirror) or from the
  * skills folder in this repo. Nothing about a client is written here.
  * Counts, ids, names of campaigns and plain-English text only: no lead row
@@ -13,7 +13,6 @@ import { join } from "node:path";
 export const TOOLKIT_RULE_ID = "52fe5a2f-9de6-4f29-a3b6-3ebb5843ae82";
 export const FIRST_SKILL = "josh-judgment-calls";
 /** Smartlead lead categories the mirror counts as a positive reply. Same as the retired service. */
-export const POSITIVE_CATEGORY_IDS = [1, 2, 131482];
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,80}$/;
 const TAG = /^[a-z][a-z0-9_]{0,60}$/;
 
@@ -74,97 +73,44 @@ function frontMatter(text) {
   return out;
 }
 
-export async function getCanon(db, { client, category } = {}) {
-  const { rows } = await db.query(
-    `select id, category, client, rule, source, supersedes, created_at
-       from topup.bot_rules
-      where status = 'active'
-        and ($1::text is null or client is null or lower(client) in ('all', lower($1)))
-        and ($2::text is null or lower(category) = lower($2))
-      order by category, client nulls first, created_at`,
-    [client ?? null, category ?? null],
-  );
-  return rows;
+/** The database half lives in the Supabase function booklet-data (D113), which needs no key: fixed actions only. */
+export const DATA_URL = process.env.BOOKLET_DATA_URL || "https://azpapwtnrbzywlnxxecz.supabase.co/functions/v1/booklet-data";
+
+export function dataClient(url = DATA_URL, fetchImpl = fetch) {
+  return async (action, args = {}) => {
+    const res = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, args }) });
+    const body = await res.json().catch(() => ({ ok: false, error: `booklet-data answered ${res.status}` }));
+    if (!body.ok) throw new Error(body.error ?? `booklet-data answered ${res.status}`);
+    return body.data;
+  };
 }
 
-export async function getToolkit(db) {
-  const { rows } = await db.query(`select id, rule, status, updated_at from topup.bot_rules where id = $1::uuid`, [TOOLKIT_RULE_ID]);
-  return rows[0] ?? null;
+export async function getCanon(data, { client, category } = {}) {
+  return data("canon", { client, category });
 }
 
-/** Insert a rule; with supersedes, mark that row superseded in the same transaction. Never deletes. */
-export async function addRule(db, { rule, category, client, source, supersedes }) {
-  const conn = typeof db.connect === "function" ? await db.connect() : db;
-  try {
-    await conn.query("begin");
-    if (supersedes) {
-      const { rowCount } = await conn.query(`update topup.bot_rules set status = 'superseded', updated_at = now() where id = $1::uuid and status = 'active'`, [supersedes]);
-      if (!rowCount) {
-        await conn.query("rollback");
-        return { ok: false, error: `no active rule with id ${supersedes}; nothing was changed` };
-      }
-    }
-    const { rows } = await conn.query(
-      `insert into topup.bot_rules (rule, category, client, source, status, supersedes)
-       values ($1, $2, $3, $4, 'active', $5::uuid)
-       returning id, category, client, created_at`,
-      [rule, category, client ?? null, source, supersedes ?? null],
-    );
-    await conn.query("commit");
-    return { ok: true, rule: rows[0], superseded: supersedes ?? null };
-  } catch (err) {
-    await conn.query("rollback").catch(() => undefined);
-    throw err;
-  } finally {
-    if (conn !== db && typeof conn.release === "function") conn.release();
-  }
+export async function getToolkit(data) {
+  return data("toolkit");
 }
 
-export async function listClients(db) {
-  const { rows } = await db.query(
-    `select m.client_tag, m.client_name, m.smartlead_client_id,
-            (select count(*) from topup.list_build_records b where b.client_tag = m.client_tag)::int as build_records,
-            (select max(session_date) from topup.list_build_records b where b.client_tag = m.client_tag) as last_build,
-            (select count(*) from topup.bot_rules r where r.status = 'active' and lower(r.client) = lower(m.client_tag))::int as client_rules
-       from topup.client_map m
-      order by m.client_tag`,
-  );
-  return rows;
+/** Insert a rule; with supersedes, the old row is marked superseded in the same transaction. Never deletes. */
+export async function addRule(data, args) {
+  return data("add_rule", args);
+}
+
+export async function listClients(data) {
+  return data("clients");
 }
 
 /** Client context: who they are, their campaigns and lanes, their build history in words, process changes, rules and skills. */
-export async function getClient(db, root, tag, { history = 10 } = {}) {
+export async function getClient(data, root, tag, { history = 10 } = {}) {
   if (!TAG.test(tag ?? "")) return null;
-  const { rows: who } = await db.query(`select client_tag, client_name, smartlead_client_id from topup.client_map where client_tag = $1`, [tag]);
-  if (!who[0]) return null;
-  const [campaigns, builds, changes, rules, skills] = await Promise.all([
-    db.query(
-      `select c.smartlead_campaign_id as campaign_id, c.name, c.status, r.lane
-         from public.campaigns c
-         left join topup.campaign_registry r on r.campaign_id = c.smartlead_campaign_id
-        where c.smartlead_client_id = $1
-        order by r.lane nulls last, c.smartlead_campaign_id`,
-      [who[0].smartlead_client_id],
-    ),
-    db.query(
-      `select id, session_date, campaign_ids, lanes, written_by, left(narrative, 1500) as narrative, transcript_path
-         from topup.list_build_records
-        where client_tag = $1
-        order by session_date desc nulls last, id desc
-        limit $2`,
-      [tag, Math.max(1, Math.min(50, history))],
-    ),
-    db.query(`select id, created_at, written_by, left(summary, 1000) as summary from topup.process_changes where client_tag = $1 or client_tag is null order by created_at desc limit 20`, [tag]),
-    db.query(`select id, category, rule from topup.bot_rules where status = 'active' and lower(client) = lower($1) order by category, created_at`, [tag]),
-    listSkills(root),
-  ]);
+  const out = await data("client", { client_tag: tag, history });
+  if (!out) return null;
+  const skills = await listSkills(root);
   const word = tag.split("_")[0];
   return {
-    client: who[0],
-    campaigns: campaigns.rows,
-    build_history: builds.rows,
-    process_changes: changes.rows,
-    client_rules: rules.rows,
+    ...out,
     skills: skills.filter((s) => s.name.startsWith(`${tag.replace(/_/g, "-")}-`) || s.name.startsWith(`${word}-`) || (s.description ?? "").toLowerCase().includes(tag.replace(/_/g, " "))).map((s) => s.name),
     next: "Read the build transcript at transcript_path for the lane you are topping up, and the client's pull skill with get_skill.",
   };
@@ -176,27 +122,9 @@ export async function getClient(db, root, tag, { history = 10 } = {}) {
  * lifetime sends and positive replies, and the rate per 2,000 sends. Rolled
  * up by lane. Flags only; the bot applies the rules from get_canon.
  */
-export async function findLowCampaigns(db, tag) {
+export async function findLowCampaigns(data, tag) {
   if (!TAG.test(tag ?? "")) return null;
-  const { rows } = await db.query(
-    `with cm as (select smartlead_client_id from topup.client_map where client_tag = $1),
-     c as (select c.id, c.smartlead_campaign_id, c.name, c.status from public.campaigns c join cm on cm.smartlead_client_id = c.smartlead_client_id),
-     l as (select c.smartlead_campaign_id, count(*) filter (where not exists (select 1 from public.sends s where s.lead_id = l.id and s.sent)) as untouched
-             from c join public.leads l on l.campaign_id = c.id group by 1),
-     s as (select c.smartlead_campaign_id,
-                  count(*) filter (where s.sent) as sends,
-                  count(*) filter (where s.sent and s.lead_category_id = any($2::int[])) as positives,
-                  count(*) filter (where s.sent and s.sent_at >= now() - interval '7 days') as sends_7d,
-                  max(s.sent_at) filter (where s.sent) as last_send_at
-             from c join public.sends s on s.campaign_id = c.id group by 1)
-     select c.smartlead_campaign_id as campaign_id, c.name, c.status, r.lane,
-            coalesce(l.untouched, 0)::int as untouched, coalesce(s.sends, 0)::int as sends,
-            coalesce(s.positives, 0)::int as positives, coalesce(s.sends_7d, 0)::int as sends_7d, s.last_send_at
-       from c left join l using (smartlead_campaign_id) left join s using (smartlead_campaign_id)
-       left join topup.campaign_registry r on r.campaign_id = c.smartlead_campaign_id
-      order by r.lane nulls last, c.smartlead_campaign_id`,
-    [tag, POSITIVE_CATEGORY_IDS],
-  );
+  const rows = (await data("low_campaigns", { client_tag: tag })) ?? [];
   const campaigns = rows.map((r) => {
     const perDay = r.sends_7d / 7;
     return {

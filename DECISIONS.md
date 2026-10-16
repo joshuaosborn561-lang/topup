@@ -3836,9 +3836,11 @@ history from `topup.list_build_records` and `topup.process_changes`,
 runway from the Smartlead mirror, skills from `skills/`. Nothing about a
 client is in the code. `add_rule` inserts; with `supersedes` it marks the
 old row superseded in the same transaction; it never deletes, and refuses
-a rule that carries an email address or a key. The one secret is
-`DATABASE_URL`, a Railway variable, and the server refuses to start on any
-project but campaignintelligence.
+a rule that carries an email address or a key. There is no secret: the
+database half is the Supabase function `booklet-data`, which uses
+Supabase's own connection and answers a fixed set of actions (no SQL comes
+in), and the server refuses to call any project but campaignintelligence.
+Like the server, the function needs no login (D41).
 
 **What it does not do.** No engine: it never pulls, sizes, dedupes,
 verifies, finds emails, stages, imports, approves spend, or touches a

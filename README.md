@@ -64,9 +64,14 @@ rules are active and how many skills are loaded.
 
 ```
 npm install
-DATABASE_URL=... npm start     # Railway holds the real value
+npm start
 npm test
 ```
+
+No secret to set. The database half is the Supabase function
+`booklet-data` (in `supabase/functions/`), which runs inside project
+`azpapwtnrbzywlnxxecz` with Supabase's own connection and answers a fixed
+set of actions only.
 
 Facts live in the database and in `skills/`, never in the server code, so a
 bot that updates the rules table updates the booklet at once, and the daily

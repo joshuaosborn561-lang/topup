@@ -3,30 +3,26 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import pg from "pg";
 import { z } from "zod";
-import { addRule, findLowCampaigns, getCanon, getClient, getSkill, getToolkit, listClients, listSkills, START_HERE } from "./booklet.mjs";
+import { addRule, dataClient, DATA_URL, findLowCampaigns, getCanon, getClient, getSkill, getToolkit, listClients, listSkills, START_HERE } from "./booklet.mjs";
 
 /**
  * The Lead Topup MCP (D113): the shared instruction booklet for every
  * top-up bot, Josh's and Cayden's. Streamable HTTP at /mcp, stateless, no
- * login (as before, D41). The one secret is DATABASE_URL, read from the
- * environment and never echoed.
+ * login (as before, D41). No secret at all: the database half is the
+ * Supabase function booklet-data, which uses Supabase's own connection.
  */
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PORT ?? 3000);
 const ALLOWED_PROJECT = "azpapwtnrbzywlnxxecz";
-
-const dbUrl = process.env.DATABASE_URL ?? "";
-if (dbUrl && !dbUrl.includes(ALLOWED_PROJECT)) {
-  console.error(JSON.stringify({ tag: "boot", error: `DATABASE_URL is not Supabase project ${ALLOWED_PROJECT}; refusing to start` }));
+if (!DATA_URL.startsWith(`https://${ALLOWED_PROJECT}.supabase.co/`)) {
+  console.error(JSON.stringify({ tag: "boot", error: `BOOKLET_DATA_URL is not on Supabase project ${ALLOWED_PROJECT}; refusing to start` }));
   process.exit(1);
 }
-const pool = dbUrl ? new pg.Pool({ connectionString: dbUrl, max: 4, ssl: { rejectUnauthorized: false }, statement_timeout: 30000 }) : null;
+const data = dataClient(DATA_URL);
 
 const text = (v) => ({ content: [{ type: "text", text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
-const noDb = () => text({ error: "The booklet has no database connection yet (DATABASE_URL is not set on the Railway service). Skills still work. Ask Josh." });
 const plain = (err) => String(err?.message ?? err).replace(/postgres(ql)?:\/\/\S+/gi, "[database url]").slice(0, 300);
 const tag = z.string().regex(/^[a-z][a-z0-9_]*$/, "snake_case client_tag");
 
@@ -48,7 +44,7 @@ function build() {
       description: "The shared rules every top-up bot follows (active rows of topup.bot_rules). They win over skill text. Filter by client (rules for that client plus the general ones) or category.",
       inputSchema: { client: tag.optional(), category: z.string().max(40).optional() },
     },
-    safe(async ({ client, category }) => (pool ? text(await getCanon(pool, { client, category })) : noDb())),
+    safe(async ({ client, category }) => text(await getCanon(data, { client, category }))),
   );
 
   server.registerTool(
@@ -64,11 +60,10 @@ function build() {
       },
     },
     safe(async (a) => {
-      if (!pool) return noDb();
       if (/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/i.test(a.rule) || /(sk-|eyJ)[A-Za-z0-9_-]{16,}/.test(a.rule)) {
         return text({ error: "That rule contains an email address or something that looks like a key. Rules never carry either. Nothing was saved." });
       }
-      return text(await addRule(pool, a));
+      return text(await addRule(data, a));
     }),
   );
 
@@ -83,9 +78,9 @@ function build() {
     }),
   );
 
-  server.registerTool("get_toolkit", { description: "The connector guide: which MCP to use for what. Lives in topup.bot_rules, so a bot that updates it updates this.", inputSchema: {} }, safe(async () => (pool ? text((await getToolkit(pool)) ?? { error: "the toolkit rule is missing from topup.bot_rules; ask Josh" }) : noDb())));
+  server.registerTool("get_toolkit", { description: "The connector guide: which MCP to use for what. Lives in topup.bot_rules, so a bot that updates it updates this.", inputSchema: {} }, safe(async () => text((await getToolkit(data)) ?? { error: "the toolkit rule is missing from topup.bot_rules; ask Josh" })));
 
-  server.registerTool("list_clients", { description: "Every client: tag, name, Smartlead client id, how many build records, last build date, how many client rules.", inputSchema: {} }, safe(async () => (pool ? text(await listClients(pool)) : noDb())));
+  server.registerTool("list_clients", { description: "Every client: tag, name, Smartlead client id, how many build records, last build date, how many client rules.", inputSchema: {} }, safe(async () => text(await listClients(data))));
 
   server.registerTool(
     "get_client",
@@ -94,8 +89,7 @@ function build() {
       inputSchema: { client_tag: tag, history: z.number().int().min(1).max(50).optional() },
     },
     safe(async ({ client_tag, history }) => {
-      if (!pool) return noDb();
-      const out = await getClient(pool, ROOT, client_tag, { history });
+      const out = await getClient(data, ROOT, client_tag, { history });
       return text(out ?? { error: `${client_tag} is not in topup.client_map; call list_clients` });
     }),
   );
@@ -107,8 +101,7 @@ function build() {
       inputSchema: { client_tag: tag },
     },
     safe(async ({ client_tag }) => {
-      if (!pool) return noDb();
-      const out = await findLowCampaigns(pool, client_tag);
+      const out = await findLowCampaigns(data, client_tag);
       return text(out ?? { error: `bad client_tag ${client_tag}` });
     }),
   );
@@ -129,14 +122,12 @@ const http = createServer(async (req, res) => {
     if (url.pathname === "/health" || url.pathname === "/") {
       let db = false;
       let activeRules = null;
-      if (pool) {
-        try {
-          const { rows } = await pool.query(`select count(*)::int as n from topup.bot_rules where status = 'active'`);
-          db = true;
-          activeRules = rows[0].n;
-        } catch {
-          db = false;
-        }
+      try {
+        const h = await data("health");
+        db = true;
+        activeRules = h.active_rules;
+      } catch {
+        db = false;
       }
       const skills = (await listSkills(ROOT).catch(() => [])).length;
       res.writeHead(200, { "content-type": "application/json" });
@@ -168,4 +159,4 @@ const http = createServer(async (req, res) => {
   }
 });
 
-http.listen(PORT, () => console.log(JSON.stringify({ tag: "boot", port: PORT, db: Boolean(pool) })));
+http.listen(PORT, () => console.log(JSON.stringify({ tag: "boot", port: PORT, data: DATA_URL })));
