@@ -35,7 +35,7 @@ Client tags: `peterson`, `peterson_earthworks`, `basco`, `culture_fits`,
 ## Retired, left in place, unread
 
 The service that used to sit between Grokbot and the vendors is gone
-(D110). Its tables stay so history is not lost: `topup.runs`,
+(D110); the booklet that replaced its reads (D113) reads only the tables above. Its tables stay so history is not lost: `topup.runs`,
 `topup.run_steps`, `topup.cards`, `topup.job_settings`, `topup.lane_events`,
 `topup.lane_state`, `topup.spend_ledger`, `topup.stall_events`,
 `topup.service_flags`, `topup.verify_batches`, `topup.qa_rules`,
