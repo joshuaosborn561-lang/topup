@@ -1,6 +1,6 @@
 ---
 name: "tam-sizing"
-description: "Size the addressable universe before building any lead list, so the build is scoped to a real number instead of running until a vendor stops returning rows. Use whenever Josh asks how many are out there, how big is the TAM, how many can we get, whether a pool is exhausted, or asks to build or extend a list for any client or lane. Runs first, before getleads, AI Ark, Prospeo, DiscoLike, Maps, PermitStack or any DM or domain discovery."
+description: "Size the addressable universe before building or topping up any lead list. LinkedIn-native ICPs are counted on all three of getleads, AI Ark and Prospeo; physical ICPs on Maps, permits or parcels. Use whenever Josh asks how many are out there, how big the TAM is, whether a pool is exhausted, or asks to build or extend a list."
 ---
 
 # TAM sizing
@@ -34,8 +34,9 @@ A count is cheap or free. A wrong count is a day of work and a credit balance.
 2. **Count the universe** with the cheapest endpoint that can express the ICP.
 3. **Prove the filter binds** with the partition check below. A count from an ignored filter is
    worse than no count.
-4. **Confirm with a second vendor.** One number is a guess. Two independent numbers within ~25%
-   is a fact.
+4. **Confirm across vendors.** LinkedIn-native ICPs are counted on all three of getleads, AI Ark
+   and Prospeo, every time (Josh, Oct 12 2026; all three are cheap to count on). Physical ICPs
+   are counted on Maps, permits or parcels instead (see below). One number is a guess.
 5. **Subtract what is already held** ... suppression, existing client lists, prior loads. The
    number that matters is net-new, never gross.
 6. **Report the number and the method**, then route.
@@ -77,7 +78,7 @@ company equivalent.
 ### getleads `count_contacts` ... free, always run it
 
 Zero credits, unlimited on the plan. Run it on every ICP even when another vendor is the primary,
-because it is the free second opinion that satisfies step 4.
+because it is one of the three required counts and it is free.
 
 Band labels must be exact strings (`"201 to 500"`). Numeric `employees_min` / `employees_max`
 causes silent band overlap. It cannot filter department size.
@@ -126,7 +127,7 @@ after dedupe" rather than as a clean TAM.
 
 ### Prospeo counts ... 1 credit per query
 
-Useful as a third opinion and the only other vendor that can filter department size. Costs ~4
+One of the three required counts on every LinkedIn-native ICP, and the only other vendor that can filter department size. Costs ~4
 credits per 100 domains for per-domain flags, so prefer AI Ark for population questions and
 Prospeo for flagging domains you already hold.
 
@@ -190,9 +191,17 @@ Cost of the check: **3 credits.** Always worth it.
 
 ---
 
-## Two-vendor agreement
+## Three-vendor agreement (LinkedIn-native ICPs)
 
-One vendor's count is a guess. Two independent counts within roughly 25% is a fact.
+Count every LinkedIn-native ICP on getleads, AI Ark and Prospeo with the same ICP expressed in
+each vendor's own filters, partition-check each one, and report all three. It applies to new
+builds and to the runway count on a top up. One vendor's count is a guess. Two counts within
+roughly 25% is a fact; the third either agrees or gets explained.
+
+* All three within about 25%: report the range and go.
+* Two agree, one is far off: the outlier's filter is broken until proven otherwise. Fix and
+  recount it before reporting; never average it in.
+* All three disagree: stop and tell Josh with the three numbers and the filters. Do not build.
 
 Measured on the Insight IT DM ICP:
 
@@ -228,7 +237,7 @@ Always these five, in this order:
 
 1. **The number** and the exact filter that produced it
 2. **Whether the filter was partition-verified**, and the arithmetic if so
-3. **The second vendor's number** and whether they agree
+3. **All three vendor numbers** (getleads, AI Ark, Prospeo) and whether they agree
 4. **Net-new after suppression**
 5. **Cost of the sizing run**, even when it is zero
 
@@ -243,7 +252,8 @@ Then route via `leadgen-mcp-routing`.
 - Never report gross when net-new is what scopes the work.
 - A count that disagrees with two other vendors by more than 2x is a broken filter until proven
   otherwise, not a discovery.
-- getleads `count_contacts` is free ... there is never a reason not to run it as the second opinion.
+- getleads `count_contacts` is free, AI Ark preview and Prospeo cost about one credit per query,
+  so there is never a reason to skip any of the three on a LinkedIn-native ICP.
 - Physical ICPs get a range plus a method, never a single number.
 - If sizing shows the lane is already built out, say so plainly and do not build. That is a
   successful sizing run, not a failed one.

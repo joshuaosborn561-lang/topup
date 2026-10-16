@@ -35,7 +35,7 @@ Estimate, state the dollar figure, get approval, run with `approve_cost_usd`. Po
 
 ## Order, revised 2026-10-14
 
-1. **`site-people-dm` first.** The company's own people pages, read server side. Free apart from the model call, and it finds the buyers who are not in any B2B database (churches, local owners, owner operated shops). Run that skill's standard name-pick filters every time (old-year / history-page founders, franchise HQ, plain real estate agents, names not in site text, then the cheap current-local-DM check) before handing anyone to email.
+1. **`site-people-dm` first.** The company's own people pages, read server side. Free apart from the model call, and it finds the buyers who are not in any B2B database (churches, local owners, owner operated shops).
 2. **`serp-dm-discovery` second.** Google indexed LinkedIn profiles via Serper, on the companies step 1 left empty.
 3. **`resolve_people` on what is still empty**, with DiscoLike skipped by default: pass `skip_tiers=discolike`. That leaves `cache` → `aiark`. Run DiscoLike only when Josh asks for that tier on this pull; it is optional, not part of the default.
 

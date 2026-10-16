@@ -1,5 +1,5 @@
 ---
-name: spintax-generator
+name: "spintax-generator"
 description: "Apply spintax to SalesGlider Growth cold email copy for send-fingerprint variation, and validate it before it ships. Use whenever Josh asks to add spintax, spin the copy, vary the copy for deliverability, check the longest path, verify a sequence is under 90 words, or asks how many variants a campaign needs. Enforces the house volume standard (ONE approved body per email slot, spun to 20+ rendered paths, 2 subject variants; never invent extra bodies) and the house safety rules: inline {a|b} syntax only, spin on low-risk elements only, core value prop and proof figures left completely untouched, merge tags preserved, no nesting, no dash punctuation, and every variant verified under 90 words on its LONGEST rendered path. Applies to any client campaign copy in any vertical."
 ---
 
@@ -58,7 +58,7 @@ Only these.
 
 - **Greeting** ... `{Hey|Hi}`
 - **Gift or offer phrasing** ... `a couple {extra|spare} {{gift}}`
-- **Risk-reversal line** ... `{yours regardless|yours either way}`
+- **Risk-reversal line** ... `{one good faith call and they're yours|they're yours after one good faith call}`. Never spin in "regardless," "either way," or "for a reply": the gift is only ever for a good faith call (salesglider-cold-email-copy). Every option that mentions the call keeps the words "good faith call," e.g. `for a {quick|short} good faith call`.
 - **Transitions** ... `{Reason for reaching out:|Why I'm reaching out:}`
 - **CTA closers** ... `{Worth a reply?|Open to it?|Worth a look?}`
 - **PS lines**
@@ -75,6 +75,8 @@ Only these.
 - **Merge tags.** `{{first_name}}`, `{{company_name}}`, `{{gift}}`,
   `{{Local_Sports_Team}}`, `%signature%` pass through untouched. Merge tags use double
   braces, spintax uses single. The validator checks this collision specifically.
+- **The good faith condition.** No spin option may drop "good faith" from a call reference or
+  turn the gift into something given without a call.
 
 ## Syntax rules
 
@@ -86,6 +88,9 @@ Only these.
   sentence. Read rendered paths, not the raw string.
 - **No dash punctuation of any kind.** Not em, not en, not hyphens as punctuation. Use
   "..." or commas. Standing house rule.
+- **Subject lines: never wrap a merge tag inside a spin group.** Smartlead's parser rejects
+  `{{{Local_Sports_Team}} tix|{{Local_Sports_Team}} tickets}` (Oct 15 2026, upload 406).
+  Write `{{Local_Sports_Team}} {tix|tickets}` instead.
 
 ## The 90-word rule
 
@@ -103,9 +108,12 @@ The opt-out PS block is exempt.
 
 ```
 python3 scripts/check_spintax.py <file.md> [more files...]
-python3 scripts/check_spintax.py --max-words 90 --min-paths 20 copy.md
+python3 scripts/check_spintax.py --max-words 90 copy.md
 python3 scripts/check_spintax.py --show-longest copy.md
 ```
+
+The validator does not take a `--min-paths` flag; count paths per body yourself (product of
+option counts per spin group, opt-out block excluded) and fail anything under 20.
 
 The validator checks:
 

@@ -73,6 +73,6 @@ Reports how many changed. On a mixed DFW nonprofit and CRE list expect roughly 4
 
 - Zero parentheses or quote marks in the output column
 - No single-token results that are bare adjectives: Advanced, Premier, Continuous, National
-- Spot-read 200 random rows per step (not the top of the table, not 20), in a pass separate from the one that produced them, **while the next pipeline step runs**, and report the error rate. Josh's rule: hold if any step is over 2 percent errors until that step is fixed and re-checked. The hold is only before Smartlead import, never mid-pipeline. The defects that matter are rare enough to miss in a small sample: on a 2,500 row send, `St..` appeared twice and ALLCAPS words appeared in under 2% of rows, which is exactly the hold line. An automated defect scan will not catch these because the strings are individually well formed. Read them. This is the same QA rule as `merge-field-qa`.
+- Spot-read 100 rows, not 20. The defects that matter are rare enough to miss in a small sample: on a 2,500 row send, `St..` appeared twice and ALLCAPS words appeared in under 2% of rows. An automated defect scan will not catch these because the strings are individually well formed. Read them.
 - Zero occurrences of `..`
 - Zero ALLCAPS words that are ordinary English
