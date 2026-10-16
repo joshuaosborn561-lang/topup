@@ -1,19 +1,22 @@
 ---
 name: "lead-list-build"
-description: "The SalesGlider Growth soup to nuts procedure for building or topping up a lead list for any client and any source, in thirteen steps from ICP to a live campaign. Use whenever Josh asks to build a list, top up a campaign, refill a lane, pull leads for a client, or asks where a list build stands, regardless of whether the leads come from getleads, Google Maps, PermitStack, parcels, public records, or a hand filled queue table. This is the spine that every other lead skill hangs off of; it names which skill governs each step, which tool runs it, what gate must pass before the next step, and who owns the decision (code, Cayden, or Josh). Always follow this order. Skipping or reordering steps is how bad lists have shipped."
+description: "The SalesGlider Growth soup to nuts procedure for building OR topping up a lead list for any client and any source, in thirteen steps. One spine, two modes: a new build designs the ICP fresh; a top up replays the recorded build for steps 1 to 3, then runs steps 4 to 13 exactly like a new build. Use whenever Josh or Cayden asks to build a list, top up, refill a lane or pull leads."
 ---
-
-**Read `topup.bot_rules` first.** Before any top-up or list build, in Supabase project `azpapwtnrbzywlnxxecz`:
-
-```sql
-select category, client, rule from topup.bot_rules where status = 'active' order by category;
-```
-
-Those rows win over skill text where they conflict. A new durable rule is inserted there (supersede the old row; never delete).
 
 # Lead list build, soup to nuts
 
-Thirteen steps plus the gate at 5.5 and the receipt at 11.5. Steps 3 through 12 are mechanical and belong to the Grok Bot babysitter (`grok-bot-babysitter`; or to Claude when the bot is not running that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a paid or destructive step until its gate passes. The 200-row spot check is not a mid-pipeline gate: score it in a separate pass while the next step runs, and a fail holds only before Smartlead upload/import (step 11), never between fetch, grade, people, email, verify, or normalize. Report every count as net useful output, never rows processed.
+**Two modes, one spine.**
+* **New build** (first pull, new lane, new client, or a campaign with no build record or a reconstructed one): run every step as written.
+* **Top up** (an existing campaign with a row in `topup.list_build_records` and a transcript): steps 1 to 3 change, everything from step 4 on is identical. See "Top up mode" below and `campaign-topup` for the replay details. A top up repeats what worked; it never redesigns the ICP, widens bands or adds titles without Josh.
+
+### Top up mode: what changes
+* **Step 1, ICP:** don't redesign it. Take the lane's ICP from the build record and transcript, then apply anything newer in `topup.process_changes`, `topup.client_icp` and `josh-judgment-calls`. If a newer decision changes the ICP, say so to Josh before pulling.
+* **Step 2, size it:** the question is runway, not the full TAM. Recount the same filters on all three vendors (getleads, AI Ark, Prospeo) for LinkedIn-native lanes, subtract everyone already sent to this ICP, and report remaining pool, how many weeks of sending that covers at the campaign's pace, and whether this top up exhausts it. Under the 200 floor or under about two weeks of runway means tell Josh and offer widening options with counts; never widen on your own, never call the pool exhausted.
+* **Step 3, pull:** replay the transcript's tools and filters, quote count and cost, wait for a named yes before anything paid, then reason who the buyer is at each company (`campaign-topup` step 2.5).
+* **Step 9, route:** load into the same campaigns the build used, same split. Cells with no live campaign park and wait for Josh. No new copy.
+* **Steps 4 to 8 and 10 to 13:** unchanged. Suppression, ICP website gate, Email Verifier Progression, all four normalizations with the 200 row QA, title and vertical QA, staging, import counts, receipt, provenance, build record, pre launch check. A top up skips none of them.
+
+Thirteen steps plus the gate at 5.5 and the receipt at 11.5. Steps 3 through 12 are mechanical and belong to the Grok Bot babysitter (`grok-bot-babysitter`; or to Claude when the bot is not running that lane). Steps 1, 9 when new copy is needed, and 13 are Josh's. Never advance a step until its gate passes. Report every count as net useful output, never rows processed.
 
 Rules that apply to every step: no lead rows in chat; counts and up to ten company names only; data moves server to server; estimate and get approval before any paid call (credit prices live in `grok-bot-babysitter` under Credit pricing; quote from there, do not invent rates); pass `client_tag` on every job; confirm the Supabase project before writing (`azpapwtnrbzywlnxxecz` campaign and lead data, `kemvxzhcxvynmoutwdrh` parcels, `klomihumrgwoixbzxypr` CRM); one session at a time on a client's tables. LeadMagic is out of the stack as of Oct 8 2026: never call it, and never let a waterfall job reach a LeadMagic tier.
 
@@ -28,15 +31,18 @@ order by created_at desc;
 ```
 Global rows (`client_tag` null) apply to every client; client rows apply to that client only (a title taken out, a lane retargeted, a label set tuned). Where a summary is not enough, read its transcript from Storage bucket `list-build-transcripts` at `transcript_path`, server side, never into chat. The `record-list-build` skill writes these rows; if this session changes the process, it writes one at the end too.
 
+Then read `josh-judgment-calls`, the general rules and this client's section. Those are Josh's own calls and win over an older client pull skill on the same point.
+
 ## Step 1. Nail the ICP for the lane (Josh)
 
 What: titles, headcount bands, geography, industries, offer family, gift tier. Decide the cells up front: band × gateway (SEG or OTHER) × gift (team or AirPods) × offer.
-Source: the client's lead pull skill (`parlay-lead-pulls`, `culture-fits-lead-pulls`, `techevo-lead-pulls`, `goliath-lead-pulls`, `salesglider-lead-pulls`) plus the latest client call in Fireflies. ICP drift is common; the call wins over the skill and the skill gets updated.
+Source: `topup.client_icp` (each lane's ICP from the client's calls), `josh-judgment-calls`, the client's lead pull skill (`bcp-lead-pulls`, `culture-fits-lead-pulls`, `deep-roots-lead-pulls`, `earthworks-lead-pulls`, `emcor-lead-pulls`, `goliath-lead-pulls`, `insight-lead-pulls`, `nutter-lead-pulls`, `parlay-lead-pulls`, `peterson-lead-pulls`, `powergryd-lead-pulls`, `salesglider-lead-pulls`, `techevo-lead-pulls`), plus the latest client call in Fireflies. ICP drift is common; the newest dated decision wins and the older place gets updated.
+Who to target: reason out who signs for this purchase at each company type and size (the "Who the buyer is" section of `josh-judgment-calls`). A title list is evidence, not the answer; the buyer changes with headcount, so each size band gets its own title set.
 Gate: every cell has a campaign or Josh knows one must be built. Josh signs off on the segment before anything is pulled.
 
 ## Step 2. Size it (code)
 
-What: count the segment on more than one free or near free source before pulling. getleads `count_contacts`, DiscoLike counters, AI Ark preview counts, Maps or PermitStack counts for physical lanes. Run the partition check that proves the filters bind. Trust a number only when two sources agree.
+What: LinkedIn-native lanes are counted on all three of getleads `count_contacts`, AI Ark preview and Prospeo, with a partition check on each; physical lanes are counted on Maps, PermitStack or parcels and reported as a range. Report all three numbers. Two within about 25% is a fact; a far off third has a broken filter until fixed; all three apart means stop and tell Josh. DiscoLike counters are a second opinion for niche ICPs described by website content.
 Then: subtract what has already been sent to this ICP (`public.leads`, `leads_staging`) to get projected net new.
 Skill: `tam-sizing`.
 Gate: projected net new is above the useful floor (default 200). If thin, present widening options with counts; Josh decides. Never widen unasked, never declare a pool exhausted.
@@ -48,7 +54,7 @@ Two flavors. Both end with rows in a table, never in chat.
 LinkedIn native lanes (Parlay, BCP, Culture Fits, TechEvo, Goliath, Insight, SG lanes): getleads `export_contacts` with `company_size` as exact band labels like `["51 to 200"]`, no `email_status` filter (Josh: export without VALID, verify everything anyway), industries validated against the catalog (commas shred silently). Poll, take the S3 URL. If getleads under delivers on the companies, cascade: AI Ark people discovery on the misses via `/people/preview` with titles always passed (1 credit per 100 results; audit titles after, it returns whoever appears first at a domain when no title is sent), title filter in SQL, then Email Finder Waterfall (`max_tier='prospeo'`, `skip_tiers='leadmagic'`) on the named people. FullEnrich last and only if stamped on.
 Skill: the client pull skill, `leadgen-mcp-routing`.
 
-Company first lanes (Peterson roofing, Earthworks, Vasco, trades): the source gives a business or a name, not an email. Google Maps Scraper (outcome mode, `estimate_only` first) by category and geography, PermitStack by permit type and date and county, parcels by use code and county, IRS 990 and Texas Comptroller officers for names. Then walk it: `unmask-shell-llc` for address named owners; Domain Waterfall for domains (`domain-waterfall`); people from the company's own site first (`site-people-dm`), then Google-indexed LinkedIn (`serp-dm-discovery`), then Find Named Person (`people-waterfall`) with DiscoLike optional (`skip_tiers=discolike`; site-people and serp-dm come first). getleads by domain or AI Ark preview with titles still fine for LinkedIn-native leftovers; `hard-to-find-dm-discovery` on what is still empty. Email Finder Waterfall in `source_table` plus `writeback` mode for addresses. Bank every name with no email (`unresolved-name-routing`). Run a pilot of about 100 through the full cascade before scaling and report cost per usable lead.
+Company first lanes (Peterson roofing, Earthworks, Vasco, trades): the source gives a business or a name, not an email. Google Maps Scraper (outcome mode, `estimate_only` first) by category and geography, PermitStack by permit type and date and county, parcels by use code and county, IRS 990 and Texas Comptroller officers for names. Then walk it: `unmask-shell-llc` for address named owners; Domain Waterfall for domains (`domain-waterfall`); people from the company's own site first (`site-people-dm`), then Google-indexed LinkedIn (`serp-dm-discovery`), then Find Named Person (`people-waterfall`) with DiscoLike only on the gaps (`skip_tiers=discolike` unless Josh asks; site-people and serp-dm come first). For domain based lists the people order is getleads, then AI Ark, then Prospeo, then the website fetch on the misses (Josh, Oct 12 2026). No website means no outreach on Maps lanes; cut it at the scrape. `hard-to-find-dm-discovery` on what is still empty. Email Finder Waterfall in `source_table` plus `writeback` mode for addresses. Bank every name with no email (`unresolved-name-routing`). Run a pilot of about 100 through the full cascade before scaling and report cost per usable lead.
 Gate: useful output counted, titles audited, spend within the approved ceiling.
 
 ## Step 4. Ingest (code)
@@ -64,11 +70,9 @@ Gate: report raw, removed by reason, net new. Net new is the number from here on
 
 ## Step 5.5. ICP website gate (code, near free, before anything paid)
 
-What: every distinct domain in the pull goes through our own site fetch plus Jev's category pick against the client's label set (skill `icp-website-gate`). Jev about $0.11 per 1,000 domains; DiscoLike fallback about $0.0038 per unreadable domain, plan for about 10% unreadable. That site-unreadable fallback is a different call from DiscoLike in the people finder.
-**Label set is a hard precondition.** Before any `icp-site-fetch` or `icp-llm` call, read `topup.icp_variants` for this `client_tag` and lane. The row must name a JEV_Q / PASS variant written for that client's ICP, already in the live `icp-llm` function. A client with several ICPs needs one variant per lane. A client with no label set of its own parks until Josh writes one; do not invent labels, and do not reuse another client's variant as a stand-in. TechEvo has none yet: park the gate, do not invent a TechEvo set, do not run `itbuyer2` as if it were TechEvo's. Every new label set gets a 50 site blind check by a separate agent on its first run. Write `icp_gate`, `icp_gate_label`, `icp_gate_at` on the rows; never delete.
-Score the ICP gate sample in parallel with the next step (see Non-blocking 200-row QA below). The ICP bar counts only false passes (a bad company let through) against 2 percent; track false cuts (a good company cut) separately and tell Josh, but a high false-cut rate does not hold the batch on its own.
-People after the gate: `site-people-dm` and `serp-dm-discovery` run first. The EMCOR/site-people name-pick filters in `site-people-dm` are standard on every run, not EMCOR-only. DiscoLike in the people finder (`people-waterfall`) is optional; pass `skip_tiers=discolike` unless Josh asks for that tier.
-Gate: only `icp_gate = yes` moves on to verification, enrichment, routing and import. Show Josh the label counts; if one label swallows a big share, fix the label set before going further. Do not wait for the 200-row ICP sample to finish before people, email, or verify start.
+What: every distinct domain in the pull goes through our own site fetch plus Jev's category pick against the client's label set (skill `icp-website-gate`). Jev about $0.11 per 1,000 domains; DiscoLike fallback about $0.0038 per unreadable domain, plan for about 10% unreadable. That site-unreadable fallback is a different call from DiscoLike in the people finder. The client's variant is in `topup.icp_variants`; a client with several ICPs needs one variant per lane. A client with no label set parks until one is written, and every new label set gets a 50 site blind check by a separate agent on its first run. Write `icp_gate`, `icp_gate_label`, `icp_gate_at` on the rows; never delete.
+People after the gate: `site-people-dm` and `serp-dm-discovery` run first. DiscoLike in the people finder (`people-waterfall`) is optional; pass `skip_tiers=discolike` unless Josh asks for that tier.
+Gate: only `icp_gate = yes` moves on to verification, enrichment, routing and import. Show Josh the label counts; if one label swallows a big share, fix the label set before going further.
 
 ## Step 6. Verify (code, paid, estimate first)
 
@@ -78,14 +82,14 @@ Gate: sendable count and reject rate reported. A reject rate far above the lane'
 
 ## Step 7. Normalize (code)
 
-What: four scripts, in this order, each writing a new column, never overwriting the raw one: `name-city-normalization` (first names and cities), `company-name-normalization` (conversational company names), `conversational-location` (Naperville to Chicagoland; a city that cannot be mapped to a metro (NO_GEOCODE) falls back to the raw normalized city, never blank), `sports-team-assignment` (MLB or NFL by distance, college fallback, pro only mode for education; ambiguous nicknames go null and route to the AirPods tier).
-Start the 200-row sample for each normalization or assignment step as soon as that column is written (first names, cities, company names, conversational location, sports teams, ICP gate labels from step 5.5, campaign routing from step 9). Score it in a separate pass while the next step runs. Do not pause the pipeline for the sample. Never post rows in chat; counts and up to 10 company names only. The checks per field are in `merge-field-qa`.
-Gate: every merge field the copy uses is populated or the row is held. A sample over 2 percent wrong does not stop normalize, route, or stage; it holds import (step 11) until that step is fixed and re-checked.
+What: four scripts, in this order, each writing a new column, never overwriting the raw one: `name-city-normalization` (first names and cities), `company-name-normalization` (conversational company names), `conversational-location` (Naperville to Chicagoland; a city that cannot be mapped to a metro (NO_GEOCODE) falls back to the raw normalized city, never blank), `sports-team-assignment` (league from `sports-offer-season`, which switches two weeks before each regular season ends; team pick order, Knicks to Rangers and the spa fallback in `josh-judgment-calls`; pro only mode for education; unresolved rows go to the lane's no team gift).
+Mandatory QA after each normalization or assignment step (first names, cities, company names, conversational location, sports teams, ICP gate labels from step 5.5, campaign routing from step 9): pull 200 random rows per step, check them by a separate pass, and report the error rate per step. Hold the batch if any step exceeds 2 percent errors until it is fixed. Never post rows in chat; counts and up to 10 company names only. The checks per field are in `merge-field-qa`.
+Gate: every merge field the copy uses is populated or the row is held.
 
 ## Step 8. QA (code purges silently, Cayden clears holds)
 
-What: purge junk titles, students, associates on PE lanes, retail, school districts, and verticals outside the ICP. Hold regulated industries on gift campaigns (banks, credit unions), acronym or broken company names, unresolved teams. Reroute nonprofits and churches to the EOS style offer, never to ticket analytics. The 200-row separate-pass samples from step 7 may still be scoring while this purge runs; do not wait on them, and do not post rows.
-Gate: holds cleared or excluded; counts of purged and held reported. Error rate per QA'd step reported when the sample finishes. Josh's rule stays: hold import if any non-ICP step is over 2 percent wrong. ICP uses its own bar (false passes only).
+What: purge people who are not the buyer at that company (junior titles, students, associates and VPs on PE lanes; see `josh-judgment-calls`) and verticals outside this client's ICP. Retail and school districts come out only where the client's ICP excludes them, not by default. Hold regulated industries on gift campaigns (banks, credit unions), acronym or broken company names, unresolved teams. Reroute nonprofits and churches to the EOS style offer, never to ticket analytics. The 200-row separate-pass QA from step 7 is the look before moving on; do not post rows.
+Gate: holds cleared or excluded; counts of purged and held reported. Error rate per QA'd step reported; hold the batch if any step is over 2 percent.
 
 ## Step 9. Route to campaign (code; Josh when copy is needed)
 
@@ -100,8 +104,7 @@ Gate: staged count equals routed count.
 ## Step 11. Import (code)
 
 What: Smartlead `start_lead_import` from staging (or `stage_leads_from_url`), in chunks. The only success test is `upload_count` equals submitted. A mismatch stops that campaign's import and is reported.
-This is the first point a 200-row sample fail may block. If any non-ICP sample is over 2 percent wrong, or the ICP sample's false-pass rate is over 2 percent, do not import until that step is fixed and re-checked. Open samples must be finished and reported before the first `start_lead_import`.
-Gate: every sample is in, no hold stands, counts match on every campaign.
+Gate: counts match on every campaign.
 
 ## Step 11.5. Write the pull receipt (code, or Claude when the Grok Bot babysitter is not running the lane)
 
@@ -114,7 +117,7 @@ Read the lead-provenance skill. Register the staging table in `topup.provenance_
 
 ## Step 11.7. Record the build, and any process change (Claude)
 
-Run `record-list-build`: the build record with narrative and full transcript. If anything about the process changed in this session (a new step, tool, label set, a title cut for this client), also write the `topup.process_changes` row described in that skill, so step 0 of the next build picks it up.
+Run `record-list-build`: the build record with narrative and full transcript. If anything about the process changed in this session (a new step, tool, label set, a title cut for this client), also write the `topup.process_changes` row described in that skill, so step 0 of the next build picks it up. If Josh made a new list decision, add it to `josh-judgment-calls`.
 
 ## Step 12. Pre launch check (code, wizard helps)
 
@@ -124,17 +127,6 @@ Gate: receipt posted: campaign, imported, runway before and after, spend by vend
 ## Step 13. Flip active and watch day one (Josh)
 
 What: Josh sets the campaign ACTIVE by hand. Nothing automated ever starts, pauses, or stops a campaign. Watch bounces and interested replies (categories Interested and Meeting Request only, never raw reply rate) on the first sending day. Bounce over 5 percent on day one means stop and find the source.
-
-## Non-blocking 200-row QA
-
-Josh's hold rule is unchanged: more than 2 percent wrong holds the batch. What changed is *when* it holds.
-
-- After each step that writes a merge field or a gate label, pull 200 random rows (not the top of the table) and score them in a pass separate from the one that produced them.
-- Start the next pipeline step in the same session. Do not sit on a 200-row read while fetch, Jev, people, email, verify, or normalize could be running.
-- Report the error rate per step when the sample finishes. Counts and up to 10 company names only.
-- A fail blocks only before upload/import (step 11). It never blocks mid-pipeline.
-- ICP gate sample: count only false passes (junk let through as `icp_gate = yes`) against the 2 percent line. Track false cuts (`icp_gate = no` on a real buyer) as a separate rate and tell Josh; do not fold them into the hold line.
-- Every other sample (names, cities, company names, location, sports, routing) still counts every wrong value against 2 percent.
 
 ## Where a build stands
 

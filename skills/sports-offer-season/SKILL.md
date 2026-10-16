@@ -1,6 +1,6 @@
 ---
-name: sports-offer-season
-description: Decide which ticket offer (MLB or NBA) every SalesGlider sports ticket campaign should be running on a given date, and run the switch when a season ends. Use whenever Josh asks which offer to run, whether it is baseball or basketball season, to switch campaigns to NBA or back to MLB, to swap the local sports team field, or why a campaign is still offering tickets to a finished season. Also use before building any new ticket offer campaign, before topping up a ticket campaign, and any time the date is within two weeks of a regular season ending. Pairs with sports-team-assignment, which does the actual team lookup.
+name: "sports-offer-season"
+description: "Decide which ticket offer (MLB or NBA) every SalesGlider sports ticket campaign should be running on a given date, and run the switch when a season ends. Use whenever Josh asks which offer to run, whether it is baseball or basketball season, to switch campaigns to NBA or back to MLB, to swap the local sports team field, or why a campaign is still offering tickets to a finished season. Also use before building any new ticket offer campaign, before topping up a ticket campaign, and any time the date is within two weeks of a regular season ending. Pairs with sports-team-assignment, which does the actual team lookup."
 ---
 
 # Sports offer season
@@ -8,21 +8,20 @@ description: Decide which ticket offer (MLB or NBA) every SalesGlider sports tic
 Ticket offers follow the season that is actually being played. Nobody wants tickets to a
 season that just ended.
 
-## The rule (set by Josh, Sept 23 2026)
+## The rule (set by Josh Sept 23 2026, timing settled Oct 16 2026)
+
+Switch **two weeks before** the current league's regular season ends, not at the end.
 
 | When | Offer | Assignment run |
 |---|---|---|
-| MLB regular season running | MLB tickets | `--league mlb` |
-| Day after the MLB regular season ends, until the NBA regular season ends | NBA tickets | `--league nba` |
-| Day after the NBA regular season ends | back to MLB | `--league mlb` |
+| MLB season, until 14 days before the MLB regular season ends | MLB tickets | `--league mlb` |
+| 14 days before the MLB regular season ends, until 14 days before the NBA regular season ends | NBA tickets | `--league nba` |
+| 14 days before the NBA regular season ends | back to MLB | `--league mlb` |
+
+Start the switch procedure below a few days ahead of the flip date so the push (about 5 hours at the rate limit) finishes by then.
 
 Both leagues fall back to college exactly the same way (sports-team-assignment). Education
-lanes stay `--pro-only` in either season. Rows with no team still route to the AirPods tier.
-
-**Open question, default in force until Josh says otherwise:** the switch happens at the end
-of the regular season. Josh mentioned "two weeks before" once and it was not settled whether
-that means switch two weeks early. If he confirms two weeks early, move every flip date in
-the calendar below back 14 days.
+lanes stay `--pro-only` in either season. Rows with no team go to that lane's no team gift (AirPods for BCP and most lanes, the spa offer for Parlay); the team pick order and the Knicks to Rangers swap live in sports-team-assignment and josh-judgment-calls.
 
 The postseason does not count. Playoff tickets are not the offer.
 
@@ -30,9 +29,10 @@ The postseason does not count. Playoff tickets are not the offer.
 
 | Season | Regular season | Offer window |
 |---|---|---|
-| MLB 2026 | ends Sun Sept 27 2026 | MLB through Sept 27 |
-| NBA 2026 to 27 | Tue Oct 20 2026 to Sun Apr 11 2027 | NBA Mon Sept 28 2026 to Sun Apr 11 2027 |
-| MLB 2027 | not yet published | MLB from Mon Apr 12 2027 |
+| MLB 2026 | ends Sun Sept 27 2026 | MLB through Sept 27 (this flip ran at season end, before the two week rule) |
+| NBA 2026 to 27 | Tue Oct 20 2026 to Sun Apr 11 2027 | NBA Mon Sept 28 2026 to Sun Mar 28 2027 |
+| MLB 2027 | not yet published | MLB from Mon Mar 29 2027 (14 days before the NBA season ends) |
+| NBA 2027 to 28 | not yet published | NBA from 14 days before the MLB 2027 regular season ends |
 
 Selling NBA tickets in the three weeks before tip off is fine. The tickets get fulfilled
 weeks after the reply anyway.
@@ -41,7 +41,7 @@ weeks after the reply anyway.
 schedule before each flip.
 
 **2027 labor risk.** MLB's collective bargaining agreement expires Dec 1 2026. If Opening
-Day 2027 is delayed or not scheduled by April 11 2027, do not flip to MLB. Ask Josh; the
+Day 2027 is delayed or not scheduled by the Mar 29 2027 flip date, do not flip to MLB. Ask Josh; the
 default is to hold NBA ticket campaigns on the AirPods tier rather than offer baseball
 tickets to games that may not happen.
 
