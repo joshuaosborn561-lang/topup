@@ -132,6 +132,7 @@ Statuses: **live** (in canon), **superseded** (by the named entry),
 | D110 | Live; the service is retired: the repo is the Grokbot instructions, the list of MCPs and the map of the data on Supabase. No code, no recipe. Grokbot reads the transcripts and calls the same MCPs; the service's tables stay in place, unread. "No stored rule" superseded by D111 |
 | D111 | Live; durable bot rules live in `topup.bot_rules` on `azpapwtnrbzywlnxxecz`. Read active rows before any top-up or list build; they win over skill text; insert to supersede, never delete |
 | D112 | Live; a client top-up must finish in about 30 minutes: 200-row QA scores in parallel and holds only before import; ICP 2% counts false passes only; site-people name-pick filters are standard; ICP variants must exist before the gate (TechEvo parks, no invented labels); email finder claims rows with 20–50 workers; pipeline jobs use expiring leases so a restart does not re-scan |
+| D113 | Live; the Lead Topup MCP is back as the shared booklet for every top-up bot: rules, skills, client context, the low-campaign finder and add_rule, read from the database and the skills folder; no login; no engine |
 
 ---
 
@@ -3819,3 +3820,36 @@ in git.
 **Guard.** None in this repo (no build). Email-waterfall tests cover
 claim, lease expiry, ceiling-release, and free-then-paid short-circuit.
 Ask Josh before deploying the edge-function patches.
+
+## D113 — The Lead Topup MCP comes back as the shared booklet, not the engine
+
+**Decision.** One small server in `server/` serves every top-up bot
+(Josh's Grokbot, Cayden's, Claude) from the same place, at
+`https://leadtopup-production.up.railway.app/mcp`, Streamable HTTP, no
+login (as D41). Its tools: `start_here`, `get_canon`, `add_rule`,
+`list_skills`, `get_skill`, `get_toolkit`, `list_clients`, `get_client`,
+`find_low_campaigns`, plus `GET /health`.
+
+Every fact is read live: rules and the toolkit from `topup.bot_rules`,
+clients from `topup.client_map`, lanes from `topup.campaign_registry`,
+history from `topup.list_build_records` and `topup.process_changes`,
+runway from the Smartlead mirror, skills from `skills/`. Nothing about a
+client is in the code. `add_rule` inserts; with `supersedes` it marks the
+old row superseded in the same transaction; it never deletes, and refuses
+a rule that carries an email address or a key. The one secret is
+`DATABASE_URL`, a Railway variable, and the server refuses to start on any
+project but campaignintelligence.
+
+**What it does not do.** No engine: it never pulls, sizes, dedupes,
+verifies, finds emails, stages, imports, approves spend, or touches a
+Smartlead campaign. Those stay with the bots and their own connectors
+per `grok-bot-babysitter` (D110). It never returns a lead row.
+
+**Why.** Josh, 16 Oct 2026: the old connector Cayden's bot points at was
+gone with the service, so there was no shared brain between his bot and
+Cayden's. Josh chose the booklet with the low-campaign finder and client
+history, and no engine ("go with no engine"). The old pull and sizing jobs
+were already removed on 12 Oct (D99), so nothing the bots use was lost.
+
+**Guard.** `tests/d113_booklet.test.mjs`. Ask Josh before adding an engine
+tool.
