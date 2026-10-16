@@ -24,9 +24,13 @@ Fallback (Josh's rule: "a COO at a very small company" is acceptable where no na
 
 No CTO in either segment.
 
+## ICP website gate: park until a TechEvo label set exists
+
+`lead-list-build` step 5.5 and `icp-website-gate` require a variant written for this client's ICP in `icp-llm` JEV_Q / PASS and a matching row in `topup.icp_variants`. TechEvo does not have one yet. Do not invent labels. Do not reuse Parlay's `itbuyer` / `itbuyer2` as if it were TechEvo's. Pull, ingest and suppress may run; the website gate, paid enrichment and import wait until Josh writes the set.
+
 ## Pipeline
 
-Same as all clients: count_contacts → export_contacts → poll → `lp_run ingest_csv` (client_tag `techevo`, dedupe_key email) → master dedupe SQL against `public.leads` union `public.suppression` in project `azpapwtnrbzywlnxxecz` on table `lp.techevo_ingested_leads` → `lp_export` for the verification file URL.
+Same as all clients: count_contacts → export_contacts → poll → `lp_run ingest_csv` (client_tag `techevo`, dedupe_key email) → master dedupe SQL against `public.leads` union `public.suppression` in project `azpapwtnrbzywlnxxecz` on table `lp.techevo_ingested_leads` → `icp-website-gate` only after a TechEvo variant exists → `lp_export` for the verification file URL.
 
 ## Geography enforcement, the part that has actually failed
 
