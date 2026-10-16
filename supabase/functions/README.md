@@ -19,3 +19,7 @@ rewrites `topup.site_dm_pick` with history / old-year and plain-agent
 filters. Franchise HQ and "name in site text" stay in post-view SQL.
 
 Do not apply the migration or deploy the functions from this PR.
+
+## booklet-data (D113)
+
+The database half of the Lead Topup MCP booklet. POST `{action, args}` with one of `health`, `canon`, `toolkit`, `add_rule`, `clients`, `client`, `low_campaigns`. Fixed queries only; counts, ids, campaign names and plain text; never a lead row; never deletes. Deployed with JWT verification off, like the MCP itself (D41).
