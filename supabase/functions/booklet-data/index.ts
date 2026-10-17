@@ -33,7 +33,12 @@ async function canon(a: Args) {
 }
 
 async function toolkit() {
-  const rows = await sql`select id, rule, status, updated_at from topup.bot_rules where id = ${TOOLKIT_RULE_ID}::uuid`;
+  // The newest active rule in category 'tools' (a superseded toolkit hands over to its replacement); the original row if none is active.
+  const rows = await sql`
+    select id, rule, status, updated_at from topup.bot_rules
+     where (status = 'active' and lower(category) = 'tools') or id = ${TOOLKIT_RULE_ID}::uuid
+     order by (status = 'active' and lower(category) = 'tools') desc, created_at desc
+     limit 1`;
   return rows[0] ?? null;
 }
 

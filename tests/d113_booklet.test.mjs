@@ -25,6 +25,7 @@ test('the data function counts "all" and blank as every-client rules, supersedes
   assert.match(fn, /sql\.begin/);
   assert.doesNotMatch(fn, /\bdelete\s+from\b/i);
   assert.match(fn, /SUPABASE_DB_URL/);
+  assert.match(fn, /lower\(category\) = 'tools'\) desc, created_at desc/, 'D113: the toolkit follows its newest active replacement');
   assert.match(fn, /LOOKS_PRIVATE\.test\(rule\)/);
   assert.doesNotMatch(fn, /select[^`]*\b(email|first_name|last_name|phone)\b[^`]*from\s+(public\.leads|lp\.)/i, 'D113: no lead rows');
 });
