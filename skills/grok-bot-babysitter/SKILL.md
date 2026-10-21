@@ -110,7 +110,11 @@ server. Any other server a transcript uses, attach it. Addresses are in
    rule: hold if any non-ICP step exceeds 2 percent, but the hold is
    only before Smartlead import, never mid-pipeline. ICP false cuts are
    tracked separately and do not count against that 2 percent. Counts
-   and up to 10 company names only, never rows. Then split the lane the
+   and up to 10 company names only, never rows.    Before the split, run the **territory lock**
+   (`skills/territory-lock`, `territory_gate.py --client <tag>`) on the
+   final file. It is always on: territory from `config/territories.json`,
+   US only for every client not listed. Only its pass file goes on;
+   dropped and held counts and reasons go in the receipt. Then split the lane the
    way its transcript split it (title words, employee bands, an industry
    word, the verifier's SEG tag, the team found, a domain hash) and
    stage each part to its campaign with the Smartlead server
@@ -137,6 +141,8 @@ server. Any other server a transcript uses, attach it. Addresses are in
 * An invented price, threshold, filter, source or split. Ask in plain
   English.
 * Any Supabase project other than `azpapwtnrbzywlnxxecz`.
+* A load that skipped the territory lock, or a held (no-location) row
+  loaded without Josh's yes.
 
 ## Credit pricing (Josh, 2026-10-14)
 

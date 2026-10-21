@@ -1,0 +1,23 @@
+{
+  "_doc": "Per-client territory lock. Read by skills/territory-lock/scripts/territory_gate.py before any load. Every client not listed gets _default (US only). include: list of {state, zip3?}; a zip3 list narrows that state to those 3-digit ZIP prefixes. exclude: list of {name, state, zip3?, cities?}.",
+  "_default": {"country": "US", "include": [], "exclude": []},
+  "emcor": {
+    "country": "US",
+    "include": [{"state": "CA"}],
+    "exclude": []
+  },
+  "techevo": {
+    "country": "US",
+    "include": [
+      {"state": "CT"}, {"state": "MA"}, {"state": "ME"},
+      {"state": "NH"}, {"state": "RI"}, {"state": "VT"},
+      {"state": "FL", "zip3": ["330", "331", "332", "333", "334", "349"], "label": "South Florida"}
+    ],
+    "exclude": [
+      {"name": "NYC", "state": "NY", "zip3": ["100", "101", "102", "103", "104", "111", "112", "113", "114", "116"],
+       "cities": ["new york", "new york city", "nyc", "manhattan", "brooklyn", "bronx", "queens", "staten island"]},
+      {"name": "Tampa", "state": "FL", "zip3": ["335", "336", "337", "346"],
+       "cities": ["tampa", "st. petersburg", "st petersburg", "clearwater", "brandon"]}
+    ]
+  }
+}
