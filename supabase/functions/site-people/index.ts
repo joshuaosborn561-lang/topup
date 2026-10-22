@@ -13,6 +13,8 @@ const BODY_CHARS = 120000;
 const MAX_PAGES = 8;
 const MAX_HOP2 = 4;
 const MAX_PEOPLE = 80;
+const LLM_INPUT_CHARS = 30000; // ~104k-char pages ran ~30s and blew the output cap
+const MAX_OUT_TOKENS = 4096;
 const PEOPLE_RE = /team|leadership|leaders|staff|management|our-people|people|who-we-are|meet|founder|owner|executive|board|pastor|elder|deacon|minister|clergy|directory|employees|principals|partners|our-firm|about|our-story|ourstory|story|history|contact/i;
 const STRONG_RE = /team|leadership|leaders|staff|management|our-people|people|who-we-are|meet|founder|owner|executive|board|pastor|elder|deacon|minister|clergy|directory|employees|principals|partners/i;
 const ok = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json' } });
@@ -96,14 +98,16 @@ async function gemini(key: string, model: string, dom: string, txt: string) {
 
 Domain: ${dom}
 Website text:
-${txt}`;
+${txt.slice(0, LLM_INPUT_CHARS)}`;
   const j: any = await callWithRetry(async () => {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 16000, responseMimeType: 'application/json', responseSchema: PERSON_SCHEMA } }) });
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: MAX_OUT_TOKENS, thinkingConfig: { thinkingLevel: 'low' }, responseMimeType: 'application/json', responseSchema: PERSON_SCHEMA } }) });
     return { status: r.status, json: await r.json().catch(() => ({})) };
   });
   {
+    // Truncated or unparsable output is a billed failure: throw so it counts toward the site's attempt cap.
+    if (j.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new Error('gemini MAX_TOKENS (truncated output)');
     const t = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? '{"people":[]}';
-    const o = JSON.parse(t);
+    let o: any; try { o = JSON.parse(t); } catch { throw new Error('gemini bad_json'); }
     const people = (Array.isArray(o.people) ? o.people : []).map((p: any) => ({ name: String(p.name ?? '').replace(/\s+/g, ' ').trim(), title: String(p.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) || null, evidence: String(p.evidence ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) || null, page: String(p.page ?? '').trim().slice(0, 120) || null }))
       .filter((p: any) => p.name.length >= 2 && p.name.length <= 60 && !/@|http|\d{3}/.test(p.name)).slice(0, MAX_PEOPLE);
     return { people, org_name: String(o.org_name ?? '').trim().slice(0, 160) || null, org_type: ORG_TYPES.includes(o.org_type) ? o.org_type : 'unknown', in_tok: j.usageMetadata?.promptTokenCount ?? null, out_tok: (j.usageMetadata?.candidatesTokenCount ?? 0) + (j.usageMetadata?.thoughtsTokenCount ?? 0) };

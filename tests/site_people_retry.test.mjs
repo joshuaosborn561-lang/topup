@@ -54,3 +54,13 @@ test('extract stops the call and returns llm_unavailable without burning site at
   assert.match(fn, /attempts = greatest\(attempts - 1, 0\)/);
   assert.match(fn, /error: LLM_UNAVAILABLE[^\n]*424\)/);
 });
+
+test('bounded Gemini calls: input trim, output cap, low thinking, truncation counts as a failure', () => {
+  assert.match(fn, /const LLM_INPUT_CHARS = 30000;/);
+  assert.match(fn, /const MAX_OUT_TOKENS = 4096;/);
+  assert.match(fn, /txt\.slice\(0, LLM_INPUT_CHARS\)/);
+  assert.match(fn, /thinkingConfig: \{ thinkingLevel: 'low' \}/);
+  assert.match(fn, /finishReason === 'MAX_TOKENS'\) throw/);
+  assert.match(fn, /throw new Error\('gemini bad_json'\)/);
+  assert.doesNotMatch(fn, /maxOutputTokens: 16000/);
+});
