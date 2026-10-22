@@ -1,4 +1,6 @@
 import postgres from 'npm:postgres@3.4.4';
+// @ts-ignore plain JS module, shared with node tests
+import { callWithRetry, LlmUnavailable, LLM_UNAVAILABLE, MAX_SITE_ATTEMPTS } from './llm_retry.mjs';
 // site-people v5 (D72, D73; leadtopup site_check question=people). D112: HTTP k= from vault site_people_key.
 // Project azpapwtnrbzywlnxxecz only. Do not deploy until Josh says. Never put the key in git.
 // v5: capture EVERY named person. Bigger people-page budget, second hop crawl
@@ -95,19 +97,17 @@ async function gemini(key: string, model: string, dom: string, txt: string) {
 Domain: ${dom}
 Website text:
 ${txt}`;
-  let last = 'gemini failed';
-  for (let i = 0; i < 5; i++) {
+  const j: any = await callWithRetry(async () => {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 16000, responseMimeType: 'application/json', responseSchema: PERSON_SCHEMA } }) });
-    const j: any = await r.json().catch(() => ({}));
-    if (r.status === 429 || r.status >= 500) { last = `gemini ${r.status}`; await sleep(backoffMs(i)); continue; }
-    if (!r.ok) throw new Error(`gemini ${r.status} ${JSON.stringify(j).slice(0, 200)}`);
+    return { status: r.status, json: await r.json().catch(() => ({})) };
+  });
+  {
     const t = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? '{"people":[]}';
     const o = JSON.parse(t);
     const people = (Array.isArray(o.people) ? o.people : []).map((p: any) => ({ name: String(p.name ?? '').replace(/\s+/g, ' ').trim(), title: String(p.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) || null, evidence: String(p.evidence ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) || null, page: String(p.page ?? '').trim().slice(0, 120) || null }))
       .filter((p: any) => p.name.length >= 2 && p.name.length <= 60 && !/@|http|\d{3}/.test(p.name)).slice(0, MAX_PEOPLE);
     return { people, org_name: String(o.org_name ?? '').trim().slice(0, 160) || null, org_type: ORG_TYPES.includes(o.org_type) ? o.org_type : 'unknown', in_tok: j.usageMetadata?.promptTokenCount ?? null, out_tok: (j.usageMetadata?.candidatesTokenCount ?? 0) + (j.usageMetadata?.thoughtsTokenCount ?? 0) };
   }
-  throw new Error(last);
 }
 async function jevPick(key: string, model: string, lookingFor: string, dom: string, txt: string, people: Array<{ k: string; n: string; t: string | null; e: string | null }>) {
   const criteria: Record<string, string> = {};
@@ -184,27 +184,38 @@ Deno.serve(async (req) => {
              and coalesce(t.chars, 0) > 300
              and not exists (select 1 from topup.site_extractions e where e.domain = t.domain and e.error is null)
              and not exists (select 1 from topup.site_extractions e where e.domain = t.domain and e.error = 'in_progress' and e.extracted_at > now() - interval '3 minutes')
+             and not exists (select 1 from topup.site_extractions e where e.domain = t.domain and (e.gave_up_at is not null or e.attempts >= ${MAX_SITE_ATTEMPTS}))
            order by t.domain
            limit ${n}
            for update of t skip locked
         ), ins as (
-          insert into topup.site_extractions (domain, model, people, error, extracted_at)
-          select domain, ${spec}, 0, 'in_progress', now() from claim
+          insert into topup.site_extractions (domain, model, people, error, attempts, extracted_at)
+          select domain, ${spec}, 0, 'in_progress', 1, now() from claim
           on conflict (domain) do update
-            set model = excluded.model, error = 'in_progress', extracted_at = now()
+            set model = excluded.model, error = 'in_progress', attempts = topup.site_extractions.attempts + 1, extracted_at = now()
             where topup.site_extractions.error is not null
           returning domain
         )
         select c.domain, c.body from claim c join ins i using (domain)`;
-      const q = [...rows]; let done = 0, errs = 0, lastErr: string | null = null, found = 0;
-      async function worker() { while (q.length && Date.now() - t0 < 125000) { const r: any = q.shift(); let x: any; try { x = await gemini(key, model, r.domain, r.body); x.error = null; } catch (e) { errs++; lastErr = String(e).slice(0, 250); x = { people: [], org_name: null, org_type: null, in_tok: null, out_tok: null, error: lastErr }; }
+      const q = [...rows]; let done = 0, errs = 0, lastErr: string | null = null, found = 0, gaveUp = 0; let llmDown: string | null = null;
+      const unbill: string[] = [];
+      async function worker() { while (q.length && !llmDown && Date.now() - t0 < 125000) { const r: any = q.shift(); let x: any; try { x = await gemini(key, model, r.domain, r.body); x.error = null; } catch (e) {
+          // 402/403: the key is out of credit or blocked. Not the site's fault: hand the site back without using an attempt and stop the call.
+          if (e instanceof LlmUnavailable) { llmDown = String(e).slice(0, 250); unbill.push(r.domain); break; }
+          errs++; lastErr = String(e).slice(0, 250); x = { people: [], org_name: null, org_type: null, in_tok: null, out_tok: null, error: lastErr }; }
         done++;
         for (const p of x.people) { found++; await sql`insert into topup.site_people (domain, person_key, full_name, title, evidence, page_url, model) values (${r.domain}, md5(lower(${p.name})), ${p.name}, ${p.title}, ${p.evidence}, ${p.page}, ${spec}) on conflict (domain, person_key) do update set title = coalesce(excluded.title, topup.site_people.title), evidence = coalesce(excluded.evidence, topup.site_people.evidence), page_url = coalesce(excluded.page_url, topup.site_people.page_url), model = excluded.model, extracted_at = now()`; }
-        await sql`insert into topup.site_extractions (domain, model, people, in_tok, out_tok, cost, error, org_name, org_type, extracted_at) values (${r.domain}, ${spec}, ${x.people.length}, ${x.in_tok}, ${x.out_tok}, null, ${x.error}, ${x.org_name}, ${x.org_type}, now()) on conflict (domain) do update set model = excluded.model, people = excluded.people, in_tok = excluded.in_tok, out_tok = excluded.out_tok, error = excluded.error, org_name = excluded.org_name, org_type = excluded.org_type, extracted_at = now()`; } }
+        const [saved] = await sql`insert into topup.site_extractions (domain, model, people, in_tok, out_tok, cost, error, org_name, org_type, extracted_at) values (${r.domain}, ${spec}, ${x.people.length}, ${x.in_tok}, ${x.out_tok}, null, ${x.error}, ${x.org_name}, ${x.org_type}, now()) on conflict (domain) do update set model = excluded.model, people = excluded.people, in_tok = excluded.in_tok, out_tok = excluded.out_tok, error = excluded.error, org_name = excluded.org_name, org_type = excluded.org_type, extracted_at = now(),
+          gave_up_at = case when excluded.error is not null and topup.site_extractions.attempts >= ${MAX_SITE_ATTEMPTS} then now() else null end
+          returning gave_up_at`;
+        if (saved?.gave_up_at) gaveUp++; } }
       await Promise.all(Array.from({ length: w }, worker));
-      if (q.length) await sql`update topup.site_extractions set error = 'released' where domain = any(${q.map((r: any) => r.domain)}) and error = 'in_progress'`;
-      const [left] = await sql`select count(*)::int c from topup.site_people_text t where t.batch = ${batch} and t.http_status between 200 and 399 and coalesce(t.chars, 0) > 300 and not exists (select 1 from topup.site_extractions e where e.domain = t.domain and e.error is null)`;
-      return ok({ model: spec, processed: done, errors: errs, last_error: lastErr, people: found, remaining: left.c });
+      const back = [...unbill, ...q.map((r: any) => r.domain)];
+      if (back.length) await sql`update topup.site_extractions set error = 'released', attempts = greatest(attempts - 1, 0) where domain = any(${back}) and error = 'in_progress'`;
+      const [left] = await sql`select count(*)::int c from topup.site_people_text t where t.batch = ${batch} and t.http_status between 200 and 399 and coalesce(t.chars, 0) > 300 and not exists (select 1 from topup.site_extractions e where e.domain = t.domain and (e.error is null or e.gave_up_at is not null or e.attempts >= ${MAX_SITE_ATTEMPTS}))`;
+      // Caller must stop on this: no retries until the key has credit again.
+      if (llmDown) return ok({ ok: false, error: LLM_UNAVAILABLE, detail: llmDown, model: spec, processed: done, released: back.length, remaining: left.c }, 424);
+      return ok({ model: spec, processed: done, errors: errs, last_error: lastErr, gave_up: gaveUp, people: found, remaining: left.c });
     }
     if (mode === 'ask') {
       const lookingFor = (u.searchParams.get('looking_for') ?? '').replace(/\s+/g, ' ').trim();
