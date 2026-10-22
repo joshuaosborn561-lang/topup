@@ -6,3 +6,5 @@ dist/
 *.log
 *.csv
 artifacts/emcor-owner-pilot*
+__pycache__/
+*.pyc
