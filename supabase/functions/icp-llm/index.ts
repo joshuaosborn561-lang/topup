@@ -6,7 +6,7 @@ import postgres from 'npm:postgres@3.4.4';
 // Writes client_salesglider.icp_llm_results (raw typed answers in `answers`). Returns counts only.
 // modes: models, run (&model=gemini:<name> | jev:<openrouter id>|<variant>  &batch=&n=&w=  or &tag=<gate tag> to grade from topup.gate_domains)
 // Jev variants: single, decomp, choice (SalesGlider trades), emcor2 (EMCOR / Mesa), deeproots, bcp (BCP PE lane), bcp_ops (BCP healthcare / logistics lanes),
-// itbuyer/itbuyer2 (Parlay, TechEvo), insight/insight2, insight_oem, powergryd, powergryd_vciso, peterson, earthworks, sg_staffing, sg_fa. Category variants pass only the label in PASS.
+// itbuyer/itbuyer2 (Parlay, TechEvo), insight/insight2, insight_oem, powergryd, powergryd_vciso, peterson, earthworks, sg_staffing, sg_fa, b2b_service (SalesGlider high-ticket B2B). Category variants pass only the label in PASS.
 // Run claims rows (in_progress lease, SKIP LOCKED) so 3-5 copies can share a batch. idle_timeout keeps warm copies from hoarding DB connections. Hard cap 5 copies (advisory lock).
 const sql = postgres(Deno.env.get('SUPABASE_DB_URL')!, { max: 2, prepare: false, idle_timeout: 10 });
 const ok = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json' } });
@@ -15,7 +15,7 @@ export const NO = `Any of these: the company mainly sells, supplies, distributes
 const PROMPT = (txt: string, dom: string) => `You screen companies for a cold outreach list. Decide if this company is a fit.\n\nFIT (yes) only if: ${YES}\n\nNOT A FIT (no) if: ${NO}\n\nIf the website text is too thin to tell, answer no.\n\nDomain: ${dom}\nWebsite text:\n${txt}\n\nReturn JSON: {"fit":"yes"|"no","confidence":0 to 1,"reason":"under 20 words"}`;
 const TRADES = 'roofing, HVAC, mechanical, plumbing, electrical, fire protection, concrete, paving, glazing, painting, flooring, drywall, framing, insulation, masonry, steel erection, excavation, site work, low voltage, security systems, signage, commercial doors, solar';
 const PASS: Record<string, string> = { choice: 'commercial_trade_contractor', emcor: 'commercial_facility_operator', emcor2: 'buyer_with_own_facility', deeproots: 'independent_manufacturer', bcp: 'private_equity_firm',
-  itbuyer: 'operating_business_with_internal_it', insight: 'company_with_internal_it_department', insight_oem: 'technology_vendor_with_channel', powergryd: 'managed_service_provider', powergryd_vciso: 'vciso_or_fractional_security_practice', peterson: 'commercial_property_decision_maker', earthworks: 'property_owner_or_developer', insight2: 'company_with_internal_it_department', itbuyer2: 'operating_business_with_internal_it', bcp_ops: 'healthcare_or_logistics_operating_company', sg_staffing: 'staffing_or_recruiting_firm', sg_fa: 'independent_financial_advisory_firm' };
+  itbuyer: 'operating_business_with_internal_it', insight: 'company_with_internal_it_department', insight_oem: 'technology_vendor_with_channel', powergryd: 'managed_service_provider', powergryd_vciso: 'vciso_or_fractional_security_practice', peterson: 'commercial_property_decision_maker', earthworks: 'property_owner_or_developer', insight2: 'company_with_internal_it_department', itbuyer2: 'operating_business_with_internal_it', bcp_ops: 'healthcare_or_logistics_operating_company', sg_staffing: 'staffing_or_recruiting_firm', sg_fa: 'independent_financial_advisory_firm', b2b_service: 'b2b_service_business' };
 const JEV_Q: Record<string, any> = {
   single: { icp_fit: { type: 'noul', instructions: 'Is this company a fit for a cold outreach list of commercial specialty trade contractors? If the website text is too thin to tell, treat it as not a fit.', criteria: { true: YES, false: NO } } },
   decomp: {
@@ -170,6 +170,13 @@ const JEV_Q: Record<string, any> = {
     accounting_tax_or_law_firm: 'A CPA, bookkeeping, tax or law firm whose main business is not investment advice.',
     marketing_or_lead_gen_agency: 'A marketing, lead generation, outbound or sales agency: a competitor, not a buyer.',
     other_or_too_thin: 'Anything else, or a site too thin to tell.' } } },
+  // SalesGlider high-ticket B2B lane. Pass label matches topup.icp_variants note: b2b_service_business (any high-ticket B2B business). Ticket size still comes from list data.
+  b2b_service: { category: { type: 'choice', instructions: 'We sell done for you cold outbound to high-ticket businesses that sell to other businesses. Which best describes this company, based on its website? Industry does not matter. A software company, professional firm, manufacturer, contractor, healthcare group or agency is a buyer when its customers are other businesses. Do not fail a real B2B company for looking small; headcount and ticket size come from the list. A one person shop, a homeowner service, or a store that sells to consumers is not a buyer.', criteria: {
+    b2b_service_business: 'A business that sells services or products to other businesses and has its own staff: professional services, B2B agencies that are not outbound shops, commercial contractors, manufacturers, distributors, healthcare groups, software or technology vendors that sell to businesses, and any other company whose customers are businesses.',
+    consumer_or_local_retail: 'Sells mainly to homeowners or consumers: retail store, restaurant, salon, residential trade, home services, or a local shop such as a tire shop.',
+    marketing_or_lead_gen_agency: 'A marketing, lead generation, outbound or sales agency: a competitor, not a buyer.',
+    government_or_public_body: 'Federal, state or local government, public school or university, or other public sector body.',
+    solo_or_too_thin: 'A one person business, a personal site, or a site too thin to tell.' } } },
 };
 async function vault(name: string) { const [r] = await sql`select decrypted_secret s from vault.decrypted_secrets where name = ${name}`; return r?.s as string; }
 async function httpGate() {
